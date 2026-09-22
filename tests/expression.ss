@@ -94,7 +94,7 @@
      (backward-kill-expression!)
      (check 'backward-kill-prepends-to-the-accumulated-kill (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)1 g"))
      (define indenting (fresh "indenting" '("(define (h)" "(+ 1" "2))" "")))
-     (mode:choose! indenting "scheme")
+     (head:with-buffer indenting (mode:choose! "scheme"))
      (head:goto! '(0 . 0))
      (indent-expression!)
      (check 'indent-expression-indents-the-lines-below-the-first

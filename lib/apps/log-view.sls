@@ -96,7 +96,7 @@
           (lambda () (set! refreshing? #f)))))
     (set! b (head:register-view! name refresh!))
     (head:buffer-fact-set! b 'log-filter components)
-    (mode:choose! b "log")
+    (mode:choose! "log" b)
     (refresh!)
     b)
 

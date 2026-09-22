@@ -15,7 +15,8 @@
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
              (prefix (head window) window:) (prefix (foundation text) text:)
-             (prefix (foundation string) string:) (prefix (test) test:))
+             (prefix (foundation string) string:) (prefix (test) test:)
+             (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:))
 
      (define check test:check)
      (define (settled text) (eval:settle-completion text (string-length text)))
@@ -84,6 +85,23 @@
      ;; offers: the type's values as expressions, the procedures producing
      ;; one, and the variables holding one; symbols complete elsewhere.
      (define (labels text) (eval:completion-candidates text (string-length text)))
+     ;; a mode is named, not spelled as a literal: an argument of type mode
+     ;; completes to the registered names, and no producer sneaks in
+     (scheme-mode:init!)
+     (check 'a-mode-argument-completes-to-names
+       (list (and (member "\"scheme\"" (labels "(mode:choose! ")) #t)
+             (filter (lambda (label) (and (>= (string-length label) 5) (string=? (substring label 0 5) "(echo"))) (labels "(mode:choose! "))
+             (format "~a" (mode:find "scheme")))
+       '(#t () "#<mode scheme>"))
+
+
+     ;; a producer that may return #f serves nothing by that #f: (echo:cursor),
+     ;; returning (or integer #f), is no completion for a (or mode #f) argument
+     (check 'a-union-member-false-serves-no-producer
+       (list (eval:type-fits? '(or mode #f) '(or integer #f)) (eval:type-fits? 'buffer '(or buffer #f))
+             (eval:type-fits? '(or mode #f) 'mode) (eval:type-fits? '(or integer #f) '(or integer #f)))
+       '(#f #t #t #t))
+
      (define (has? needle candidates) (and candidates (exists (lambda (l) (string=? l needle)) candidates) #t))
      (define (has-prefix? needle candidates) (and candidates (exists (lambda (l) (string:prefix? needle l)) candidates) #t))
      (eval '(define myb (buffer "*scratch*")) (interaction-environment))

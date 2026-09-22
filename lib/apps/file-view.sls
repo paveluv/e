@@ -534,7 +534,7 @@
       (head:set-app-selectable! view #f)
       (head:set-app-status-position! view head:buffer-name)
       (head:buffer-fact-set! view 'resume-kind 'file-view)
-      (mode:choose! view "files"))
+      (mode:choose! "files" view))
     view)
 
   (edoc "Show the files view for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")

@@ -34,7 +34,7 @@
      (define (make-source name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (mode:choose! b "markdown")
+         (head:with-buffer b (mode:choose! "markdown"))
          (head:add-buffer! b)
          b))
 
@@ -260,7 +260,7 @@
      ;; The same companion relation works for a local markdown source.
      (define local-source (head:new-local-buffer! "local source"))
      (head:buffer-lines-set! local-source (vector "# Local"))
-     (mode:choose! local-source "markdown")
+     (head:with-buffer local-source (mode:choose! "markdown"))
      (head:show-buffer! local-source)
      (markdown:view!)
      (check 'local-source-gets-local-view (head:buffer-store-id (head:current-buffer)) #f)

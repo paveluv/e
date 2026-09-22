@@ -25,7 +25,7 @@
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
           (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
-          (rename (evaluation-status status)) (rename (eval-top-level-form! top-level-form!))
+          (rename (evaluation-status status)) (rename (eval-top-level-form! top-level-form!)) type-fits?
           (rename (evaluation-values values)))
   (import (chezscheme)
           (prefix (core kernel) kernel:)
@@ -191,21 +191,28 @@
                   (and type (list type start end (substring s start end) (and quote-at #t))))]
                [else #f])))))
 
+  (edoc "Whether a produced type serves a wanted one: the same, one refining it, a named type and the record type it denotes either way round, or a member serving a member across unions; #f, the absence a union allows, serves nothing."
+        (wanted datum "the argument's documented type")
+        (produced datum "the documented result type")
+        (returns boolean))
   (define (type-fits? wanted produced)
-    ;; whether a produced type serves a wanted one: the same, one refining
-    ;; it, a named type and the record type it denotes either way round, a
-    ;; member of a wanted union, or a union with a serving member
-    (define (refines? produced fuel)
+    ;; A procedure that may return #f is no producer of the other member:
+    ;; (or integer #f) does not serve (or mode #f).
+    (define (refines? wanted produced fuel)
       (let ([record (and (symbol? produced) (> fuel 0) (edoc:type-named produced))])
         (and record (edoc:type-within record)
-             (or (type-fits? wanted (edoc:type-within record)) (refines? (edoc:type-within record) (- fuel 1))))))
+             (or (member-fits? wanted (edoc:type-within record)) (refines? wanted (edoc:type-within record) (- fuel 1))))))
     (define (record-of? t) (and (pair? t) (eq? (car t) 'record)))
-    (or (equal? wanted produced)
-        (refines? produced 8)
-        (and (record-of? wanted) (symbol? produced) (edoc:type-denotes-record? produced (cadr wanted)))
-        (and (record-of? produced) (symbol? wanted) (edoc:type-denotes-record? wanted (cadr produced)))
-        (and (pair? wanted) (eq? (car wanted) 'or) (exists (lambda (m) (type-fits? m produced)) (cdr wanted)))
-        (and (pair? produced) (eq? (car produced) 'or) (exists (lambda (m) (type-fits? wanted m)) (cdr produced)))))
+    (define (members t)
+      (cond [(and (pair? t) (eq? (car t) 'or)) (apply append (map members (cdr t)))]
+            [(eq? t #f) '()]
+            [else (list t)]))
+    (define (member-fits? wanted produced)
+      (or (equal? wanted produced)
+          (refines? wanted produced 8)
+          (and (record-of? wanted) (symbol? produced) (edoc:type-denotes-record? produced (cadr wanted)))
+          (and (record-of? produced) (symbol? wanted) (edoc:type-denotes-record? wanted (cadr produced)))))
+    (and (exists (lambda (w) (exists (lambda (p) (member-fits? w p)) (members produced))) (members wanted)) #t))
 
   ;; the language's types, integer or boolean say, belong to the edoc library
   (define language-owner (edoc:type-owner (edoc:type-named 'boolean)))

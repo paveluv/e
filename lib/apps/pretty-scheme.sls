@@ -297,10 +297,7 @@
         (edit:insert-text! (string typed))))
 
   (define (toggle-mode! name)
-    (mode:choose! (head:current-buffer)
-                  (if (equal? (mode:name-of (head:current-buffer)) name)
-                      "scheme"
-                      name))
+    (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
     (void))
 
   (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct.")

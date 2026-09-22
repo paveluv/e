@@ -17,7 +17,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export (rename (add-mode-extension! add-extension!)) (rename (assign-mode! assign!))
+  (export (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
           indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
@@ -28,6 +28,7 @@
           register-formatter! register-indenter! (rename (mode-render render))
           (rename (mode-row-styles row-styles)) (rename (mode-styles styles)))
   (import (rnrs)
+          (only (chezscheme) record-writer)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
                 vector-copy void)
@@ -78,14 +79,21 @@
   (define modes (kernel:make-registry))
 
   ;; A mode as an edoc type: its registered name; completion lists the modes
-  ;; with the endings they claim.
+  ;; with the endings they claim. A mode is a registry entry looked up by
+  ;; name, so its name is its spelling; the record behind it is for programs
+  ;; and prints as #<mode name>.
+  (define (mode-details m)
+    (string:join (mode-extensions m) " "))
+
   (edoc-type mode "a mode, by name"
     (predicate (lambda (v) (and (string? v) (find-mode v) #t)))
-    (complete (lambda (partial)
-                (map (lambda (m) (cons (mode-name m) (string:join (mode-extensions m) " ")))
-                     (kernel:registry-items modes))))
-    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+    (complete (lambda (partial) (map (lambda (m) (cons (mode-name m) (mode-details m))) (kernel:registry-items modes))))
+    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p)))))
+    (within string))
 
+  (define mode-printing
+    (record-writer (record-type-descriptor mode)
+      (lambda (r p wr) (display "#<mode " p) (display (mode-name r) p) (display ">" p))))
 
   (define mode-extension-additions (kernel:make-registry))
 
@@ -199,15 +207,21 @@
         (name mode "the mode's name")
         (returns (or (record mode) #f)))
   (define (find-mode name)
-    (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name))))
+    (and (string? name)
+         (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name)))))
 
-  (edoc "Give a buffer the registered mode called name, or none with #f, regardless of its file name."
-        (b buffer "the buffer")
-        (name (or mode #f) "the mode's name"))
-  (define (set-buffer-mode! b name)
-    ;; Give b the registered mode called name (#f for none), regardless of
-    ;; its file name -- how transcript buffers get their highlighting.
-    (set-mode-of! b (and name (find-mode name)) #f))
+  (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
+        (name (or mode #f) "the mode's name, or #f for none")
+        (b (list-of buffer) "the buffer, at most one"))
+  (define (set-buffer-mode! name . b)
+    ;; how transcript buffers get their highlighting, and how a user picks
+    ;; a mode by hand
+    (set-mode-of! (if (pair? b) (car b) (head:current-buffer)) (and name (find-mode name)) #f))
+
+  (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
+        (b (list-of buffer) "the buffer, at most one"))
+  (define (assign-current-mode! . b)
+    (assign-mode! (if (pair? b) (car b) (head:current-buffer))))
 
   (edoc "The keymap context of a buffer's mode, named after it, or #f; a capture context needs a live app."
         (b buffer "the buffer")
@@ -236,18 +250,18 @@
                       (cons context acc)
                       acc))))))
 
-  (edoc "The name of a buffer's mode, or #f without one."
-        (b buffer "the buffer")
+  (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
+        (b (list-of buffer) "the buffer, at most one")
         (returns (or string #f)))
-  (define (buffer-mode-name b)
+  (define (buffer-mode-name . b)
     ;; The name of b's mode, or #f without one.
-    (let ([m (mode-of b)]) (and m (mode-name m))))
+    (let ([m (apply mode-of b)]) (and m (mode-name m))))
 
-  (edoc "A buffer's mode record, or #f."
-        (b buffer "the buffer")
+  (edoc "A buffer's mode record, the current buffer's without an argument, or #f."
+        (b (list-of buffer) "the buffer, at most one")
         (returns (or (record mode) #f)))
-  (define (mode-of b)
-    (let ([n (head:buffer-fact b 'mode #f)]) (and n (find-mode n))))
+  (define (mode-of . b)
+    (let ([n (head:buffer-fact (if (pair? b) (car b) (head:current-buffer)) 'mode #f)]) (and n (find-mode n))))
 
   (define (set-mode-of! b m . auto?)
     (head:buffer-facts-set! b
@@ -385,8 +399,6 @@
                         [(find-mode name) => (lambda (m) (set-mode-of! b m))]
                         [else (void)])))
               (head:buffers)))
-
-
 
   ;;; The head's adopt hook -------------------------------------------------------
 

@@ -41,27 +41,27 @@
 
      (define by-file (head:new-buffer! "x.probe"))
      (head:buffer-file-set! by-file "/nowhere/x.probe")
-     (mode:assign! by-file)
+     (head:with-buffer by-file (mode:assign!))
      (check 'detect-by-extension (mode:name-of by-file) "probe")
      (check 'detected-is-auto (head:buffer-mode-auto by-file) #t)
 
      (define by-interpreter (head:new-buffer! "script"))
      (head:buffer-lines-set! by-interpreter (vector "#!/usr/bin/env probesh" "x"))
-     (mode:assign! by-interpreter)
+     (head:with-buffer by-interpreter (mode:assign!))
      (check 'detect-by-interpreter (mode:name-of by-interpreter) "probe")
 
      (define plain (head:new-buffer! "notes.txt"))
      (head:buffer-file-set! plain "/nowhere/notes.txt")
-     (mode:assign! plain)
+     (head:with-buffer plain (mode:assign!))
      (check 'detect-nothing (mode:name-of plain) #f)
      (check 'of-nothing (mode:of plain) #f)
 
      ;; -- choosing by hand ----------------------------------------------------
 
-     (mode:choose! plain "probe")
+     (head:with-buffer plain (mode:choose! "probe"))
      (check 'chosen (list (mode:name-of plain) (mode:key-context plain)) '("probe" probe))
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
-     (mode:choose! plain #f)
+     (head:with-buffer plain (mode:choose! #f))
      (check 'unchosen (mode:of plain) #f)
 
      (check 'adoption-distinguishes-undetected-and-explicit-no-mode
@@ -88,27 +88,27 @@
              (set! mode-observations
                (cons (list (mode:name-of atomic-mode) (head:buffer-mode-auto atomic-mode))
                      mode-observations))))))
-     (mode:choose! atomic-mode "probe")
+     (head:with-buffer atomic-mode (mode:choose! "probe"))
      (check 'manual-mode-choice-is-atomic mode-observations '(("probe" #f) ("probe" #f)))
      (set! mode-observations '())
-     (mode:assign! atomic-mode)
+     (head:with-buffer atomic-mode (mode:assign!))
      (check 'detected-mode-choice-is-atomic mode-observations '(("probe" #t) ("probe" #t)))
      (store:unsubscribe! mode-token)
 
      ;; A local buffer uses the same mode API, without a store twin.
      (define local (head:new-local-buffer! "*local-mode*"))
      (head:buffer-lines-set! local (vector "#!/usr/bin/env probesh" "local"))
-     (mode:assign! local)
+     (head:with-buffer local (mode:assign!))
      (check 'local-detection (mode:name-of local) "probe")
      (check 'local-detected-is-auto (head:buffer-mode-auto local) #t)
      (check 'local-has-no-twin (head:buffer-store-id local) #f)
-     (mode:choose! local "probe")
+     (head:with-buffer local (mode:choose! "probe"))
      (check 'local-chosen (mode:name-of local) "probe")
      (check 'local-chosen-is-not-auto (head:buffer-mode-auto local) #f)
      (check 'local-line-styles
             (vector->list ((mode:line-styles local) "abc"))
             '(keyword keyword keyword))
-     (mode:choose! local #f)
+     (head:with-buffer local (mode:choose! #f))
      (check 'local-mode-cleared (mode:of local) #f)
 
      ;; -- extensions added later ----------------------------------------------
@@ -116,7 +116,7 @@
      (mode:add-extension! "probe" ".pr2")
      (define by-addition (head:new-buffer! "y.pr2"))
      (head:buffer-file-set! by-addition "/nowhere/y.pr2")
-     (mode:assign! by-addition)
+     (head:with-buffer by-addition (mode:assign!))
      (check 'detect-by-added-extension (mode:name-of by-addition) "probe")
      (check 'bad-extension-refused
             (guard (ex [else 'refused]) (mode:add-extension! "probe" "pr3"))
@@ -139,7 +139,7 @@
      (check 'plain-buffer-styles ((mode:line-styles plain) "abc") #f)
 
      (mode:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
-     (mode:choose! plain "raiser")
+     (head:with-buffer plain (mode:choose! "raiser"))
      (check 'raising-styler-paints-plain ((mode:line-styles plain) "abc") #f)
 
      ;; -- memoized whole-buffer analysis --------------------------------------
@@ -180,7 +180,7 @@
      (parent! probe-styler old-indent)
      (mode:derive! "child" "parent" '(".child"))
      (mode:derive! "grandchild" "child" '(".grandchild"))
-     (mode:choose! plain "grandchild")
+     (head:with-buffer plain (mode:choose! "grandchild"))
      (define derived-line (string-copy "abc"))
      ((mode:line-styles plain) derived-line)
      (mode:indent-on-tab! "parent" #f)
@@ -223,7 +223,7 @@
      ;; claims their ending assigns it to them at once, as the worksheet does
      (define late (head:new-buffer! "notes.late"))
      (head:buffer-file-set! late "/tmp/notes.late")
-     (mode:assign! late)
+     (head:with-buffer late (mode:assign!))
      (define before-derivation (mode:name-of late))
      (mode:derive! "late" "parent" '(".late"))
      (check 'deriving-a-mode-assigns-it-to-open-buffers-with-its-ending
@@ -232,7 +232,7 @@
      ;; re-registration gives the open buffers with that ending the mode
      (define newly (head:new-buffer! "notes.newly"))
      (head:buffer-file-set! newly "/tmp/notes.newly")
-     (mode:assign! newly)
+     (head:with-buffer newly (mode:assign!))
      (define before-reregistration (mode:name-of newly))
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "parent" '(".parent" ".newly") '("parentsh") probe-styler))
@@ -240,12 +240,12 @@
        (list before-reregistration (mode:name-of newly) (mode:name-of late)) '(#f "parent" "late"))
      ;; a detected or chosen mode stays when others register: registration
      ;; is additive, and a mode chosen by hand follows only its own name
-     (mode:choose! late "parent")
+     (head:with-buffer late (mode:choose! "parent"))
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "thief" '(".newly" ".late") '() probe-styler))
      (define stolen (head:new-buffer! "z.newly"))
      (head:buffer-file-set! stolen "/tmp/z.newly")
-     (mode:assign! stolen)
+     (head:with-buffer stolen (mode:assign!))
      (check 'registration-takes-only-buffers-without-a-mode
        (list (mode:name-of newly) (mode:name-of late) (mode:name-of stolen)) '("parent" "parent" "thief"))
      (parent! probe-styler new-indent)

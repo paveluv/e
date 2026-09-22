@@ -174,7 +174,7 @@
      ;; when the provider pumps a frame and an after-commit observer does too.
      (mode:register! "position-format" '() '() (lambda (line) #f))
      (define formatted (fresh "position-format-source" '("abc" "tail")))
-     (mode:choose! formatted "position-format")
+     (head:with-buffer formatted (mode:choose! "position-format"))
      (head:goto! '(0 . 2))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
@@ -194,7 +194,7 @@
      (check 'format-undo-keeps-both-foreign-edits (text-of formatted) '("RQabc" "tail"))
 
      (define conflict (fresh "position-format-conflict" '("abc")))
-     (mode:choose! conflict "position-format")
+     (head:with-buffer conflict (mode:choose! "position-format"))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
          (foreign! b (text:make-span 0 1 0 2) '("R"))
@@ -205,7 +205,7 @@
      (check 'format-refusal-keeps-head-history (vector-ref (head:buffer-history conflict) 0) '())
 
      (define indented (fresh "position-indent-source" '("  abc" "tail")))
-     (mode:choose! indented "position-format")
+     (head:with-buffer indented (mode:choose! "position-format"))
      (head:goto! '(1 . 2))
      (set-mark-command!)
      (head:goto! '(0 . 3))
@@ -239,7 +239,7 @@
      (undo!)
      (check 'local-other-window-follows-undo (wpoint w2) '(1 . 2))
      (check 'local-undo-restores-command-point (head:point) '(0 . 1))
-     (mode:choose! local "position-format")
+     (head:with-buffer local (mode:choose! "position-format"))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
          (head:buffer-lines-set! b '#("new local text"))

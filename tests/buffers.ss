@@ -45,7 +45,7 @@
          (let ([b (head:new-local-buffer! (car entry))])
            (head:buffer-lines-set! b (make-vector (cadr entry) (car entry)))
            (head:buffer-file-set! b (caddr entry))
-           (mode:choose! b (cadddr entry))
+           (head:with-buffer b (mode:choose! (cadddr entry)))
            (head:add-buffer! b)))
        '(("picker-alpha" 20 "/project/zebra/long/日本語 alpha.txt" "pick-z")
          ("picker-beta" 9 "/project/alpha/src/beta.ss" "pick-a")

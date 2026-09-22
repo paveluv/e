@@ -451,14 +451,16 @@ A buffer takes the mode detection finds when it opens, and follows detection
 until a mode is chosen for it by hand:
 
 ```scheme
-(mode:choose! (head:current-buffer) "scheme")
+(mode:choose! "scheme")
+(mode:choose! "markdown" (buffer "notes.md"))
 ```
 
 Registering a mode, deriving one or adding an ending gives the mode to the
 open buffers that have none yet, so a file opened before its extension loads
 takes the mode when the extension registers it. A buffer that already has a
 mode, detected or chosen, keeps it and picks up only a reloaded record of the
-same name; `(mode:assign! b)` re-detects one buffer on request.
+same name; `(mode:assign!)` re-detects the current buffer on request, and either
+command takes another buffer as a last argument or under `head:with-buffer`.
 
 Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
 snapshot vector of lines and returns per-row results, recomputed once per

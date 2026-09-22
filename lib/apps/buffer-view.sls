@@ -392,7 +392,7 @@
           (head:set-app-cursor-visible! view #f)
           (head:set-app-selectable! view #f)
           (head:set-app-status-position! view head:buffer-name)
-          (mode:choose! view "buffers")
+          (mode:choose! "buffers" view)
           (refresh!)
           view)))
 

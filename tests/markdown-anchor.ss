@@ -33,7 +33,7 @@
      (define (fresh name local?)
        (let ([b ((if local? head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b '#("# Alpha" "" "# Middle" "" "# Omega"))
-         (mode:choose! b "markdown")
+         (head:with-buffer b (mode:choose! "markdown"))
          (head:show-buffer! b)
          (markdown:view!)
          b))

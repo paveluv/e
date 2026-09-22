@@ -113,7 +113,7 @@
        (lambda (local?)
          (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "navigation.md")])
            (head:buffer-lines-set! source '#("# Alpha" "" "# Middle" "" "# Omega"))
-           (mode:choose! source "markdown")
+           (head:with-buffer source (mode:choose! "markdown"))
            (head:show-buffer! source)
            (head:goto! '(2 . 1))
            (let ([entered #f] [once #t])

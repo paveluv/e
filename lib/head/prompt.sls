@@ -634,7 +634,7 @@
               (head:register-app!
                 (head:new-local-buffer! (if in-window? (label-stem label) "completions"))
                 render! mouse!))
-            (mode:choose! view (if in-window? "prompt" "completions"))
+            (mode:choose! (if in-window? "prompt" "completions") view)
             (head:set-app-presentation! view 0 #f #f (if in-window? 'text 'default))
             (head:set-app-status-position! view status-text)
             (head:set-app-manages-viewport! view #t)

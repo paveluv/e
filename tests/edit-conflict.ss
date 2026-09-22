@@ -215,7 +215,7 @@
      ;; desired cursor movement cannot be installed before a refused edit.
      (define indented (fresh "edit-indent-refusal" '("  abc")))
      (mode:register! "conflict-indent" '() '() (lambda (line) #f))
-     (mode:choose! indented "conflict-indent")
+     (head:with-buffer indented (mode:choose! "conflict-indent"))
      (head:goto! '(0 . 2))
      (mode:register-indenter! "conflict-indent"
        (lambda (b from to)

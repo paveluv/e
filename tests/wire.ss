@@ -2424,7 +2424,7 @@
                             (head:show-buffer! (head:adopt-store-buffer! ,plain))
                             (window:split-right!) (window:focus-next!)
                             (let ([source (head:adopt-store-buffer! ,source)])
-                              (mode:choose! source "markdown")
+                              (head:with-buffer source (mode:choose! "markdown"))
                               (head:show-buffer! (markdown:companion! source "<resume view>")))
                             (head:goto! (cons (let find ([row 0])
                                                  (if (string=? (head:buffer-line (head:current-buffer) row) "After table")

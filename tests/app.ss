@@ -489,7 +489,7 @@
          (let ([before (length (received 'input))] [ran? #f] [commands 0])
            (define (toggle!) (head:set-full-capture! (head:current-window) (not (head:full-capture? (head:current-window)))))
            (mode:register! "adapter-test" '() '() (lambda (line) #f))
-           (mode:choose! b "adapter-test")
+           (head:with-buffer b (mode:choose! "adapter-test"))
            (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
            (keymap:set-context-capture! 'adapter-test "C-]" toggle! '("C-x" "M-x"))
            (keymap:bind-default! "M-x" (lambda () (set! commands (+ commands 1))))

@@ -248,7 +248,7 @@
              (head:store-reset! b input)
              (vector-set! input 0 "caller mutation")
              (check 'baseline-owns-its-vector (head:buffer-lines b) '#("before")))
-           (mode:choose! b "invalid-line-output")
+           (head:with-buffer b (mode:choose! "invalid-line-output"))
            (let ([before (state b)] [history (head:buffer-history b)])
              (check 'invalid-inputs-refuse-before-changing-either-owner
                (map
@@ -388,7 +388,7 @@
                (insert-text! "written")
                (head:buffer-facts-set! saved '((read-only . #t) (disposable . #t) (stale . #t)))
                (head:buffer-name-set! saved "before save")
-               (mode:choose! saved "invalid-line-output")
+               (head:with-buffer saved (mode:choose! "invalid-line-output"))
                (let ([token
                       (store:subscribe! saved-id
                         (lambda (event)
@@ -403,7 +403,7 @@
                               [(retarget) (head:buffer-facts-set! saved
                                             '((file . "/tmp/retargeted.ss") (base . "new baseline\n")))])
                             (when (memq effect '(name retarget)) (head:buffer-name-set! saved "callback name"))
-                            (when (memq effect '(mode retarget)) (mode:choose! saved "invalid-line-output"))
+                            (when (memq effect '(mode retarget)) (head:with-buffer saved (mode:choose! "invalid-line-output")))
                             (head:before-frame!)
                             (set! seen (current)))))])
                  (dynamic-wind void
@@ -421,7 +421,7 @@
                                dirty? (or (not adopt?) (not dirty?))))))
                    (lambda () (store:unsubscribe! token))))))
            '((name #f) (mode #f) (name #t) (mode #t) (retarget #t) (text #t)))
-         (mode:choose! saved "invalid-line-output")
+         (head:with-buffer saved (mode:choose! "invalid-line-output"))
          (check 'second-save-writes-later-text-and-keeps-manual-mode
            (list (save-file! path) (file:read path) (head:buffer-modified saved)
                  (mode:name-of saved) (head:buffer-mode-auto saved))
@@ -462,7 +462,7 @@
                                   [(file) (head:buffer-facts-set! b
                                             '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
                                   [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
-                                  [(mode) (mode:choose! b "invalid-line-output")]
+                                  [(mode) (head:with-buffer b (mode:choose! "invalid-line-output"))]
                                   [(trailing) (head:buffer-trailing-set! b #f)]
                                   [(text) (if shared? (insert! (head:buffer-store-id b) 0 "later ")
                                               (insert-text! "later "))])

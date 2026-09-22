@@ -896,14 +896,14 @@
       (error 'markdown-view-install! "expected markdown lines" lines))
     (head:buffer-fact-set! b 'markdown-input lines)
     (head:buffer-read-only-set! b #t)
-    (mode:choose! b "markdown-view")
+    (mode:choose! "markdown-view" b)
     (refresh-render! b)
     b)
 
   (define (attach-source-view! b)
     (head:buffer-fact-set! b 'resume-kind 'markdown)
     (head:register-view! b (lambda () (refresh-render! b)))
-    (mode:choose! b "markdown-view")
+    (mode:choose! "markdown-view" b)
     b)
 
   (edoc "The local view buffer rendering a Markdown source buffer, or #f."
