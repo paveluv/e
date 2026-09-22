@@ -14,6 +14,7 @@
              (except (head edit) init!)
              (prefix (head head) head:)
              (prefix (head expression) expression:)
+             (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (apps eval) eval:)
              (prefix (service log) log:)
@@ -55,6 +56,56 @@
        (list (after forward-expression!) (begin (head:goto! '(0 . 5)) (after backward-expression!)))
        '((0 . 7) (0 . 1)))
 
+     ;; up, down and over lists, the edges of top-level forms, marks, kills,
+     ;; a transposition and an indentation, all on the same spans
+     (scheme-mode:init!)
+     (define lists (fresh "lists" '("(define (f x)" "  (+ x 1))" "(g 1 2)" "")))
+     (head:goto! '(1 . 5))
+     (check 'up-leaves-the-enclosing-lists-then-stops
+       (map after (list up-expression! up-expression! up-expression!)) '((1 . 2) (0 . 0) (0 . 0)))
+     (check 'down-enters-the-next-lists-then-stops
+       (map after (list down-expression! down-expression! down-expression!)) '((0 . 1) (0 . 9) (0 . 9)))
+     (head:goto! '(0 . 0))
+     (check 'next-list-skips-atoms-then-stops
+       (map after (list next-list! next-list! next-list!)) '((1 . 10) (2 . 7) (2 . 7)))
+     (check 'previous-list-comes-back-then-stops
+       (map after (list previous-list! previous-list! previous-list!)) '((2 . 0) (0 . 0) (0 . 0)))
+     (head:goto! '(1 . 5))
+     (check 'beginning-and-end-of-form-walk-the-top-level-forms
+       (list (after beginning-of-form!) (after beginning-of-form!) (after end-of-form!) (after end-of-form!) (after end-of-form!))
+       '((0 . 0) (0 . 0) (1 . 10) (2 . 7) (2 . 7)))
+     (head:goto! '(1 . 5))
+     (mark-form!)
+     (check 'mark-form-selects-the-top-level-form (list (head:point) (head:mark)) '((0 . 0) (1 . 10)))
+     (head:goto! '(2 . 1))
+     (mark-expression!) (mark-expression!) (mark-expression!)
+     (check 'mark-expression-extends-by-one-expression-each-time (list (head:point) (head:mark)) '((2 . 1) (2 . 6)))
+     (head:goto! '(2 . 3))
+     (transpose-expressions!)
+     (check 'transpose-swaps-the-expressions-around-point
+       (list (head:buffer-line lists 2) (head:point)) '("(1 g 2)" (2 . 4)))
+     (head:goto! '(2 . 1))
+     (kill-expression!)
+     (head:set-last-command! kill-expression!)
+     (kill-expression!)
+     (check 'kill-expression-accumulates-forward (list (head:buffer-line lists 2) (head:copy-text)) '("( 2)" "1 g"))
+     (head:goto! '(2 . 4))
+     (head:set-last-command! kill-expression!)
+     (backward-kill-expression!)
+     (check 'backward-kill-prepends-to-the-accumulated-kill (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)1 g"))
+     (define indenting (fresh "indenting" '("(define (h)" "(+ 1" "2))" "")))
+     (mode:choose! indenting "scheme")
+     (head:goto! '(0 . 0))
+     (indent-expression!)
+     (check 'indent-expression-indents-the-lines-below-the-first
+       (list (head:buffer-line indenting 0) (head:buffer-line indenting 1) (head:buffer-line indenting 2))
+       '("(define (h)" "  (+ 1" "    2))"))
+
+     ;; the long Control-Meta spellings parse, so the default bindings install
+     (check 'control-meta-spellings-of-special-keys-parse
+       (list (keymap:spec "C-M-BACKSPACE") (keymap:spec "C-M-SPC") (keymap:spec "C-M-@"))
+       '(("C-M-BACKSPACE") ("C-M-SPC") ("C-M-@")))
+
      ;; evaluation of the expression before point and of the top-level form around it
      (fresh "evaluations" '("(define ex-forty 40)" "(list 1 (+ 2 3) 4)" "(+ ex-forty 2)" ""))
      (define (last-eval) (log:datum (car (log:entries 'eval))))
@@ -75,8 +126,7 @@
      (fresh "nothing" '(""))
      (check 'no-expression-before-point-is-an-error (test:raises? eval:last-expression!) #t)
 
-     ;; *scratch* speaks Scheme once the mode is registered
-     (scheme-mode:init!)
+     ;; *scratch* speaks Scheme once the mode is registered (it was, above)
      (mode:refresh!)
      (check 'scratch-has-scheme-mode-by-default
        (mode:name-of (head:buffer-named "*scratch*")) "scheme")

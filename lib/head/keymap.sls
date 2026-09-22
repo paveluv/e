@@ -69,6 +69,9 @@
       [(and (> (string-length s) 3) (string:prefix? "M-" s))
        (let ([base (key-token (string:tail s 2))])
          (string-append "M-" (if (string=? base " ") "SPC" base)))]
+      [(and (> (string-length s) 5) (string:prefix? "C-M-" s))
+       (let ([base (key-token (string:tail s 4))])
+         (string-append "C-M-" (if (string=? base " ") "SPC" base)))]
       [(and (= (string-length s) 5) (string:prefix? "C-M-" s))
        (format "C-M-~c" (char-downcase (string-ref s 4)))]
       [(= (string-length s) 1) s]

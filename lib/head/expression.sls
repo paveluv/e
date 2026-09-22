@@ -11,7 +11,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head expression)
-  (export backward forward spans text top-level)
+  (export backward container down form-end form-start forward next-list previous-list spans text
+          top-level)
   (import (chezscheme)
           (prefix (head head) head:))
 
@@ -140,6 +141,28 @@
                            s best))
                      #f all))))
 
+  (define (compound-forward all offset)
+    ;; the next list or vector starting at or after offset inside the
+    ;; enclosing one, atoms skipped, the outermost of those starting together
+    (let ([container (container-around all offset)])
+      (fold-left (lambda (best s)
+                   (if (and (span-compound? s) (within? s container) (>= (span-start s) offset)
+                            (or (not best) (< (span-start s) (span-start best))
+                                (and (= (span-start s) (span-start best)) (> (span-end s) (span-end best)))))
+                       s best))
+                 #f all)))
+
+  (define (compound-backward all offset)
+    ;; the last list or vector ending by offset inside the enclosing one,
+    ;; atoms skipped, the outermost of those ending together
+    (let ([container (container-around all offset)])
+      (fold-left (lambda (best s)
+                   (if (and (span-compound? s) (within? s container) (<= (span-end s) offset)
+                            (or (not best) (> (span-end s) (span-end best))
+                                (and (= (span-end s) (span-end best)) (< (span-start s) (span-start best)))))
+                       s best))
+                 #f all)))
+
   (define (top-level-spans all)
     ;; the spans inside no other, in text order: an outer span precedes its parts
     (let loop ([rest all] [limit -1] [acc '()])
@@ -181,6 +204,58 @@
         (effects internal))
   (define (top-level b position)
     (edges b position top-level-around))
+
+  (edoc "The list or vector around a position in a buffer, as (values start end) positions, or (values #f #f) at top level."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (effects internal))
+  (define (container b position)
+    (edges b position container-around))
+
+  (edoc "The position just inside the next list or vector at a position's level in a buffer, atoms skipped, or #f without one."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (returns (or pair #f))
+        (effects internal))
+  (define (down b position)
+    (let* ([a (analysis b)] [s (compound-forward (vector-ref a 3) (offset-of a position))])
+      (and s (position-of a (+ (span-start s) 1)))))
+
+  (edoc "The next list or vector at a position's level in a buffer, atoms skipped, as (values start end) positions, or (values #f #f) without one."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (effects internal))
+  (define (next-list b position)
+    (edges b position compound-forward))
+
+  (edoc "The previous list or vector at a position's level in a buffer, atoms skipped, as (values start end) positions, or (values #f #f) without one."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (effects internal))
+  (define (previous-list b position)
+    (edges b position compound-backward))
+
+  (edoc "The start of the last top-level form beginning before a position in a buffer, or #f."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (returns (or pair #f))
+        (effects internal))
+  (define (form-start b position)
+    (let* ([a (analysis b)] [offset (offset-of a position)])
+      (let loop ([tops (top-level-spans (vector-ref a 3))] [best #f])
+        (cond [(and (pair? tops) (< (span-start (car tops)) offset)) (loop (cdr tops) (car tops))]
+              [best (position-of a (span-start best))]
+              [else #f]))))
+
+  (edoc "The end of the first top-level form ending after a position in a buffer, or #f."
+        (b buffer "the buffer")
+        (position pair "(row . col)")
+        (returns (or pair #f))
+        (effects internal))
+  (define (form-end b position)
+    (let* ([a (analysis b)] [offset (offset-of a position)]
+           [s (find (lambda (t) (> (span-end t) offset)) (top-level-spans (vector-ref a 3)))])
+      (and s (position-of a (span-end s)))))
 
   (edoc "The text of a buffer between two positions, rows joined by newlines."
         (b buffer "the buffer")

@@ -27,17 +27,22 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
-  (export answer! backspace! backward-expression! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
+  (export answer! backspace! backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
+          beginning-of-line! buffer-clean? buffer-text
           call-as-one-edit! copy-region! copy-text copy-text! current-region
-          delete-forward! empty-trash! end-of-buffer! end-of-line! format-buffer! format-region!
-          forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-line! indent-region!
-          indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-line! kill-region!
+          delete-forward! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
+          format-region!
+          forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-expression! indent-line!
+          indent-region!
+          indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-expression! kill-line! kill-region!
+          mark-expression! mark-form!
           message-progress message-source move-horizontal! move-left! move-right! move-vertical!
-          new-buffer! newline! next-line! open-line! page-down! page-up! page-window!
-          page-window-fraction! present-log-entries! present-log-entry! previous-line!
+          new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
+          page-window-fraction! present-log-entries! present-log-entry! previous-line! previous-list!
           prompt-file! quit! redo! redraw-command! region-text replace-region-text! restore!
           rewrite-region! save! save-file! set-mark-command! set-message!
-          set-point-without-scroll! trash undo! undo-actor! undo-scope visit-file! with-region
+          set-point-without-scroll! transpose-expressions! trash undo! undo-actor! undo-scope up-expression!
+          visit-file! with-region
           yank!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
@@ -442,6 +447,99 @@
     (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
       (if start (head:goto! start) (set-message! "No expression before point"))))
 
+  (define (position-before? a b)
+    (or (< (car a) (car b)) (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+
+  (define (kill-between! from to prepend?)
+    ;; from precedes to; the killed text joins the copy buffer as C-k's
+    ;; does, ahead of the previous kill when killing backward
+    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+           [text (text-between (car from) (cdr from) (car to) (cdr to))])
+      (with-recorded-edit (format "kill ~s" text)
+        (parameterize ([edit-source source]) (delete-region! (car from) (cdr from) (car to) (cdr to)))
+        (kill! text prepend?)
+        (changed!))))
+
+  (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs.")
+  (define (kill-expression!)
+    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
+      (if end (kill-between! (head:point) end #f) (set-message! "No expression after point"))))
+
+  (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs.")
+  (define (backward-kill-expression!)
+    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
+      (if start (kill-between! start (head:point) #t) (set-message! "No expression before point"))))
+
+  (edoc "Set the mark at the end of the next expression and activate it, point staying; with the mark active beyond point, extend it by one more expression; the C-M-SPC of Emacs.")
+  (define (mark-expression!)
+    (let* ([point (head:point)] [mark (cons mark-row mark-col)]
+           [from (if (and mark-active? (position-before? point mark)) mark point)])
+      (let-values ([(start end) (expression:forward (head:current-buffer) from)])
+        (cond [(not end) (set-message! "No expression after point")]
+              [(head:buffer-selectable? (head:current-buffer))
+               (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+               (set! message "Mark set")]))))
+
+  (edoc "Mark the top-level form around point: point at its start, the mark at its end; the C-M-h of Emacs.")
+  (define (mark-form!)
+    (let-values ([(start end) (expression:top-level (head:current-buffer) (head:point))])
+      (cond [(not start) (set-message! "No top-level form in the buffer")]
+            [(head:buffer-selectable? (head:current-buffer))
+             (head:goto! start)
+             (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+             (set! message "Mark set")])))
+
+  (edoc "Move point up out of the enclosing list or vector, to its start; the C-M-u of Emacs.")
+  (define (up-expression!)
+    (let-values ([(start end) (expression:container (head:current-buffer) (head:point))])
+      (if start (head:goto! start) (set-message! "Not inside an expression"))))
+
+  (edoc "Move point down into the next list or vector, just past its opening delimiter; the C-M-d of Emacs.")
+  (define (down-expression!)
+    (let ([inside (expression:down (head:current-buffer) (head:point))])
+      (if inside (head:goto! inside) (set-message! "No list after point"))))
+
+  (edoc "Move point over the next list or vector, skipping atoms; the C-M-n of Emacs.")
+  (define (next-list!)
+    (let-values ([(start end) (expression:next-list (head:current-buffer) (head:point))])
+      (if end (head:goto! end) (set-message! "No list after point"))))
+
+  (edoc "Move point back over the previous list or vector, skipping atoms; the C-M-p of Emacs.")
+  (define (previous-list!)
+    (let-values ([(start end) (expression:previous-list (head:current-buffer) (head:point))])
+      (if start (head:goto! start) (set-message! "No list before point"))))
+
+  (edoc "Move point to the start of the last top-level form beginning before point, the enclosing one included; the C-M-a of Emacs.")
+  (define (beginning-of-form!)
+    (let ([start (expression:form-start (head:current-buffer) (head:point))])
+      (if start (head:goto! start) (set-message! "No top-level form before point"))))
+
+  (edoc "Move point to the end of the first top-level form ending after point, the enclosing one included; the C-M-e of Emacs.")
+  (define (end-of-form!)
+    (let ([end (expression:form-end (head:current-buffer) (head:point))])
+      (if end (head:goto! end) (set-message! "No top-level form after point"))))
+
+  (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs.")
+  (define (transpose-expressions!)
+    (let ([b (head:current-buffer)] [point (head:point)])
+      (let-values ([(as ae) (expression:backward b point)] [(bs be) (expression:forward b point)])
+        (if (or (not as) (not bs) (equal? as bs))
+            (set-message! "No two expressions around point")
+            (let ([before (text-between (car as) (cdr as) (car ae) (cdr ae))]
+                  [between (text-between (car ae) (cdr ae) (car bs) (cdr bs))]
+                  [after (text-between (car bs) (cdr bs) (car be) (cdr be))])
+              (replace-region-text! as be (string-append after between before))
+              (head:goto! be))))))
+
+  (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs.")
+  (define (indent-expression!)
+    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
+      (cond [(not end) (set-message! "No expression after point")]
+            [(< (car start) (car end))
+             (when (indent-rows! (+ (car start) 1) (car end))
+               (set! message (format "Indented ~a line~a" (- (car end) (car start)) (if (= (- (car end) (car start)) 1) "" "s"))))]
+            [else (set! message "Nothing to indent below the first line")])))
+
   (edoc "Move point one character left, crossing to the end of the previous line.")
   (define (move-left!)
     (cond [(> point-col 0) (set! point-col (- point-col 1))]
@@ -686,10 +784,13 @@
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
     ;; into a single copy-buffer entry.
-    (and (memq (head:last-command) (list kill-line! kill-region!)) #t))
+    (and (memq (head:last-command) (list kill-line! kill-region! kill-expression! backward-kill-expression!)) #t))
 
-  (define (kill! text)
-    (replace-copy-text! (if (killing?) (string-append (head:copy-text) text) text) "kill"))
+  (define (kill! text . before?)
+    ;; consecutive kills accumulate into the copy buffer, a backward kill
+    ;; ahead of what is there
+    (let ([old (head:copy-text)] [prepend? (and (pair? before?) (car before?))])
+      (replace-copy-text! (if (killing?) (if prepend? (string-append text old) (string-append old text)) text) "kill")))
 
   (edoc "Copy text into the copy buffer without changing a buffer or point; C-y pastes it."
         (text string "the text to copy"))
@@ -1957,6 +2058,12 @@
           ("C-v" ,page-down!) ("C-w" ,kill-region!) ("C-y" ,yank!)
           ("C-_" ,undo!) ("C-M-_" ,redo!) ("M-w" ,copy-region!)
           ("C-M-f" ,forward-expression!) ("C-M-b" ,backward-expression!)
+          ("C-M-n" ,next-list!) ("C-M-p" ,previous-list!)
+          ("C-M-u" ,up-expression!) ("C-M-d" ,down-expression!)
+          ("C-M-a" ,beginning-of-form!) ("C-M-e" ,end-of-form!)
+          ("C-M-k" ,kill-expression!) ("C-M-BACKSPACE" ,backward-kill-expression!)
+          ("C-M-@" ,mark-expression!) ("C-M-SPC" ,mark-expression!) ("C-M-h" ,mark-form!)
+          ("C-M-t" ,transpose-expressions!) ("C-M-q" ,indent-expression!)
           ("M-v" ,page-up!) ("M-<" ,beginning-of-buffer!)
           ("M->" ,end-of-buffer!) ("UP" ,previous-line!)
           ("DOWN" ,next-line!) ("LEFT" ,move-left!)

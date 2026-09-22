@@ -163,7 +163,9 @@ for configuration, lifecycle and scripted clients.
 | `C-@`, `C-w`, `M-w`, `C-y` | Mark, kill, copy, yank |
 | `M-x` | Evaluate Scheme interactively |
 | `C-x C-e`, `C-M-x` | Evaluate the expression before point, the top-level form around it |
-| `C-M-f`, `C-M-b` | Move forward, backward by expression |
+| `C-M-f`, `C-M-b`, `C-M-n`, `C-M-p` | Move over the next or previous expression, or list |
+| `C-M-u`, `C-M-d`, `C-M-a`, `C-M-e` | Up out of a list, down into one, to a top-level form's start or end |
+| `C-M-k`, `C-M-BACKSPACE`, `C-M-SPC`, `C-M-h`, `C-M-t`, `C-M-q` | Kill, mark, transpose or indent expressions |
 | `C-h f`, `M-.`, `C-h k` | Describe a name, symbol at point, or key |
 | `C-x g` | Browse Git history and patches |
 | `C-c t` | Open a terminal buffer |
