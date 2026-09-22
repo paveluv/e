@@ -85,6 +85,7 @@
           (prefix (core property) property:)
           (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation text) text:)
           (prefix (head render) render:)
           (prefix (service file) file:)
@@ -3371,12 +3372,13 @@
   (edoc "Show a buffer in the current window and put it first in the recency list; a buffer whose recency fact is behind goes last instead."
         (b buffer "the buffer to show"))
   (define (show-buffer! b)
-    (add-buffer! b)
-    ;; A picker is inventory, not a document visit: it stays behind the
-    ;; documents in the recency list even when its own row is opened.
-    (let ([rest (remq b the-buffers)])
-      (set! the-buffers (if (eq? (buffer-fact b 'recency #f) 'behind) (append rest (list b)) (cons b rest))))
-    (set-window-buffer! the-current b))
+    (let ([b (edoc:type-value 'buffer b)])
+      (add-buffer! b)
+      ;; A picker is inventory, not a document visit: it stays behind the
+      ;; documents in the recency list even when its own row is opened.
+      (let ([rest (remq b the-buffers)])
+        (set! the-buffers (if (eq? (buffer-fact b 'recency #f) 'behind) (append rest (list b)) (cons b rest))))
+      (set-window-buffer! the-current b)))
 
   ;;; Scopes: another window or buffer current for the extent of a body
 
@@ -3398,7 +3400,7 @@
         (body (list-of any) "the forms to run"))
   (define-syntax with-window
     (syntax-rules ()
-      [(_ w body ...) (call-with-window w (lambda () body ...))]))
+      [(_ w body ...) (call-with-window (edoc:type-value 'window w) (lambda () body ...))]))
 
   (define (call-with-buffer b thunk)
     ;; b temporarily current: in the window already showing it when there
@@ -3421,7 +3423,7 @@
         (body (list-of any) "the forms to run"))
   (define-syntax with-buffer
     (syntax-rules ()
-      [(_ b body ...) (call-with-buffer b (lambda () body ...))]))
+      [(_ b body ...) (call-with-buffer (edoc:type-value 'buffer b) (lambda () body ...))]))
 
   (edoc "Retire this head's record of a buffer, moving windows off it and running the kill hooks; the store content stays."
         (b buffer "the buffer"))

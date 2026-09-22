@@ -12,7 +12,7 @@
 
 (eval
   '(begin
-     (import (prefix (test) test:)
+     (import (prefix (test) test:) (head literal)
              (prefix (core kernel) kernel:)
              (prefix (head mode) mode:)
              (prefix (head head) head:)
@@ -63,6 +63,15 @@
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
      (head:with-buffer plain (mode:choose! #f))
      (check 'unchosen (mode:of plain) #f)
+
+     ;; the optional buffer goes as its literal or by name
+     (mode:choose! "probe" (buffer "notes.txt"))
+     (check 'chosen-by-literal (mode:name-of (buffer "notes.txt")) "probe")
+     (mode:choose! "probe" "notes.txt")
+     (check 'chosen-by-name (list (mode:name-of "notes.txt") (mode:name-of plain)) '("probe" "probe"))
+     (mode:choose! #f "notes.txt")
+     (mode:assign! "notes.txt")
+     (check 'assigned-by-name (list (mode:of "notes.txt") (head:buffer-mode-auto plain)) '(#f #t))
 
      (check 'adoption-distinguishes-undetected-and-explicit-no-mode
        (map (lambda (choice)

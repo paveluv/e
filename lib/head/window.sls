@@ -16,6 +16,7 @@
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
+          (prefix (foundation edoc) edoc:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head paint) paint:)
@@ -52,14 +53,15 @@
   (define (focus! w)
     ;; All user-visible focus changes pass here; head:set-current! is
     ;; the raw setter and tells no app.
-    (cond
-      [(not (and (memq w (head:windows)) (not (head:popup? w)))) #f]
-      [(eq? w (head:current-window)) #t]
-      [else
-       (head:dispatch-app-event! "BLUR")
-       (head:set-current! w)
-       (head:dispatch-app-event! "FOCUS")
-       #t]))
+    (let ([w (edoc:type-value 'window w)])
+      (cond
+        [(not (and (memq w (head:windows)) (not (head:popup? w)))) #f]
+        [(eq? w (head:current-window)) #t]
+        [else
+         (head:dispatch-app-event! "BLUR")
+         (head:set-current! w)
+         (head:dispatch-app-event! "FOCUS")
+         #t])))
 
   (edoc "Select the next window in layout order; the window now selected."
         (returns window))
@@ -236,15 +238,16 @@
         (b buffer "the buffer to show")
         (returns (or window #f)))
   (define (display! b)
-    (head:add-buffer! b)
-    (cond
-      [(window-showing b)]
-      [(pair? (cdr (ordinary-windows)))
-       (let ([w (next-window (head:current-window))])
-         (head:set-window-buffer! w b)
-         w)]
-      [(split-current-window! 'below b #f)]
-      [else #f]))
+    (let ([b (edoc:type-value 'buffer b)])
+      (head:add-buffer! b)
+      (cond
+        [(window-showing b)]
+        [(pair? (cdr (ordinary-windows)))
+         (let ([w (next-window (head:current-window))])
+           (head:set-window-buffer! w b)
+           w)]
+        [(split-current-window! 'below b #f)]
+        [else #f])))
 
   (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was. The window, or #f when there was no room."
         (b buffer "the buffer to show")
@@ -252,9 +255,10 @@
   (define (pop-up-or-reuse! b)
     ;; Help-like buffers never appropriate another leaf: the buffer stays a
     ;; reference beside the command that asked for it.
-    (head:add-buffer! b)
-    (or (window-showing b)
-        (split-current-window! 'below b #f)))
+    (let ([b (edoc:type-value 'buffer b)])
+      (head:add-buffer! b)
+      (or (window-showing b)
+          (split-current-window! 'below b #f))))
 
   ;;; Registration -------------------------------------------------------------------
 

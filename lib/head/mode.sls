@@ -211,6 +211,10 @@
     (and (string? name)
          (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name)))))
 
+  (define (the-buffer b)
+    ;; the optional buffer argument, by name or as its literal, else the current buffer
+    (if (pair? b) (edoc:type-value 'buffer (car b)) (head:current-buffer)))
+
   (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
         (name (or mode #f) "the mode's name, or #f for none")
         (b (list-of buffer) "the buffer, at most one"))
@@ -218,12 +222,12 @@
     ;; how transcript buffers get their highlighting, and how a user picks
     ;; a mode by hand
     (let ([name (and name (edoc:type-value 'mode name))])
-      (set-mode-of! (if (pair? b) (car b) (head:current-buffer)) (and name (find-mode name)) #f)))
+      (set-mode-of! (the-buffer b) (and name (find-mode name)) #f)))
 
   (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b (list-of buffer) "the buffer, at most one"))
   (define (assign-current-mode! . b)
-    (assign-mode! (if (pair? b) (car b) (head:current-buffer))))
+    (assign-mode! (the-buffer b)))
 
   (edoc "The keymap context of a buffer's mode, named after it, or #f; a capture context needs a live app."
         (b buffer "the buffer")
@@ -263,7 +267,7 @@
         (b (list-of buffer) "the buffer, at most one")
         (returns (or (record mode) #f)))
   (define (mode-of . b)
-    (let ([n (head:buffer-fact (if (pair? b) (car b) (head:current-buffer)) 'mode #f)]) (and n (find-mode n))))
+    (let ([n (head:buffer-fact (the-buffer b) 'mode #f)]) (and n (find-mode n))))
 
   (define (set-mode-of! b m . auto?)
     (head:buffer-facts-set! b

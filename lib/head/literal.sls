@@ -152,7 +152,6 @@
   ;; must be. A buffer or a window is live, on this seat, now; an actor is
   ;; any identity, offered from the directory.
 
-  (define (live-buffer? v) (and (head:buffer? v) (memq v (head:buffers)) #t))
 
   (define (buffer-details b)
     ;; what a completion row shows beside a buffer
@@ -163,8 +162,8 @@
               (and (head:buffer-modified b) "modified")))
       "  "))
 
-  (edoc-type buffer "a live buffer, spelled (buffer \"name\")"
-    (predicate live-buffer?)
+  (edoc-type buffer "a buffer, spelled (buffer \"name\"); completion offers the live ones"
+    (predicate head:buffer?)
     (complete (lambda (partial) (map (lambda (b) (cons b (buffer-details b))) (head:buffers))))
     (read buffer)
     (write (lambda (b) (format "(buffer ~s)" (head:buffer-name b)))))
@@ -174,8 +173,8 @@
     (complete (lambda (partial) (map (lambda (b) (cons (head:buffer-name b) (buffer-details b))) (head:buffers))))
     (write (lambda (v) (format "~s" v))))
 
-  (edoc-type window "a window on screen, spelled (window n)"
-    (predicate (lambda (v) (and (head:window? v) (memq v (head:windows)) #t)))
+  (edoc-type window "a window, spelled (window n); completion offers those on screen"
+    (predicate head:window?)
     (complete (lambda (partial)
                 (map (lambda (w) (cons w (head:buffer-name (head:window-buffer w))))
                      (remq (head:popup) (head:windows)))))

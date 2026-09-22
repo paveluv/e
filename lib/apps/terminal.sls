@@ -10,6 +10,7 @@
           (rename (terminal-toggle-capture! toggle-capture!)))
   (import (chezscheme)
           (prefix (core kernel) kernel:)
+          (prefix (foundation edoc) edoc:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -62,7 +63,7 @@
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
         (buffer* (list-of buffer) "the terminal buffer, at most one"))
   (define (terminal-close! . buffer*)
-    (cond [(terminal-id (if (pair? buffer*) (car buffer*) (head:current-buffer))) => vt:close!])
+    (cond [(terminal-id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (head:current-buffer))) => vt:close!])
     (void))
 
   (edoc "Tell the terminals the host's color scheme, so their default colors follow it."

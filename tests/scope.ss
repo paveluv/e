@@ -73,6 +73,18 @@
        (guard (ex [else 'refused]) (head:with-window 'nowhere (head:current-window)))
        'refused)
 
+     ;; a buffer goes by name and a window by index as well as by literal,
+     ;; in the scope forms and the commands alike, as completion writes them
+     (check 'scope-forms-take-a-name-or-an-index
+       (list (head:with-buffer "scope-b" (head:current-buffer))
+             (head:with-window (head:window-index other) (head:current-window))
+             (equal? (buffer-text "scope-b") (buffer-text b)) (eq? (buffer-clean? "scope-b") (buffer-clean? b)))
+       (list b other #t #t))
+     (check 'window-commands-take-a-name-or-an-index
+       (list (head:window-buffer (window:display! "scope-b")) (window:focus! (head:window-index other)) (head:current-window)
+             (begin (window:focus! here) (head:current-window)))
+       (list b #t other here))
+
      ;; exact arities: no optional scope or setting
      (check 'undo-takes-no-scope (guard (ex [else 'refused]) (undo! 'all)) 'refused)
      (window:set-wrap! #f)
@@ -99,5 +111,7 @@
              (guard (ex [(kernel:refusal? ex) 'refused]) (window:set-line-numbers! #t))
              (head:window-line-numbers? here) (head:window-line-numbers here))
        '(refused refused #f default))
+
+     (check 'kill-buffer-takes-a-name (begin (kill-buffer! "scope-b") (and (memq b (head:buffers)) #t)) #f)
 
      (test:finish! 'scope)))

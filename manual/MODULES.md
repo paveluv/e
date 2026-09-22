@@ -471,9 +471,14 @@ the spelling itself once the type accepts it, so `(mode "scheme")` is the
 name `"scheme"` checked against the registered modes. Commands take the bare
 value and the literal alike; a command's author gets that with one call,
 `(edoc:type-value 'mode name)`, which returns a value the type accepts or
-reads it from its spelling. Completion spells an argument's options as
-literals, a reminder of the type at that position, and writes the whole
-literal on Tab.
+reads it from its spelling. So the commands that take a buffer take its name
+too, and those that take a window its index: `(kill-buffer! "notes.txt")`,
+`(window:focus! 2)`, `(head:with-buffer "*scratch*" ...)`, `(mode:of
+"notes.txt")`; the accessors under `head:` keep taking the values
+themselves. A type whose literal returns its spelling, `file` or `mode`,
+needs nothing, since `(file "notes.txt")` is `"notes.txt"`. Completion
+spells an argument's options as literals, a reminder of the type at that
+position, and writes the whole literal on Tab.
 
 Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
 snapshot vector of lines and returns per-row results, recomputed once per

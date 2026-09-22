@@ -48,6 +48,7 @@
           (prefix (core kernel) kernel:)
           (prefix (core property) property:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head dispatch) dispatch:)
@@ -1223,8 +1224,9 @@
         (b buffer "the buffer to read")
         (returns string))
   (define (buffer-text b)
-    ;; b's text as its file would hold it
-    (file:text (head:buffer-lines b) (head:buffer-trailing b)))
+    ;; b's text as its file would hold it; b by name or as its literal
+    (let ([b (edoc:type-value 'buffer b)])
+      (file:text (head:buffer-lines b) (head:buffer-trailing b))))
 
   (edoc "Whether a buffer can be discarded without losing work: unmodified, or marked disposable; #f when its state cannot be read."
         (b buffer "the buffer to judge")
@@ -1234,7 +1236,7 @@
     ;; head cache.  Read-only protects editing, not the lifetime of work.
     ;; Generated tools explicitly opt into disposal; failed reads fail closed.
     (guard (ex [else #f])
-      (let-values ([(text revision facts) (head:buffer-state b)])
+      (let-values ([(text revision facts) (head:buffer-state (edoc:type-value 'buffer b))])
         (file:state-clean? text facts))))
 
   ;;; Buffer commands ------------------------------------------------------------
@@ -1369,7 +1371,7 @@
   (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
         (b buffer "the buffer to kill"))
   (define (kill-buffer! b)
-    (let ([id (head:buffer-store-id b)] [name (head:buffer-name b)])
+    (let* ([b (edoc:type-value 'buffer b)] [id (head:buffer-store-id b)] [name (head:buffer-name b)])
       (let-values ([(text revision facts) (head:buffer-state b)])
         (let ([unsaved? (not (file:state-clean? text facts))]
               [disposable? (cond [(assq 'disposable facts) => cdr] [else #f])])
