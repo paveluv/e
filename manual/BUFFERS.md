@@ -235,15 +235,21 @@ snapshot history and behave the same under `mine` and `all`.
 
 The mark belongs to the buffer, while point belongs to each window.
 
-The copy buffer is global: text killed or copied in one buffer can be pasted
+The copy buffer is a buffer of its own, `<copy>`, local to the head and created
+by the first kill or copy. Text killed or copied in one buffer can be pasted
 with `C-y` in another. Consecutive kill commands accumulate, so repeated `C-k`
-followed by `C-y` reconstructs the complete block.
+followed by `C-y` reconstructs the complete block. Show `<copy>` in a window to
+watch copies arrive, edit it before pasting, or undo in it: every copy is one
+undo entry there, and `C-_` brings the previous one back, up to 1024 entries.
+Killing `<copy>` asks nothing; the next copy recreates it. `edit:copy-text`
+returns its text, `head:copy-buffer` the buffer.
 
 Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
-`M-w`, `C-w`, repeated `C-k`, and Scheme calls to `edit:copy-text!` can
-place the exact UTF-8 text in the desktop clipboard without selecting padded
-terminal cells. The host terminal retains final control over whether clipboard
-writes are permitted. Enable forwarding in `config.e` when desired:
+`M-w`, `C-w`, repeated `C-k`, Scheme calls to `edit:copy-text!`, and any other
+change to `<copy>`, such as editing it by hand, can place the exact UTF-8 text
+in the desktop clipboard without selecting padded terminal cells. The host
+terminal retains final control over whether clipboard writes are permitted.
+Enable forwarding in `config.e` when desired:
 
 ```scheme
 (edit:forward-copy-buffer-to-system-clipboard #t) ; default is #f

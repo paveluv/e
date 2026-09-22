@@ -37,7 +37,7 @@
           buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
           bump-buffer-revision! call-uninterrupted call-with-display-update call-with-interrupt
-          checkpoint! clamp-buffer-positions! copy-buffer current-buffer current-keys
+          checkpoint! clamp-buffer-positions! copy-buffer copy-text current-buffer current-keys
           (rename (current current-window)) default-directory depart! detach-app!
           dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
           fit-layout! flush-ui-audit! follow-app! forget-buffer! fresh-buffer!
@@ -55,7 +55,7 @@
           request-app-size! request-frame-at! resume! resume-source! root run-deferred!
           run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
           set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
-          set-app-selectable! set-app-status-position! set-buffers! set-copy-buffer! set-current!
+          set-app-selectable! set-app-status-position! set-buffers! set-copy-text! set-current!
           set-current-keys! set-departure! set-dividers! set-drag! set-file-opener!
           set-frame-hook! set-full-capture! set-last-command! set-layout-root!
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
@@ -367,19 +367,36 @@
     ;; the live window numbered n, or #f
     (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
-  ;; The seat's copy buffer: one string, the last kill or copy; commands and
-  ;; prompts read and replace it.
-  (define the-copy-buffer "")
+  ;; The seat's copy buffer, <copy>: a local tool buffer holding the last
+  ;; kill or copy as text. Commands and prompts read and replace it, and
+  ;; the user can show, edit and undo it like any buffer: each copy is one
+  ;; undo entry there, kept up to copy-history-limit. It is created when
+  ;; first needed; killing it asks nothing, and the next copy recreates it.
+  (define copy-key "<copy>")
+  (define copy-history-limit 1024)
 
-  (edoc "The seat's copy buffer: the last kill or copy, one string."
-        (returns string))
+  (edoc "The seat's copy buffer: the local tool buffer keyed <copy>, holding the last kill or copy, created when first needed."
+        (returns buffer)
+        (effects internal))
   (define (copy-buffer)
-    the-copy-buffer)
+    (or (find-tool-buffer copy-key)
+        (let ([b (tool-buffer! copy-key)])
+          (buffer-fact-set! b 'history-limit copy-history-limit)
+          b)))
 
-  (edoc "Replace the seat's copy buffer."
+  (edoc "The copy buffer's text, the empty string while there is no copy buffer."
+        (returns string))
+  (define (copy-text)
+    (let ([b (find-tool-buffer copy-key)])
+      (if b (text:to-string (buffer-lines b) (buffer-trailing b)) "")))
+
+  (edoc "Replace the copy buffer's text as a new baseline, without an undo entry."
         (s string "the text"))
-  (define (set-copy-buffer! s)
-    (set! the-copy-buffer s))
+  (define (set-copy-text! s)
+    (unless (string? s) (error 'set-copy-text! "expected a string" s))
+    (unless (and (string=? s "") (not (find-tool-buffer copy-key)))
+      (let-values ([(lines trailing?) (text:from-string s)])
+        (store-reset! (copy-buffer) lines (list (cons 'trailing trailing?))))))
 
   ;; The text of the bracketed paste just consumed: the pump's paste
   ;; handler stashes it, the PASTE key's command reads it.
@@ -2417,7 +2434,7 @@
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 3 the-copy-buffer (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 3 (copy-text) (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
@@ -2466,7 +2483,7 @@
                             (case (car reference)
                               [(shared) (apply resume-source! (append (cdr reference) (list positions)))]
                               [(tool)
-                               (let ([b (find-tool-buffer (cadr reference))])
+                               (let ([b (or (find-tool-buffer (cadr reference)) (and (equal? (cadr reference) copy-key) (copy-buffer)))])
                                  (when b
                                    (buffer-name-set! b (caddr reference))
                                    (let ([app (app-of b)]) (when app ((app-refresh! app)))))
@@ -2482,6 +2499,7 @@
       (lambda (tag version copied selected layout entries)
         (unless (and (eq? tag 'screen) (memv version '(1 2 3)) (string? copied))
           (error 'resume! "unsupported screen checkpoint"))
+        (set-copy-text! copied)
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
                [buffers (list->vector
@@ -2551,7 +2569,6 @@
                       (vector-set! entry 4 (project-resume-positions positions lines changes))))))) buffers)
           (set-layout-root! root)
           (set-current! current)
-          (set-copy-buffer! copied)
           (let ([restored (filter values (map (lambda (entry) (vector-ref entry 0)) (vector->list buffers)))])
             (set! the-buffers (append restored (filter (lambda (b) (not (memq b restored))) the-buffers))))
           (vector-for-each

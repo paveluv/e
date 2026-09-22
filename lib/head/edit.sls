@@ -28,7 +28,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
   (export answer! backspace! beginning-of-buffer! beginning-of-line! buffer-clean? buffer-text
-          call-as-one-edit! copy-region! copy-text! current-copy-buffer current-region
+          call-as-one-edit! copy-region! copy-text copy-text! current-region
           delete-forward! empty-trash! end-of-buffer! end-of-line! format-buffer! format-region!
           forward-copy-buffer-to-system-clipboard indent-buffer! indent-line! indent-region!
           indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-line! kill-region!
@@ -147,8 +147,6 @@
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  (define-syntax copy-buffer
-    (identifier-syntax [id (head:copy-buffer)] [(set! id v) (head:set-copy-buffer! v)]))
   (define suppress-history (make-parameter #f))
   ;; Desired anchors in the command's proposed result.  The head projects
   ;; them into the accepted revision before adopting any later changes.
@@ -271,6 +269,11 @@
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only"))))))
 
+  (define (trim-history b entries)
+    ;; a buffer with a history-limit fact keeps that many undo entries
+    (let ([limit (head:buffer-fact b 'history-limit #f)])
+      (if (and limit (> (length entries) limit)) (list-head entries limit) entries)))
+
   (define (call-with-recorded-edit! label thunk)
     (check-editable!)
     (let ([b (head:window-buffer current-window)]
@@ -297,7 +300,7 @@
                     (lambda ()
                       (unless committed?
                         (unless previous
-                          (vector-set! h 0 (cons entry (vector-ref h 0))))
+                          (vector-set! h 0 (trim-history b (cons entry (vector-ref h 0)))))
                         (vector-set! h 1 '())
                         (set-car! entry label)
                         (when (and group (not group-entry))
@@ -584,7 +587,7 @@
 
   ;;; Kill and yank ---------------------------------------------------------
 
-  (edoc "Whether every kill and copy also reaches the terminal's clipboard, through OSC 52."
+  (edoc "Whether every kill and copy, and every other change to <copy>, also reaches the terminal's clipboard, through OSC 52."
         (value boolean))
   (define forward-copy-buffer-to-system-clipboard (make-parameter
                                                     #f
@@ -632,23 +635,57 @@
         (paint:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
+  ;; Whatever changes <copy> -- a hand edit there, undo, the prompt's C-k --
+  ;; reaches the clipboard at the next frame, once per revision; the copy
+  ;; commands publish at once and note their revision. A copy buffer seen
+  ;; for the first time is only noted, so a fresh or resumed head never
+  ;; writes the clipboard by itself.
+  (define published-copy (cons #f #f)) ; (buffer . the revision published)
+
+  (define (copy-revision b)
+    (let-values ([(lines revision facts) (head:buffer-state b)]) revision))
+
+  (define (note-copy-published! b)
+    (set! published-copy (cons b (copy-revision b))))
+
+  (define (publish-copy-changes!)
+    (let ([b (head:find-tool-buffer "<copy>")])
+      (when b
+        (let ([revision (copy-revision b)])
+          (cond [(not (eq? b (car published-copy))) (set! published-copy (cons b revision))]
+                [(eqv? revision (cdr published-copy)) (void)]
+                [else
+                 (set! published-copy (cons b revision))
+                 (when (forward-copy-buffer-to-system-clipboard)
+                   (publish-system-clipboard! (head:copy-text)))])))))
+
+  (define (replace-copy-text! text label)
+    ;; <copy> takes the text as one undo entry of its own -- C-_ there
+    ;; brings the previous copy back -- with point at its end in every
+    ;; window showing it; then the clipboard follows at once.
+    (let ([b (head:copy-buffer)])
+      (let-values ([(lines trailing?) (text:from-string text)])
+        (head:with-buffer b
+          (parameterize ([edit-source #f])
+            (with-recorded-edit (format "~a ~s" label (string:elide text 40))
+              (replace-buffer-lines! b lines (list (cons 'trailing trailing?)))))))
+      (note-copy-published! b)
+      (publish-system-clipboard! text)))
+
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
     ;; into a single copy-buffer entry.
     (and (memq (head:last-command) (list kill-line! kill-region!)) #t))
 
   (define (kill! text)
-    (set! copy-buffer (if (killing?) (string-append copy-buffer text) text))
-    (publish-system-clipboard! copy-buffer))
+    (replace-copy-text! (if (killing?) (string-append (head:copy-text) text) text) "kill"))
 
   (edoc "Copy text into the copy buffer without changing a buffer or point; C-y pastes it."
         (text string "the text to copy"))
   (define (copy-text! text)
-    ;; Replace the text C-y pastes without changing a buffer or point.
     (unless (string? text)
       (error 'copy-text! "expected a string" text))
-    (set! copy-buffer text)
-    (publish-system-clipboard! copy-buffer)
+    (replace-copy-text! text "copy")
     (void))
 
   (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate.")
@@ -668,17 +705,16 @@
 
   (edoc "The copy buffer's text."
         (returns string))
-  (define (current-copy-buffer)
-    ;; The copy buffer's text, for consumers outside the buffer -- the
-    ;; terminal's yank, a future clipboard bridge.
-    copy-buffer)
+  (define (copy-text)
+    (head:copy-text))
 
   (edoc "Insert the copy buffer's text at point.")
   (define (yank!)
     ;; The copy buffer can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
-    (unless (string=? copy-buffer "")
-      (insert-text-as! copy-buffer (format "yank ~s" copy-buffer))))
+    (let ([text (head:copy-text)])
+      (unless (string=? text "")
+        (insert-text-as! text (format "yank ~s" text)))))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -1935,6 +1971,7 @@
       (head:set-file-opener! visit-file!)
       (head:set-quit-command! quit!)
       (head:set-review-viewer! view-quit-buffers!)
+      (head:add-pre-redraw-hook! publish-copy-changes!)
       (head:set-after-key! clamp-point!))
 
     (doc:register!

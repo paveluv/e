@@ -393,7 +393,7 @@
                       (list (head:layout-split-orientation node)
                             (head:layout-split-first-weight node) (head:layout-split-second-weight node)
                             (shape (head:layout-split-first node)) (shape (head:layout-split-second node)))))
-                (head:window-index (head:current-window)) (head:copy-buffer)
+                (head:window-index (head:current-window)) (head:copy-text)
                 (map (lambda (w)
                        (let ([b (head:window-buffer w)])
                          (list (or (head:buffer-store-id b) (head:buffer-name b))
@@ -2283,8 +2283,8 @@
                    (test:check 'terminal-output-keeps-authorship-without-tints
                      (map head-blame (list a b))
                      (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
-                   (head-read a '(begin (window:delete-others!) (head:set-copy-buffer! "screen A kill") #t))
-                   (head-read b '(begin (head:set-copy-buffer! "screen B kill")
+                   (head-read a '(begin (window:delete-others!) (head:set-copy-text! "screen A kill") #t))
+                   (head-read b '(begin (head:set-copy-text! "screen B kill")
                                         (terminal:toggle-capture!) #t))
                    (test:check 'shared-terminal-capture-is-local-to-each-head
                      (list (head-read a '(head:full-capture? (head:current-window)))
@@ -2410,7 +2410,7 @@
                      (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                      (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
                        (list (head-read again '(list (head:buffer-store-id (head:current-buffer))
-                                                     (length (remq (head:popup) (head:windows))) (head:copy-buffer)))
+                                                     (length (remq (head:popup) (head:windows))) (head:copy-text)))
                              (filter (lambda (name) (string:prefix? "*scratch*" name))
                                (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))))
                        (list (list terminal-id 1 "screen A kill") '("*scratch*")))
@@ -2491,7 +2491,7 @@
                                (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
                                                                (remq (head:popup) (head:windows))))
                                      (head-read b '(list (length (remq (head:popup) (head:windows)))
-                                                         (head:buffer-store-id (head:current-buffer)) (head:copy-buffer))))
+                                                         (head:buffer-store-id (head:current-buffer)) (head:copy-text))))
                                (list (make-list 3 id) (list 1 terminal-id "screen B kill")))
                              ;; A screen saved before the pop-up numbered its
                              ;; ordinary window 0. It resumes renumbered beside
@@ -2509,7 +2509,7 @@
                                    (head-read legacy
                                      '(list (head:window-index (head:current-window)) (head:window-index (head:popup))
                                             (map head:window-index (remq (head:popup) (head:windows)))
-                                            (head:buffer-store-id (head:current-buffer)) (head:copy-buffer)))
+                                            (head:buffer-store-id (head:current-buffer)) (head:copy-text)))
                                    (list 1 0 '(1) lines "legacy kill"))))))))))
                )))
            (stop!)

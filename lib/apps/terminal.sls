@@ -51,7 +51,7 @@
 
   (edoc "Send the copy buffer's text to the terminal in the current buffer as pasted input.")
   (define (terminal-yank!)
-    (send-input! (edit:current-copy-buffer) #t) (void))
+    (send-input! (edit:copy-text) #t) (void))
 
   (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
   (define (terminal-toggle-capture!)
