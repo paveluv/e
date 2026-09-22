@@ -221,27 +221,49 @@
   (define (pending-tickets)
     (with-mutex protocol-lock (map (lambda (entry) (vector-ref entry 0)) pending-asks)))
 
-  (edoc "Record a head's screen checkpoint; a kept kill slot keeps the previous kill text."
+  (define (checkpoint-entries state)
+    ;; the buffer entries of a version 4 screen checkpoint, else none
+    (if (and (list? state) (= (length state) 5) (eq? (car state) 'screen) (eqv? (cadr state) 4)
+             (list? (list-ref state 4)) (for-all pair? (list-ref state 4)))
+        (list-ref state 4)
+        '()))
+
+  (define (local-text-reference? reference)
+    (and (list? reference) (= (length reference) 5) (eq? (car reference) 'local)))
+
+  (define (with-retained-texts state previous)
+    ;; Heads send a local buffer's text only when it changed: an entry whose
+    ;; text is the symbol kept takes the text the retained checkpoint holds
+    ;; for the same buffer name, or an empty text when it holds none.
+    (define (retained name)
+      (or (exists (lambda (entry)
+                    (let ([reference (car entry)])
+                      (and (local-text-reference? reference) (equal? (cadr reference) name)
+                           (list? (list-ref reference 4)) (list-ref reference 4))))
+                  (checkpoint-entries previous))
+          '("")))
+    (if (null? (checkpoint-entries state))
+        state
+        (list (car state) (cadr state) (caddr state) (cadddr state)
+          (map (lambda (entry)
+                 (let ([reference (car entry)])
+                   (if (and (local-text-reference? reference) (eq? (list-ref reference 4) 'kept))
+                       (cons (list 'local (cadr reference) (caddr reference) (cadddr reference) (retained (cadr reference)))
+                             (cdr entry))
+                       entry)))
+               (checkpoint-entries state)))))
+
+  (edoc "Record a head's screen checkpoint; a local buffer entry whose text is the symbol kept keeps the text the retained checkpoint holds for that buffer."
         (actor actor "the actor identity")
         (state datum "the checkpoint"))
   (define (checkpoint! actor state)
     (activity:call-with
       (lambda ()
-        ;; A screen checkpoint whose kill slot is the symbol kept keeps the
-        ;; kill text of the retained checkpoint: heads send that text only
-        ;; when it changes.
         (let ([entry (known-head actor)] [state (datum:copy state)])
           (unless (and entry (registered? actor))
             (error 'checkpoint! "expected an attached named head" actor))
           (with-mutex protocol-lock
-            (head-state-checkpoint-set! entry
-                                        (if (and (list? state) (>= (length state) 3) (eq? (caddr state) 'kept))
-                                          (let ([previous (head-state-checkpoint entry)])
-                                            (cons* (car state) (cadr state)
-                                              (if (and (list? previous) (>= (length previous) 3) (string? (caddr previous)))
-                                                (caddr previous) "")
-                                              (cdddr state)))
-                                          state)))))))
+            (head-state-checkpoint-set! entry (with-retained-texts state (head-state-checkpoint entry))))))))
 
   (edoc "Ask an actor a question through the interaction protocol; the reply procedure receives the answer, and an owner may withdraw it. The ticket."
         (from actor "the asker")

@@ -414,7 +414,7 @@
              (case kind
                [(missing-provider)
                 (let ([state (actor:checkpoint head:ui-actor)])
-                  (set-car! (car (list-ref state 5)) '(uninstalled-view "old view"))
+                  (set-car! (car (list-ref state 4)) '(uninstalled-view "old view"))
                   (actor:checkpoint! head:ui-actor state))]
                [(edit) (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("new" ""))]
                [(reset) (store:reset! bot id '("x"))]
@@ -440,7 +440,12 @@
        (head:set-copy-text! "Xaved kill")
        (head:checkpoint!)
        (check 'a-changed-copy-text-reaches-the-next-checkpoint
-         (caddr (actor:checkpoint head:ui-actor)) "Xaved kill"))
+         (exists (lambda (entry)
+                   (let ([reference (car entry)])
+                     (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) "<copy>")
+                          (list-ref reference 4))))
+                 (list-ref (actor:checkpoint head:ui-actor) 4))
+         '("Xaved kill")))
 
      ;; One frame deadline serves both outer and nested pumps. Multiple
      ;; providers choose the earliest, the head owns its time value, and a

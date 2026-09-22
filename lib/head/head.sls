@@ -367,34 +367,40 @@
     ;; the live window numbered n, or #f
     (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
-  ;; The seat's copy buffer, <copy>: a local tool buffer holding the last
-  ;; kill or copy as text. Commands and prompts read and replace it, and
-  ;; the user can show, edit and undo it like any buffer: each copy is one
+  ;; The seat's copy buffer, <copy>: a local buffer holding the last kill
+  ;; or copy as text. Commands and prompts read and replace it, and the
+  ;; user can show, edit and undo it like any buffer: each copy is one
   ;; undo entry there, kept up to copy-history-limit. It is created when
   ;; first needed; killing it asks nothing, and the next copy recreates it.
-  (define copy-key "<copy>")
+  ;; Like every plain local buffer, it travels with the screen checkpoint.
+  (define copy-name "<copy>")
   (define copy-history-limit 1024)
 
-  (edoc "The seat's copy buffer: the local tool buffer keyed <copy>, holding the last kill or copy, created when first needed."
+  (define (local-buffer-named name)
+    ;; this head's local buffer with a name, or #f; shared names never wear brackets
+    (find (lambda (b) (and (not (buffer-store-id b)) (string=? (buffer-name b) name))) the-buffers))
+
+  (edoc "The seat's copy buffer, the local buffer <copy> holding the last kill or copy, created when first needed."
         (returns buffer)
         (effects internal))
   (define (copy-buffer)
-    (or (find-tool-buffer copy-key)
-        (let ([b (tool-buffer! copy-key)])
+    (or (local-buffer-named copy-name)
+        (let ([b (new-local-buffer! copy-name)])
+          (buffer-fact-set! b 'disposable #t)
           (buffer-fact-set! b 'history-limit copy-history-limit)
-          b)))
+          (add-buffer! b))))
 
   (edoc "The copy buffer's text, the empty string while there is no copy buffer."
         (returns string))
   (define (copy-text)
-    (let ([b (find-tool-buffer copy-key)])
+    (let ([b (local-buffer-named copy-name)])
       (if b (text:to-string (buffer-lines b) (buffer-trailing b)) "")))
 
   (edoc "Replace the copy buffer's text as a new baseline, without an undo entry."
         (s string "the text"))
   (define (set-copy-text! s)
     (unless (string? s) (error 'set-copy-text! "expected a string" s))
-    (unless (and (string=? s "") (not (find-tool-buffer copy-key)))
+    (unless (and (string=? s "") (not (local-buffer-named copy-name)))
       (let-values ([(lines trailing?) (text:from-string s)])
         (store-reset! (copy-buffer) lines (list (cons 'trailing trailing?))))))
 
@@ -2369,6 +2375,40 @@
   (define resume-registry (kernel:make-registry car))
   (define last-checkpoint #f)
 
+  (define (checkpoint-entries state)
+    ;; the buffer entries of a version 4 screen checkpoint, else none
+    (if (and (list? state) (= (length state) 5) (eqv? (cadr state) 4) (list? (list-ref state 4)))
+        (list-ref state 4)
+        '()))
+
+  (define (without-copy-slot state)
+    ;; screen checkpoints before version 4 carried the copy text third; it is not restored
+    (if (and (list? state) (= (length state) 6) (memv (cadr state) '(1 2 3)))
+        (cons* (car state) (cadr state) (cdddr state))
+        state))
+
+  (define (sent-revision name)
+    ;; the content revision of a local buffer whose text the base holds
+    ;; from the last checkpoint sent, or #f
+    (exists (lambda (entry)
+              (let ([reference (car entry)])
+                (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) name)
+                     (caddr reference))))
+            (checkpoint-entries last-checkpoint)))
+
+  (define (with-kept-texts state)
+    ;; the checkpoint as later frames compare it: every local text the
+    ;; base now holds reads kept
+    (if (null? (checkpoint-entries state))
+        state
+        (list (car state) (cadr state) (caddr state) (cadddr state)
+          (map (lambda (entry)
+                 (let ([reference (car entry)])
+                   (if (and (pair? reference) (eq? (car reference) 'local))
+                       (cons (list 'local (cadr reference) (caddr reference) (cadddr reference) 'kept) (cdr entry))
+                       entry)))
+               (list-ref state 4)))))
+
   (edoc "Register how a kind of local view is captured for a checkpoint and restored on resume."
         (kind symbol "the view kind")
         (capture procedure "the capture")
@@ -2400,7 +2440,15 @@
                               (values (and reference (cons (car entry) reference)) positions)))]
                       [(buffer-fact b 'tool-key #f)
                        => (lambda (key) (values (list 'tool key (buffer-name b)) positions))]
-                      [else (values #f positions)])])
+                      [(app-of b) (values #f positions)]
+                      [else
+                       ;; a plain local buffer travels with its facts and text, the
+                       ;; text only when its revision changed since the last checkpoint sent
+                       (let-values ([(lines revision facts) (buffer-state b)])
+                         (values (list 'local (buffer-name b) revision
+                                       (list-sort (lambda (x y) (string<? (symbol->string (car x)) (symbol->string (car y)))) facts)
+                                       (if (eqv? revision (sent-revision (buffer-name b))) 'kept (vector->list lines)))
+                                 positions))])])
         (list reference (buffer-marked b) positions))))
 
   ;; An idle checkpoint (a wake frame: foreign edits moved this head's
@@ -2434,19 +2482,16 @@
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 3 (copy-text) (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
       (unless (equal? state last-checkpoint)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
           (if (or (not idle?) (not due) (time<=? due now))
               (let ([state (datum:copy state)])
-                ;; Kill text travels only when it changed; the base keeps the
-                ;; last one it received under the kept marker.
-                (actor:checkpoint! ui-actor
-                  (if (and last-checkpoint (equal? (caddr state) (caddr last-checkpoint)))
-                      (cons* 'screen 3 'kept (cdddr state))
-                      state))
-                (set! last-checkpoint state)
+                ;; A local text travels only when it changed; the base keeps
+                ;; the last one it received under the kept marker.
+                (actor:checkpoint! ui-actor state)
+                (set! last-checkpoint (with-kept-texts state))
                 (set! checkpoint-sent-at now))
               (request-frame-at! due))))))
 
@@ -2483,11 +2528,21 @@
                             (case (car reference)
                               [(shared) (apply resume-source! (append (cdr reference) (list positions)))]
                               [(tool)
-                               (let ([b (or (find-tool-buffer (cadr reference)) (and (equal? (cadr reference) copy-key) (copy-buffer)))])
+                               (let ([b (find-tool-buffer (cadr reference))])
                                  (when b
                                    (buffer-name-set! b (caddr reference))
                                    (let ([app (app-of b)]) (when app ((app-refresh! app)))))
                                  (values b positions))]
+                              [(local)
+                               (apply
+                                 (lambda (name revision facts text)
+                                   (unless (and (string? name) (list? facts) (list? text) (for-all string? text))
+                                     (error 'resume! "invalid local buffer checkpoint"))
+                                   (let ([b (or (local-buffer-named name) (new-local-buffer! name))])
+                                     (buffer-facts-set! b facts)
+                                     (buffer-lines-set! b (list->vector text))
+                                     (values (add-buffer! b) positions)))
+                                 (cdr reference))]
                               [else
                                (let ([entry (resumer (car reference))])
                                  (if entry ((caddr entry) (cdr reference) positions) (values #f positions)))])))])
@@ -2496,10 +2551,9 @@
 
   (define (restore-screen! state)
     (apply
-      (lambda (tag version copied selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2 3)) (string? copied))
+      (lambda (tag version selected layout entries)
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4)))
           (error 'resume! "unsupported screen checkpoint"))
-        (set-copy-text! copied)
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
                [buffers (list->vector
@@ -2605,10 +2659,10 @@
                    (and (pair? names) (list id #f (map (lambda (entry) (cons (car entry) #f)) names))))))
           (store:buffer-list))))
     (let ([state (actor:checkpoint ui-actor)])
-      (set! last-checkpoint (datum:copy state))
+      (set! last-checkpoint (with-kept-texts (datum:copy (without-copy-slot state))))
       (and state
            (guard (ex [else (log:add! 'head (format "Screen checkpoint ignored: ~a" (kernel:condition-text ex))) #f])
-             (call-with-display-update (lambda () (restore-screen! state)))))))
+             (call-with-display-update (lambda () (restore-screen! (without-copy-slot state))))))))
 
 
   ;;; Apps and views ------------------------------------------------------------

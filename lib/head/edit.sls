@@ -649,7 +649,7 @@
     (set! published-copy (cons b (copy-revision b))))
 
   (define (publish-copy-changes!)
-    (let ([b (head:find-tool-buffer "<copy>")])
+    (let ([b (head:buffer-named "<copy>")])
       (when b
         (let ([revision (copy-revision b)])
           (cond [(not (eq? b (car published-copy))) (set! published-copy (cons b revision))]

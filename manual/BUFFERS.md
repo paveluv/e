@@ -241,8 +241,9 @@ with `C-y` in another. Consecutive kill commands accumulate, so repeated `C-k`
 followed by `C-y` reconstructs the complete block. Show `<copy>` in a window to
 watch copies arrive, edit it before pasting, or undo in it: every copy is one
 undo entry there, and `C-_` brings the previous one back, up to 1024 entries.
-Killing `<copy>` asks nothing; the next copy recreates it. `edit:copy-text`
-returns its text, `head:copy-buffer` the buffer.
+Killing `<copy>` asks nothing; the next copy recreates it, and like every plain
+local buffer it returns on attach with its text. `edit:copy-text` returns its
+text, `head:copy-buffer` the buffer.
 
 Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
 `M-w`, `C-w`, repeated `C-k`, Scheme calls to `edit:copy-text!`, and any other
@@ -681,7 +682,8 @@ the current name after subscribers return, preserving their newer choices.
 For detection without mutation, `(mode:detect path first-line)` returns a
 registered mode record or `#f`. Its `mode:name` can join a larger fact batch;
 save uses this to detect outside the store's mutation lock.
-`base` is a string or `#f`; `trailing` and `disposable` are booleans.
+`base` is a string or `#f`; `trailing` and `disposable` are booleans;
+`history-limit`, how many undo entries a local buffer keeps, is an integer.
 Shared `modified` is derived and cannot be set or dropped. Generated output
 can set `disposable` to `#t`; registered apps and tool buffers do so already.
 The local modified flag remains available for private command history.

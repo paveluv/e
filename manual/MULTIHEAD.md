@@ -224,7 +224,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Terminal processes and their screens | Prompts, `<completions>`, `<buffers>`, `<copy>` |
 | The log's records | `<log>` renderings and the echo area |
 | Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |
-| Questions waiting for a named head | The copy buffer, checkpointed under the head's name |
+| Questions waiting for a named head | Plain local buffers with their text, `<copy>` among them, checkpointed under the head's name |
 | `base-config.e`, permissions and sessions | `config.e`, key bindings, styles |
 
 Shared buffers keep file names or names such as `*scratch*`; local buffers

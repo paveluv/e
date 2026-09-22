@@ -453,14 +453,17 @@
                (actor:checkpoint owner)
                (begin (actor:checkpoint! owner '(new layout)) (actor:checkpoint owner)))
          '(#t #("kill text" (layout)) (new layout)))
-       ;; A screen checkpoint keeps the retained kill text under the kept
-       ;; marker; without a retained string the slot becomes empty.
-       (test:check 'screen-checkpoints-keep-unchanged-kill-text
-         (list (begin (actor:checkpoint! owner '(screen 1 kept 0 (layout) ())) (actor:checkpoint owner))
-               (begin (actor:checkpoint! owner '(screen 1 "killed" 0 (layout) ())) (actor:checkpoint owner))
-               (begin (actor:checkpoint! owner '(screen 1 kept 1 (layout) ())) (actor:checkpoint owner))
-               (begin (actor:checkpoint! owner '(screen 1 "" 1 (layout) ())) (actor:checkpoint owner)))
-         '((screen 1 "" 0 (layout) ()) (screen 1 "killed" 0 (layout) ())
-           (screen 1 "killed" 1 (layout) ()) (screen 1 "" 1 (layout) ()))))
+       ;; A screen checkpoint keeps a local buffer's retained text under the
+       ;; kept marker; without a retained text the entry gets an empty one.
+       (test:check 'screen-checkpoints-keep-unchanged-local-texts
+         (list (begin (actor:checkpoint! owner '(screen 4 0 (layout) (((local "<n>" 1 () kept) #f ())))) (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 4 0 (layout) (((local "<n>" 2 () ("text")) #f ())))) (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 4 1 (layout) (((local "<n>" 2 () kept) #f ()) ((shared 7 3) #t ()))))
+                      (actor:checkpoint owner))
+               (begin (actor:checkpoint! owner '(screen 4 1 (layout) (((local "<n>" 3 () ("")) #f ())))) (actor:checkpoint owner)))
+         '((screen 4 0 (layout) (((local "<n>" 1 () ("")) #f ())))
+           (screen 4 0 (layout) (((local "<n>" 2 () ("text")) #f ())))
+           (screen 4 1 (layout) (((local "<n>" 2 () ("text")) #f ()) ((shared 7 3) #t ())))
+           (screen 4 1 (layout) (((local "<n>" 3 () ("")) #f ()))))))
 
      (test:finish! 'actor)))

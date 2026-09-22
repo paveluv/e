@@ -1037,7 +1037,7 @@
                  '(begin
                     (edit:insert-text! "kept after restart")
                     (head:window-pcol-set! (head:current-window) 4)
-                    (let ([b (head:new-local-buffer! "local draft omitted")])
+                    (let ([b (head:new-local-buffer! "local draft kept")])
                       (head:add-buffer! b) (head:store-reset! b '("draft")) (head:buffer-modified-set! b #t))
                     #t))
                (body head control base original original-fingerprint
@@ -1176,12 +1176,12 @@
                                       (and notice screen (< notice screen)))) heads)))
                    (not (equal? original replacement))
                    (head-read launcher '(list (head:buffer-line (head:current-buffer) 0) (head:point)))
-                   (head-read launcher '(and (head:buffer-named "<local draft omitted>") #t))
+                   (head-read launcher '(and (head:buffer-named "<local draft kept>") #t))
                    (map (lambda (head)
                           (head-read head '(let ([status (client:request 'status)])
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
-                 (list 1 #t expected #f (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
+                 (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
                (head-wait 'old-screen-gets-restart-farewell head
                  (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
                (for-each
@@ -2510,7 +2510,7 @@
                                      '(list (head:window-index (head:current-window)) (head:window-index (head:popup))
                                             (map head:window-index (remq (head:popup) (head:windows)))
                                             (head:buffer-store-id (head:current-buffer)) (head:copy-text)))
-                                   (list 1 0 '(1) lines "legacy kill"))))))))))
+                                   (list 1 0 '(1) lines ""))))))))))
                )))
            (stop!)
            (for-each (lambda (head)

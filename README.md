@@ -124,7 +124,7 @@ $ ~/.e/e --name work
 ```
 
 `C-x C-c` detaches that screen. Attach with the same name to restore its
-layout, positions and copy buffer; use a different name for an independent
+layout, positions and local buffers; use a different name for an independent
 screen. Shared edits and terminal processes continue while no screen is
 attached. `M-x (main:shutdown!!)` saves shared text and named views, then
 stops the base and all its screens. It asks about local drafts, live processes

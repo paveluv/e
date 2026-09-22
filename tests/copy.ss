@@ -21,12 +21,12 @@
          (head:show-buffer! b)
          (head:goto! '(0 . 0))
          b))
-     (define (copy) (head:find-tool-buffer "<copy>"))
+     (define (copy) (head:buffer-named "<copy>"))
      (define (undo-entries) (length (vector-ref (head:buffer-history (copy)) 0)))
 
      (check 'no-copy-buffer-before-the-first-copy (list (copy) (head:copy-text) (copy-text)) '(#f "" ""))
      (copy-text! "abc\n")
-     (check 'the-first-copy-creates-the-tool-buffer
+     (check 'the-first-copy-creates-the-local-buffer
        (list (eq? (copy) (head:copy-buffer)) (head:buffer-name (copy)) (and (memq (copy) (head:buffers)) #t)
              (head:buffer-lines (copy)) (head:buffer-trailing (copy)) (head:copy-text) (copy-text))
        (list #t "<copy>" #t (vector "abc") #t "abc\n" "abc\n"))
@@ -90,5 +90,21 @@
      (copy-text! "l1\nl2\nl3")
      (check 'a-window-showing-the-copy-buffer-follows-the-arriving-text
        (list (eq? (head:current-buffer) (copy)) (head:point)) '(#t (2 . 2)))
+
+     ;; a plain local buffer returns on resume with its text and facts; <copy> is one
+     (define notes (head:new-local-buffer! "notes"))
+     (head:buffer-fact-set! notes 'history-limit 7)
+     (head:buffer-lines-set! notes (vector "keep" "me"))
+     (head:add-buffer! notes)
+     (copy-text! "before")
+     (head:checkpoint!)
+     (head:buffer-lines-set! notes (vector "lost"))
+     (copy-text! "lost too")
+     (head:resume!)
+     (check 'plain-local-buffers-return-on-resume-with-text-and-facts
+       (list (vector->list (head:buffer-lines (head:buffer-named "<notes>")))
+             (head:buffer-fact (head:buffer-named "<notes>") 'history-limit #f)
+             (head:copy-text) (eq? (head:buffer-named "<notes>") notes))
+       '(("keep" "me") 7 "before" #t))
 
      (test:finish! 'copy)))
