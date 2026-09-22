@@ -58,27 +58,28 @@
             others)))
       (sources root)))
 
-  (edoc "Load an entry module from a local repository's lib directory, managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional; relative repository paths use the installation, relative library roots use the repository."
+  (edoc "Load an entry module from a local repository's lib directory, managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional, one directory or a list; relative repository paths use the installation, relative library roots use the repository."
         (repository directory "the extension checkout")
         (entry string "its module name, such as worksheet-mode")
-        (roots (list-of directory) "additional R6RS source roots"))
+        (roots (or directory (list-of directory)) "additional R6RS source roots, one or several"))
   (define load!
     (case-lambda
       [(repository entry) (load! repository entry '())]
       [(repository entry roots)
+       (define root-list (if (string? roots) (list roots) roots))
        (when (eq? (startup:mode) 'base)
          (error 'extension:load! "load head extensions from config.e" repository))
        (unless (and (string? entry) (> (string-length entry) 0)
                     (for-all (lambda (c) (or (char-alphabetic? c) (char-numeric? c) (memv c '(#\- #\_))))
                       (string->list entry)))
          (error 'extension:load! "expected a module name" entry))
-       (unless (and (list? roots) (for-all string? roots))
+       (unless (and (list? root-list) (for-all string? root-list))
          (error 'extension:load! "expected library root paths" roots))
        (let* ([repository (directory repository (kernel:installation-directory))]
               [lib (directory "lib" repository)]
               [existing (library-directories)]
               [cache (cdar existing)]
-              [requested (cons lib (map (lambda (root) (directory root repository)) roots))]
+              [requested (cons lib (map (lambda (root) (directory root repository)) root-list))]
               [combined
                (fold-left
                  (lambda (all root)

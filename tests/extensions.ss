@@ -76,6 +76,8 @@
            (extension:load! "../plugin" "external-probe" '("../deps"))
            (let ([roots (library-directories)])
              (extension:load! (path "plugin") "external-probe" '("../deps"))
+             ;; one root may be given as a string
+             (extension:load! (path "plugin") "external-probe" "../deps")
              (test:check 'one-line-load-is-idempotent-and-keeps-checkout-clean
                (list (eval '(external-probe:value)) starts (equal? roots (library-directories))
                      (list-sort string<? (directory-list (path "plugin"))))

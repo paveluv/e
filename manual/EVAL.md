@@ -145,7 +145,9 @@ and stays bare while a variable such as `myb` is among the matches. The
 operator position of a nested form takes the enclosing argument's type,
 so `(head:show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
 symbol; a form under a quote, or under an undocumented operator, completes
-symbols as before. A `one-of` type offers its literals, a boolean `#t` and
+symbols as before, except an element of a quoted list at an argument typed
+`(list-of T)`, which completes as a `T`: `(extension:load! "x" "y" '("../sch`
+lists directories. A `one-of` type offers its literals, a boolean `#t` and
 `#f`, and inside a string literal the type's string values complete the
 literal: `(edit:visit-file! "man` lists paths under `manual/`, `(buffer "`
 lists buffer names. A string value completes as a session: with several

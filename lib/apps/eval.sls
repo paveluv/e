@@ -161,6 +161,11 @@
       (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
         (and type (list type start end (substring s start end) in-string?))))
     (define (plain? frame) (and (not (frame-quoted? frame)) (string? (frame-operator frame))))
+    (define (element-type type)
+      ;; the element type of a (list-of t) argument, or of such a member of an or
+      (cond [(and (pair? type) (eq? (car type) 'list-of) (pair? (cdr type))) (cadr type)]
+            [(and (pair? type) (eq? (car type) 'or)) (exists element-type (cdr type))]
+            [else #f]))
     (let* ([quote-at (open-string-start s pos)]
            [range (and (not quote-at) (symbol-range s pos))]
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
@@ -174,6 +179,12 @@
                      (pair? (cdr frames)) (plain? (cadr frames))
                      (> start 0) (char=? (string-ref s (- start 1)) (frame-opener frame)))
                 (typed (cadr frames) (- start 1) end #f)]
+               ;; an element of a quoted list at an argument typed (list-of t)
+               ;; takes t: '("../sch completes directories under a roots argument
+               [(and (frame-quoted? frame) (pair? (cdr frames)) (plain? (cadr frames)))
+                (let ([type (element-type (argument-type (string->symbol (frame-operator (cadr frames)))
+                                                         (frame-arguments (cadr frames))))])
+                  (and type (list type start end (substring s start end) (and quote-at #t))))]
                [else #f])))))
 
   (define (type-fits? wanted produced)

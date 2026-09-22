@@ -156,8 +156,10 @@ The entry can be `lib/my-mode.sls`, declaring `(my-mode)`, or
 the kernel publishes its exports as `my-mode:` and owns its registrations
 just like a bundled module. Helpers are ordinary imported libraries.
 Relative checkout paths start at e's installation, not the current buffer.
-An optional third argument lists additional R6RS source roots, relative to
-the checkout or absolute, with `~` supported:
+An optional third argument adds R6RS source roots, one directory or a list
+of them, relative to the checkout or absolute, with `~` supported; at M-x a
+root completes as a directory, inside the string and inside each element of
+the quoted list:
 
 ```scheme
 (extension:load! "~/git/my-extension" "my-mode" '("vendor" "~/scheme"))

@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
              (prefix (head window) window:) (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
@@ -139,6 +139,15 @@
        (list '("manual/") '("lib/apps/") (list (string-append scratch-dir "/alpha-"))))
      (for-each (lambda (name) (delete-file (string-append scratch-dir "/" name))) '("alpha-one.txt" "alpha-two.txt"))
      (delete-directory scratch-dir)
+     ;; A roots argument, one directory or a list of them, completes as a
+     ;; directory inside the string and inside each element of a quoted list;
+     ;; a quoted list elsewhere still completes symbols
+     (check 'a-list-of-argument-completes-its-elements
+       (list (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" \"man"))
+             (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"man"))
+             (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"lib\" \"man"))
+             (labels "(head:show-buffer! '(bu"))
+       '(#t #t #t #f))
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
