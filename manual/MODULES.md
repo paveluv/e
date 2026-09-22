@@ -168,9 +168,10 @@ the quoted list:
 The loader manages compilation under e's runtime cache. The checkout can
 be read-only; it needs no cache setup, generated files or machine-specific
 paths in its libraries. It never downloads dependencies. A library present
-under two roots is refused, naming both files, rather than one silently
-shadowing the other; the check indexes each root once, so a large source
-tree as a dependency root costs one walk. A missing import names the
+under two roots is not checked: Chez searches the roots in the order given,
+e's own first, and the first match wins. Libraries may be added under a root
+after loading, so resolving an overlap rests with the extension's user. A
+missing import names the
 library and the third argument that supplies its root.
 Repeated loading is harmless. If initialization or a surrounding config
 fails, module membership and registrations roll back, allowing a corrected

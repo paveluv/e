@@ -88,7 +88,7 @@
              (let ([objects (cdr (assoc (path "plugin/lib") (library-directories)))])
                (and (file-exists? (string-append objects "/external-probe.so"))
                     (not (file-exists? (path "plugin/eo"))))) #t)
-           (test:check 'conflicts-and-missing-entry-are-refused
+           (test:check 'an-entry-shadowing-e-and-a-missing-entry-are-refused
              (map test:raises?
                (list (lambda () (extension:load! "../conflict" "kernel"))
                      (lambda () (extension:load! "../plugin" "missing")))) '(#t #t))
@@ -97,7 +97,7 @@
                               (for-all (lambda (part) (and (string:search text part 0 (string-length text)) #t)) parts))])
              (test:check 'errors-name-the-checkout-the-entry-and-the-missing-library
                (list (mentions? (complaint (lambda () (extension:load! "../plugin" "missing"))) (path "plugin") "missing")
-                     (mentions? (complaint (lambda () (extension:load! "../conflict" "kernel"))) "core/kernel.sls" "two roots")
+                     (mentions? (complaint (lambda () (extension:load! "../conflict" "kernel"))) "kernel" "not to the checkout")
                      (mentions? (complaint (lambda () (extension:load! "../plugin" "needs-absent"))) "(absent collection)" "third argument")
                      (mentions? (complaint (lambda () (extension:load! "../nowhere" "x"))) "repository")
                      (mentions? (complaint (lambda () (extension:load! "../plugin" "external-probe" "../nowhere"))) "library root"))
