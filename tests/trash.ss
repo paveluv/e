@@ -12,7 +12,8 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:))
+             (prefix (head head) head:)
+             (prefix (state store) store:))
 
      (define check test:check)
      (define path (format "/tmp/e-trash-~a-~a.txt" (get-process-id) (random 1000000)))
@@ -31,17 +32,19 @@
      (check 'a-visit-after-a-kill-reads-the-disk-into-a-fresh-buffer-under-the-plain-name
        (list (and (head:buffer-store-id fresh) (not (eqv? (head:buffer-store-id fresh) first-id)))
              (text fresh) (head:buffer-name fresh) (map car (trash)))
-       (list #t '("on disk") name (list name)))
+       (list #t '("on disk") name (list (string-append name "<2>"))))
 
+     (check 'the-store-stays-saveable-with-a-trashed-namesake
+       (let-values ([(next states) (store:export)]) (store:valid-import? next states)) #t)
      ;; a second kill of the same name: the trash lists the newest first
      (insert-text! "second ")
      (kill-buffer! fresh)
-     (check 'the-trash-holds-both-kills-of-the-name (map car (trash)) (list name name))
+     (check 'the-trash-holds-both-kills-under-distinct-names (map car (trash)) (list name (string-append name "<2>")))
 
      ;; restore! takes the newest; the next restore! the older, under a unique name
      (define newest (restore! name))
-     (define older (restore! name))
-     (check 'restore-takes-the-newest-then-the-older-under-a-unique-name
+     (define older (restore! (string-append name "<2>")))
+     (check 'restore-brings-both-back-under-their-distinct-names
        (list (eqv? (head:buffer-store-id newest) (head:buffer-store-id fresh)) (text newest) (head:buffer-name newest)
              (eqv? (head:buffer-store-id older) first-id) (text older) (head:buffer-name older)
              (equal? (head:buffer-file older) (head:buffer-file newest)) (trash) (eq? (head:current-buffer) older))

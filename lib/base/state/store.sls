@@ -199,21 +199,35 @@
       (error 'store "expected a nonempty buffer name" name))
     (string-copy name))
 
-  (define (unique-name base self)
-    ;; Caller holds the store lock. Hidden buffers share this namespace,
-    ;; trashed ones release their names until they are restored; deletion
-    ;; releases a name and renaming does not compete with itself.
-    (let ([used (make-hashtable string-hash string=?)])
+  (define (unique-name base self . all?)
+    ;; Caller holds the store lock. Live buffers share this namespace;
+    ;; trashed ones release their names until they are restored, unless
+    ;; all? asks for every buffer's. Deletion releases a name and renaming
+    ;; does not compete with itself.
+    (let ([used (make-hashtable string-hash string=?)] [every? (and (pair? all?) (car all?))])
       (vector-for-each
         (lambda (id)
           (let ([b (buffer-of 'unique-name id)])
-            (unless (or (eqv? id self) (property-value b 'trashed #f))
+            (unless (or (eqv? id self) (and (not every?) (property-value b 'trashed #f)))
               (hashtable-set! used (buffer-label b) #t))))
         (hashtable-keys (store-buffers (current-store))))
       (let next ([name base] [suffix 2])
         (if (hashtable-ref used name #f)
             (next (format "~a<~a>" base suffix) (+ suffix 1))
             name))))
+
+  (define (evict-trashed-holder! actor name self)
+    ;; A trashed buffer holding the name a live buffer just took moves to a
+    ;; suffixed one: names stay unique across the store, as the session
+    ;; file requires, and the live buffer keeps the plain one.
+    (vector-for-each
+      (lambda (id)
+        (let ([b (buffer-of 'unique-name id)])
+          (when (and (not (eqv? id self)) (property-value b 'trashed #f) (string=? (buffer-label b) name))
+            (let ([moved (unique-name name id #t)])
+              (buffer-label-set! b moved)
+              (enqueue-event! `(rename ,id ,moved ,actor))))))
+      (hashtable-keys (store-buffers (current-store)))))
 
   (edoc "Create a buffer with a name, lines and optional facts, publishing them together; its id."
         (actor actor "the actor identity")
@@ -241,6 +255,7 @@
         (install-properties! b updates)
         (refresh-edit-facts! b #f)
         (hashtable-set! (store-buffers s) id b))
+      (evict-trashed-holder! actor name id)
       (enqueue-event! `(create ,id ,name ,actor))
       id))
 
@@ -401,9 +416,14 @@
 
   (define (rename-buffer! actor id name)
     ;; The same name allocator serves renames and atomic fact/name batches.
-    (let* ([b (buffer-of 'rename! id)] [name (unique-name name id)])
+    ;; A trashed buffer renamed competes with every name; a live one with
+    ;; the live ones, and evicts a trashed holder of its new name.
+    (let* ([b (buffer-of 'rename! id)]
+           [trashed? (and (property-value b 'trashed #f) #t)]
+           [name (unique-name name id trashed?)])
       (buffer-label-set! b name)
       (enqueue-event! `(rename ,id ,name ,actor))
+      (unless trashed? (evict-trashed-holder! actor name id))
       (string-copy name)))
 
   (edoc "Delete a buffer."
