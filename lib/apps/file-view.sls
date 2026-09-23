@@ -13,6 +13,7 @@
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
           (prefix (head table) table:)
+          (prefix (head window) window:)
           (prefix (service directory) directory:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
@@ -366,9 +367,22 @@
               [(not directories-only?)
                (if (not (eq? (directory:entry-kind entry) 'file))
                    (edit:set-message! "Not a readable regular file; refresh to check for changes")
-                   (let ([target (head:app-event-focus)])
-                     (when (and target (memq target (head:windows))) (head:set-current! target))
-                     (head:call-with-interrupt (lambda () (edit:visit-file! path)))))]))))
+                   (let* ([focus (head:app-event-focus)]
+                          [source (if (and focus (memq focus (head:windows))) focus (head:current-window))]
+                          [targets (window:linked 'target source)])
+                     (cond
+                       [(pair? targets)
+                        ;; the pick opens in every target window; this one keeps
+                        ;; the files view and the focus
+                        (for-each (lambda (w) (head:with-window w (head:call-with-interrupt (lambda () (edit:visit-file! path)))))
+                                  targets)]
+                       [else
+                        (head:set-current! source)
+                        (head:call-with-interrupt (lambda () (edit:visit-file! path)))
+                        ;; the view was a step to the document, not a stop: it
+                        ;; goes behind in the recency list, so C-x b offers the
+                        ;; document it replaced
+                        (head:set-buffers! (append (remq view (head:buffers)) (list view)))])))]))))
   (define (filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing

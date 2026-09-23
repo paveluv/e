@@ -192,7 +192,11 @@ Hovering does not move the keyboard choice or scroll the list. Normal browsing
 hides the cursor and disables text selection. Status hints appear only while
 the app is focused.
 
-A file clicked in a side panel opens in the focused window. A directory click
+A chosen file, by Enter or by a click, opens in the focused window, and the
+files view steps behind in the recency list, so `C-x b` offers the document
+the view replaced and Enter returns to it. When the window has target links,
+`(window:link-target! (window 2))` say, the file opens in every target window
+instead and the files pane keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
 browses rows in the pointed files pane without opening files. Named-head
 reattachment restores the directory, filter, sorts, hidden-entry setting and

@@ -15,7 +15,7 @@
 (eval
   '(begin
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:)
-             (prefix (foundation string) string:) (prefix (test) test:))
+             (prefix (foundation string) string:) (prefix (head window) window:) (prefix (test) test:))
 
      (define check test:check)
      ;; Load through the kernel so the reload below replaces the real module.
@@ -222,6 +222,27 @@
              (head:app-buffer? (view)) (show-hidden))
        (list #t #t (path "empty") "Filter: n" #t #t))
 
+     ;; Opening a file from the view without target links shows it in this
+     ;; window and puts the view behind in the recency list, so C-x b offers
+     ;; the document the view replaced; with target links the file opens in
+     ;; every target and this window keeps the view and the focus
+     (define w1 (head:current-window))
+     (visit-file! (path "zeta.txt"))
+     (define b1 (head:current-buffer))
+     (files-open! root) (filter! "long") (press! "RET")
+     (check 'files-opening-a-file-puts-the-view-behind-the-document-it-replaced
+       (list (head:buffer-name (head:current-buffer)) (eq? (cadr (head:buffers)) b1) (eq? (car (reverse (head:buffers))) (view)))
+       (list "a 日本語 long (name).txt" #t #t))
+     (define w2 (window:split-below!))
+     (window:focus! w1)
+     (files-open! root)
+     (window:link-target! w2)
+     (filter! "zeta") (press! "RET")
+     (check 'files-with-a-target-link-open-the-file-there-and-keep-the-view
+       (list (head:buffer-name (head:window-buffer w2)) (eq? (head:current-window) w1) (eq? (head:current-buffer) (view))
+             (eq? (head:window-buffer w1) (view)))
+       (list "zeta.txt" #t #t #t))
+     (window:focus! w2) (window:delete!)
      (kill-buffer! (view))
      (for-each (lambda (name) (delete-file (path name))) names)
      (for-each (lambda (name) (delete-directory (path name))) (reverse directories))
