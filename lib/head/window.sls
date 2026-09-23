@@ -11,8 +11,9 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
   (export delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right!
-          focus-up! init! pop-up-or-reuse! resize! set-line-numbers! set-wrap! split-above!
-          split-below! split-left! split-right! toggle-line-numbers! toggle-wrap!)
+          focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse!
+          register-link-tag! resize! set-line-numbers! set-wrap! split-above! split-below! split-left!
+          split-right! toggle-line-numbers! toggle-wrap! unlink!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
@@ -192,11 +193,94 @@
                              (head:layout-split-second parent)
                              (head:layout-split-first parent))])
            (head:replace-layout-window! parent sibling)
+           (prune-links!)
            (focus! next))])))
 
-  (edoc "Keep only the selected window.")
+  (edoc "Keep only the selected window; its links go with the others.")
   (define (delete-others!)
-    (head:set-layout-root! (head:current-window)))
+    (head:set-layout-root! (head:current-window))
+    (prune-links!)
+    (void))
+
+  ;;; Links -----------------------------------------------------------------------
+
+  ;; Directed links between windows, tagged, many to many: (from to tag)
+  ;; triples in the order made.  A link lives while both windows are in the
+  ;; layout: reading the links forgets the dead ones, and deleting a window
+  ;; drops its links at once.  Tags are registered with a description, so
+  ;; the window-link-tag type completes them; target is the one the apps
+  ;; know, the window a chooser opens its pick in.
+  (define links '())
+  (define link-tags (list (cons 'target "the window a chooser in the linked window opens its pick in")))
+
+  (edoc-type window-link-tag "a tag on a link between windows, one the code registered, target say"
+    (predicate (lambda (v) (and (symbol? v) (assq v link-tags) #t)))
+    (complete (lambda (partial) (map (lambda (entry) (cons (car entry) (cdr entry))) link-tags)))
+    (write (lambda (v) (format "'~s" v))))
+
+  (define (live-links)
+    ;; the links whose windows are both in the layout
+    (let ([alive (head:layout-leaves (head:root))])
+      (filter (lambda (l) (and (memq (car l) alive) (memq (cadr l) alive))) links)))
+
+  (define (prune-links!)
+    ;; the dead links forgotten, when a window closes or a link changes
+    (set! links (live-links)))
+
+  (define (link-data l) (list (head:window-index (car l)) (head:window-index (cadr l)) (caddr l)))
+
+  (define (live-window who w)
+    (let ([w (edoc:type-value 'window w)])
+      (unless (memq w (head:layout-leaves (head:root))) (error who "not a live window" w))
+      w))
+
+  (edoc "Register a tag for links between windows, with a description for its completion; target is registered already, the window a chooser in the linked window opens its pick in."
+        (tag symbol "the tag")
+        (description string "what a link so tagged means"))
+  (define (register-link-tag! tag description)
+    (unless (symbol? tag) (error 'register-link-tag! "expected a symbol" tag))
+    (unless (string? description) (error 'register-link-tag! "expected a description" description))
+    (set! link-tags (append (remp (lambda (entry) (eq? (car entry) tag)) link-tags) (list (cons tag description))))
+    (void))
+
+  (edoc "Link the current window to another under a tag: a directed link, of which a window may have many out and many in; the same link asked twice is one. The link as data, (from to tag) by window indexes."
+        (w window "the window linked to")
+        (tag window-link-tag "the tag, registered")
+        (returns list))
+  (define (link! w tag)
+    (let ([to (live-window 'link! w)] [from (head:current-window)])
+      (unless (and (symbol? tag) (assq tag link-tags)) (error 'link! "not a registered link tag" tag))
+      (when (eq? to from) (error 'link! "a window cannot link to itself"))
+      (prune-links!)
+      (unless (exists (lambda (l) (and (eq? (car l) from) (eq? (cadr l) to) (eq? (caddr l) tag))) links)
+        (set! links (append links (list (list from to tag)))))
+      (link-data (list from to tag))))
+
+  (edoc "Link the current window to another as its target, the window a chooser in this one opens its pick in: the files app opens a chosen file in every target and keeps its own window. The link as data."
+        (w window "the target window")
+        (returns list))
+  (define (link-target! w) (link! w 'target))
+
+  (edoc "Remove the current window's links to another, under one tag or under all of them."
+        (w window "the window linked to")
+        (tag (list-of window-link-tag) "the tag, at most one; all tags without"))
+  (define (unlink! w . tag)
+    (let ([to (edoc:type-value 'window w)] [from (head:current-window)])
+      (set! links (remp (lambda (l) (and (eq? (car l) from) (eq? (cadr l) to) (or (null? tag) (eq? (caddr l) (car tag)))))
+                        (live-links)))
+      (void)))
+
+  (edoc "The windows a window links to under a tag, in the order linked: the current window's, or a given window's."
+        (tag window-link-tag "the tag")
+        (w (list-of window) "the window, at most one; the current one without")
+        (returns (list-of window)))
+  (define (linked tag . w)
+    (let ([from (if (pair? w) (edoc:type-value 'window (car w)) (head:current-window))])
+      (map cadr (filter (lambda (l) (and (eq? (car l) from) (eq? (caddr l) tag))) (live-links)))))
+
+  (edoc "Every live link between windows as data, (from to tag) by window indexes, in the order made."
+        (returns list))
+  (define (links-data) (map link-data (live-links)))
 
   ;;; The window's settings ---------------------------------------------------------
 

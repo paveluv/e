@@ -533,6 +533,21 @@ windows above or below it. The destination keeps its own point position.
 Window edges are resized by dragging them with the mouse, respecting the
 split tree's ownership and minimum sizes.
 
+### Window links
+
+A window can link to others, directed and tagged, many to many: a window
+may have several links out and several in, and a link lives while both
+windows are on screen. `(window:link! (window 2) (window-link-tag 'target))`
+links the current window to window 2 under a tag, `(window:link-target!
+(window 2))` under the `target` tag, the window a chooser in this one opens
+its pick in: with targets, `<files>` opens a chosen file in every target
+window and keeps its own pane and the focus. `(window:linked 'target)` lists
+the current window's targets, `(window:links)` every link as data by window
+indexes, and `(window:unlink! (window 2))` removes the links to a window,
+one tag or all. `(window:register-link-tag! 'mirror "...")` adds a tag with
+its description; the `window-link-tag` type completes the registered tags at
+M-x, so a tag is a literal there, `(window-link-tag 'target)`.
+
 ## Buffer API
 
 The public Scheme API exposes read-only inspection through `head:current-buffer`,
