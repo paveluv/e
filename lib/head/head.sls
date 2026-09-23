@@ -264,6 +264,7 @@
   (define the-popup #f)
   (define popup-buffer #f)      ; its placeholder while hidden, outside the buffer list
   (define the-popup-rows 0)
+  (define the-screen-height 0)  ; the rows the last tiling had, for the pop-up's default height
 
   (edoc "The pop-up window, window 0: hidden until something is shown in it."
         (returns window))
@@ -1016,6 +1017,7 @@
     ;; Tile the tree into width x height (the screen minus the echo
     ;; area).  -> the entries, also remembered along with the dividers.
     (set! the-dividers '())
+    (set! the-screen-height height)
     (set! the-layout (layout-node! the-root 0 0 width height))
     the-layout)
 
@@ -1039,7 +1041,7 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
-  (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing."
+  (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing; the pop-up's bar has instead one × at its left, the clear action, emptying it."
         (value list))
   (define window-buttons '((below . "↕") (right . "↔") (close . "×")))
 
@@ -1053,26 +1055,29 @@
         (returns (or pair #f)))
   (define (window-button-at x0 r0)
     ;; Paint and hit-test the same single-cell labels, flush right,
-    ;; with an inert │ before each label and after the final one.
+    ;; with an inert │ before each label and after the final one; the
+    ;; pop-up's one label, ×, sits at the left of its bar.
     ;; Inline controls carry painted, window-relative cell ranges. Return
     ;; (action . window), or #f outside a visible control.
     (window-at x0 r0
       (lambda (entry)
         (let ([w (car entry)])
-          (and (not (popup? w)) (= r0 (+ (cadr entry) (caddr entry)))
-               (or (let ([column (- x0 (window-xoff w))])
-                     (cond [(find (lambda (span)
-                                    (and (<= 0 (car span) column) (< column (cadr span))
-                                         (<= (cadr span) (- (window-width w) window-buttons-width 1))))
-                              (window-status-actions w))
-                            => (lambda (span) (cons (caddr span) w))]
+          (and (= r0 (+ (cadr entry) (caddr entry)))
+               (if (popup? w)
+                   (and (= x0 (window-xoff w)) (cons 'clear w))
+                   (or (let ([column (- x0 (window-xoff w))])
+                         (cond [(find (lambda (span)
+                                        (and (<= 0 (car span) column) (< column (cadr span))
+                                          (<= (cadr span) (- (window-width w) window-buttons-width 1))))
+                                  (window-status-actions w))
+                                => (lambda (span) (cons (caddr span) w))]
                            [else #f]))
-                 (let loop ([buttons window-buttons]
-                            [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
-                   (and (pair? buttons) (> column 0)
-                     (let ([width (string-length (cdar buttons))])
-                       (if (<= column width) (cons (caar buttons) w)
-                           (loop (cdr buttons) (- column width 1))))))))))))
+                     (let loop ([buttons window-buttons]
+                                [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
+                       (and (pair? buttons) (> column 0)
+                         (let ([width (string-length (cdar buttons))])
+                           (if (<= column width) (cons (caar buttons) w)
+                             (loop (cdr buttons) (- column width 1)))))))))))))
 
   (edoc "The divider descriptor under a screen position, or #f; a crossing belongs to the horizontal split."
         (x0 integer "the column")
@@ -3362,6 +3367,12 @@
         (window-prow-set! w (buffer-spot-row b))
         (window-pcol-set! w (buffer-spot-col b))
         (window-top-set! w (buffer-spot-top b))
+        (when (eq? w the-popup)
+          ;; a buffer sent to the pop-up, by a link say, shows it at a third
+          ;; of the screen; its own placeholder hides it again
+          (cond [(eq? b popup-buffer) (set! the-popup-rows 0)]
+                [(= the-popup-rows 0) (set! the-popup-rows (max 3 (quotient the-screen-height 3)))])
+          (request-repaint!))
         (window-topseg-set! w 0)
         (window-left-set! w 0)
         (clamp-buffer-positions! b))

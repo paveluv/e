@@ -523,7 +523,12 @@ termination, and dragging still resizes the vertical split.
 `<completions>` appears in the pop-up window, window 0, above the echo area
 for the prompt's duration and hides again afterwards; the other windows keep
 their buffers, points and viewports. The split tree is the only source of
-windows, the pop-up included: it is the root split's second leaf.
+windows, the pop-up included: it is the root split's second leaf. Any other
+buffer sent to the pop-up, by a link with `(window 0)` as its target say,
+shows there at a third of the screen; its status line carries no split or
+close buttons, only a `×` at its left, which empties the pane, as
+`(window:clear-pop-up!)` does: the pane shows its own `<pop-up>` placeholder
+again and hides, and the buffer stays in the list.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
 and focus the first window it crosses. Thus the cursor's row chooses between

@@ -562,9 +562,12 @@
                     (head:set-window-buffer! w fallback)))
                 (head:windows))
               ;; The pop-up hides again, unless an outer prompt's list is
-              ;; waiting to come back into it.
+              ;; waiting to come back into it; any other buffer found there,
+              ;; a document shown in the pop-up by mistake, must not keep it
+              ;; open
               (when (head:popup? target)
-                (if (memq previous (head:buffers))
+                (if (and (memq previous (head:buffers)) (head:app-buffer? previous)
+                         (equal? (head:buffer-fact previous 'mode #f) "completions"))
                     (head:set-window-buffer! target previous)
                     (head:hide-popup!)))
               (head:forget-buffer! view))))

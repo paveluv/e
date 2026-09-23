@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right!
+  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right!
           focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse!
           register-link-tag! resize! set-line-numbers! set-wrap! split-above! split-below! split-left!
           split-right! toggle-line-numbers! toggle-wrap! unlink!)
@@ -195,6 +195,10 @@
            (head:replace-layout-window! parent sibling)
            (prune-links!)
            (focus! next))])))
+
+  (edoc "Empty the pop-up, window 0: a buffer sent there, by a link say, gives way to the pane's own placeholder and the pane hides; the buffer stays in the list. The × at the left of the pane's status line does the same.")
+  (define (clear-pop-up!)
+    (head:hide-popup!))
 
   (edoc "Keep only the selected window; its links go with the others.")
   (define (delete-others!)

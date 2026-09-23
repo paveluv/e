@@ -104,12 +104,13 @@
         [(head:window-button-at (- x 1) (- y 1)) =>
          (lambda (control)
            (let ([action (car control)] [w (cdr control)])
-             (window:focus! w)
+             (unless (head:popup? w) (window:focus! w))
              (if (procedure? action) (action)
                (case action
                  [(below) (window:split-below!)]
                  [(right) (window:split-right!)]
-                 [(close) (window:delete!)])))
+                 [(close) (window:delete!)]
+                 [(clear) (window:clear-pop-up!)])))
            "MOUSE-HANDLED")]
         [(head:divider-at (- x 1) (- y 1)) =>
          (lambda (divider)
