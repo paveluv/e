@@ -287,21 +287,6 @@
     (set! buffer-filter text)
     (refresh!))
 
-  (define (status-hint)
-    ;; Ordinary status hints are called only for the focused window, even
-    ;; when another window shows this same app. Keep whole hints that fit.
-    (and (eq? (head:current-buffer) view)
-         (let ([room (- (head:window-width (head:current-window))
-                        head:window-buttons-width
-                        (glyph:cells (format "~a▏~a "
-                                       (head:window-index (head:current-window)) (head:buffer-name view))))])
-           (let add ([text ""]
-                     [hints '("F1–F6 sort" "C-u clear")])
-             (if (null? hints) text
-                 (add (if (<= (+ (glyph:cells text) 2 (glyph:cells (car hints))) room)
-                          (string-append text "  " (car hints)) text)
-                   (cdr hints)))))))
-
   (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
 
   ;;; The app as an API: what M-x or an agent asks and does --------------------------
@@ -481,12 +466,11 @@
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the buffet: its mode with its keys bound in the buffet context, its view, status hint, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
+  (edoc "Install the buffet: its mode with its keys bound in the buffet context, its view, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
   (define (init!)
     (mode:register! "buffet" '() '() (lambda (line) #f) #f styles)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'buffet key (cadr entry))) (car entry))) buffet-keys)
     (ensure!)
-    (paint:add-status-hint! status-hint)
     (head:add-buffer-kill-hook!
       (lambda (b)
         ;; A hidden picker must not keep a killed document's text alive.

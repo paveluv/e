@@ -626,15 +626,6 @@
            [out (make-vector (string-length line) face)])
       (when (or (zero? row) (and (= row 1) (string:prefix? "Directory: " line)))
         (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome)) out))
-  (define (hints)
-    (and (eq? (head:current-buffer) view)
-         (let ([room (- (head:window-width (head:current-window))
-                        head:window-buttons-width
-                        (glyph:cells (format "~a▏~a " (head:window-index (head:current-window)) (head:buffer-name view))))])
-           (fold-left (lambda (text hint)
-                        (if (<= (+ (glyph:cells text) 2 (glyph:cells hint)) room)
-                            (string-append text "  " hint) text)) ""
-             '("M-c create" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
     (unless (and view (memq view (head:buffers)) (head:app-buffer? view))
       (set! view (head:register-app! "*finder*" render! handle!))
@@ -669,12 +660,11 @@
       (if (and (eq? was view) (not explicit?)) (refresh!)
           (navigate! dir #f selected))) (void))
 
-  (edoc "Install the finder: its mode with its keys bound in the finder context, the C-x C-f binding, its status hints and buffer-kill hook.")
+  (edoc "Install the finder: its mode with its keys bound in the finder context, the C-x C-f binding and its buffer-kill hook; C-x TAB lists the keys.")
   (define (init!)
     (mode:register! "finder" '() '() (lambda (line) #f) #f styles)
     (keymap:bind-default! "C-x C-f" open!)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'finder key (cadr entry))) (car entry))) finder-keys)
-    (paint:add-status-hint! hints)
     (head:add-buffer-kill-hook!
       (lambda (b)
         (vector-for-each (lambda (choice)

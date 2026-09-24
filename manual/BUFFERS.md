@@ -403,9 +403,8 @@ configurable through [Styles](STYLES.md).
 
 There is no text cursor or text selection; C-Space does not set a mark.
 The keyboard candidate still scrolls into view. The status bar shows
-`<buffet>` and, only in the focused window, hints for
-F1–F6 and C-u as space permits. Window numbers and controls remain available
-in every window. Creation, deletion, edits, saves, renames and mode/file
+`<buffet>` and nothing more; `C-x TAB` lists the keys. Window numbers and
+controls remain available in every window. Creation, deletion, edits, saves, renames and mode/file
 changes appear on redraw.
 
 ### Keyboard and mouse controls

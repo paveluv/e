@@ -367,8 +367,8 @@ text scroll.
 returned zero-based `(row . column)` projects the status position onto source
 text. A returned string replaces the usual buffer details with operation
 text, while retaining the window number and controls. Temporary prompts use
-this for key hints and completion page counts; the buffet shows its
-name and adds keyboard hints only in the focused window. Status text fits
+this for key hints and completion page counts; the buffet shows its name.
+Status text fits
 terminal cells, including wide characters, so window controls keep their
 positions. `#f` restores the default.
 

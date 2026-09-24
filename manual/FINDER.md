@@ -207,8 +207,8 @@ gets the same tint and a muted dotted underline, taking precedence over the
 keyboard choice. Headings and breadcrumbs keep their own background and use
 bold text with the same dotted underline.
 Hovering does not move the keyboard choice or scroll the list. Normal browsing
-hides the cursor and disables text selection. Status hints appear only while
-the app is focused.
+hides the cursor and disables text selection. The status bar shows the pane's
+name only; `C-x TAB` lists its keys.
 
 A chosen file, by Enter or by a click, opens in the focused window, and the
 files view steps behind in the recency list, so `C-x b` offers the document
