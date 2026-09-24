@@ -17,7 +17,8 @@
           (rename (key-binding binding)) binding-action binding-context binding-kind
           binding-prefix? binding-sequence binding-spec call call-action-arguments
           call-action-procedure call-action? choose-binding command-hint command-key
-          command-keys context-capture (rename (key-event-binding event-binding)) prefill
+          command-keys (rename (effective-bindings context-bindings)) context-capture
+          (rename (key-event-binding event-binding)) prefill
           prefill-action-arguments prefill-action-procedure prefill-action? prefill-name
           prefill-text resolved-binding same-sequence? sequence-bindings sequence-text
           set-context-capture! (rename (key-spec spec)) (rename (unbind-key! unbind!)))
@@ -199,6 +200,9 @@
         (same-sequence? sequence (binding-sequence (cdr owned))))
       (kernel:registry-entries key-bindings)))
 
+  (edoc "A context's live bindings, one owned entry per key sequence, a user binding winning over a default: the keys helper's raw material."
+        (context symbol "the keymap context, global or a mode's")
+        (returns list))
   (define (effective-bindings context)
     ;; One chosen entry per sequence.  Registry order handles newest-first;
     ;; a user entry replaces a previously seen default regardless of age.

@@ -8,6 +8,18 @@ Press `C-h k`, then a key or complete chord, to open `<help>`. The report shows
 the resolved global command, where it was defined, shadowed definitions, and
 any meanings the key has inside prompts, incremental search, or query-replace.
 
+## Listing the keys
+
+`C-x TAB` lists the keys that work where you are, in the pop-up window above
+the echo area: the current buffer's own keys first, as its app declares them,
+then the bindings of its mode contexts, then the global ones. Each row names
+the key, the command it runs, `edit:kill-line!` say, and what that command
+does, from its documentation. `C-x TAB` again turns the page; past the last
+page it puts the pop-up away, as the `↓` on the pop-up's status line does at
+any time. `(keys:show!)` and `(keys:hide!)` are the commands. An app that
+handles its keys itself declares them for the listing under its buffer's
+`keys` fact, as `(key action description)` triples.
+
 ## Global bindings
 
 `keymap:bind!` takes a key specification and a zero-argument command:

@@ -548,6 +548,20 @@
       (head:set-app-selectable! view #f)
       (head:set-app-status-position! view head:buffer-name)
       (head:buffer-fact-set! view 'resume-kind 'file-view)
+      ;; the keys helper lists these under C-x TAB, the app handling them itself
+      (head:buffer-fact-set! view 'keys
+        '(("RET" "open" "Open the chosen file here, or in the window's target windows; enter a chosen directory")
+          ("RIGHT" "enter" "Enter the chosen directory")
+          ("LEFT" "parent" "Go up to the parent directory")
+          ("UP, DOWN" "move" "Move the choice; PAGEUP and PAGEDOWN by a page, HOME and END to the ends")
+          ("text" "filter" "Filter the entries by name, or by path with a slash in the text")
+          ("BACKSPACE" "erase" "Erase the filter's last character, or go up when it is empty")
+          ("C-u" "clear" "Clear the filter")
+          ("M-c" "create" "Create a file or a directory at a typed path")
+          ("F1 to F6" "sort" "Sort by a column, again for the other direction")
+          ("M-." "hidden" "Show or hide the dot entries")
+          ("C-r" "refresh" "Scan the directory again")
+          ("ESC, C-g" "return" "Return to the buffer the view replaced")))
       (mode:choose! "files" view))
     view)
 

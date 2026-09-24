@@ -167,6 +167,7 @@ for configuration, lifecycle and scripted clients.
 | `C-M-u`, `C-M-d`, `C-M-a`, `C-M-e` | Up out of a list, down into one, to a top-level form's start or end |
 | `C-M-k`, `C-M-BACKSPACE`, `C-M-SPC`, `C-M-h`, `C-M-t`, `C-M-q` | Kill, mark, transpose or indent expressions |
 | `C-h f`, `M-.`, `C-h k` | Describe a name, symbol at point, or key |
+| `C-x TAB` | List the keys that work here, in the pop-up |
 | `C-x g` | Browse Git history and patches |
 | `C-c t` | Open a terminal buffer |
 | `C-c a` | Answer a question another actor left for you |

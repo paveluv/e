@@ -392,6 +392,15 @@
           (head:set-app-cursor-visible! view #f)
           (head:set-app-selectable! view #f)
           (head:set-app-status-position! view head:buffer-name)
+          ;; the keys helper lists these under C-x TAB, the app handling them itself
+          (head:buffer-fact-set! view 'keys
+            '(("RET" "switch" "Switch to the row's buffer, or restore a trashed one")
+              ("UP, DOWN" "move" "Move the choice; PAGEUP and PAGEDOWN by a page, HOME and END to the ends")
+              ("text" "filter" "Filter the buffers by name")
+              ("BACKSPACE" "erase" "Erase the filter's last character")
+              ("C-u" "clear" "Clear the filter")
+              ("F1 to F6" "sort" "Sort by a column, again for the other direction")
+              ("ESC, C-g" "return" "Return to the buffer the app replaced")))
           (mode:choose! "buffers" view)
           (refresh!)
           view)))

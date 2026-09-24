@@ -259,7 +259,7 @@
         (reverse
           (kernel:load-modules!
             '("blame" "buffer-view" "c-mode" "describe" "dispatch" "echo" "edit" "eval" "extension" "file-view" "git-view"
-              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "merge" "mode" "mouse"
+              "glyph" "head" "keymap" "keys" "literal" "log-view" "markdown" "md-mode" "merge" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "terminal" "tty" "window"))))
       (load-config!)
