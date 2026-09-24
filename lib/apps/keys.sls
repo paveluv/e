@@ -11,7 +11,7 @@
   (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-page-up! page-up!))
           (rename (keys-show! show!)))
   (import (rnrs)
-          (only (chezscheme) format iota list-head quotient void)
+          (only (chezscheme) format iota list-head make-weak-eq-hashtable quotient void)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head head) head:)
@@ -289,6 +289,7 @@
       (head:buffer-fact-set! view 'resume-kind 'keys)
       ;; long, and read by position: a scrollbar on the configured side
       (head:buffer-fact-set! view 'scrollbar #t)
+      (head:set-buffer-status! view status)
       (head:add-buffer! view)
       (mode:choose! "keys" view)))
 
@@ -308,21 +309,61 @@
             (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
               (fill! b))))))
 
+  ;;; Pages -----------------------------------------------------------------------
+
+  (define page-cache (make-weak-eq-hashtable)) ; window -> (key . starts), the last computation
+
+  (define (page-rows w)
+    ;; the text rows a window shows: the pop-up's count before it is tiled
+    (max 1 (if (head:popup? w) (head:popup-rows) (head:window-size w))))
+
+  (define (page-starts w)
+    ;; the lines starting each page of the listing in a window, counted in
+    ;; the window's visual rows so a wrapped line takes what it takes; kept
+    ;; per window until the text, the rows, the wrapping or the width change
+    (let* ([lines (head:buffer-lines view)] [rows (page-rows w)]
+           [wrapped? (and (> (head:window-width w) 1) (paint:window-wrapped? w))]
+           [key (list rows wrapped? (head:window-content-width w))]
+           [hit (hashtable-ref page-cache w #f)])
+      (if (and hit (eq? (caar hit) lines) (equal? (cdar hit) key))
+          (cdr hit)
+          (let ([starts
+                 (let loop ([i 0] [used 0] [starts '()])
+                   (cond
+                     [(= i (vector-length lines)) (reverse (if (null? starts) '(0) starts))]
+                     [else
+                      (let ([take (if wrapped? (paint:line-segments w (vector-ref lines i)) 1)])
+                        (if (or (= used 0) (<= (+ used take) rows))
+                            (loop (+ i 1) (+ used take) (if (= used 0) (cons i starts) starts))
+                            (loop i 0 starts)))]))])
+            (hashtable-set! page-cache w (cons (cons lines key) starts))
+            starts))))
+
+  (define (page-index w starts)
+    ;; the page a window is on: the last start at or before its top
+    (let ([top (head:window-top w)])
+      (let loop ([starts starts] [i 0] [found 0])
+        (cond [(null? starts) found]
+              [(<= (car starts) top) (loop (cdr starts) (+ i 1) i)]
+              [else found]))))
+
   (define (page! direction)
     ;; the listing a page further where it shows, the pop-up first: down,
     ;; from the top again past the end; up, from the last page again past
-    ;; the top
-    (let* ([w (car (view-windows))] [n (vector-length (head:buffer-lines view))]
-           [size (max 1 (if (head:popup? w) (head:popup-rows) (head:window-size w)))]
-           [top (+ (head:window-top w) (* direction size))]
-           [top (cond [(>= top n) 0]
-                      [(< top 0) (* size (quotient (max 0 (- n 1)) size))]
-                      [else top])])
+    ;; the top; the pages as the status bar counts them
+    (let* ([w (car (view-windows))] [starts (page-starts w)]
+           [top (list-ref starts (mod (+ (page-index w starts) direction) (length starts)))])
       (head:window-top-set! w top)
       (head:window-prow-set! w top)
       (head:window-pcol-set! w 0)))
 
   (define (page-down!) (page! 1))
+
+  (define (status b w)
+    ;; the bar of a window showing the listing: the buffer's name, the page
+    ;; the window is on of how many, and the paging keys
+    (let ([starts (page-starts w)])
+      (format "<keys>  page ~a of ~a  C-x TAB page down, C-x S-TAB page up" (+ 1 (page-index w starts)) (length starts))))
 
   (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
@@ -357,12 +398,7 @@
     (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
     (drop-view!))
 
-  (define (hint b active?)
-    ;; the listing's paging keys on its bar, in every window showing it,
-    ;; selected or not
-    (and view (eq? b view) "C-x TAB page down, C-x S-TAB page up"))
-
-  (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
+  (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
     (mode:register! "keys" '() '() styles #f #f)
     (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
@@ -371,5 +407,4 @@
     ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
     (prompt:allow! keys-show!)
     (prompt:allow! keys-page-up!)
-    (paint:add-buffer-status-hint! hint)
     (head:add-pre-redraw-hook! follow!)))

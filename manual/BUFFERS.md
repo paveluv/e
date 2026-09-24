@@ -47,7 +47,8 @@ The status line also shows the buffer name, one-based line and column, the
 detected mode, and the remaining merge-conflict count; it carries no key
 hints, `C-x TAB` listing the keys instead. Temporary interactions such as
 find-file use that space for page counts instead of generated-buffer
-coordinates.
+coordinates, and a buffer may replace those details with text of its own
+through `head:set-buffer-status!`, as `<keys>` does with its page.
 
 Window 0 is the pop-up window. It has no rows and no status line until a
 completion list needs it or a buffer is sent to it, when it appears above the

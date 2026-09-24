@@ -21,8 +21,8 @@
           app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
           app-event-buffer-position app-event-button app-event-focus app-event-position
           app-facts app-following? app-handle-event! app-manages-window-viewport? app-of
-          app-refresh! app-refresh-error app-refresh-error-set! app-status app-status-position
-          app-status-position-set! app? before-frame! buffer buffer-append! buffer-base
+          app-refresh! app-refresh-error app-refresh-error-set! app-status
+          app? before-frame! buffer buffer-append! buffer-base
           buffer-base-set! buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
           buffer-file-set! buffer-history buffer-history-set! buffer-line buffer-line-count
           buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
@@ -33,7 +33,7 @@
           buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision
           buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set!
           buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stale
-          buffer-stale-set! buffer-stamp buffer-stamp-set! buffer-state buffer-sticky-lines
+          buffer-stale-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines
           buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
           bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
@@ -57,7 +57,7 @@
           request-app-size! request-frame-at! resize-popup! resume! resume-source! root run-deferred!
           run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
           set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
-          set-app-selectable! set-app-status-position! set-buffers! set-copy-text! set-current!
+          set-app-selectable! set-app-status-position! set-buffer-status! set-buffers! set-copy-text! set-current!
           set-current-keys! set-departure! set-dividers! set-drag! set-file-opener!
           set-frame-hook! set-full-capture! set-last-command! set-layout-root!
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
@@ -78,6 +78,7 @@
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
+                logbit? procedure-arity-mask
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
                 make-time add-duration
@@ -2750,12 +2751,11 @@
         (refresh! thunk "rebuilds the buffer")
         (handle-event! (or procedure #f) "(handle-event! event) takes a key or pointer event, or #f")
         (refresh-error (or string #f) "the last failed refresh's text, or #f")
-        (cursor-visible? (or boolean procedure symbol) "whether the cursor shows: a boolean, a procedure, or default")
-        (status-position (or procedure #f) "a procedure giving the status line's position text, or #f"))
+        (cursor-visible? (or boolean procedure symbol) "whether the cursor shows: a boolean, a procedure, or default"))
   (define-record-type app
     (fields buffer refresh! handle-event!
             (mutable refresh-error)
-            (mutable cursor-visible?) (mutable status-position)))
+            (mutable cursor-visible?)))
 
   (define app-registry (kernel:make-registry))
   (define buffer-kill-hook-registry (kernel:make-registry))
@@ -3002,7 +3002,7 @@
                     target)
                   (tool-buffer! target))]
            [a (make-app b refresh! handler
-                        #f 'default #f)])
+                        #f 'default)])
       (buffer-read-only-set! b #t)
       ;; the buffer is an app's for good: a re-registration (a module
       ;; reloading) takes back the same tool, and its local facts stay.
@@ -3051,19 +3051,35 @@
     (unless selectable? (buffer-marked-raw-set! b #f))
     b)
 
-  (edoc "Say how an app buffer's status line shows its position: a procedure giving the text, or #f for the buffer coordinates."
+  ;; A buffer's own status text, in place of the generated name, coordinates
+  ;; and mode tag: a provider kept beside the buffer rather than in a fact,
+  ;; since a checkpoint saves facts as data
+  (define buffer-statuses (make-weak-eq-hashtable))
+
+  (edoc "Give a buffer its own status text, in place of the generated name, coordinates and mode tag: a procedure of the buffer, or of the buffer and the window painted, giving a string, a zero-based (row . column) to project as the position, or #f for the generated details; #f takes the provider away."
+        (b buffer "the buffer")
+        (status (or procedure #f) "the provider, or #f"))
+  (define (set-buffer-status! b status)
+    (unless (or (not status) (procedure? status))
+      (error 'set-buffer-status! "status must be #f or a procedure" status))
+    (if status (hashtable-set! buffer-statuses b status) (hashtable-delete! buffer-statuses b))
+    b)
+
+  (edoc "A buffer's own status text for a window painted, its provider's answer: a string, a (row . column), or #f; #f without a provider."
+        (b buffer "the buffer")
+        (w window "the window showing it")
+        (returns any))
+  (define (buffer-status b w)
+    (let ([status (hashtable-ref buffer-statuses b #f)])
+      (and status
+           (if (logbit? 2 (procedure-arity-mask status)) (status b w) (status b)))))
+
+  (edoc "Say how an app buffer's status line shows its position: a procedure giving the text, or #f for the buffer coordinates; set-buffer-status! for an app buffer, which it must be."
         (b buffer "the app buffer")
         (position (or procedure #f) "the position source"))
   (define (set-app-status-position! b position)
-    ;; A coordinate pair projects a source position; a string supplies
-    ;; operation details in place of generated buffer coordinates/mode.
-    (let ([a (app-of b)])
-      (unless a (error 'set-app-status-position! "not an app buffer" b))
-      (unless (or (not position) (procedure? position))
-        (error 'set-app-status-position!
-               "position must be #f or a procedure" position))
-      (app-status-position-set! a position)
-      b))
+    (unless (app-of b) (error 'set-app-status-position! "not an app buffer" b))
+    (set-buffer-status! b position))
 
   (edoc "Whether the cursor shows in a window: its app's choice, a followed surface's, or yes."
         (w window "the window")

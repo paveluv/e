@@ -14,7 +14,8 @@ any meanings the key has inside prompts, incremental search, or query-replace.
 above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
 first, as its app declares them, then the bindings of its mode contexts,
 then the global ones, each section's title in bold, with a scrollbar for
-its length and its paging keys on its status bar, selected or not; the
+its length and a status bar of its own reading `<keys>`, the page the window
+is on of how many, counted in the window's rows, and the paging keys; the
 listing is laid out for the window showing it and again when the terminal
 is resized. It lists what works here: a key a nearer context takes, `RET`
 in `<finder>` say, is left out of the global section, and where the text is

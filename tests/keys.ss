@@ -63,11 +63,12 @@
      (head:before-frame!)
      (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
        (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
-             (head:window-scrollbar? (head:popup))
+             (head:window-scrollbar? (head:popup)) (string:prefix? "<keys>  page 1 of " (head:buffer-status (view) popup))
+             (string:suffix? "  C-x TAB page down, C-x S-TAB page up" (head:buffer-status (view) popup))
              (begin (head:checkpoint!)
                     (exists (lambda (entry) (let ([r (car entry)]) (and (pair? r) (eq? (car r) 'local) (equal? (cadr r) "<keys>"))))
                             (list-ref (actor:checkpoint head:ui-actor) 4))))
-       '(#f "<keys>" keys right #f))
+       '(#f "<keys>" keys right #t #t #f))
      (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-mode-section-first
        (let ([at (index-of "M-q")])
          (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
@@ -127,6 +128,18 @@
 
      ;; C-x TAB pages the pop-up down from anywhere, back to the top past the end
      (define size (head:popup-rows))
+     (define (page-of)
+       (let* ([s (head:buffer-status (view) popup)] [from (+ 5 (string:search s "page " 0 (string-length s)))])
+         (substring s from (string:search s "  C-x" 0 (string-length s)))))
+     (define pages (string->number (list-ref (let loop ([s (page-of)] [out '()]) (cond [(string:search s " " 0 (string-length s)) => (lambda (i) (loop (substring s (+ i 1) (string-length s)) (cons (substring s 0 i) out)))] [else (reverse (cons s out))])) 2)))
+     (check 'the-bar-counts-the-pages-of-the-listing (list (> pages 1) (page-of)) (list #t (format "1 of ~a" pages)))
+     (keys:page-up!)
+     (check 'c-x-s-tab-at-the-top-shows-the-last-page (page-of) (format "~a of ~a" pages pages))
+     (keys:show!)
+     (check 'and-c-x-tab-then-shows-the-first (page-of) (format "1 of ~a" pages))
+     (keys:show!)
+     (check 'the-next-page-down-is-the-second (page-of) (format "2 of ~a" pages))
+     (keys:page-up!) ; back to the top
      (keys:page-up!)
      (check 'c-x-s-tab-at-the-top-goes-to-the-last-page
        (list (> (head:window-top popup) 0) (= 0 (mod (head:window-top popup) size))) '(#t #t))
@@ -200,6 +213,15 @@
      (keys:hide!)
      (check 'hiding-takes-the-listing-out-of-the-window
        (list (head:buffer-named "<keys>") (head:buffer-name (head:window-buffer w1))) '(#f "keyed"))
+
+     ;; any buffer may carry its own status text, with the window when the
+     ;; provider takes it, and taken away with #f
+     (check 'a-buffer-carries-its-own-status-text-for-the-window-painted
+       (let ([w1 (head:current-window)])
+         (list (begin (head:set-buffer-status! b (lambda (b w) (format "w~a" (head:window-index w)))) (head:buffer-status b w1))
+               (begin (head:set-buffer-status! b head:buffer-name) (head:buffer-status b w1))
+               (begin (head:set-buffer-status! b #f) (head:buffer-status b w1))))
+       (list (format "w~a" (head:window-index (head:current-window))) "keyed" #f))
 
      ;; the long key names show short and bind under either spelling
      (check 'long-key-names-show-short

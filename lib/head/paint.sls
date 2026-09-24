@@ -920,11 +920,8 @@
       ;; the left one-eighth block: single width, in every monospace
       ;; font's block range) so the gap falls after the line, not before
       (let* ([number (format "~a\x258F;" (head:window-index w))]
-             [app-position
-              (let* ([a (head:app-of b)]
-                     [position (and a (head:app-status-position a))])
-                (and position
-                     (guard (ex [else #f]) (position b))))]
+             ;; the buffer's own status text, when it has a provider
+             [app-position (guard (ex [else #f]) (head:buffer-status b w))]
              [head-prefix
               (if (string? app-position) number
                 (format "~a~a~a  "

@@ -375,11 +375,14 @@ painter and apply to every window showing the app. The scrollbar is a position i
 it is painted, not dragged -- the wheel, the keyboard, and clicks in the
 text scroll.
 
-`head:set-app-status-position!` accepts a callback receiving the buffer. A
-returned zero-based `(row . column)` projects the status position onto source
-text. A returned string replaces the usual buffer details with operation
-text, while retaining the window number and controls. Temporary prompts use
-this for key hints and completion page counts; the buffet shows its name.
+Any buffer may own the middle of its status line: `head:set-buffer-status!`
+takes a callback receiving the buffer, or the buffer and the window being
+painted when it accepts two arguments, and `head:set-app-status-position!` is
+the same call for an app buffer. A returned zero-based `(row . column)`
+projects the status position onto source text. A returned string replaces the
+usual buffer details with text of its own, while retaining the window number
+and controls. Temporary prompts use this for completion page counts, the
+buffet shows its name, and `<keys>` shows the page each window is on.
 Status text fits
 terminal cells, including wide characters, so window controls keep their
 positions. `#f` restores the default.
