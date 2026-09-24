@@ -1046,11 +1046,18 @@
       styles))
 
   (define (style-exchange text)
-    ;; Scheme highlighting over the whole exchange, echo and *log*
-    ;; alike -- the editor's own names in the editor style: eval runs
-    ;; in the editor's environment, whatever a random file does.
-    (let ([scheme (mode:find "scheme")])
-      (and scheme (editorize! text ((mode:styles scheme) text)))))
+    ;; Scheme highlighting over the exchange, echo and *log* alike -- the
+    ;; editor's own names in the editor style: eval runs in the editor's
+    ;; environment, whatever a random file does.  A failed evaluation's
+    ;; message is prose, not Scheme: plain red after the arrow.
+    (let* ([scheme (mode:find "scheme")]
+           [styles (if scheme
+                       (editorize! text ((mode:styles scheme) text))
+                       (make-vector (string-length text) 'plain))]
+           [failed (string:search text " => error: " 0 (string-length text))])
+      (when failed
+        (style:fill-range! styles (+ failed 4) (vector-length styles) 'error))
+      styles))
 
   ;; the M-x prompt's label: a lambda, the mark of an expression to evaluate
   ;; (keymap's action-text spells it too, describing a pre-filled key)

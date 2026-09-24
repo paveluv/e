@@ -98,4 +98,13 @@
                (list "fresh.sls" "fresh.so" "broken.sls"))
      (delete-directory (string-append root "/probe")) (delete-directory root)
 
+     ;; a failed evaluation's message styles as plain error text, not Scheme;
+     ;; the styler is registered by the app's install
+     (eval:init!)
+     (test:check 'a-failed-evaluations-message-is-error-text-not-scheme
+       (let* ([text "(help) => error: Exception: variable help is not bound"]
+              [styles ((log:styler 'eval) text)]
+              [at (string:search text "not" 0 (string-length text))])
+         (list (vector-ref styles at) (vector-ref styles (- (string-length text) 1)) (not (eq? (vector-ref styles 1) 'error))))
+       '(error error #t))
      (test:finish! 'evaluation)))

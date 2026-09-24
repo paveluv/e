@@ -18,6 +18,7 @@
 
      ;; Theme changes invalidate cached ink, preserve explicit overrides,
      ;; and leave faces with no light variant alone. Repeated reports are inert.
+     (check 'the-error-face-is-red (style:code 'error) "\x1B;[31m")
      (let ([dark (style:code 'header)] [chrome (style:code 'chrome)] [changes 0])
        (style:set-changed-hook! (lambda () (set! changes (+ changes 1))))
        (style:color-scheme! #f)

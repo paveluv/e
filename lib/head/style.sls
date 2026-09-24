@@ -205,6 +205,7 @@
         (header ((foreground 252) (background 240)))
         (hover (bold dotted-underline (underline-color 242)))
         (comment ((foreground bright-black)))
+        (error ((foreground red)))
         (string ((foreground green)))
         (keyword (bold (foreground cyan)))
         (number ((foreground magenta)))
