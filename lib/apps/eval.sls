@@ -20,7 +20,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
-  (export call-with-evaluation! completion-candidates completion-extensions completion-span
+  (export call-with-evaluation! completion-candidates completion-extensions completion-hint completion-span
           (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
@@ -566,7 +566,10 @@
                  [arguments
                   (cond
                     [(not sig)
-                     (let ([tokens (and (procedure? value) (guard (ex [else #f]) (local-params value)))])
+                     ;; a procedure without an edoc: its describe entry's
+                     ;; parameters, the corpus's or a module's, else its own
+                     (let ([tokens (or (and (procedure? value) (described-params sym))
+                                       (and (procedure? value) (guard (ex [else #f]) (local-params value))))])
                        (if tokens (string-append "(" (string:join tokens " ") ")") ""))]
                     [else
                      (case (edoc:signature-kind sig)

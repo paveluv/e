@@ -5,7 +5,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps describe)
-  (export (rename (describe-at-point! at-point!)) (rename (reference:fetch! fetch-data!)) init!
+  (export (rename (describe-at-point! at-point!)) fetch-data! init!
           (rename (describe-key! key!)) (rename (describe! show!)) (rename (describe this)))
   (import (chezscheme)
           (prefix (only (apps markdown) companion companion!) markdown:)
@@ -21,6 +21,14 @@
           (prefix (head window) window:)
           (prefix (service doc) doc:)
           (prefix (service reference) reference:))
+
+  ;;; Fetching --------------------------------------------------------------------
+
+  (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the describe database, each page's progress redrawn in place in the echo area; one fetch at a time.")
+  (define (fetch-data!)
+    ;; the fetch runs in this head: its records present as progress, one
+    ;; line redrawn per page, and the log keeps every step
+    (parameterize ([edit:message-progress #t]) (reference:fetch!)))
 
   ;;; Display -------------------------------------------------------------------
 

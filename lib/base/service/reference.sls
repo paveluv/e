@@ -530,13 +530,14 @@
                [done 0]
                [progress (lambda (what)
                            (set! done (+ done 1))
-                           (log:add! 'describe (format "Fetching ~a (~a/~a)" what done total) #f))])
+                           ;; shown: progress in place under the head's progress mode
+                           (log:add! 'describe (format "Fetching ~a (~a/~a)" what done total) #t))])
           (ensure-directory! ref)
           (ensure-directory! (string-append ref "/tspl4"))
           (ensure-directory! (string-append ref "/csug"))
           (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
           (fetch-book! ref "csug" csug-base csug-pages progress)
-          (log:add! 'describe "Extracting the reference corpus..." #f)
+          (log:add! 'describe "Extracting the reference corpus..." #t)
           (let* ([data (append (parse-book ref "tspl4" 'tspl tspl-pages)
                                (parse-book ref "csug" 'csug csug-pages))]
                  [next (index-data data)])

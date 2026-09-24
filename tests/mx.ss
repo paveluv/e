@@ -15,7 +15,7 @@
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:)
              (prefix (head window) window:) (prefix (foundation text) text:)
-             (prefix (foundation string) string:) (prefix (test) test:)
+             (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:))
 
@@ -296,4 +296,11 @@
              (keymap:prefill-text (keymap:prefill search:replace! "old")))
        '("(kill-buffer! (head:current-buffer))" "λ (answer! " "(search:replace! \"old\" "))
 
+     ;; a procedure without an edoc shows its described parameters, the
+     ;; corpus's or a module's, in its completion hint, before its arity
+     (define-top-level-value 'mx-plain-proc (lambda (a b . c) #f))
+     (doc:register! '(((mx-plain-proc) (("procedure" . "(mx-plain-proc alpha beta ...)")) "void" ("(mx)") mx "Fixture" #f "A fixture.")))
+     (check 'a-described-procedure-completes-with-its-parameter-names (eval:completion-hint 'mx-plain-proc) "(alpha beta ...)")
+     (check 'an-undescribed-procedure-completes-with-its-source-parameters
+       (begin (define-top-level-value 'mx-bare-proc (lambda (a b . c) #f)) (eval:completion-hint 'mx-bare-proc)) "(a b . c)")
      (test:finish! 'mx)))

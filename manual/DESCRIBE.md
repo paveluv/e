@@ -38,9 +38,12 @@ extensions from the Chez Scheme User's Guide. Fetch it once from inside e:
 
 The command downloads and extracts roughly 1,400 entries into
 `data/describe/`, which is intentionally outside version control. It uses the
-[HTTP client](HTTPS.md). Fetch steps are recorded in `<log>`; completion also
-appears in the echo area. Queries remain available during a fetch, and another
-fetch is refused until the current one finishes.
+[HTTP client](HTTPS.md). Each page's progress is redrawn in place in the echo
+area and every step is recorded in `<log>`; completion is announced in both.
+Queries remain available during a fetch, and another fetch is refused until
+the current one finishes. Once the corpus is there, M-x completion shows a
+procedure's parameter names from it, `(string-append string ...)` say, where
+the procedure has no documentation of its own.
 
 Without the downloaded corpus, module-published documentation remains
 available.

@@ -278,9 +278,11 @@
              (let ([messages (reverse (map log:datum (log:entries 'describe)))])
                (list (length messages) (car messages) (list-ref messages 22) (list-ref messages 23)
                      (presented)))
+             ;; every record is shown, progress in place under the head's progress
+             ;; mode, appended otherwise, as here
              (list 24 "Fetching tspl4/binding.html (1/22)" "Extracting the reference corpus..."
                    "Describe database ready: 22 entries covering 2 names"
-                   (append (make-list 23 '(#f 0)) '((append 22)))))
+                   (append (make-list 23 '(append 0)) '((append 22)))))
 
            ;; A failed refresh closes its transport and releases ownership;
            ;; it must not replace the database or the already published index.
