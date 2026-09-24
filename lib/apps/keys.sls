@@ -347,7 +347,7 @@
   (define (hint b active?)
     ;; the listing's paging keys on its bar, in every window showing it,
     ;; selected or not
-    (and view (eq? b view) "C-x TAB page down, C-x S-TAB up"))
+    (and view (eq? b view) "C-x TAB page down, C-x S-TAB page up"))
 
   (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
