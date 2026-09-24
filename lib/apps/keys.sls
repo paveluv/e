@@ -8,7 +8,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps keys)
-  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-show! show!)))
+  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-page-up! page-up!))
+          (rename (keys-show! show!)))
   (import (rnrs)
           (only (chezscheme) format iota list-head quotient void)
           (prefix (foundation edoc) edoc:)
@@ -294,16 +295,21 @@
             (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
               (fill! b))))))
 
-  (define (page-down!)
-    ;; the listing a page further where it shows, the pop-up first, from the
-    ;; top again past the end
+  (define (page! direction)
+    ;; the listing a page further where it shows, the pop-up first: down,
+    ;; from the top again past the end; up, from the last page again past
+    ;; the top
     (let* ([w (car (view-windows))] [n (vector-length (head:buffer-lines view))]
            [size (max 1 (if (head:popup? w) (head:popup-rows) (head:window-size w)))]
-           [top (+ (head:window-top w) size)]
-           [top (if (>= top n) 0 top)])
+           [top (+ (head:window-top w) (* direction size))]
+           [top (cond [(>= top n) 0]
+                      [(< top 0) (* size (quotient (max 0 (- n 1)) size))]
+                      [else top])])
       (head:window-top-set! w top)
       (head:window-prow-set! w top)
       (head:window-pcol-set! w 0)))
+
+  (define (page-down!) (page! 1))
 
   (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
@@ -322,7 +328,11 @@
          (fill! b)
          (head:show-popup! (head:popup-default-rows)))]))
 
-  (edoc "Show the keys listing in the current window as the read-only buffer <keys>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB pages it there.")
+  (edoc "Page the keys listing up where it shows, from the last page again past the top; not shown, show it as C-x TAB does.")
+  (define (keys-page-up!)
+    (if (showing?) (page! -1) (keys-show!)))
+
+  (edoc "Show the keys listing in the current window as the read-only buffer <keys>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there.")
   (define (keys-open!)
     (let ([b (head:current-buffer)])
       (ensure-view!)
@@ -335,14 +345,16 @@
     (drop-view!))
 
   (define (hint)
-    (and view (eq? (head:current-buffer) view) "C-x TAB page down"))
+    (and view (eq? (head:current-buffer) view) "C-x TAB page down, C-x S-TAB up"))
 
-  (edoc "Install the keys helper: its mode, C-x TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
+  (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
     (mode:register! "keys" '() '() styles #f #f)
     (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" keys-show!)
-    ;; C-x TAB works everywhere, inside a prompt too, where it lists the prompt's keys
+    (keymap:bind-default! "C-x S-TAB" keys-page-up!)
+    ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
     (prompt:allow! keys-show!)
+    (prompt:allow! keys-page-up!)
     (paint:add-status-hint! hint)
     (head:add-pre-redraw-hook! follow!)))

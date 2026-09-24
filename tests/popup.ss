@@ -15,6 +15,7 @@
              (except (head edit) init!)
              (head literal)
              (prefix (head head) head:)
+             (prefix (head keymap) keymap:)
              (prefix (head paint) paint:)
              (prefix (head window) window:))
 
@@ -22,6 +23,9 @@
      (define path (format "/tmp/e-popup-~a.txt" (get-process-id)))
      (call-with-output-file path (lambda (p) (display "hello\n" p)))
      (define popup (head:popup))
+     (window:init!)
+     (check 'c-x-esc-and-c-x-c-g-empty-the-pop-up
+       (list (eq? (keymap:binding "C-x ESC") window:clear-pop-up!) (eq? (keymap:binding "C-x C-g") window:clear-pop-up!)) '(#t #t))
      (define (popup-name) (head:buffer-name (head:window-buffer popup)))
      (define (popup-entry) (find (lambda (e) (eq? (car e) popup)) (paint:window-layout)))
      (head:before-frame!)

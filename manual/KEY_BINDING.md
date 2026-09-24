@@ -31,7 +31,7 @@ a `prompt:` command such as `prompt:accept!` for Enter, the keys of the
 prompt's own view where it has one, the finder's create mode say, and the
 global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
-you are, and back to the top past the end; `C-x o` or `M-Down` select the
+you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
 line puts it away, as `(keys:hide!)` does. `(keys:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and

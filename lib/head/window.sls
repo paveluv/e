@@ -365,7 +365,7 @@
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the default window keys, and allow the window commands inside a prompt.")
+  (edoc "Install the default window keys, C-x ESC and C-x C-g emptying the pop-up among them, and allow the window commands inside a prompt.")
   (define (init!)
     ;; the global commands a prompt may run without losing its input:
     ;; pure window management
@@ -376,6 +376,7 @@
     (for-each
       (lambda (entry) (keymap:bind-default! (car entry) (cadr entry)))
       `(("C-x o" ,focus-next!) ("C-x 0" ,delete!) ("C-x 1" ,delete-others!)
+        ("C-x ESC" ,clear-pop-up!) ("C-x C-g" ,clear-pop-up!)
         ("C-x 2" ,split-below!) ("C-x 3" ,split-right!)
         ("C-x l" ,toggle-line-numbers!) ("C-x t" ,toggle-wrap!)
         ("M-UP" ,focus-up!) ("M-DOWN" ,focus-down!)

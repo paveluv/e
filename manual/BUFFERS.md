@@ -543,8 +543,9 @@ read-only; it cannot be split or closed. Its status line carries no split or
 close buttons, only a `↓` where the other windows' `×` is, which empties the
 pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>`
 placeholder again and hides, the buffer stays in the list, and if the pane
-was selected the window selected before it is again; `C-x 1` hides it along
-with the other windows. Dragging the status line
+was selected the window selected before it is again; `C-x ESC` and `C-x C-g`
+do the same from the keyboard, and `C-x 1` hides it along with the other
+windows. Dragging the status line
 of the window above the pane resizes it, as `(window:resize! n)` does in it;
 a size given by hand sticks as the most the pane takes from then on, a
 shorter completion list taking less.

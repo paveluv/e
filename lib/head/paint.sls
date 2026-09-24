@@ -436,6 +436,15 @@
     ;; windows too.
     (kernel:registry-add! buffer-status-hints proc))
 
+  (define (spaced value)
+    ;; a hint starts one space after what precedes it, the mode tag say,
+    ;; whatever spacing its provider wrote
+    (if (and (pair? value) (pair? (car value)) (string? (caar value)))
+        (let* ([text (caar value)]
+               [start (let skip ([i 0]) (if (and (< i (string-length text)) (char=? (string-ref text i) #\space)) (skip (+ i 1)) i))])
+          (cons (cons (string-append " " (substring text start (string-length text))) (cdar value)) (cdr value)))
+        value))
+
   (define (status-hint-values b active?)
     (let loop ([procs (append (if active? (kernel:registry-items status-hints) '())
                               (kernel:registry-items buffer-status-hints))]
@@ -460,7 +469,7 @@
                        [else #f])))])
             (loop (cdr procs)
                   (and ordinary (> ordinary 1) (- ordinary 1))
-                  (if value (append (reverse value) out) out))))))
+                  (if value (append (reverse (spaced value)) out) out))))))
 
   (define (app-status-values w active?)
     (let* ([b (head:window-buffer w)] [status (head:app-status b)]

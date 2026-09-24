@@ -51,7 +51,8 @@
      (keymap:bind-default! 'keys-test "RET" beginning-of-line!)
      (keymap:bind-default! 'keys-test "C-k" end-of-line!)
 
-     (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
+     (check 'c-x-tab-and-c-x-s-tab-are-bound-to-the-helper
+       (list (eq? (keymap:binding "C-x TAB") keys:show!) (eq? (keymap:binding "C-x S-TAB") keys:page-up!)) '(#t #t))
      (check 'the-prompts-keys-are-its-commands-and-c-x-tab-is-allowed-there
        (list (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("RET")))) prompt:accept!)
              (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("C-g")))) prompt:cancel!)
@@ -112,6 +113,11 @@
 
      ;; C-x TAB pages the pop-up down from anywhere, back to the top past the end
      (define size (head:popup-rows))
+     (keys:page-up!)
+     (check 'c-x-s-tab-at-the-top-goes-to-the-last-page
+       (list (> (head:window-top popup) 0) (= 0 (mod (head:window-top popup) size))) '(#t #t))
+     (keys:show!)
+     (check 'and-c-x-tab-past-the-end-returns-to-the-top (head:window-top popup) 0)
      (keys:show!)
      (check 'c-x-tab-again-pages-the-listing-down (list (head:window-top popup) (eq? (head:current-window) w1)) (list size #t))
      (let loop ([n 0]) (when (and (> (head:window-top popup) 0) (< n (+ 2 (quotient (length (lines)) size)))) (keys:show!) (loop (+ n 1))))
