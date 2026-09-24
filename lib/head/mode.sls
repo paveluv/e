@@ -17,7 +17,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
+  (export add-context! (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
           indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
@@ -243,18 +243,40 @@
              (and (or (not (keymap:context-capture context)) (head:app-buffer? b))
                   context)))))
 
-  (edoc "The keymap contexts of a buffer's mode and its parents, nearest first, each named after its mode; a capture context needs a live app."
+  ;; A context a buffer has by its state rather than its mode: merge while
+  ;; its text holds conflict markers, say.  The app binding keys in it
+  ;; registers the context with the predicate; the registration retracts
+  ;; with the module.  Such a context comes before the mode's.
+  (define state-contexts (kernel:make-registry))
+
+  (edoc "Register a keymap context a buffer has while a predicate holds of it, before its mode's contexts: (mode:add-context! 'merge merging?) say, by the app that binds keys in the context."
+        (name symbol "the context")
+        (holds? procedure "(holds? buffer) giving whether the buffer has the context now"))
+  (define (add-context! name holds?)
+    (unless (and (symbol? name) (procedure? holds?))
+      (error 'add-context! "expected a context name and a predicate" name holds?))
+    (kernel:registry-add! state-contexts (cons name holds?)))
+
+  (define (state-contexts-of b)
+    ;; the registered contexts whose predicates hold of b; a raising
+    ;; predicate withholds its context rather than taking a key down
+    (fold-right (lambda (entry acc) (if (guard (ex [else #f]) ((cdr entry) b)) (cons (car entry) acc) acc))
+                '() (kernel:registry-items state-contexts)))
+
+  (edoc "The keymap contexts of a buffer, nearest first: those it has by its state, registered with add-context!, then its mode's and its parents', each named after its mode; a capture context needs a live app."
         (b buffer "the buffer")
         (returns (list-of symbol)))
   (define (key-contexts b)
-    (let loop ([m (mode-of b)] [acc '()])
-      (if (not m)
-          (reverse acc)
-          (loop (and (mode-parent m) (find-mode (mode-parent m)))
-                (let ([context (string->symbol (mode-name m))])
-                  (if (or (not (keymap:context-capture context)) (head:app-buffer? b))
-                      (cons context acc)
-                      acc))))))
+    (append
+      (state-contexts-of b)
+      (let loop ([m (mode-of b)] [acc '()])
+        (if (not m)
+            (reverse acc)
+            (loop (and (mode-parent m) (find-mode (mode-parent m)))
+                  (let ([context (string->symbol (mode-name m))])
+                    (if (or (not (keymap:context-capture context)) (head:app-buffer? b))
+                        (cons context acc)
+                        acc)))))))
 
   (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
         (b (list-of buffer) "the buffer, at most one")

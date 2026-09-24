@@ -180,14 +180,22 @@ three-argument form consisting of the context, key, and semantic action:
 ```scheme
 (keymap:bind! 'isearch "M-i" 'toggle-case)
 (keymap:unbind! 'isearch "M-c")
-(keymap:bind! 'prompt "C-u" 'kill)
+(keymap:bind! 'prompt "C-u" prompt:kill!)
 (keymap:bind! 'query-replace "SPC" 'skip)
 ```
 
-These contexts use action symbols because the operation acts on the currently
-running prompt or search. Their keys are
+The search and query-replace contexts use action symbols because the
+operation acts on the currently running search; the prompt context binds the
+`prompt:` commands, which ask the open prompt for their action. Their keys are
 individual decoded key events; global keymaps provide arbitrary multi-key
 chords.
+
+A context may also come from a buffer's state rather than its mode. An app
+registers it with a predicate, `(mode:add-context! 'merge merging?)`, and
+every buffer the predicate holds of has the context, before its mode's: the
+merge keys `M-n`, `M-m` and `M-d` are bound in `merge`, which a buffer has
+while its text holds conflict markers, so elsewhere those keys keep their
+other meanings and the keys listing shows them only where they work.
 
 Buffer-mode contexts can bind command procedures and complete chords. Terminals
 also declare which keys reach e during partial capture. To include `C-c` as

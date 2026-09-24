@@ -4,7 +4,9 @@
 ;; markers in the text: next! hops to a conflict, keep-mine! and
 ;; keep-disk! resolve the one at point, each as one undo step.  The
 ;; commands work on the current buffer through edit's editing API; the
-;; keys M-n, M-m and M-d are bound in init!, owned by the module.
+;; keys M-n, M-m and M-d are the merge context's, which a buffer has
+;; while its text holds conflict markers, so elsewhere they keep their
+;; other meanings and the keys listing shows them only where they work.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps merge)
@@ -13,7 +15,21 @@
           (prefix (foundation string) string:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
-          (prefix (head keymap) keymap:))
+          (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
+          (prefix (service file) file:))
+
+  (define scanned (make-weak-eq-hashtable)) ; buffer -> (lines . markers?), the last scan
+
+  (define (merging? b)
+    ;; whether the buffer's text holds conflict markers, scanned once per
+    ;; text: the lines vector is immutable and new after every edit
+    (let ([lines (head:buffer-lines b)] [last (hashtable-ref scanned b #f)])
+      (if (and last (eq? (car last) lines))
+          (cdr last)
+          (let ([now (> (file:conflict-count lines) 0)])
+            (hashtable-set! scanned b (cons lines now))
+            now))))
 
   (define (conflict-marker? b row prefix)
     (and (>= row 0) (< row (head:buffer-line-count b))
@@ -93,8 +109,9 @@
       (lambda (c) (delete-rows! (caddr c) (caddr c)) (delete-rows! (car c) (cadr c)))
       "Kept the disk side"))
 
-  (edoc "Install the merge keys: M-n, M-m and M-d.")
+  (edoc "Install the merge context, a buffer's while its text holds conflict markers, and its keys: M-n, M-m and M-d.")
   (define (init!)
-    (keymap:bind-default! "M-n" next!)
-    (keymap:bind-default! "M-m" keep-mine!)
-    (keymap:bind-default! "M-d" keep-disk!)))
+    (mode:add-context! 'merge merging?)
+    (keymap:bind-default! 'merge "M-n" next!)
+    (keymap:bind-default! 'merge "M-m" keep-mine!)
+    (keymap:bind-default! 'merge "M-d" keep-disk!)))

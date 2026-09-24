@@ -208,8 +208,11 @@ write succeeds; a failed write leaves the merged text available for review.
 Merge uses a three-way patience diff. Independent changes combine silently;
 collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
 `M-n` (`merge:next!`) moves to the next conflict, while `M-m` (`merge:keep-mine!`)
-and `M-d` (`merge:keep-disk!`) keep the buffer or disk side. Each resolution is one undo step, and saving waits until all conflicts are
-resolved. A read-only `<merge-name>` buffer records the merge report.
+and `M-d` (`merge:keep-disk!`) keep the buffer or disk side; the three keys
+belong to the `merge` context, which the buffer has while its text holds
+conflict markers, so `C-x TAB` lists them only then. Each resolution is one
+undo step, and saving waits until all conflicts are resolved. A read-only
+`<merge-name>` buffer records the merge report.
 
 ## Undo, selections, and the copy buffer
 
