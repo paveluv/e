@@ -248,7 +248,8 @@
           (let ([option (case (car args) [(shell) vt:shell] [(scrollback) vt:scrollback]
                           [else (error 'wire "unknown terminal option")])])
             (if (null? (cdr args)) (option) (begin (option (cadr args)) #t)))])]
-      [(reference-fetch) (control!) (arity 0) (reference:fetch!) #t]
+      [(reference-fetch) (control!) (arity 0) (reference:begin-fetch! actor) #t]
+      [(reference-signatures) (arity 0) (reference:signatures)]
       [(reference-page) (arity 0) (reference:page actor)]
       [(reference-page!)
        (control!) (arity 4)

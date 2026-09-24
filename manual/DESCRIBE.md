@@ -36,12 +36,13 @@ extensions from the Chez Scheme User's Guide. Fetch it once from inside e:
 (describe:fetch-data!)
 ```
 
-The command downloads and extracts roughly 1,400 entries into
-`data/describe/`, which is intentionally outside version control. It uses the
-[HTTP client](HTTPS.md). Each page's progress is redrawn in place in the echo
-area and every step is recorded in `<log>`; completion is announced in both.
-Queries remain available during a fetch, and another fetch is refused until
-the current one finishes. Once the corpus is there, M-x completion shows a
+The command asks the base to download and extract roughly 1,400 entries into
+`data/describe/`, which is intentionally outside version control, and returns
+at once; the base uses the [HTTP client](HTTPS.md). Each page's progress is
+redrawn in place in the echo area as it comes and every step is recorded in
+`<log>`; the completion, or a failure, is announced in both. Queries remain
+available during a fetch, and another fetch is refused until the current one
+finishes. Once the corpus is there, M-x completion shows a
 procedure's parameter names from it, `(string-append string ...)` say, where
 the procedure has no documentation of its own.
 

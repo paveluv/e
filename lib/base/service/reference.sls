@@ -7,9 +7,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service reference)
-  (export (rename (doc-browser-url browser-url)) (rename (doc-entries entries)) fetch!
-          (rename (doc-lookup lookup)) page page!)
+  (export begin-fetch! (rename (doc-browser-url browser-url)) (rename (doc-entries entries)) fetch!
+          (rename (doc-lookup lookup)) page page! signatures)
   (import (chezscheme)
+          (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (service doc) doc:)
@@ -17,6 +18,7 @@
           (prefix (service log) log:)
           (prefix (state actor) actor:)
           (prefix (state store) store:)
+          (prefix (sys activity) activity:)
           (prefix (sys https) https:))
 
   (define (data-dir)
@@ -515,41 +517,100 @@
         (for-each (lambda (e) (write e port) (newline port)) entries)
         (display ")\n" port))))
 
+  (define (claim-fetch!)
+    ;; one fetch owns the downloaded chapter files at a time: the claim,
+    ;; refused while one runs
+    (with-mutex corpus-lock
+      (when fetching? (error 'reference:fetch! "a reference fetch is already running"))
+      (set! fetching? #t)))
+
+  (define (release-fetch!)
+    (with-mutex corpus-lock (set! fetching? #f)))
+
+  (define (run-fetch!)
+    ;; the download and the rebuild, the claim held: readers keep the last
+    ;; complete index, and no log or transport call runs under its lock
+    (let* ([ref (data-dir)]
+           [total (+ (length tspl-pages) (length csug-pages))]
+           [done 0]
+           [progress (lambda (what)
+                       (set! done (+ done 1))
+                       ;; shown: progress in place under progress mode, which the
+                       ;; wire's fetch runs in
+                       (log:add! 'describe (format "Fetching ~a (~a/~a)" what done total) #t))])
+      (ensure-directory! ref)
+      (ensure-directory! (string-append ref "/tspl4"))
+      (ensure-directory! (string-append ref "/csug"))
+      (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
+      (fetch-book! ref "csug" csug-base csug-pages progress)
+      (log:add! 'describe "Extracting the reference corpus..." #t)
+      (let* ([data (append (parse-book ref "tspl4" 'tspl tspl-pages)
+                           (parse-book ref "csug" 'csug csug-pages))]
+             [next (index-data data)])
+        (with-mutex corpus-lock
+          (write-data! data)
+          (set! corpus next))
+        (log:add! 'describe
+          (format "Describe database ready: ~a entries covering ~a names"
+                  (length (car next))
+                  (hashtable-size (cdr next)))))
+      (void)))
+
   (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the index; one fetch at a time.")
   (define (fetch!)
-    ;; One fetch owns the downloaded chapter files at a time. Readers keep
-    ;; the last complete index; no log or transport call runs under its lock.
-    (dynamic-wind #t
-      (lambda ()
-        (with-mutex corpus-lock
-          (when fetching? (error 'reference:fetch! "a reference fetch is already running"))
-          (set! fetching? #t)))
-      (lambda ()
-        (let* ([ref (data-dir)]
-               [total (+ (length tspl-pages) (length csug-pages))]
-               [done 0]
-               [progress (lambda (what)
-                           (set! done (+ done 1))
-                           ;; shown: progress in place under the head's progress mode
-                           (log:add! 'describe (format "Fetching ~a (~a/~a)" what done total) #t))])
-          (ensure-directory! ref)
-          (ensure-directory! (string-append ref "/tspl4"))
-          (ensure-directory! (string-append ref "/csug"))
-          (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
-          (fetch-book! ref "csug" csug-base csug-pages progress)
-          (log:add! 'describe "Extracting the reference corpus..." #t)
-          (let* ([data (append (parse-book ref "tspl4" 'tspl tspl-pages)
-                               (parse-book ref "csug" 'csug csug-pages))]
-                 [next (index-data data)])
-            (with-mutex corpus-lock
-              (write-data! data)
-              (set! corpus next))
-            (log:add! 'describe
-              (format "Describe database ready: ~a entries covering ~a names"
-                      (length (car next))
-                      (hashtable-size (cdr next)))))
-          (void)))
-      (lambda () (with-mutex corpus-lock (set! fetching? #f)))))
+    (claim-fetch!)
+    (dynamic-wind void run-fetch! release-fetch!))
+
+  (edoc "Start the download in a worker on an actor's behalf and return at once: the fetch's records are the actor's, each page's as progress, a failure's among them; refused while a fetch runs. The transport settings in force are the worker's."
+        (actor actor "the actor the records are attributed to"))
+  (define (begin-fetch! actor)
+    (claim-fetch!)
+    (let ([backend (https:backend)] [connector (https:connector)])
+      (fork-thread
+        (lambda ()
+          (dynamic-wind void
+            (lambda ()
+              (actor:call-as actor
+                (lambda ()
+                  (parameterize ([https:backend backend] [https:connector connector] [log:progress #t])
+                    (guard (ex [else
+                                (guard (ignored [else (void)])
+                                  (log:add! 'describe (format "Fetch failed: ~a" (kernel:condition-text ex)) #t))])
+                      (activity:call-with run-fetch!))))))
+            release-fetch!)))
+      (void)))
+
+  (define signature-cache #f) ; (corpus registered-count . signatures) as last built
+
+  (edoc "The documented procedure forms of the corpus and the registered modules, (name form ...) per name with the forms as text, in one piece for a head's completion hints."
+        (returns list)
+        (effects internal))
+  (define (signatures)
+    (let* ([corpus (car (corpus-data))] [registered (doc:entries)])
+      (unless (and signature-cache (eq? (car signature-cache) corpus) (= (cadr signature-cache) (length registered)))
+        (let ([table (make-eq-hashtable)])
+          (define (attach! name text)
+            (eq-hashtable-update! table name (lambda (old) (if (member text old) old (append old (list text)))) '()))
+          (for-each
+            (lambda (entry)
+              (for-each
+                (lambda (form)
+                  (when (equal? (car form) "procedure")
+                    ;; a form goes to the name it defines when that is one of the
+                    ;; entry's; an unreadable or foreign one to every name
+                    (let ([operator (guard (ex [else #f])
+                                      (let ([sig (with-input-from-string (cdr form) read)]) (and (pair? sig) (car sig))))])
+                      (if (memq operator (doc:names entry))
+                          (attach! operator (cdr form))
+                          (for-each (lambda (name) (attach! name (cdr form))) (doc:names entry))))))
+                (doc:forms entry)))
+            (append corpus registered))
+          (set! signature-cache
+            (cons corpus
+                  (cons (length registered)
+                        (let-values ([(names forms) (hashtable-entries table)])
+                          (map cons (vector->list names) (vector->list forms))))))))
+      (cddr signature-cache)))
 
   ;;; Loading and queries ------------------------------------------------------
 

@@ -45,7 +45,7 @@
           (prefix (head style) style:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
-          (prefix (only (service reference) lookup) reference:)
+          (prefix (only (service reference) signatures) reference:)
           (prefix (only (sys sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
 
   ;;; Symbol completion -------------------------------------------------------
@@ -688,24 +688,32 @@
                    (loop (cdr p)))]
             [else (cons (format "~a" (car p)) (loop (cdr p)))])))
 
+  (define signature-table #f) ; (source . index): the base's signatures last seen, indexed by name
+
+  (edoc "The documented procedure forms recorded for a name, as text: the base's corpus and registered modules come in one piece, indexed once per version, and the hints computed against an older version go with it."
+        (sym symbol "the name")
+        (returns (list-of string))
+        (effects internal))
+  (define (described-forms sym)
+    (let ([source (guard (ex [else '()]) (reference:signatures))])
+      (unless (and signature-table (eq? (car signature-table) source))
+        (let ([index (make-eq-hashtable)])
+          (for-each (lambda (entry) (eq-hashtable-set! index (car entry) (cdr entry))) source)
+          (set! signature-table (cons source index))
+          (hashtable-clear! hint-cache)))
+      (eq-hashtable-ref (cdr signature-table) sym '())))
+
   (define (described-params sym)
     ;; Pick the longest documented procedure form for this name.
     (guard (ex [else #f])
       (let ([best #f])
         (for-each
-          (lambda (entry)
-            (for-each
-              (lambda (form)
-                (when (equal? (car form) "procedure")
-                  (let ([sig (guard (ex [else #f])
-                               (with-input-from-string (cdr form) read))])
-                    (when (and (pair? sig) (eq? (car sig) sym)
-                               (or (not best)
-                                   (> (signature-arity sig)
-                                      (signature-arity best))))
-                      (set! best sig)))))
-              (doc:forms entry)))
-          (reference:lookup sym))
+          (lambda (text)
+            (let ([sig (guard (ex [else #f]) (with-input-from-string text read))])
+              (when (and (pair? sig) (eq? (car sig) sym)
+                         (or (not best) (> (signature-arity sig) (signature-arity best))))
+                (set! best sig))))
+          (described-forms sym))
         (and best (signature-tokens best)))))
 
   (define (local-params v)

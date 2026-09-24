@@ -298,6 +298,30 @@
              (set! fail-at #f)
              (fetch!)
              (test:check 'refresh-can-retry (map fields (reference:entries)) before))
+
+           ;; the wire's fetch runs in a worker on the requester's behalf: it
+           ;; returns at once, refuses a second fetch while it runs, and its
+           ;; records are the requester's, presented as progress; the
+           ;; signatures come in one piece, the registered modules' included
+           (arrived #f) (release #f) (set! paused #t)
+           (let ([shown (length (presented))])
+             (parameterize ([https:backend 'native] [https:connector connect])
+               (reference:begin-fetch! '(head "fetcher")))
+             (test:await 'background-fetch-entered arrived)
+             (test:check 'a-second-fetch-is-refused-while-one-runs
+               (test:raises? (lambda () (reference:begin-fetch! '(head "fetcher")))) #t)
+             (release #t)
+             (test:await 'background-fetch-completes (lambda () (>= (length (presented)) (+ shown 24))))
+             (test:check 'the-background-fetchs-records-are-the-requesters-progress
+               (let ([records (list-head (log:entries 'describe) 24)])
+                 (list (for-all (lambda (e) (equal? (log:actor e) '(head "fetcher"))) records)
+                       (car (map log:datum (reverse records)))
+                       (for-all (lambda (p) (eq? (car p) 'progress)) (list-tail (presented) shown))))
+               (list #t "Fetching tspl4/binding.html (1/22)" #t))
+             (test:check 'the-signatures-come-in-one-piece-with-the-registered-modules
+               (let ([table (reference:signatures)])
+                 (list (cdr (assq 's9-reference table)) (cdr (assq 's9-alias table)) (eq? table (reference:signatures))))
+               '(("(s9-reference value)" "(s9-reference)") ("(s9-alias value)") #t)))
            (for-each
              (lambda (description)
                (registered! description)

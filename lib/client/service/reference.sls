@@ -4,7 +4,7 @@
 ;; the page or the store reports a change to its buffer.
 (import (only (foundation edoc) elibrary))
 (elibrary (service reference)
-  (export browser-url entries fetch! lookup page page!)
+  (export browser-url entries fetch! lookup page page! signatures)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core kernel) kernel:)
@@ -37,10 +37,29 @@
             (when (or (not batch) (and (pair? current) (assv (car current) batch)))
               (forget-page!)))))))
 
-  (edoc "Ask the base to download the reference corpus.")
+  (define signature-cache #f) ; the base's signatures as last fetched, until the corpus changes
+  (define signature-invalidation
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (client:subscribe! 'logged
+          (lambda (entry presentation)
+            ;; a describe record: a fetch under way or done, the corpus changing
+            (when (eq? (caddr entry) 'describe) (set! signature-cache #f)))))))
+
+  (edoc "Ask the base to start downloading the reference corpus; it returns at once, and the fetch's progress arrives as this head's log records, redrawn in place in the echo area.")
   (define (fetch!)
     (forget-page!)
+    (set! signature-cache #f)
     (client:request 'reference-fetch))
+
+  (edoc "The documented procedure forms of the base's corpus and registered modules, (name form ...) per name, fetched in one request and kept until the corpus changes."
+        (returns list)
+        (effects internal))
+  (define (signatures)
+    (or signature-cache
+        (let ([next (client:request 'reference-signatures)])
+          (set! signature-cache next)
+          next)))
   (define (check-head head)
     (unless (equal? head (client:identity)) (error 'reference "a head addresses its own page")))
 

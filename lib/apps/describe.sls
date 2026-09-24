@@ -24,11 +24,11 @@
 
   ;;; Fetching --------------------------------------------------------------------
 
-  (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the describe database, each page's progress redrawn in place in the echo area; one fetch at a time.")
+  (edoc "Ask the base to download the reference corpus, TSPL and CSUG, and rebuild the describe database: the command returns at once, each page's progress is redrawn in place in the echo area as it comes, and the completion or a failure is announced there; one fetch at a time.")
   (define (fetch-data!)
-    ;; the fetch runs in this head: its records present as progress, one
-    ;; line redrawn per page, and the log keeps every step
-    (parameterize ([edit:message-progress #t]) (reference:fetch!)))
+    ;; the base downloads in a worker on this head's behalf: its records
+    ;; are this head's, presented as progress while the editor stays free
+    (reference:fetch!))
 
   ;;; Display -------------------------------------------------------------------
 
