@@ -60,6 +60,7 @@
              (prompt:allowed? keys:show!))
        (list #t #t "(prompt:type! (head:typed-text))" #t))
      (keys:show!)
+     (paint:window-layout) ; tiled, the pop-up has its geometry for the painter's clamp below
      (head:before-frame!)
      (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
        (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
@@ -133,12 +134,18 @@
          (substring s from (string:search s "  C-x" 0 (string-length s)))))
      (define pages (string->number (list-ref (let loop ([s (page-of)] [out '()]) (cond [(string:search s " " 0 (string-length s)) => (lambda (i) (loop (substring s (+ i 1) (string-length s)) (cons (substring s 0 i) out)))] [else (reverse (cons s out))])) 2)))
      (check 'the-bar-counts-the-pages-of-the-listing (list (> pages 1) (page-of)) (list #t (format "1 of ~a" pages)))
-     (keys:page-up!)
+     ;; the painter's clamp keeps point a margin from the edges: paging must
+     ;; leave the top where it put it once a frame has clamped
+     (define (clamp!) (paint:scroll-window! popup (head:popup-rows)))
+     (keys:page-up!) (clamp!)
      (check 'c-x-s-tab-at-the-top-shows-the-last-page (page-of) (format "~a of ~a" pages pages))
-     (keys:show!)
+     (keys:show!) (clamp!)
      (check 'and-c-x-tab-then-shows-the-first (page-of) (format "1 of ~a" pages))
-     (keys:show!)
-     (check 'the-next-page-down-is-the-second (page-of) (format "2 of ~a" pages))
+     (keys:show!) (clamp!)
+     (check 'the-next-page-down-is-the-second (list (page-of) (head:window-top popup)) (list (format "2 of ~a" pages) size))
+     (keys:show!) (clamp!)
+     (check 'and-the-one-after-is-the-third (page-of) (format "3 of ~a" pages))
+     (keys:page-up!) (clamp!)
      (keys:page-up!) ; back to the top
      (keys:page-up!)
      (check 'c-x-s-tab-at-the-top-goes-to-the-last-page

@@ -340,21 +340,34 @@
             starts))))
 
   (define (page-index w starts)
-    ;; the page a window is on: the last start at or before its top
-    (let ([top (head:window-top w)])
+    ;; the page a window is on: the one holding the line at the middle of
+    ;; the window's rows, so the painter's margins, which shift the top a
+    ;; few rows at either end of the text, leave the page as it was paged to
+    (let* ([lines (head:buffer-lines view)] [n (vector-length lines)]
+           [rows (page-rows w)]
+           [wrapped? (and (> (head:window-width w) 1) (paint:window-wrapped? w))]
+           [mid (let walk ([i (max 0 (min (head:window-top w) (- n 1)))] [used 0])
+                  (let ([take (if wrapped? (paint:line-segments w (vector-ref lines i)) 1)])
+                    (if (or (>= (+ i 1) n) (> (+ used take) (quotient rows 2)))
+                        i
+                        (walk (+ i 1) (+ used take)))))])
       (let loop ([starts starts] [i 0] [found 0])
         (cond [(null? starts) found]
-              [(<= (car starts) top) (loop (cdr starts) (+ i 1) i)]
+              [(<= (car starts) mid) (loop (cdr starts) (+ i 1) i)]
               [else found]))))
 
   (define (page! direction)
     ;; the listing a page further where it shows, the pop-up first: down,
     ;; from the top again past the end; up, from the last page again past
-    ;; the top; the pages as the status bar counts them
+    ;; the top; the pages as the status bar counts them, and point in the
+    ;; middle of the page, where the painter's scroll margin leaves the top
+    ;; where it was put
     (let* ([w (car (view-windows))] [starts (page-starts w)]
-           [top (list-ref starts (mod (+ (page-index w starts) direction) (length starts)))])
+           [i (mod (+ (page-index w starts) direction) (length starts))]
+           [top (list-ref starts i)]
+           [end (if (< (+ i 1) (length starts)) (- (list-ref starts (+ i 1)) 1) (- (vector-length (head:buffer-lines view)) 1))])
       (head:window-top-set! w top)
-      (head:window-prow-set! w top)
+      (head:window-prow-set! w (min end (+ top (quotient (page-rows w) 2))))
       (head:window-pcol-set! w 0)))
 
   (define (page-down!) (page! 1))
