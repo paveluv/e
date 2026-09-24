@@ -304,8 +304,9 @@ capture; splits copy the preference and named-head checkpoints retain it. This i
 state: it does not change the producer's capture facts or another head's input.
 `keymap:context-capture` returns `(toggle-key toggle-procedure editor-key ...)`
 or `#f`. Paint inserts the clickable `●` (full) or `◐` (partial) indicator after
-the first token of the producer's status, with the toggle hint in the focused
-window.
+the first token of the producer's status. Status bars carry no key hints; the
+keys listing on `C-x TAB` is where a key is looked up, and only `<keys>`
+itself says so on its bar.
 
 Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
 a `(lambda (buffer active?) ...)` returning a string, `(text . style)` span, or

@@ -97,7 +97,7 @@ headless emulator exposes both the controller state and accumulated output;
 e never invokes a host printer or command implicitly.
 
 Every live terminal window shows its process indicator and capture preference:
-`▶ ◐` or `▶ ●`. A focused window also shows `C-] toggle capture`.
+`▶ ◐` or `▶ ●`; `C-x TAB` lists the keys, the capture toggle among them.
 The preference belongs to the window; other windows and attached heads keep
 their own choice. A split copies the
 current choice into the new window, after which each is independent. Switching

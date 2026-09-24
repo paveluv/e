@@ -135,7 +135,7 @@
      ;; forwards the editor prefixes too -------------------------------------
      (send! "\x3;t")                    ; C-c t
      (wait-for! 'nested-terminal-opens
-                (lambda () (and (find-cell "▶ ◐") (find-cell "C-] toggle capture"))) 10000)
+                (lambda () (and (find-cell "▶ ◐") (not (find-cell "toggle capture")))) 10000)
      (send! "\x1b;x")                     ; M-x
      (wait-for! 'partial-capture-opens-the-global-prompt
                 (lambda () (and (find-cell "λ (") (find-cell "▶ ◐")))
@@ -177,12 +177,11 @@
      (wait-for! 'host-theme-report-forwarded
                 (lambda () (find-cell "997;2")) 3000)
 
-     ;; -- process exit frees the buffer: the capture control and its hint
-     ;; leave with the process ---------------------------------------------
+     ;; -- process exit frees the buffer: the capture control leaves with
+     ;; the process ------------------------------------------------------------
      (send! "exit\r")
      (wait-for! 'shell-exit-frees-buffer
-       (lambda () (and (find-cell "■") (not (find-cell "■ ●")) (not (find-cell "■ ◐"))
-                       (not (find-cell "C-] toggle capture")))) 10000)
+       (lambda () (and (find-cell "■") (not (find-cell "■ ●")) (not (find-cell "■ ◐")))) 10000)
 
      ;; -- M-x completion opens the pop-up window: the first Tab normalizes
      ;; without choosing, the second lists candidates above the echo area, and

@@ -477,15 +477,13 @@
       (cond [(or (not status) (string=? status "")) '()]
             [capture
              ;; Insert the window's control beside the producer's first status
-             ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix.
+             ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix;
+             ;; the toggle's key is the keys listing's to tell, not the bar's
              (let ([end (or (string:search status " " 0 (string-length status)) (string-length status))]
-                   [key (car capture)] [toggle (cadr capture)])
-               (append
-                 (list (cons (string-append " " (substring status 0 end) " ") #f)
-                       (cons (if (head:full-capture? w) "●" "◐") toggle)
-                       (cons (string:tail status end) #f))
-                 (if (and active? (eq? toggle (keymap:event-binding context key)))
-                     (list (cons (string-append "  " key " toggle capture") #f)) '())))]
+                   [toggle (cadr capture)])
+               (list (cons (string-append " " (substring status 0 end) " ") #f)
+                     (cons (if (head:full-capture? w) "●" "◐") toggle)
+                     (cons (string:tail status end) #f)))]
             [else (list (cons (string-append " " status) #f))])))
 
   (define (status-actions prefix spans visible-cells)
