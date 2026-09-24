@@ -503,7 +503,9 @@ toggles wrapping for one window, and `(window:set-wrap! setting)` sets it to
 `#t`, `#f` or `default`. Like line numbers, the window's setting applies
 while it shows an edit buffer; a buffer's own wrap fact, set with
 `head:buffer-wrap-set!`, is what an app's buffer follows and what an edit
-buffer follows while its window's setting is `default`.
+buffer follows while its window's setting is `default`. The fact is saved with
+the session, so a base restart keeps it: a terminal's transcript, whose rows
+are as wide as the terminal was, stays unwrapped.
 
 Wrapping, Up/Down, and paging measure screen cells, keeping the visual column
 across wide characters and combining sequences. Selections highlight whole

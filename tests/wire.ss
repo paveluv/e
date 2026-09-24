@@ -775,13 +775,15 @@
                        (map (lambda (key) (cdr (assq key facts))) '(base stamp modified)))
                      (rpc head 'history note) (rpc head 'read-marks note))
                    (list expected '("disk baseline\n" (10 . 9) #f) '() '()))
-                 (test:check 'live-and-ended-terminals-restore-as-ordinary-read-only-transcripts
+                 ;; a transcript's rows are as wide as the terminal was: its wrap fact,
+                 ;; #f, is kept, or a head would soft-wrap every full row by a character
+                 (test:check 'live-and-ended-terminals-restore-as-ordinary-read-only-unwrapped-transcripts
                    (map (lambda (id)
                           (let ([facts (caddr (rpc head 'snapshot id))])
-                            (list (car (rpc head 'snapshot id)) (cdr (assq 'read-only facts))
+                            (list (car (rpc head 'snapshot id)) (cdr (assq 'read-only facts)) (assq 'wrap facts)
                               (filter (lambda (entry) (memq (car entry) '(app mode alive disposable))) facts))))
                      (list term ended))
-                   (map (lambda (id) (list (list-ref (assv id states) 3) #t '())) (list term ended)))
+                   (map (lambda (id) (list (list-ref (assv id states) 3) #t '(wrap . #f) '())) (list term ended)))
                  (let* ([revision (cadr expected)] [notice (rpc head 'startup-notice)])
                    (rpc head 'edit note revision '(0 0 0 0) '("new base "))
                    (test:check 'restored-revisions-cannot-reuse-unrelated-deltas

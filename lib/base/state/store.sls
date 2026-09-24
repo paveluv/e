@@ -466,7 +466,10 @@
 
   ;;; Saved representation -------------------------------------------------
 
-  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed))
+  ;; the facts a session keeps: a buffer's file and baseline, its mode and
+  ;; its wrap setting, which every head shares and a restart must not reset,
+  ;; a terminal's transcript least of all, whose rows are its columns wide
+  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed wrap))
   (define (integer-at-least? n minimum) (and (integer? n) (exact? n) (>= n minimum)))
 
   (define (persistent-facts? facts)
@@ -479,6 +482,9 @@
                         [(file mode) (or (not (cdr entry)) (and (string? (cdr entry)) (> (string-length (cdr entry)) 0)))]
                         [(base) (or (not (cdr entry)) (string? (cdr entry)))]
                         [(trailing read-only) (boolean? (cdr entry))]
+                        [(wrap) (let ([v (cdr entry)])
+                                  (or (memq v '(default #t #f clean))
+                                      (and (pair? v) (eq? (car v) 'clean) (integer-at-least? (cdr v) 20))))]
                         [(modified-at) (or (not (cdr entry)) (and (integer? (cdr entry)) (exact? (cdr entry))))]
                         [(trashed) (let ([v (cdr entry)])
                                      (or (not v) (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))

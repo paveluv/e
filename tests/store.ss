@@ -1375,7 +1375,10 @@
                                            (trailing . #t) (mode . "scheme") (read-only . #f) (modified-at . 123)))])
        (check 'saved-store-validation
          (map (lambda (entry) (apply store:valid-import? entry))
-           (list (list 20 (list state)) '(1 ()) (list 2 (list state)) (list 0 '())
+           (list (list 20 (list state)) '(1 ())
+             ;; a wrap fact is kept: default, a boolean, clean or a clean cap
+             (list 20 (list (append (list-head state 4) (list (cons '(wrap . #f) (list-ref state 4))))))
+             (list 2 (list state)) (list 0 '())
              (list 20 (list state state))
              (list 20 (list state (cons 3 (cdr state))))
              '(20 ((2 -1 "saved" #("text") ())))
@@ -1386,9 +1389,10 @@
              '(20 ((2 8 "saved" #("text") ((modified . #t)))) )
              '(20 ((2 8 "saved" #("text") ((read-only . yes)))) )
              '(20 ((2 8 "saved" #("text") ((stamp 10 . 1000000000)))))
-             '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))))
-         (append '(#t #t) (make-list 13 #f))))
-     (let* ([id (store:create! alice "persistent" '("kept") '((trailing . #t) (mode . "scheme") (transient . ignored)))]
+             '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))
+             '(20 ((2 8 "saved" #("text") ((wrap . 3)))))))
+         (append '(#t #t #t) (make-list 14 #f))))
+     (let* ([id (store:create! alice "persistent" '("kept") '((trailing . #t) (mode . "scheme") (wrap . #f) (transient . ignored)))]
             [omitted (store:create! alice "generated" '("not kept") '((disposable . #t)))]
             [gap (store:create! alice "gone" '(""))])
        (store:delete! alice gap)
@@ -1397,8 +1401,8 @@
            (check 'export-preserves-identities-without-runtime-facts
              (list (> next-id gap) (cadr saved) (list-ref saved 3) (assv omitted states)
                    (assq 'transient (list-ref saved 4)) (assq 'modified (list-ref saved 4))
-                   (cdr (assq 'modified-at (list-ref saved 4))))
-             (list #t (store:revision id) '#("kept") #f #f #f (store:property id 'modified-at)))
+                   (cdr (assq 'modified-at (list-ref saved 4))) (assq 'wrap (list-ref saved 4)))
+             (list #t (store:revision id) '#("kept") #f #f #f (store:property id 'modified-at) '(wrap . #f)))
            (check 'import-never-overlays-a-running-store
              (list (test:raises? (lambda () (store:import! next-id (list saved))))
                    (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))) '(#t #t)))))
