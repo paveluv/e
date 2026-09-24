@@ -243,6 +243,19 @@
              (eq? (head:window-buffer w1) (view)))
        (list "zeta.txt" #t #t #t))
      (window:focus! w2) (window:delete!)
+
+     ;; the app as an API: what an agent asks and does without keys
+     (define (api name) (top-level-value name))
+     ((api 'file-view:filter!) "long") (settle!)
+     (check 'the-api-filters-lists-and-locates
+       (list ((api 'file-view:location)) ((api 'file-view:entries))) (list root (list (list (path "a 日本語 long (name).txt") 'file))))
+     ((api 'file-view:filter!) "") (settle!)
+     ((api 'file-view:select!) "zeta.txt")
+     (check 'the-api-selects-by-path-and-tells-the-choice ((api 'file-view:chosen)) (path "zeta.txt"))
+     (check 'the-api-sorts-by-column-and-tells-the-order
+       (begin ((api 'file-view:sort-column!) 2) (let ([first ((api 'file-view:sorts))]) ((api 'file-view:sort-column!) 2) (list first ((api 'file-view:sorts)))))
+       '(((2 . #f)) ((2 . #t))))
+     (check 'the-api-refuses-an-unlisted-path (test:raises? (lambda () ((api 'file-view:select!) "nowhere.txt"))) #t)
      (kill-buffer! (view))
      (for-each (lambda (name) (delete-file (path name))) names)
      (for-each (lambda (name) (delete-directory (path name))) (reverse directories))

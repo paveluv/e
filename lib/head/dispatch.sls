@@ -33,7 +33,8 @@
     ;; Run a resolved binding's action and remember it as the last
     ;; command (an error still counts); an unbound key, or a context
     ;; action leaking into the global map, is reported and remembered
-    ;; as no command at all.
+    ;; as no command at all.  A call's producers run at the press, its
+    ;; other arguments stand as given.
     (cond [(procedure? action)
            (unless (and capture (eq? action (cadr capture)))
              (head:follow-app! (head:current-window) #f))
@@ -45,7 +46,8 @@
            (dynamic-wind void
              (lambda ()
                (apply (keymap:call-action-procedure action)
-                      (map (lambda (produce) (produce)) (keymap:call-action-arguments action))))
+                      (map (lambda (produce) (if (procedure? produce) (produce) produce))
+                           (keymap:call-action-arguments action))))
              (lambda () (head:set-last-command! action)))]
           [(keymap:prefill-action? action)
            ;; a pre-filled M-x built with keymap:prefill

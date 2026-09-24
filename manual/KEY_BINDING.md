@@ -54,11 +54,13 @@ used directly. A lambda can adapt a command that needs arguments:
 
 Two structural actions describe themselves where a lambda shows as an
 anonymous command. `keymap:call` applies a command to what other procedures
-return when the key is pressed, and `keymap:prefill` opens M-x with the
-command's call typed up to its next argument, so completion asks for it:
+return when the key is pressed, and to any other argument as given, and
+`keymap:prefill` opens M-x with the command's call typed up to its next
+argument, so completion asks for it:
 
 ```scheme
 (keymap:bind! "C-x k" (keymap:call edit:kill-buffer! head:current-buffer))
+(keymap:bind! "F2" (keymap:call file-view:sort-column! 2))
 (keymap:bind! "C-c a" (keymap:prefill edit:answer!))
 ```
 

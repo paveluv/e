@@ -1,9 +1,10 @@
 ;; file-view.sls -- the local, filterable <files> app.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps file-view)
-  (export choose! clear-filter! create! enter! erase! expansion-limit first-row! init! last-row! next-row! open!
-          open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! show-hidden
-          sort-column! toggle-hidden!)
+  (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
+          expansion-limit filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
+          open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
+          show-hidden sort-column! (rename (sort-order sorts)) toggle-hidden!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
@@ -316,7 +317,7 @@
                       (cons 'file-hidden (show-hidden)))
                 placements presentations)))))))
 
-  (define (select! row)
+  (define (select-row! row)
     (when row
       (choice-selected-set! (choice-for (head:current-window)) (car row))
       (head:goto! (cons (row-index (car row)) 0))))
@@ -325,7 +326,7 @@
            [index (if row (row-index (car row)) (- first-row 1))])
       (set! hover #f)
       (when (pair? rows)
-        (select! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
+        (select-row! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
   (define (navigate! path keep-filter? selected)
     ;; Recall a directory's choice only for the same filter; a fresh query
     ;; must get its own default instead of an old unfiltered container.
@@ -387,6 +388,9 @@
                         ;; goes behind in the recency list, so C-x b offers the
                         ;; document it replaced
                         (head:set-buffers! (append (remq view (head:buffers)) (list view)))])))]))))
+
+  (edoc "Set the filter: entries whose names match the text stay listed, a text with a slash matching paths; the choice stays when it still matches."
+        (text string "the filter text"))
   (define (filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing
@@ -475,6 +479,39 @@
 
   (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
 
+  ;;; The app as an API: what M-x or an agent asks and does --------------------------
+
+  (edoc "The directory the files view shows, or #f before it opens."
+        (returns (or string #f)))
+  (define (directory-shown) location)
+
+  (edoc "The entries listed, in the order shown: (path kind) each, the kind file, directory or another of the directory service's."
+        (returns list))
+  (define (listed-entries)
+    (map (lambda (row) (list (car row) (directory:entry-kind (cdr row)))) rows))
+
+  (edoc "The chosen entry's path in the current window, or #f without one."
+        (returns (or string #f)))
+  (define (chosen-path)
+    ;; read without making a window's choice record, as candidate would
+    (let* ([w (head:current-window)] [choice (hashtable-ref choices w #f)]
+           [row (or (and (string? (over w)) (assoc (over w) rows))
+                    (and choice (assoc (choice-selected choice) rows))
+                    (default-row))])
+      (and row (car row))))
+
+  (edoc "Make a listed entry the choice in the current window, by its path, absolute or relative to the directory shown; refused when none is listed under it."
+        (path string "the entry's path"))
+  (define (select-path! path)
+    (let ([row (or (assoc (file:canonical (file:expand (file:absolute path location))) rows) (exact-row path))])
+      (unless row (error 'select! "no such entry is listed" path))
+      (select-row! row)))
+
+  (edoc "The sort order as data, the columns sorted by, first first, each (column . descending?), the columns 1 to 6."
+        (returns list))
+  (define (sort-order)
+    (map (lambda (s) (cons (+ (car s) 1) (cdr s))) sorts))
+
   (edoc "Open the chosen file in this window, or in the window's target windows when it has any; a chosen directory is entered instead."
         (prompts))
   (define (choose!) (activate! #f))
@@ -513,12 +550,12 @@
         (prompts))
   (define (create!) (path!))
 
-  (edoc "Sort by the column of the function key pressed, F1 to F6, the same key again reversing the order.")
-  (define (sort-column!)
-    (let ([key (and (pair? (head:current-keys)) (car (head:current-keys)))])
-      (if (and key (member key '("F1" "F2" "F3" "F4" "F5" "F6")))
-          (cycle! (- (char->integer (string-ref key 1)) 49))
-          (edit:set-message! "Press F1 to F6 to sort by a column"))))
+  (edoc "Sort the entries by a column, the same column again reversing the order: 1 name, 2 size, 3 modified, 4 created, 5 permissions, 6 the entry or match count; F1 to F6 sort by the column of their number."
+        (column integer "the column, 1 to 6"))
+  (define (sort-column! column)
+    (unless (and (integer? column) (exact? column) (<= 1 column 6))
+      (error 'sort-column! "expected a column, 1 to 6" column))
+    (cycle! (- column 1)))
 
   (edoc "Show the dot entries, or hide them again.")
   (define (toggle-hidden!)
@@ -547,8 +584,9 @@
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!) (("M-c") ,create!)
-      (("F1" "F2" "F3" "F4" "F5" "F6") ,sort-column!) (("M-.") ,toggle-hidden!) (("C-r") ,refresh!)
-      (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)))
+      (("M-.") ,toggle-hidden!) (("C-r") ,refresh!) (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
+      ;; the function keys sort by the column of their number
+      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
     ;; what the files context leaves to the app: focus, the wheel, the
@@ -563,7 +601,7 @@
              (set! hover (cond [row (cons (head:current-window) (car row))]
                                [column (cons (head:current-window) (car column))] [else #f]))) #t]
           [(member event '("MOUSE-LEAVE" "BLUR")) (set! hover #f) #t]
-          [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select! (keyboard-row (head:current-window))) #t]
+          [(member event '("MOUSE-RELEASE" "MOUSE-DRAG")) (select-row! (keyboard-row (head:current-window))) #t]
           [(string=? event "MOUSE-CLICK")
            (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [breadcrumb (and at (breadcrumb-hit (head:current-window) (car at) (cdr at)))]
@@ -571,7 +609,7 @@
                   ;; Navigation from another pane ends path entry through the
                   ;; prompt's normal focus-loss rule; its input must not undo it.
                   [navigation (if path-part #t 'keep-focus)])
-             (cond [row (set! hover #f) (select! row) (activate! #f) navigation]
+             (cond [row (set! hover #f) (select-row! row) (activate! #f) navigation]
                    [breadcrumb (up-to! (caddr breadcrumb)) navigation]
                    [column (cycle! (car column)) (set! hover (cons (head:current-window) (car column))) 'keep-focus]
                    [else 'ignore-click]))]

@@ -313,13 +313,13 @@
   (define-record-type (prefill-action make-prefill-action prefill-action?)
     (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
 
-  (edoc "Bind a key to a call: the command applied to what the producers return when the key is pressed, (keymap:call edit:kill-buffer! head:current-buffer) say."
+  (edoc "Bind a key to a call: the command applied, when the key is pressed, to what the producers return and to the other arguments as given, (keymap:call edit:kill-buffer! head:current-buffer) say, or (keymap:call file-view:sort-column! 2)."
         (procedure procedure "the command to call")
-        (producers (list-of procedure) "the procedures producing its arguments, in order")
+        (producers (list-of any) "its arguments in order: a procedure produces one at the press, any other value stands as it is")
         (returns (record call-action)))
   (define (call procedure . producers)
-    (unless (and (procedure? procedure) (for-all procedure? producers))
-      (error 'call "expected a procedure and producers" procedure producers))
+    (unless (procedure? procedure)
+      (error 'call "expected a procedure" procedure))
     (make-call-action procedure producers))
 
   (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument, (keymap:prefill edit:answer!) say, the given arguments spelled first."
@@ -363,7 +363,8 @@
           [(call-action? action)
            (string-append "(" (action-text (call-action-procedure action))
                           (apply string-append
-                            (map (lambda (p) (string-append " (" (action-text p) ")")) (call-action-arguments action)))
+                            (map (lambda (p) (if (procedure? p) (string-append " (" (action-text p) ")") (string-append " " (spell p))))
+                                 (call-action-arguments action)))
                           ")")]
           ;; the M-x prompt's label, as eval draws it, then the text it opens with
           [(prefill-action? action) (string-append "λ " (prefill-text action))]

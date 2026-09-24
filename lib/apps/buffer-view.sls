@@ -9,9 +9,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffer-view)
-  (export choose! clear-filter! erase! first-row! init! last-row! next! next-row! open! page-down! page-up!
-          paste-filter! previous! previous-row! return! sort-column!)
+  (export choose! (rename (chosen-entry chosen)) clear-filter! erase! filter! first-row! init! last-row! next! next-row!
+          open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) sort-column!)
   (import (chezscheme)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
@@ -279,6 +280,8 @@
         (when (and target (memq target (head:windows))) (head:set-current! target))
         (if (trashed? e) (edit:restore! (trashed-name e)) (head:show-buffer! e)))))
 
+  (edoc "Set the filter: buffers whose names, paths or shown paths contain the text stay listed."
+        (text string "the filter text"))
   (define (filter! text)
     (set! hover #f)
     (set! buffer-filter text)
@@ -300,6 +303,24 @@
                    (cdr hints)))))))
 
   (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
+
+  ;;; The app as an API: what M-x or an agent asks and does --------------------------
+
+  (edoc "The chosen entry in the current window: a buffer, a trashed buffer's name, or #f without one."
+        (returns (or buffer string #f)))
+  (define (chosen-entry)
+    ;; read without making a window's choice record, as candidate would
+    (let* ([w (head:current-window)] [choice (hashtable-ref choices w #f)]
+           [e (if (memq (hover-of w) rows) (hover-of w) (and choice (choice-selected choice)))]
+           [e (and (selectable? e) (memq e rows) e)])
+      (cond [(not e) #f] [(trashed? e) (trashed-name e)] [else e])))
+
+  (edoc "Make a listed buffer the choice in the current window; refused when it is not listed."
+        (b buffer "the buffer"))
+  (define (select-buffer! b)
+    (let ([b (edoc:type-value 'buffer b)])
+      (unless (memq b rows) (error 'select! "the buffer is not listed" (head:buffer-name b)))
+      (select-row! b)))
 
   (edoc "Switch this window to the chosen buffer, or restore a chosen trashed one.")
   (define (choose!) (activate-row!))
@@ -331,12 +352,12 @@
   (edoc "Clear the filter, every buffer listed again.")
   (define (clear-filter!) (filter! ""))
 
-  (edoc "Sort by the column of the function key pressed, F1 to F6, the same key again reversing the order.")
-  (define (sort-column!)
-    (let ([key (and (pair? (head:current-keys)) (car (head:current-keys)))])
-      (if (and key (member key '("F1" "F2" "F3" "F4" "F5" "F6")))
-          (cycle-sort! (- (char->integer (string-ref key 1)) (char->integer #\1)))
-          (edit:set-message! "Press F1 to F6 to sort by a column"))))
+  (edoc "Sort the buffers by a column, the same column again reversing the order: 1 modified, 2 read-only, 3 buffer, 4 lines, 5 mode, 6 file; F1 to F6 sort by the column of their number."
+        (column integer "the column, 1 to 6"))
+  (define (sort-column! column)
+    (unless (and (integer? column) (exact? column) (<= 1 column 6))
+      (error 'sort-column! "expected a column, 1 to 6" column))
+    (cycle-sort! (- column 1)))
 
   (edoc "Return to the buffer the buffers app replaced in this window.")
   (define (return!)
@@ -358,7 +379,9 @@
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!)
-      (("F1" "F2" "F3" "F4" "F5" "F6") ,sort-column!) (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)))
+      (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
+      ;; the function keys sort by the column of their number
+      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
     ;; what the buffers context leaves to the app: focus, the wheel, the

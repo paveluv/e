@@ -63,6 +63,10 @@
        (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
        '(#t #t))
      (check 'a-key-bound-to-an-anonymous-command-is-left-out (index-of "M-z") #f)
+     (check 'a-call-with-a-constant-argument-reads-as-the-call
+       (let ([text (keymap:action-text (keymap:call beginning-of-line! 3))])
+         (list (contains? text "beginning-of-line!") (string:suffix? " 3)" text)))
+       '(#t #t))
      (check 'section-titles-are-bold-and-rows-plain
        (let ([styles (mode:line-styles (view))])
          (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))

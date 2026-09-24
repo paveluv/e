@@ -173,15 +173,21 @@ Linux uses `statx`; unavailable fields show `—`. On other supported systems,
 the current fallback supplies type, permissions and modification time, with
 size and creation time unknown. Inode-change time is never labeled Created.
 
-## Keys as commands
+## The app as an API
 
-Every key of the files pane runs a `file-view:` command bound in the `files`
-context: `file-view:choose!` for Enter, `enter!`, `parent!`, `next-row!`,
-`previous-row!`, `page-down!`, `page-up!`, `first-row!`, `last-row!`,
-`erase!`, `clear-filter!`, `create!`, `sort-column!` for `F1` to `F6`,
-`toggle-hidden!`, `refresh!`, `return!` and `paste-filter!`. `C-x TAB` lists
-them with their descriptions, `C-h k` describes one, and M-x runs any of
-them; typed characters grow the filter directly.
+The files pane is driven entirely through `file-view:` commands, so M-x or
+an agent can do everything a key does. Every key of the pane is bound in
+the `files` context to one of them: `file-view:choose!` for Enter, `enter!`,
+`parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
+`first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
+`(sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
+`return!` and `paste-filter!`, so `C-x TAB` lists them with their
+descriptions and `C-h k` describes one. Beside the keys, `(filter! text)`
+sets the filter that typing grows, `(select! path)` makes a listed entry the
+choice, `(chosen)` is the choice's path, `(entries)` lists what is shown as
+`(path kind)` pairs, `(location)` is the directory shown, and `(sorts)` the
+sort order as `(column . descending?)` pairs; `open-directory!` opens the
+pane on a directory.
 
 ## Windows and heads
 

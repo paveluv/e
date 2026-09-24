@@ -191,4 +191,11 @@
      (head:show-buffer! origin)
      (kill-buffer! (buffer "<picker-gamma>"))
      (kernel:retract-module! 'picker-fixture)
+     ;; the app as an API: the filter set, a buffer chosen, the choice told
+     (buffer-view:open!)
+     (buffer-view:filter! "picker-b")
+     (buffer-view:select! (buffer "<picker-beta>"))
+     (check 'the-api-filters-selects-and-tells-the-choice
+       (list (eq? (buffer-view:chosen) (buffer "<picker-beta>")) (test:raises? (lambda () (buffer-view:select! (buffer "<picker-gamma>")))))
+       '(#t #t))
      (test:finish! 'buffers)))
