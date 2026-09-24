@@ -297,7 +297,7 @@
   (define (close! typed)
     ;; ")" and "]" both close the innermost open construct with the
     ;; character the source opened it with, as the Scheme REPL does;
-    ;; outside the mode they insert themselves.
+    ;; run outside the modes, from M-x say, they insert themselves.
     (if (pretty-buffer?)
         (edit:insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
         (edit:insert-text! (string typed))))
@@ -344,8 +344,12 @@
     (mode:derive! "pretty-scheme-clusters" "scheme" '() #f rendered)
     (mode:derive! "pretty-scheme-depth" "scheme" '() #f depth-rendered)
     (mode:derive! "pretty-scheme-rainbow" "scheme" '() #f #f rainbow-styles)
-    (keymap:bind-default! ")" close-round!)
-    (keymap:bind-default! "]" close-square!)
+    ;; the closing brackets are the two hiding modes' own keys, bound in their
+    ;; contexts: elsewhere a bracket types itself
+    (for-each (lambda (context)
+                (keymap:bind-default! context ")" close-round!)
+                (keymap:bind-default! context "]" close-square!))
+              '(pretty-scheme-clusters pretty-scheme-depth))
     (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)

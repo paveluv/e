@@ -18,7 +18,8 @@
              (prefix (head head) head:)
              (prefix (state store) store:)
              (only (chezscheme) format box unbox set-box!)
-             (prefix (modes scheme-mode) scheme-mode:) (prefix (apps pretty-scheme) pretty-scheme:))
+             (prefix (modes scheme-mode) scheme-mode:) (prefix (apps pretty-scheme) pretty-scheme:)
+             (prefix (head keymap) keymap:))
 
 
      (define check test:check)
@@ -282,5 +283,12 @@
              (eq? (mode:styles (mode:find "pretty-scheme-rainbow")) (mode:styles (mode:find "scheme")))
              (and (mode:render (mode:find "pretty-scheme-clusters")) #t))
        '(#t #t #t #t #t #t))
+     ;; the closing brackets are the hiding modes' own keys, not the global map's
+     (check 'pretty-schemes-closing-brackets-are-bound-in-its-hiding-modes-only
+       (list (keymap:binding ")") (keymap:binding "]")
+             (let ([hit (keymap:resolved-binding 'pretty-scheme-clusters '(")"))]) (and hit (eq? (keymap:binding-action (cdr hit)) pretty-scheme:close-round!)))
+             (let ([hit (keymap:resolved-binding 'pretty-scheme-depth '("]"))]) (and hit (eq? (keymap:binding-action (cdr hit)) pretty-scheme:close-square!)))
+             (keymap:resolved-binding 'pretty-scheme-rainbow '(")")))
+       '(#f #f #t #t #f))
 
      (test:finish! 'mode)))
