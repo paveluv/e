@@ -8,7 +8,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps keys)
-  (export (rename (keys-hide! hide!)) init! (rename (keys-show! show!)))
+  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-show! show!)))
   (import (rnrs)
           (only (chezscheme) format void)
           (prefix (foundation edoc) edoc:)
@@ -16,10 +16,24 @@
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
-          (prefix (head paint) paint:))
+          (prefix (head paint) paint:)
+          (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <keys> buffer while it is shown
   (define listed #f) ; (buffer . contexts) the listing describes
+  (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
+
+  (define (stale-listing? b)
+    ;; a <keys> or <keys 2> local buffer that is not the view: one an older
+    ;; checkpoint brought back as text
+    (let ([name (head:buffer-name b)])
+      (and (not (eq? b view)) (not (head:buffer-store-id b))
+           (string:prefix? "<keys" name) (string:suffix? ">" name))))
+
+  (define (sweep!)
+    ;; the listings an older checkpoint restored go; the view is made fresh
+    (for-each (lambda (b) (when (stale-listing? b) (head:forget-buffer! b))) (head:buffers))
+    (set! swept? #t))
 
   ;;; The rows ------------------------------------------------------------------------
 
@@ -59,16 +73,18 @@
 
   ;;; The text -------------------------------------------------------------------------
 
+  (define (cells s) (glyph:cells s))
+
   (define (pad s width)
-    (if (>= (string-length s) width) s (string-append s (make-string (- width (string-length s)) #\space))))
+    (if (>= (cells s) width) s (string-append s (make-string (- width (cells s)) #\space))))
 
   (define (wrap text width)
-    ;; the text as lines of at most width characters, broken at spaces
+    ;; the text as lines of at most width cells, broken at spaces
     (let loop ([words (filter (lambda (w) (> (string-length w) 0)) (split-words text))] [line ""] [out '()])
       (cond
         [(null? words) (reverse (if (string=? line "") out (cons line out)))]
         [(string=? line "") (loop (cdr words) (car words) out)]
-        [(<= (+ (string-length line) 1 (string-length (car words))) width)
+        [(<= (+ (cells line) 1 (cells (car words))) width)
          (loop (cdr words) (string-append line " " (car words)) out)]
         [else (loop words "" (cons line out))])))
 
@@ -84,8 +100,8 @@
     ;; command and its description wrapped in the last column
     (if (null? groups)
         '()
-        (let* ([key-width (apply max (map (lambda (g) (apply max (map string-length (car g)))) groups))]
-               [command-width (min 40 (apply max (map (lambda (g) (string-length (cadr g))) groups)))]
+        (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
+               [command-width (min 40 (apply max (map (lambda (g) (cells (cadr g))) groups)))]
                [text-width (max 10 (- width key-width command-width 6))])
           (cons title
                 (apply append
@@ -114,10 +130,10 @@
                               (if (= (length (cddr capture)) 1) "s" "")
                               (keymap:sequence-text (list (car capture)))))))))
 
-  (define (listing b)
+  (define (listing b width)
     ;; the buffer's mode contexts' bindings, an app's own keys among them,
-    ;; then the global ones
-    (let ([width (max 40 (paint:screen-cols))])
+    ;; then the global ones, in the width given
+    (let ([width (max 40 width)])
       (append (apply append
                 (map (lambda (context)
                        (section (format "~a keys" context) (append (context-groups context) (capture-note context)) width))
@@ -134,23 +150,48 @@
 
   ;;; The buffer in the pop-up ------------------------------------------------------------
 
-  (define (subject)
-    ;; the window whose keys the listing describes: the current one, or the
-    ;; one selected before the pop-up when the pop-up itself is selected
-    (let ([w (head:current-window)])
-      (if (head:popup? w) (or (head:previous-window) w) w)))
+  (define (view-windows)
+    ;; the windows showing the listing, the pop-up first when it does
+    (let ([ws (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows))])
+      (if (memq (head:popup) ws) (cons (head:popup) (remq (head:popup) ws)) ws)))
 
-  (define (showing?) (and view (memq view (head:buffers)) (eq? (head:window-buffer (head:popup)) view) #t))
+  (define (showing?) (and view (memq view (head:buffers)) (pair? (view-windows)) #t))
+
+  (define (subject)
+    ;; the window whose keys the listing describes: the current one unless
+    ;; it shows the listing, then the one selected before it, else none
+    (let ([w (head:current-window)] [p (head:previous-window)])
+      (cond [(not (eq? (head:window-buffer w) view)) w]
+            [(and p (not (eq? (head:window-buffer p) view))) p]
+            [else #f])))
+
+  (define (listing-width)
+    ;; the narrowest window showing the listing, a cell short of its edge so
+    ;; no line wraps; the screen's width before any shows it, or while the
+    ;; windows are not yet tiled and report no width to speak of
+    (let* ([ws (view-windows)]
+           [narrowest (if (null? ws) 0 (apply min (map head:window-content-width ws)))])
+      (- (if (> narrowest 40) narrowest (paint:screen-cols)) 1)))
 
   (define (fill! b)
-    ;; the listing for a buffer into the view, from the top
+    ;; the listing for a buffer into the view, shown from the top wherever it is
     (set! listed (cons b (mode:key-contexts b)))
     (head:buffer-read-only-set! view #f)
-    (head:buffer-lines-set! view (list->vector (let ([lines (listing b)]) (if (null? lines) (list "no keys") lines))))
+    (head:buffer-lines-set! view
+      (list->vector (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))))
     (head:buffer-read-only-set! view #t)
-    (head:window-top-set! (head:popup) 0)
-    (head:window-prow-set! (head:popup) 0)
-    (head:window-pcol-set! (head:popup) 0))
+    (for-each (lambda (w) (head:window-top-set! w 0) (head:window-prow-set! w 0) (head:window-pcol-set! w 0))
+              (view-windows)))
+
+  (define (ensure-view!)
+    ;; the <keys> buffer, made fresh when none is live
+    (unless (and view (memq view (head:buffers)))
+      (sweep!)
+      (set! view (head:new-local-buffer! "keys"))
+      ;; transient: a checkpoint keeps no listing, so a restart brings none back
+      (head:buffer-fact-set! view 'resume-kind 'keys)
+      (head:add-buffer! view)
+      (mode:choose! "keys" view)))
 
   (define (drop-view!)
     (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
@@ -159,49 +200,57 @@
 
   (define (follow!)
     ;; the listing keeps to the active window's buffer and its mode; the view
-    ;; goes once the pop-up shows something else, cleared by its ↓ say
+    ;; goes once no window shows it, the pop-up cleared by its ↓ say
+    (unless swept? (sweep!))
     (when (and view (memq view (head:buffers)))
-      (if (not (eq? (head:window-buffer (head:popup)) view))
+      (if (null? (view-windows))
           (drop-view!)
-          (let ([b (head:window-buffer (subject))])
-            (unless (or (eq? b view) (and listed (eq? (car listed) b) (equal? (cdr listed) (mode:key-contexts b))))
+          (let* ([w (subject)] [b (and w (head:window-buffer w))])
+            (when (and b (not (eq? b view))
+                       (not (and listed (eq? (car listed) b) (equal? (cdr listed) (mode:key-contexts b)))))
               (fill! b))))))
 
   (define (page-down!)
-    ;; the pop-up's view a page further, from the top again past the end
-    (let* ([w (head:popup)] [n (vector-length (head:buffer-lines view))]
-           [size (max 1 (head:popup-rows))]
+    ;; the listing a page further where it shows, the pop-up first, from the
+    ;; top again past the end
+    (let* ([w (car (view-windows))] [n (vector-length (head:buffer-lines view))]
+           [size (max 1 (if (head:popup? w) (head:popup-rows) (head:window-size w)))]
            [top (+ (head:window-top w) size)]
            [top (if (>= top n) 0 top)])
       (head:window-top-set! w top)
       (head:window-prow-set! w top)
       (head:window-pcol-set! w 0)))
 
-  (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, page it down, and from the top again past the end. The listing follows the active window.")
+  (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
     (cond
       [(showing?) (page-down!)]
       [else
-       (let ([b (head:window-buffer (subject))])
-         (unless (and view (memq view (head:buffers)))
-           (set! view (head:new-local-buffer! "keys"))
-           (head:add-buffer! view)
-           (mode:choose! "keys" view))
+       (let ([b (head:window-buffer (or (subject) (head:current-window)))])
+         (ensure-view!)
          (head:set-window-buffer! (head:popup) view)
          (fill! b)
          (head:show-popup! (head:popup-default-rows)))]))
 
-  (edoc "Put the key listing away: the pop-up shows its placeholder again and hides.")
+  (edoc "Show the keys listing in the current window as the read-only buffer <keys>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB pages it there.")
+  (define (keys-open!)
+    (let ([b (head:current-buffer)])
+      (ensure-view!)
+      (head:show-buffer! view)
+      (unless (eq? b view) (fill! b))))
+
+  (edoc "Put the key listing away: the pop-up shows its placeholder again and hides, and a window showing the listing shows another buffer.")
   (define (keys-hide!)
-    (when (showing?) (head:hide-popup!))
+    (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
     (drop-view!))
 
   (define (hint)
     (and view (eq? (head:current-buffer) view) "C-x TAB page down"))
 
-  (edoc "Install the keys helper: its mode, C-x TAB showing or paging the listing, its status hint, and the listing following the active window before every frame.")
+  (edoc "Install the keys helper: its mode, C-x TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
     (mode:register! "keys" '() '() styles #f #f)
+    (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" keys-show!)
     (paint:add-status-hint! hint)
     (head:add-pre-redraw-hook! follow!)))

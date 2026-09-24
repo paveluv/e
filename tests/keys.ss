@@ -22,11 +22,16 @@
              (prefix (head head) head:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
-             (prefix (head window) window:))
+             (prefix (head paint) paint:)
+             (prefix (head window) window:)
+             (prefix (state actor) actor:))
 
      (define check test:check)
      (edit-init!)
      (keys:init!)
+     ;; a listing an older checkpoint brought back as a plain local buffer
+     (define stale (head:new-local-buffer! "keys"))
+     (head:add-buffer! stale)
      (define popup (head:popup))
      (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
      (define (view) (head:window-buffer popup))
@@ -47,6 +52,12 @@
      (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
      (keys:show!)
      (head:before-frame!)
+     (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
+       (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
+             (begin (head:checkpoint!)
+                    (exists (lambda (entry) (let ([r (car entry)]) (and (pair? r) (eq? (car r) 'local) (equal? (cadr r) "<keys>"))))
+                            (list-ref (actor:checkpoint head:ui-actor) 4))))
+       '(#f "<keys>" keys #f))
      (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-mode-section-first
        (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
              (index-of "keys-test keys") (< 0 (index-of "Global keys"))
@@ -115,6 +126,23 @@
      (window:clear-pop-up!)
      (head:before-frame!)
      (check 'clearing-the-pop-up-drops-the-view-too (list (head:popup-rows) (head:buffer-named "<keys>")) '(0 #f))
+
+     ;; the listing opens in an ordinary window too, for the buffer shown there,
+     ;; C-x TAB pages it there, and hiding takes it away
+     (window:focus! w1)
+     (head:show-buffer! b)
+     (keys:open!)
+     (paint:window-layout) ; tiled, the window reports its width
+     (check 'the-listing-opens-in-the-current-window-for-its-buffer
+       (list (head:buffer-name (head:current-buffer)) (head:buffer-line (head:current-buffer) 0) (head:popup-rows) (head:window-top w1)
+             ;; every line fits the window that shows it
+             (for-all (lambda (l) (< (string-length l) (head:window-content-width w1))) (vector->list (head:buffer-lines (head:current-buffer)))))
+       '("<keys>" "keys-test keys" 0 0 #t))
+     (keys:show!)
+     (check 'c-x-tab-pages-the-listing-in-its-window (list (> (head:window-top w1) 0) (head:popup-rows)) '(#t 0))
+     (keys:hide!)
+     (check 'hiding-takes-the-listing-out-of-the-window
+       (list (head:buffer-named "<keys>") (head:buffer-name (head:window-buffer w1))) '(#f "keyed"))
 
      ;; the long key names show short and bind under either spelling
      (check 'long-key-names-show-short
