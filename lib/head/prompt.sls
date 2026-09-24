@@ -21,13 +21,18 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt)
-  (export (rename (prompt-active? active?)) allow! completion-highlight completion-kind completion-label confirm?
-          content (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
-          (rename (prompt-ghost ghost)) (rename (prompt-in-window in-window))
-          (rename (prompt-inspector inspector)) interaction (rename (query-key! key!)) line
-          make-candidate make-completer (rename (make-content-view make-content))
-          (rename (prompt-multiline multiline)) (rename (prompt! read!))
-          (rename (prompt-reindent reindent)) transient (rename (validate-input validate)))
+  (export (rename (prompt-accept! accept!)) (rename (prompt-active? active?)) allow! (rename (prompt-allowed? allowed?))
+          (rename (prompt-alternate-complete! alternate-complete!)) (rename (prompt-backward! backward!))
+          (rename (prompt-beginning! beginning!)) (rename (prompt-cancel! cancel!)) (rename (prompt-complete! complete!))
+          completion-highlight completion-kind completion-label confirm? content (rename (content-view-context content-context))
+          (rename (prompt-delete-backward! delete-backward!)) (rename (prompt-delete-forward! delete-forward!))
+          (rename (prompt-down! down!)) (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
+          (rename (prompt-end! end!)) (rename (prompt-forward! forward!)) (rename (prompt-ghost ghost))
+          (rename (prompt-in-window in-window)) (rename (prompt-inspect! inspect!)) (rename (prompt-inspector inspector))
+          interaction (rename (query-key! key!)) (rename (prompt-kill! kill!)) line make-candidate make-completer
+          (rename (make-content-view make-content)) (rename (prompt-multiline multiline)) (rename (prompt-newline! newline!))
+          (rename (prompt-paste! paste!)) (rename (prompt! read!)) (rename (prompt-reindent reindent)) transient
+          (rename (prompt-type! type!)) (rename (prompt-up! up!)) (rename (validate-input validate)) (rename (prompt-yank! yank!)))
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme)
@@ -92,6 +97,111 @@
   (define (allow! command . stand-in)
     (kernel:registry-add! allowed-commands
       (cons command (and (pair? stand-in) (car stand-in)))))
+
+  (edoc "Whether a global command may run from inside a prompt, having been allowed."
+        (command any "the command, as a key binds it")
+        (returns boolean))
+  (define (prompt-allowed? command)
+    (and (assq command (kernel:registry-items allowed-commands)) #t))
+
+  ;;; The prompt's commands -----------------------------------------------------------
+  ;;
+  ;; The keys of a prompt are bound in the prompt context to these commands,
+  ;; so the keys listing shows them and a key's meaning is documented here.
+  ;; Each asks the open prompt for one action, which its loop carries out on
+  ;; the input it holds; outside a prompt they are refused.
+
+  (define requested #f)
+
+  (define (request! action)
+    (unless (prompt-active?) (error 'prompt "no prompt is open"))
+    (set! requested action))
+
+  (define (take-requested!)
+    (let ([r requested]) (set! requested #f) r))
+
+  (edoc "Cancel the prompt, its input dropped.")
+  (define (prompt-cancel!) (request! 'cancel))
+
+  (edoc "Accept the prompt's input, where it validates as the prompt requires.")
+  (define (prompt-accept!) (request! 'accept))
+
+  (edoc "Move the prompt's point to the beginning of its line, and again to the beginning of the whole input.")
+  (define (prompt-beginning!) (request! 'beginning))
+
+  (edoc "Move the prompt's point to the end of its line, and again to the end of the whole input.")
+  (define (prompt-end!) (request! 'end))
+
+  (edoc "Move the prompt's point one character back.")
+  (define (prompt-backward!) (request! 'backward))
+
+  (edoc "Move the prompt's point one character forward.")
+  (define (prompt-forward!) (request! 'forward))
+
+  (edoc "Move up a line of a multi-line input, or back through the prompt's history from its first line.")
+  (define (prompt-up!) (request! 'up))
+
+  (edoc "Move down a line of a multi-line input, or forward through the prompt's history from its last line.")
+  (define (prompt-down!) (request! 'down))
+
+  (edoc "Delete the character after the prompt's point.")
+  (define (prompt-delete-forward!) (request! 'delete-forward))
+
+  (edoc "Delete the character before the prompt's point.")
+  (define (prompt-delete-backward!) (request! 'delete-backward))
+
+  (edoc "Kill the input from the prompt's point to its end into the copy buffer.")
+  (define (prompt-kill!) (request! 'kill))
+
+  (edoc "Insert the copy buffer's text at the prompt's point.")
+  (define (prompt-yank!) (request! 'yank))
+
+  (edoc "Complete the input at point, a sole candidate whole, a common prefix as far as it goes, the candidates listed otherwise.")
+  (define (prompt-complete!) (request! 'complete))
+
+  (edoc "Complete with the prompt's other completer, the editor-defined names at M-x say.")
+  (define (prompt-alternate-complete!) (request! 'alternate-complete))
+
+  (edoc "Describe the name at the prompt's point, where the prompt has an inspector.")
+  (define (prompt-inspect!) (request! 'inspect))
+
+  (edoc "Insert a line break at the prompt's point, in a multi-line input.")
+  (define (prompt-newline!) (request! 'newline))
+
+  (edoc "Insert a bracketed paste at the prompt's point, its lines joined with spaces unless the input is multi-line.")
+  (define (prompt-paste!) (request! 'paste))
+
+  (edoc "Insert text at the prompt's point, as typing does; SELF-INSERT, any character, runs it with the character typed."
+        (text string "the text to insert"))
+  (define (prompt-type! text) (request! (cons 'type text)))
+
+  (define (run-action! action)
+    ;; a bound action run inside the prompt: a command, or a call with its
+    ;; producers run and its other arguments as given
+    (cond [(procedure? action) (action)]
+          [(keymap:call-action? action)
+           (apply (keymap:call-action-procedure action)
+                  (map (lambda (p) (if (procedure? p) (p) p)) (keymap:call-action-arguments action)))]
+          [else (void)]))
+
+  (define (prompt-action event)
+    ;; what a key asks of the prompt: a symbol as bound, or what the bound
+    ;; command requests when run, a character through SELF-INSERT
+    (head:set-current-keys! (list event))
+    (let ([bound (or (keymap:event-binding 'prompt event)
+                     (and (tty:key-event-character event) (keymap:event-binding 'prompt "SELF-INSERT")))])
+      (cond [(symbol? bound) bound]
+            [(or (procedure? bound) (keymap:call-action? bound))
+             (set! requested #f)
+             (run-action! bound)
+             (take-requested!)]
+            [else #f])))
+
+  (define (content-action! body event)
+    ;; a key the content view's own context binds, run: #t when one was
+    (let ([bound (and (content-view-context body) (keymap:event-binding (content-view-context body) event))])
+      (and (or (procedure? bound) (keymap:call-action? bound))
+           (begin (head:set-current-keys! (list event)) (run-action! bound) #t))))
 
   ;;; Questions, completions, and the prompt ------------------------------------------
 
@@ -249,9 +359,21 @@
   (edoc "A live completion view below a prompt's input."
         (minimum-height integer "the rows it needs at least")
         (render procedure "(render input window available-height page) giving styled lines and a page count")
-        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it"))
-  (define-record-type content-view
-    (fields minimum-height render handle))
+        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it")
+        (context (or symbol #f) "a keymap context whose bindings act while the view shows, listed among the prompt's keys"))
+  (define-record-type (content-view %make-content-view content-view?)
+    (fields minimum-height render handle context))
+
+  (edoc "A content view for a prompt in a window: the rows it needs, its renderer, its event handler or #f, and optionally the keymap context whose bindings act while it shows."
+        (minimum-height integer "the rows it needs at least")
+        (render procedure "(render input window available-height page) giving styled lines and a page count")
+        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it")
+        (context (list-of symbol) "the keymap context, at most one")
+        (returns (record content-view)))
+  (define make-content-view
+    (case-lambda
+      [(minimum-height render handle) (%make-content-view minimum-height render handle #f)]
+      [(minimum-height render handle context) (%make-content-view minimum-height render handle context)]))
 
   (edoc "The content view a prompt in a window shows below its input, or #f."
         (value (or (record content-view) #f)))
@@ -896,7 +1018,7 @@
               (if in-window? (render!) (render-echo!))
               (paint:redraw!)
               (let* ([event (head:read-key-event #t)]
-                     [action (and (not (eof-object? event)) (keymap:event-binding 'prompt event))]
+                     [action (and (not (eof-object? event)) (prompt-action event))]
                      [previous-edge last-edge])
                 (set! last-edge #f)
                 (cond
@@ -911,6 +1033,7 @@
                        (and body (string=? event "S-TAB")))
                    (set! page (mod (+ page (if (member event '("PAGEUP" "S-TAB")) -1 1)) pages))
                    (loop s pos "")]
+                  [(and body (content-action! body event)) (set! page 0) (loop s pos "")]
                   [(and body (content-view-handle body) ((content-view-handle body) event))
                    (set! page 0) (loop s pos "")]
                   [(eq? action 'cancel) (set! message "Quit") #f]
@@ -965,6 +1088,8 @@
                            (edited (car result) (cdr result)))
                          (let ([text (string:join lines " ")])
                            (edited (string:insert s pos text) (+ pos (string-length text))))))]
+                  [(and (pair? action) (eq? (car action) 'type))
+                   (edited (string:insert s pos (cdr action)) (+ pos (string-length (cdr action))))]
                   [(prompt-window-command event) => (lambda (run) (loop s pos (run)))]
                   [(tty:key-event-character event) => (lambda (c) (edited (string:insert s pos (string c)) (+ pos 1)))]
                   [else (loop s pos "")]))))))

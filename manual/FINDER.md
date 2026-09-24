@@ -70,7 +70,7 @@ as an italic ghost immediately after the input. It disappears after two seconds
 or when you continue editing; it is not repeated in the echo area.
 Up/Down browse file history; Left/Right edit the path.
 Tab also refreshes the directory's metadata; C-r rescans without completing
-input, so external file creations and removals can be picked up in this mode.
+input, so external file creations and removals can be picked up in this mode. These keys, with F1–F6, are the `finder-create` context's, listed by `C-x TAB` while the mode is open.
 
 The input keeps find-file's editing, cursor, wrapping and error recovery.
 Esc or C-g removes the prompt and returns to normal files mode at the

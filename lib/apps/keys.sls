@@ -17,6 +17,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head prompt) prompt:)
           (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <keys> buffer while it is shown
@@ -63,7 +64,9 @@
                       (map (lambda (i) (+ i 1)) (iota (length sequence)))))
             nearer))
 
-  (define (context-groups context nearer read-only?)
+  (define (context-groups context nearer read-only? . keep)
+    ;; keep, when given, admits a binding's action: the commands allowed in a
+    ;; prompt for the global section while one is open
     ;; (keys command description) for a context's bindings that work here:
     ;; not shadowed by a nearer context, and not editing where the text is
     ;; read-only; the keys running one command together, groups by their
@@ -83,7 +86,8 @@
             (loop (cdr owned)
                   (if (and command
                            (not (shadowed? (keymap:binding-sequence b) nearer))
-                           (not (and read-only? (edits? action))))
+                           (not (and read-only? (edits? action)))
+                           (or (null? keep) ((car keep) action)))
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -176,19 +180,32 @@
     (or (head:app-buffer? b)
         (let ([guard (head:buffer-read-only b)]) (and guard (not (procedure? guard))))))
 
+  (define (prompt-context)
+    ;; the context of an open prompt's content view, or #f
+    (let ([body (prompt:content)]) (and body (prompt:content-context body))))
+
   (define (listing b width)
-    ;; the keys that work in the buffer: its mode contexts' bindings, an
-    ;; app's own keys among them, then the global ones, each context's keys
-    ;; less those a nearer context takes, and less the editing commands
-    ;; where the text is read-only, in the width given
-    (let ([width (max 40 width)] [read-only? (read-only-text? b)])
-      (let loop ([contexts (append (mode:key-contexts b) '(global))] [nearer '()] [out '()])
+    ;; the keys that work now: with a prompt open, its content view's
+    ;; context, the prompt's keys and the global commands allowed in a
+    ;; prompt; else the buffer's mode contexts' bindings, an app's own keys
+    ;; among them, then the global ones; each context's keys less those a
+    ;; nearer context takes, and less the editing commands where the text
+    ;; is read-only, in the width given
+    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [prompting? (prompt:active?)])
+      (let loop ([contexts (if prompting?
+                               (append (if (prompt-context) (list (prompt-context)) '()) '(prompt global))
+                               (append (mode:key-contexts b) '(global)))]
+                 [nearer '()] [out '()])
         (if (null? contexts)
             (apply append (reverse out))
             (let ([context (car contexts)])
               (loop (cdr contexts) (cons context nearer)
                     (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
-                                   (append (context-groups context nearer read-only?) (capture-note context)) width)
+                                   (append (if (and prompting? (eq? context 'global))
+                                               (context-groups context nearer #f prompt:allowed?)
+                                               (context-groups context nearer (and (not prompting?) read-only?)))
+                                           (capture-note context))
+                                   width)
                           out)))))))
 
   (define (heading? line)
@@ -211,12 +228,18 @@
 
   (define (showing?) (and view (memq view (head:buffers)) (pair? (view-windows)) #t))
 
+  (define (describable? w)
+    ;; a window the listing can describe: one showing something other than
+    ;; the listing, the pop-up only while it shows
+    (and w (not (eq? (head:window-buffer w) view))
+         (not (and (head:popup? w) (= (head:popup-rows) 0)))))
+
   (define (subject)
     ;; the window whose keys the listing describes: the current one unless
     ;; it shows the listing, then the one selected before it, else none
     (let ([w (head:current-window)] [p (head:previous-window)])
-      (cond [(not (eq? (head:window-buffer w) view)) w]
-            [(and p (not (eq? (head:window-buffer p) view))) p]
+      (cond [(describable? w) w]
+            [(describable? p) p]
             [else #f])))
 
   (define (listing-width)
@@ -228,9 +251,14 @@
       ;; the screen's width less the listing's scrollbar column
       (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
 
+  (define (situation b)
+    ;; what the listing depends on: the buffer, its contexts, its text being
+    ;; read-only, and an open prompt with its content's context
+    (list b (mode:key-contexts b) (read-only-text? b) (prompt:active?) (prompt-context)))
+
   (define (fill! b)
     ;; the listing for a buffer into the view, shown from the top wherever it is
-    (set! listed (list b (mode:key-contexts b) (read-only-text? b)))
+    (set! listed (situation b))
     (head:buffer-read-only-set! view #f)
     (head:buffer-lines-set! view
       (list->vector (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))))
@@ -263,8 +291,7 @@
       (if (null? (view-windows))
           (drop-view!)
           (let* ([w (subject)] [b (and w (head:window-buffer w))])
-            (when (and b (not (eq? b view))
-                       (not (equal? listed (list b (mode:key-contexts b) (read-only-text? b)))))
+            (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
               (fill! b))))))
 
   (define (page-down!)
@@ -281,7 +308,13 @@
   (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
     (cond
-      [(showing?) (page-down!)]
+      [(showing?)
+       ;; the situation changed under the listing, a prompt opened say: it
+       ;; refills; unchanged, or with nothing else to describe, it pages
+       (let* ([w (subject)] [b (and w (head:window-buffer w))])
+         (if (and b (not (eq? b view)) (not (equal? listed (situation b))))
+             (fill! b)
+             (page-down!)))]
       [else
        (let ([b (head:window-buffer (or (subject) (head:current-window)))])
          (ensure-view!)
@@ -309,5 +342,7 @@
     (mode:register! "keys" '() '() styles #f #f)
     (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" keys-show!)
+    ;; C-x TAB works everywhere, inside a prompt too, where it lists the prompt's keys
+    (prompt:allow! keys-show!)
     (paint:add-status-hint! hint)
     (head:add-pre-redraw-hook! follow!)))

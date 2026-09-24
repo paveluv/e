@@ -240,6 +240,16 @@
      (send! "\x18;0")
      (wait-for! 'close-the-test-split
        (lambda () (not (and (find-cell "1▏") (find-cell "2▏")))) 5000)
+     ;; C-x TAB works inside a prompt, listing the prompt's keys in the pop-up;
+     ;; pressed again after the prompt closes, the listing returns to the buffer's
+     (send! "\x1b;x")
+     (send! "\x18;\t")
+     (wait-for! 'c-x-tab-inside-a-prompt-lists-the-prompts-keys
+       (lambda () (and (find-cell "prompt keys") (find-cell "prompt:"))) 5000)
+     (send! "\x7;")                     ; C-g leaves the prompt
+     (send! "\x18;\t")
+     (wait-for! 'the-listing-returns-to-the-buffers-keys
+       (lambda () (and (find-cell "<keys>") (not (find-cell "prompt keys")))) 5000)
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

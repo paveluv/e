@@ -30,6 +30,11 @@ Prompt input wider than the screen wraps onto continuation rows marked with
 shrinking windows to their configured minimum; after eight prompt rows, the
 prompt scrolls while keeping its cursor visible.
 
+Every prompt key runs a `prompt:` command bound in the `prompt` context,
+`prompt:accept!` for Enter, `prompt:complete!` for Tab, `prompt:type!` with
+the character typed, so `C-x TAB` lists them while a prompt is open, together
+with the global commands allowed there.
+
 ## Window management during a prompt
 
 A prompt does not lock the window layout. The window-management commands

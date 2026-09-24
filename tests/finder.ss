@@ -256,7 +256,11 @@
        (begin ((api 'finder:toggle-sort-column!) 2) (let ([first ((api 'finder:sorts))]) ((api 'finder:toggle-sort-column!) 2) (list first ((api 'finder:sorts)))))
        '(((2 . #f)) ((2 . #t))))
      (check 'the-api-refuses-an-unlisted-path (test:raises? (lambda () ((api 'finder:select!) "nowhere.txt"))) #t)
-     (check 'typing-is-a-binding-of-the-files-context
+     (check 'the-create-modes-keys-are-bound-in-its-own-context
+       (list (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'finder-create '("C-r")))) (api 'finder:refresh!))
+             (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'finder-create '("F2"))))))
+       '(#t "(finder:toggle-sort-column! 2)"))
+     (check 'typing-is-a-binding-of-the-finder-context
        (let ([hit (keymap:resolved-binding 'finder '("SELF-INSERT"))])
          (and hit (keymap:action-text (keymap:binding-action (cdr hit)))))
        "(finder:extend-filter! (head:typed-text))")

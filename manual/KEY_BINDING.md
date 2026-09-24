@@ -26,6 +26,10 @@ lists that one's keys. Every binding is listed; a key bound to a lambda,
 in `config.e` say, shows as `anonymous command` with nothing to say about
 it, so bind a named command instead, and the editor's own libraries never
 bind a lambda, the linter refusing one.
+`C-x TAB` works everywhere: inside a prompt it lists the prompt's keys, each
+a `prompt:` command such as `prompt:accept!` for Enter, the keys of the
+prompt's own view where it has one, the finder's create mode say, and the
+global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status

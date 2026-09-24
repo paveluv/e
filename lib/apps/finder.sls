@@ -407,12 +407,11 @@
     (start-scan!))
   (define (cycle! column)
     (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
-  (define (sort-event! event)
-    (and (member event '("F1" "F2" "F3" "F4" "F5" "F6"))
-         (begin (cycle! (- (char->integer (string-ref event 1)) 49)) #t)))
   (define (path-event! event)
-    ;; Tab's filesystem lookup and the live metadata must see fresh entries.
-    (if (member event '("TAB" "C-r")) (begin (refresh!) (string=? event "C-r")) (sort-event! event)))
+    ;; Tab's filesystem lookup must see fresh entries; the mode's own keys,
+    ;; C-r and the sorting F1 to F6, are bound in the finder-create context
+    (when (string=? event "TAB") (refresh!))
+    #f)
   (define (follow-path! input base)
     (let* ([full (file:expand (file:absolute (if (string=? input "~") "~/" input) base))]
            [directory (file:canonical (file:directory-part full))])
@@ -467,7 +466,8 @@
         (lambda () (set! query "") (set! path-part "") (set! hover #f))
         (lambda ()
           (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
-                                           (lambda (input w height page) (path-lines input w height page base)) path-event!)])
+                                           (lambda (input w height page) (path-lines input w height page base))
+                                           path-event! 'finder-create)])
             (edit:prompt-file! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
@@ -665,6 +665,9 @@
     (mode:register! "finder" '() '() (lambda (line) #f) #f styles)
     (keymap:bind-default! "C-x C-f" open!)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'finder key (cadr entry))) (car entry))) finder-keys)
+    ;; the keys of the create mode's prompt, beside the prompt's own
+    (keymap:bind-default! 'finder-create "C-r" refresh!)
+    (for-each (lambda (n) (keymap:bind-default! 'finder-create (format "F~a" n) (keymap:call toggle-sort-column! n))) '(1 2 3 4 5 6))
     (head:add-buffer-kill-hook!
       (lambda (b)
         (vector-for-each (lambda (choice)

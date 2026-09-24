@@ -23,6 +23,7 @@
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
+             (prefix (head prompt) prompt:)
              (prefix (head window) window:)
              (prefix (state actor) actor:))
 
@@ -51,6 +52,12 @@
      (keymap:bind-default! 'keys-test "C-k" end-of-line!)
 
      (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
+     (check 'the-prompts-keys-are-its-commands-and-c-x-tab-is-allowed-there
+       (list (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("RET")))) prompt:accept!)
+             (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("C-g")))) prompt:cancel!)
+             (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("SELF-INSERT")))))
+             (prompt:allowed? keys:show!))
+       (list #t #t "(prompt:type! (head:typed-text))" #t))
      (keys:show!)
      (head:before-frame!)
      (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
