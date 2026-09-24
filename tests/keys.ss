@@ -48,6 +48,7 @@
      (keymap:bind-default! 'keys-test "M-w" kill-line!)
      (keymap:bind-default! 'keys-test "M-z" (lambda () #f))
      (keymap:bind-default! 'keys-test "RET" beginning-of-line!)
+     (keymap:bind-default! 'keys-test "C-k" end-of-line!)
 
      (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
      (keys:show!)
@@ -60,10 +61,11 @@
                             (list-ref (actor:checkpoint head:ui-actor) 4))))
        '(#f "<keys>" keys right #f))
      (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-mode-section-first
-       (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
-             (index-of "keys-test keys") (< 0 (index-of "Global keys"))
-             (contains? (line-at 1) "M-q") (contains? (line-at 1) "kill-line!") (contains? (line-at 1) "Kill from point"))
-       (list "<keys>" #t "keys" #t 0 #t #t #t #t))
+       (let ([at (index-of "M-q")])
+         (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
+               (index-of "keys-test keys") (< 0 at (index-of "Global keys"))
+               (contains? (line-at at) "kill-line!") (contains? (line-at at) "Kill from point")))
+       (list "<keys>" #t "keys" #t 0 #t #t #t))
      (check 'a-long-description-wraps-in-its-column-and-keys-running-one-command-share-the-row
        (let ([at (index-of "M-q")])
          ;; the wrapped description runs on below the first line, however narrow the column
@@ -76,6 +78,12 @@
          (list (substring (line-at at) 0 2) (substring (line-at (+ at 1)) 0 2) (vector-ref (styles (line-at at)) 1)
                (substring (line-at (index-of "RET")) 0 2)))
        '(" ╷" " ╵" chrome "  "))
+     (check 'a-global-key-the-mode-takes-is-left-out-of-the-global-section
+       (let ([global (index-of "Global keys")])
+         (list (and (index-of "C-k") (< (index-of "C-k") global))
+               (exists (lambda (l) (contains? l "  C-k ")) (list-tail (lines) global))
+               (exists (lambda (l) (contains? l "  C-_ ")) (list-tail (lines) global))))
+       '(#t #f #t))
      (check 'a-row-with-a-short-description-takes-one-line
        (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
        '(#t #t))
@@ -101,6 +109,17 @@
      (check 'c-x-tab-again-pages-the-listing-down (list (head:window-top popup) (eq? (head:current-window) w1)) (list size #t))
      (let loop ([n 0]) (when (and (> (head:window-top popup) 0) (< n (+ 2 (quotient (length (lines)) size)))) (keys:show!) (loop (+ n 1))))
      (check 'past-the-end-it-returns-to-the-top (head:window-top popup) 0)
+
+     ;; where the text is read-only the editing commands are left out
+     (head:buffer-read-only-set! b #t)
+     (head:show-buffer! b)
+     (head:before-frame!)
+     (check 'a-read-only-buffer-lists-no-editing-command
+       (let ([global (list-tail (lines) (index-of "Global keys"))])
+         (list (exists (lambda (l) (contains? l "  C-_ ")) global) (exists (lambda (l) (contains? l "kill-line!")) global)
+               (exists (lambda (l) (contains? l "beginning-of-buffer!")) global)))
+       '(#f #f #t))
+     (head:buffer-read-only-set! b #f)
 
      ;; the listing follows the active window
      (define other (head:new-buffer! "other"))

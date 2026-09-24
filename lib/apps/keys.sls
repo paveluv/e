@@ -10,7 +10,7 @@
 (elibrary (apps keys)
   (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-show! show!)))
   (import (rnrs)
-          (only (chezscheme) format void)
+          (only (chezscheme) format iota list-head quotient void)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head head) head:)
@@ -20,7 +20,7 @@
           (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <keys> buffer while it is shown
-  (define listed #f) ; (buffer . contexts) the listing describes
+  (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
 
   (define (stale-listing? b)
@@ -37,19 +37,38 @@
 
   ;;; The rows ------------------------------------------------------------------------
 
+  (define (action-procedure action)
+    ;; the procedure a key action runs, or #f
+    (cond [(procedure? action) action]
+          [(keymap:call-action? action) (keymap:call-action-procedure action)]
+          [(keymap:prefill-action? action) (keymap:prefill-action-procedure action)]
+          [else #f]))
+
+  (define (edits? action)
+    ;; whether the command declares (edits): refused where the text is read-only
+    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
+      (and (pair? sigs)
+           (exists (lambda (f) (and (pair? f) (eq? (car f) 'edits))) (edoc:signature-flags (car sigs))))))
+
   (define (summary-of action)
     ;; what the procedure a key action runs does, from its documentation
-    (let* ([proc (cond [(procedure? action) action]
-                       [(keymap:call-action? action) (keymap:call-action-procedure action)]
-                       [(keymap:prefill-action? action) (keymap:prefill-action-procedure action)]
-                       [else #f])]
-           [sigs (and proc (edoc:edoc-of proc))])
+    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
       (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
 
-  (define (context-groups context)
-    ;; (keys command description) for a context's live bindings, the keys
-    ;; running one command together, groups by their first key; a lambda
-    ;; shows as the anonymous command it is, a name being owed
+  (define (shadowed? sequence nearer)
+    ;; whether a nearer context binds the sequence, or a prefix of it, so
+    ;; the key never reaches this binding
+    (exists (lambda (context)
+              (exists (lambda (n) (keymap:resolved-binding context (list-head sequence n)))
+                      (map (lambda (i) (+ i 1)) (iota (length sequence)))))
+            nearer))
+
+  (define (context-groups context nearer read-only?)
+    ;; (keys command description) for a context's bindings that work here:
+    ;; not shadowed by a nearer context, and not editing where the text is
+    ;; read-only; the keys running one command together, groups by their
+    ;; first key; a lambda shows as the anonymous command it is, a name
+    ;; being owed
     (define (add key command description groups)
       (let ([hit (find (lambda (g) (string=? (cadr g) command)) groups)])
         (if hit
@@ -62,7 +81,9 @@
           (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
                  [command (and action (keymap:action-text action))])
             (loop (cdr owned)
-                  (if command
+                  (if (and command
+                           (not (shadowed? (keymap:binding-sequence b) nearer))
+                           (not (and read-only? (edits? action))))
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -149,15 +170,26 @@
                               (if (= (length (cddr capture)) 1) "s" "")
                               (keymap:sequence-text (list (car capture)))))))))
 
+  (define (read-only-text? b)
+    ;; whether an editing command is refused in the buffer: an app's, or one
+    ;; read-only outright; a guard deciding per edit does not count
+    (or (head:app-buffer? b)
+        (let ([guard (head:buffer-read-only b)]) (and guard (not (procedure? guard))))))
+
   (define (listing b width)
-    ;; the buffer's mode contexts' bindings, an app's own keys among them,
-    ;; then the global ones, in the width given
-    (let ([width (max 40 width)])
-      (append (apply append
-                (map (lambda (context)
-                       (section (format "~a keys" context) (append (context-groups context) (capture-note context)) width))
-                     (mode:key-contexts b)))
-              (section "Global keys" (context-groups 'global) width))))
+    ;; the keys that work in the buffer: its mode contexts' bindings, an
+    ;; app's own keys among them, then the global ones, each context's keys
+    ;; less those a nearer context takes, and less the editing commands
+    ;; where the text is read-only, in the width given
+    (let ([width (max 40 width)] [read-only? (read-only-text? b)])
+      (let loop ([contexts (append (mode:key-contexts b) '(global))] [nearer '()] [out '()])
+        (if (null? contexts)
+            (apply append (reverse out))
+            (let ([context (car contexts)])
+              (loop (cdr contexts) (cons context nearer)
+                    (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
+                                   (append (context-groups context nearer read-only?) (capture-note context)) width)
+                          out)))))))
 
   (define (heading? line)
     ;; a section title: a line that is not a row, rows starting with two spaces
@@ -198,7 +230,7 @@
 
   (define (fill! b)
     ;; the listing for a buffer into the view, shown from the top wherever it is
-    (set! listed (cons b (mode:key-contexts b)))
+    (set! listed (list b (mode:key-contexts b) (read-only-text? b)))
     (head:buffer-read-only-set! view #f)
     (head:buffer-lines-set! view
       (list->vector (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))))
@@ -232,7 +264,7 @@
           (drop-view!)
           (let* ([w (subject)] [b (and w (head:window-buffer w))])
             (when (and b (not (eq? b view))
-                       (not (and listed (eq? (car listed) b) (equal? (cdr listed) (mode:key-contexts b)))))
+                       (not (equal? listed (list b (mode:key-contexts b) (read-only-text? b)))))
               (fill! b))))))
 
   (define (page-down!)

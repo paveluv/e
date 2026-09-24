@@ -10,7 +10,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffer-view)
   (export choose! (rename (chosen-entry chosen)) clear-filter! erase! extend-filter! filter! first-row! init! last-row! next! next-row!
-          open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) sort-column!)
+          open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) toggle-sort-column!)
   (import (chezscheme)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
@@ -358,9 +358,9 @@
 
   (edoc "Sort the buffers by a column, the same column again reversing the order: 1 modified, 2 read-only, 3 buffer, 4 lines, 5 mode, 6 file; F1 to F6 sort by the column of their number."
         (column integer "the column, 1 to 6"))
-  (define (sort-column! column)
+  (define (toggle-sort-column! column)
     (unless (and (integer? column) (exact? column) (<= 1 column 6))
-      (error 'sort-column! "expected a column, 1 to 6" column))
+      (error 'toggle-sort-column! "expected a column, 1 to 6" column))
     (cycle-sort! (- column 1)))
 
   (edoc "Return to the buffer the buffers app replaced in this window.")
@@ -386,7 +386,7 @@
       (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
       (("SELF-INSERT") ,(keymap:call extend-filter! head:typed-text))
       ;; the function keys sort by the column of their number
-      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
+      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call toggle-sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
     ;; what the buffers context leaves to the app: focus, the wheel and the

@@ -59,6 +59,9 @@
      (paint:window-layout) ; the dividers come with a tiling
      (check 'the-boundary-above-the-shown-pop-up-is-a-divider
        (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (head:root)))) (head:dividers)) #t) #t)
+     (window:delete-others!)
+     (check 'keeping-one-window-hides-the-pop-up-too (head:popup-rows) 0)
+     (head:with-window popup (visit-file! path))
      (window:clear-pop-up!)
      (head:before-frame!)
      (check 'clearing-restores-the-placeholder-and-hides-the-pane

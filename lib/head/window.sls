@@ -211,12 +211,13 @@
   (define (clear-pop-up!)
     (head:hide-popup!))
 
-  (edoc "Keep only the selected window; its links go with the others. The pop-up cannot be kept alone.")
+  (edoc "Keep only the selected window, the pop-up hidden too; the links go with the other windows. The pop-up cannot be kept alone.")
   (define (delete-others!)
     (if (head:popup? (head:current-window))
         (message! "The pop-up window stays")
         (begin
           (head:set-layout-root! (head:current-window))
+          (head:hide-popup!)
           (prune-links!)))
     (void))
 

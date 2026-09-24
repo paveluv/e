@@ -253,7 +253,7 @@
      ((api 'file-view:select!) "zeta.txt")
      (check 'the-api-selects-by-path-and-tells-the-choice ((api 'file-view:chosen)) (path "zeta.txt"))
      (check 'the-api-sorts-by-column-and-tells-the-order
-       (begin ((api 'file-view:sort-column!) 2) (let ([first ((api 'file-view:sorts))]) ((api 'file-view:sort-column!) 2) (list first ((api 'file-view:sorts)))))
+       (begin ((api 'file-view:toggle-sort-column!) 2) (let ([first ((api 'file-view:sorts))]) ((api 'file-view:toggle-sort-column!) 2) (list first ((api 'file-view:sorts)))))
        '(((2 . #f)) ((2 . #t))))
      (check 'the-api-refuses-an-unlisted-path (test:raises? (lambda () ((api 'file-view:select!) "nowhere.txt"))) #t)
      (check 'typing-is-a-binding-of-the-files-context

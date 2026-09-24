@@ -4,7 +4,7 @@
   (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
           expansion-limit extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
           open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
-          show-hidden sort-column! (rename (sort-order sorts)) toggle-hidden!)
+          show-hidden (rename (sort-order sorts)) toggle-hidden! toggle-sort-column!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
@@ -556,9 +556,9 @@
 
   (edoc "Sort the entries by a column, the same column again reversing the order: 1 name, 2 size, 3 modified, 4 created, 5 permissions, 6 the entry or match count; F1 to F6 sort by the column of their number."
         (column integer "the column, 1 to 6"))
-  (define (sort-column! column)
+  (define (toggle-sort-column! column)
     (unless (and (integer? column) (exact? column) (<= 1 column 6))
-      (error 'sort-column! "expected a column, 1 to 6" column))
+      (error 'toggle-sort-column! "expected a column, 1 to 6" column))
     (cycle! (- column 1)))
 
   (edoc "Show the dot entries, or hide them again.")
@@ -591,7 +591,7 @@
       (("M-.") ,toggle-hidden!) (("C-r") ,refresh!) (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
       (("SELF-INSERT") ,(keymap:call extend-filter! head:typed-text))
       ;; the function keys sort by the column of their number
-      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
+      ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call toggle-sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
     ;; what the files context leaves to the app: focus, the wheel and the

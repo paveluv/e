@@ -413,7 +413,7 @@ changes appear on redraw.
 Every key of the app runs a `buffer-view:` command bound in the `buffers`
 context: `buffer-view:choose!` for Enter, `next-row!`, `previous-row!`,
 `page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
-`clear-filter!`, `(sort-column! n)` for `F1` to `F6`, `return!` and
+`clear-filter!`, `(toggle-sort-column! n)` for `F1` to `F6`, `return!` and
 `paste-filter!`, and typing is the context's `SELF-INSERT` binding,
 `(extend-filter! text)` with the character typed, so `C-x TAB` lists them
 all and `C-h k` describes them, and M-x or an agent drives the app the same
@@ -544,7 +544,8 @@ read-only; it cannot be split or closed. Its status line carries no split or
 close buttons, only a `↓` where the other windows' `×` is, which empties the
 pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>`
 placeholder again and hides, the buffer stays in the list, and if the pane
-was selected the window selected before it is again. Dragging the status line
+was selected the window selected before it is again; `C-x 1` hides it along
+with the other windows. Dragging the status line
 of the window above the pane resizes it, as `(window:resize! n)` does in it;
 a size given by hand sticks as the most the pane takes from then on, a
 shorter completion list taking less.
