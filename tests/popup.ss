@@ -42,6 +42,15 @@
              (head:window-button-at (- right 4) status-row) (head:window-button-at left status-row))
        (list (cons 'clear popup) #f #f #f))
      (define b (head:window-buffer popup))
+     ;; a resize by hand sets the size, which sticks as the most the pane takes
+     (define rows (head:popup-rows))
+     (head:resize-popup! -1)
+     (check 'a-resize-by-hand-sets-the-size-and-its-limit
+       (list (head:popup-rows) (head:popup-limit) (begin (head:show-popup! 100) (head:popup-rows)) (begin (head:show-popup! 1) (head:popup-rows)))
+       (list (- rows 1) (- rows 1) (- rows 1) 1))
+     (head:before-frame!)
+     (check 'the-boundary-above-the-shown-pop-up-is-a-divider
+       (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (head:root)))) (head:dividers)) #t) #t)
      (window:clear-pop-up!)
      (head:before-frame!)
      (check 'clearing-restores-the-placeholder-and-hides-the-pane

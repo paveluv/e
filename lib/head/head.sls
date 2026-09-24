@@ -49,10 +49,12 @@
           layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
           layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
           make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
-          open-file! point popup popup-buttons popup-rows popup? prepare-quit quit! quit-command! quitting?
+          open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit
+          previous-window quit!
+          quit-command! quitting?
           read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
           register-app! register-resume! register-view! registered-apps replace-layout-window!
-          request-app-size! request-frame-at! resume! resume-source! root run-deferred!
+          request-app-size! request-frame-at! resize-popup! resume! resume-source! root run-deferred!
           run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
           set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
           set-app-selectable! set-app-status-position! set-buffers! set-copy-text! set-current!
@@ -264,7 +266,9 @@
   (define the-popup #f)
   (define popup-buffer #f)      ; its placeholder while hidden, outside the buffer list
   (define the-popup-rows 0)
-  (define the-screen-height 0)  ; the rows the last tiling had, for the pop-up's default height
+  (define the-popup-limit #f) ; the rows a resize gave the pop-up by hand: its size from then on, at most
+  (define the-screen-height 0) ; the rows the last tiling had, for the pop-up's default height
+  (define the-previous #f) ; the window selected before the current one
 
   (edoc "The pop-up window, window 0: hidden until something is shown in it."
         (returns window))
@@ -289,14 +293,45 @@
     ;; their minimum) and repaint.
     (unless (and (integer? rows) (exact? rows) (> rows 0))
       (error 'show-popup! "expected a positive row count" rows))
-    (set! the-popup-rows rows)
+    (set! the-popup-rows (if the-popup-limit (min rows the-popup-limit) rows))
     (request-repaint!))
+
+  (edoc "The rows a resize by hand gave the pop-up, the most it takes from then on, or #f while it takes what its content asks."
+        (returns (or integer #f)))
+  (define (popup-limit)
+    the-popup-limit)
+
+  (edoc "Resize the pop-up by hand, by a number of rows, within what the windows above can spare: its size from then on, at most, a shorter content taking less."
+        (delta integer "the rows to add, negative to take"))
+  (define (resize-popup! delta)
+    (let* ([above (if (layout-split? the-root) (layout-min-height (layout-split-first the-root)) 0)]
+           [most (max 1 (- the-screen-height above 1))]
+           [rows (max 1 (min most (+ (if (> the-popup-rows 0) the-popup-rows (popup-default-rows)) delta)))])
+      (set! the-popup-limit rows)
+      (when (> the-popup-rows 0) (set! the-popup-rows rows))
+      (request-repaint!)))
+
+  (edoc "The rows the pop-up opens with for a buffer sent to it: a third of the screen, or the size a resize by hand gave it."
+        (returns integer))
+  (define (popup-default-rows)
+    (or the-popup-limit (max 3 (quotient the-screen-height 3))))
+
+  (define (popup-hidden!)
+    ;; the pop-up hides while it is selected: the selection returns to the
+    ;; window selected before it, else the first ordinary window, told so
+    (when (eq? the-current the-popup)
+      (let ([w (or (and (memq the-previous the-windows) (not (popup? the-previous)) the-previous)
+                   (find (lambda (w) (not (popup? w))) the-windows))])
+        (when w
+          (set-current! w)
+          (dispatch-app-event! "FOCUS")))))
 
   (edoc "Hide the pop-up, restoring its own buffer, and repaint.")
   (define (hide-popup!)
     (set! the-popup-rows 0)
     (unless (eq? (window-buffer the-popup) popup-buffer)
       (set-window-buffer! the-popup popup-buffer))
+    (popup-hidden!)
     (request-repaint!))
 
   (edoc "The seat's buffers, most recently shown first, as a fresh list."
@@ -469,7 +504,14 @@
   (edoc "Select a window, without telling the apps."
         (w window "the window"))
   (define (set-current! w)
-    (set! the-current w))
+    (unless (eq? w the-current)
+      (set! the-previous the-current)
+      (set! the-current w)))
+
+  (edoc "The window selected before the current one, or #f."
+        (returns (or window #f)))
+  (define (previous-window)
+    (and (memq the-previous the-windows) the-previous))
 
   (edoc "The divider rectangles of the last tiling, for painting and drag hit-testing."
         (returns list))
@@ -636,7 +678,8 @@
               [two (- total one)])
          (if below?
              (begin
-               (unless (popup? second)
+               ;; the boundary above a shown pop-up drags like any other
+               (unless (and (popup? second) (= the-popup-rows 0))
                  (set! the-dividers
                    (cons (list 'below node x (+ y one -1) width)
                          the-dividers)))
@@ -1135,17 +1178,20 @@
                                  (+ (cadr entry) (caddr entry) 1))
                                entries))
                    (apply min (map cadr entries))))))
-        (let* ([one (extent first)] [two (extent second)]
-               [m1 (if (eq? orientation 'right)
+        (if (popup? second)
+            ;; the boundary moving down takes rows from the pop-up, by hand
+            (resize-popup! (- delta))
+          (let* ([one (extent first)] [two (extent second)]
+                 [m1 (if (eq? orientation 'right)
                        (layout-min-width first)
                        (layout-min-height first))]
-               [m2 (if (eq? orientation 'right)
+                 [m2 (if (eq? orientation 'right)
                        (layout-min-width second)
                        (layout-min-height second))]
-               [delta (min delta (- two m2))]
-               [delta (max delta (- m1 one))])
-          (layout-split-first-weight-set! split (+ one delta))
-          (layout-split-second-weight-set! split (- two delta))))))
+                 [delta (min delta (- two m2))]
+                 [delta (max delta (- m1 one))])
+            (layout-split-first-weight-set! split (+ one delta))
+            (layout-split-second-weight-set! split (- two delta)))))))
 
   ;;; Gestures -----------------------------------------------------------------------
 
@@ -3377,10 +3423,10 @@
         (window-pcol-set! w (buffer-spot-col b))
         (window-top-set! w (buffer-spot-top b))
         (when (eq? w the-popup)
-          ;; a buffer sent to the pop-up, by a link say, shows it at a third
-          ;; of the screen; its own placeholder hides it again
-          (cond [(eq? b popup-buffer) (set! the-popup-rows 0)]
-                [(= the-popup-rows 0) (set! the-popup-rows (max 3 (quotient the-screen-height 3)))])
+          ;; a buffer sent to the pop-up, by a link say, shows it at its
+          ;; default size; its own placeholder hides it again
+          (cond [(eq? b popup-buffer) (set! the-popup-rows 0) (popup-hidden!)]
+                [(= the-popup-rows 0) (set! the-popup-rows (popup-default-rows))])
           (request-repaint!))
         (window-topseg-set! w 0)
         (window-left-set! w 0)

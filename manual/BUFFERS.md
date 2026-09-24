@@ -525,10 +525,18 @@ for the prompt's duration and hides again afterwards; the other windows keep
 their buffers, points and viewports. The split tree is the only source of
 windows, the pop-up included: it is the root split's second leaf. Any other
 buffer sent to the pop-up, by a link with `(window 0)` as its target say,
-shows there at a third of the screen; its status line carries no split or
+shows there at a third of the screen, or at the size you last gave the pane by
+hand. While it shows, the pop-up is a window like the others: `C-x o` and the
+`M-` arrows select it, a click on its status line or text does too, and its
+text can be browsed, selected and copied, but not edited, since the pane is
+read-only; it cannot be split or closed. Its status line carries no split or
 close buttons, only a `↓` where the other windows' `×` is, which empties the
-pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>` placeholder
-again and hides, and the buffer stays in the list.
+pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>`
+placeholder again and hides, the buffer stays in the list, and if the pane
+was selected the window selected before it is again. Dragging the status line
+of the window above the pane resizes it, as `(window:resize! n)` does in it;
+a size given by hand sticks as the most the pane takes from then on, a
+shorter completion list taking less.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction
 and focus the first window it crosses. Thus the cursor's row chooses between

@@ -43,12 +43,18 @@
     ;; the ring of ordinary windows: the pop-up is never in it
     (remq (head:popup) (head:layout-leaves (head:root))))
 
-  (define (next-window w)
-    (let* ([ring (ordinary-windows)]
-           [tail (cdr (or (memq w ring) (cons #f ring)))])
+  (define (focus-ring)
+    ;; the windows focus cycles through: the ordinary ones and the pop-up
+    ;; while it is shown
+    (filter (lambda (w) (or (not (head:popup? w)) (> (head:popup-rows) 0))) (head:layout-leaves (head:root))))
+
+  (define (next-in ring w)
+    (let ([tail (cdr (or (memq w ring) (cons #f ring)))])
       (if (pair? tail) (car tail) (car ring))))
 
-  (edoc "Select a window while it is on screen, the apps left and entered hearing BLUR and FOCUS; the pop-up is never selected. Whether the window was selected."
+  (define (next-window w) (next-in (ordinary-windows) w))
+
+  (edoc "Select a window while it is on screen, the apps left and entered hearing BLUR and FOCUS; the pop-up is selected while it is shown. Whether the window was selected."
         (w window "the window to select")
         (returns boolean))
   (define (focus! w)
@@ -56,7 +62,7 @@
     ;; the raw setter and tells no app.
     (let ([w (edoc:type-value 'window w)])
       (cond
-        [(not (and (memq w (head:windows)) (not (head:popup? w)))) #f]
+        [(not (and (memq w (head:windows)) (or (not (head:popup? w)) (> (head:popup-rows) 0)))) #f]
         [(eq? w (head:current-window)) #t]
         [else
          (head:dispatch-app-event! "BLUR")
@@ -64,14 +70,15 @@
          (head:dispatch-app-event! "FOCUS")
          #t])))
 
-  (edoc "Select the next window in layout order; the window now selected."
+  (edoc "Select the next window in layout order, the pop-up among them while it is shown; the window now selected."
         (returns window))
   (define (focus-next!)
-    (focus! (next-window (head:current-window)))
+    (focus! (next-in (focus-ring) (head:current-window)))
     (head:current-window))
 
   (define (focus-direction! direction)
-    (let* ([layout (remp (lambda (entry) (head:popup? (car entry))) (paint:window-layout))]
+    ;; the layout lists the pop-up only while it is shown
+    (let* ([layout (paint:window-layout)]
            [current (head:current-window)]
            [cursor (paint:window-screen-position current (head:window-prow current) (head:window-pcol current))]
            [cx (- (cdr cursor) 1)]
@@ -170,6 +177,10 @@
     (let loop ([child (head:current-window)])
       (let ([parent (head:layout-parent (head:root) child)])
         (cond
+          [(head:popup? child) (head:resize-popup! delta)]
+          [(and parent (head:popup? (head:layout-split-second parent)) (> (head:popup-rows) 0))
+           ;; the windows above grow at the shown pop-up's expense
+           (head:resize-popup! (- delta))]
           [(or (not parent) (head:popup? (head:layout-split-second parent)))
            (message! "No vertical split")]
           [(eq? (head:layout-split-orientation parent) 'below)
@@ -200,10 +211,13 @@
   (define (clear-pop-up!)
     (head:hide-popup!))
 
-  (edoc "Keep only the selected window; its links go with the others.")
+  (edoc "Keep only the selected window; its links go with the others. The pop-up cannot be kept alone.")
   (define (delete-others!)
-    (head:set-layout-root! (head:current-window))
-    (prune-links!)
+    (if (head:popup? (head:current-window))
+        (message! "The pop-up window stays")
+        (begin
+          (head:set-layout-root! (head:current-window))
+          (prune-links!)))
     (void))
 
   ;;; Links -----------------------------------------------------------------------

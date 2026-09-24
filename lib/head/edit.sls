@@ -272,6 +272,10 @@
     ;; The same guard protects fresh edits and history restoration:
     ;; #t forbids all edits, and a procedure decides per edit.
     (let ([guard (head:buffer-read-only (head:window-buffer current-window))])
+      ;; the pop-up shows; what it shows is edited in a window of its own
+      (when (head:popup? current-window)
+        (raise (condition (kernel:make-read-only-error)
+                          (make-message-condition "the pop-up is read-only"))))
       (when (if (procedure? guard) (not (guard)) guard)
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only"))))))
