@@ -16,6 +16,12 @@ restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
+- **Key helper.** `C-x TAB` lists the keys that work where you are, in a
+  pane above the echo area: the app's or mode's own keys first, then the
+  global ones, each with the command it runs and what that command does,
+  straight from the command's documentation. The listing follows the active
+  window, works inside prompts too, and `C-x TAB` again pages through it.
+  Status bars carry no key hints; this is where a key is looked up.
 - **Local installation.** All code and state are kept in the installation
   directory (where you cloned `e`), including modules, configuration files,
   and the base's session state and logs. To uninstall `e`, simply remove
@@ -35,7 +41,7 @@ Highlights:
   update their presentation from internal structures and can optionally
   respond to user input. Examples include logs, Git history, live reference
   pages, rendered Markdown, and the file and buffer pickers.
-- **Easy filesystem navigation.** The `files` and `buffers` apps have live,
+- **Easy filesystem navigation.** The `<finder>` and `<buffet>` apps have live,
   filterable tables with multi-column sorting and keyboard or mouse
   navigation. Finder supports recursive path matching, clickable directory
   breadcrumbs and explicit file/directory creation.
