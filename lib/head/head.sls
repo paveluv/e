@@ -1879,7 +1879,8 @@
         (map (lambda (w)
                (list (cons w (cons (window-prow w) (window-pcol w)))
                      (cons (cons 'top w) (cons (window-top w) 0))))
-          (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)))))
+          ;; the pop-up's view of a buffer is transient: no place of it is kept
+          (filter (lambda (w) (and (eq? (window-buffer w) b) (not (popup? w)))) the-windows)))))
 
   (edoc "Undo or redo in a shared buffer through the store's attributed journal: (values status detail), status applied, nothing or blocked."
         (b buffer "the buffer")
@@ -2672,13 +2673,18 @@
               (let ([b (vector-ref entry 0)])
                 (when b
                   (let ([positions
-                         (map (lambda (entry)
-                                (let* ([place (car entry)] [top? (pair? place)]
-                                       [index (if top? (cdr place) place)]
-                                       [w (and (natural? index)
-                                               (find (lambda (w) (= (window-index w) (remap index))) windows))])
-                                  (cons (if w (if top? (cons 'top w) w) place) (cdr entry))))
-                           (vector-ref entry 4))])
+                         ;; a place in a window the saved layout has no more, the
+                         ;; pop-up's from an older checkpoint say, is dropped
+                         (filter values
+                           (map (lambda (entry)
+                                  (let* ([place (car entry)] [top? (pair? place)]
+                                         [index (if top? (cdr place) place)]
+                                         [w (and (natural? index)
+                                                 (find (lambda (w) (= (window-index w) (remap index))) windows))])
+                                    (cond [(memq place '(mark spot spot-top)) entry]
+                                          [w (cons (if top? (cons 'top w) w) (cdr entry))]
+                                          [else #f])))
+                             (vector-ref entry 4)))])
                     (check-placements! b positions)
                     (let-values ([(lines revision changes) (snapshot-since b (vector-ref entry 1))])
                       (vector-set! entry 4 (project-resume-positions positions lines changes))))))) buffers)

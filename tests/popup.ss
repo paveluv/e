@@ -42,6 +42,13 @@
              (head:window-button-at (- right 4) status-row) (head:window-button-at left status-row))
        (list (cons 'clear popup) #f #f #f))
      (define b (head:window-buffer popup))
+     ;; a checkpoint keeps no place of the pop-up's, and resumes while the
+     ;; buffer shows there
+     (check 'a-checkpoint-keeps-no-place-in-the-pop-up
+       (list (exists (lambda (entry) (let ([place (car entry)]) (or (eq? place popup) (and (pair? place) (eq? (cdr place) popup)))))
+                     (head:buffer-placements b))
+             (begin (head:checkpoint!) (head:resume!)))
+       '(#f #t))
      ;; a resize by hand sets the size, which sticks as the most the pane takes
      (define rows (head:popup-rows))
      (head:resize-popup! -1)
@@ -49,6 +56,7 @@
        (list (head:popup-rows) (head:popup-limit) (begin (head:show-popup! 100) (head:popup-rows)) (begin (head:show-popup! 1) (head:popup-rows)))
        (list (- rows 1) (- rows 1) (- rows 1) 1))
      (head:before-frame!)
+     (paint:window-layout) ; the dividers come with a tiling
      (check 'the-boundary-above-the-shown-pop-up-is-a-divider
        (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (head:root)))) (head:dividers)) #t) #t)
      (window:clear-pop-up!)
