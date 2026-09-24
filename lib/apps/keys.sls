@@ -344,8 +344,10 @@
     (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
     (drop-view!))
 
-  (define (hint)
-    (and view (eq? (head:current-buffer) view) "C-x TAB page down, C-x S-TAB up"))
+  (define (hint b active?)
+    ;; the listing's paging keys on its bar, in every window showing it,
+    ;; selected or not
+    (and view (eq? b view) "C-x TAB page down, C-x S-TAB up"))
 
   (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, its status hint, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
@@ -356,5 +358,5 @@
     ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
     (prompt:allow! keys-show!)
     (prompt:allow! keys-page-up!)
-    (paint:add-status-hint! hint)
+    (paint:add-buffer-status-hint! hint)
     (head:add-pre-redraw-hook! follow!)))
