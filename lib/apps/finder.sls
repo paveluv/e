@@ -1,6 +1,6 @@
-;; file-view.sls -- the local, filterable <files> app.
+;; finder.sls -- the local, filterable <finder> app, the directory browser.
 (import (only (foundation edoc) elibrary))
-(elibrary (apps file-view)
+(elibrary (apps finder)
   (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
           expansion-limit extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
           open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
@@ -23,14 +23,14 @@
           (prefix (sys glyph) glyph:)
           (prefix (sys tty) tty:))
 
-  (edoc "How many matching entries the files view expands a directory into while filtering."
+  (edoc "How many matching entries the finder expands a directory into while filtering."
         (value integer))
   (define expansion-limit (make-parameter 20
                             (lambda (n)
                               (unless (and (integer? n) (exact? n) (>= n 0))
                                 (error 'expansion-limit "expected a nonnegative integer" n)) n)))
 
-  (edoc "Whether the files view lists hidden entries, the dot files."
+  (edoc "Whether the finder lists hidden entries, the dot files."
         (value boolean))
   (define show-hidden (make-parameter #f
                         (lambda (value)
@@ -378,7 +378,7 @@
                      (cond
                        [(pair? targets)
                         ;; the pick opens in every target window; this one keeps
-                        ;; the files view and the focus
+                        ;; the finder and the focus
                         (for-each (lambda (w) (head:with-window w (head:call-with-interrupt (lambda () (edit:visit-file! path)))))
                                   targets)]
                        [else
@@ -473,7 +473,7 @@
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))
 
-  (edoc "Rescan the directory the files view shows.")
+  (edoc "Rescan the directory the finder shows.")
   (define (refresh!)
     (when view (start-scan!)) (void))
 
@@ -481,7 +481,7 @@
 
   ;;; The app as an API: what M-x or an agent asks and does --------------------------
 
-  (edoc "The directory the files view shows, or #f before it opens."
+  (edoc "The directory the finder shows, or #f before it opens."
         (returns (or string #f)))
   (define (directory-shown) location)
 
@@ -566,7 +566,7 @@
     (show-hidden (not (show-hidden)))
     (filter! query))
 
-  (edoc "Return to the buffer the files view replaced in this window.")
+  (edoc "Return to the buffer the finder replaced in this window.")
   (define (return!)
     (let ([origin (choice-origin (choice-for (head:current-window)))])
       (set! hover #f)
@@ -580,9 +580,9 @@
                (list->string (filter (lambda (c) (not (eq? (char-general-category c) 'Cc)))
                                (string->list (head:read-paste)))))))
 
-  ;; The keys of the files view, bound in its mode's context to the commands
+  ;; The keys of the finder, bound in its mode's context to the commands
   ;; above, so the keys helper lists them and C-h k describes them
-  (define files-keys
+  (define finder-keys
     `((("RET") ,choose!) (("RIGHT") ,enter!) (("LEFT") ,parent!)
       (("DOWN" "C-n" "TAB") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!)
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
@@ -594,7 +594,7 @@
       ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call toggle-sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
-    ;; what the files context leaves to the app: focus, the wheel and the
+    ;; what the finder context leaves to the app: focus, the wheel and the
     ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (render!) #t]
           [(string=? event "WHEEL-UP") (move! -1) #t]
@@ -637,7 +637,7 @@
              '("M-c create" "Left parent" "F1–F6 sort" "C-u clear" "M-. hidden" "C-r refresh")))))
   (define (ensure!)
     (unless (and view (memq view (head:buffers)) (head:app-buffer? view))
-      (set! view (head:register-app! "*files*" render! handle!))
+      (set! view (head:register-app! "*finder*" render! handle!))
       (set! location (head:buffer-fact view 'directory (file:canonical (file:expand (head:default-directory)))))
       (set! query (head:buffer-fact view 'file-filter ""))
       (set! sorts (head:buffer-fact view 'file-sorts '()))
@@ -646,15 +646,15 @@
       (head:set-app-cursor-visible! view #f)
       (head:set-app-selectable! view #f)
       (head:set-app-status-position! view head:buffer-name)
-      (head:buffer-fact-set! view 'resume-kind 'file-view)
-      (mode:choose! "files" view))
+      (head:buffer-fact-set! view 'resume-kind 'finder)
+      (mode:choose! "finder" view))
     view)
 
-  (edoc "Show the files view for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")
+  (edoc "Show the finder for the current file's directory, an app's working directory or the head's launch directory, with the current file selected.")
   (define (open!)
     (open-at! (head:default-directory) #f))
 
-  (edoc "Show the files view for a directory, with the current file selected when it is inside."
+  (edoc "Show the finder for a directory, with the current file selected when it is inside."
         (directory directory "the directory to browse"))
   (define (open-directory! directory)
     (unless (string? directory) (error 'open-directory! "expected a directory path" directory))
@@ -669,11 +669,11 @@
       (if (and (eq? was view) (not explicit?)) (refresh!)
           (navigate! dir #f selected))) (void))
 
-  (edoc "Install the files app: its mode with its keys bound in the files context, the C-x C-f binding, its status hints and buffer-kill hook.")
+  (edoc "Install the finder: its mode with its keys bound in the finder context, the C-x C-f binding, its status hints and buffer-kill hook.")
   (define (init!)
-    (mode:register! "files" '() '() (lambda (line) #f) #f styles)
+    (mode:register! "finder" '() '() (lambda (line) #f) #f styles)
     (keymap:bind-default! "C-x C-f" open!)
-    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'files key (cadr entry))) (car entry))) files-keys)
+    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'finder key (cadr entry))) (car entry))) finder-keys)
     (paint:add-status-hint! hints)
     (head:add-buffer-kill-hook!
       (lambda (b)
@@ -700,8 +700,8 @@
                          (list (list w row 0 (string-length (vector-ref (head:window-lines w) row))
                                  (if (string? over) 'candidate-hover 'candidate))) '()))))
               (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))))
-    (when (head:find-tool-buffer "*files*") (ensure!) (start-scan!))
-    (head:register-resume! 'file-view
+    (when (head:find-tool-buffer "*finder*") (ensure!) (start-scan!))
+    (head:register-resume! 'finder
       (lambda (b positions)
         (values (list location query sorts (show-hidden) (head:buffer-name b)
                   (fold-right
@@ -716,7 +716,7 @@
                                                  (and (pair? key) (memv (car key) '(0 1 2 3 4 5)) (boolean? (cdr key)))) keys)
                          (list? selected) (for-all (lambda (p)
                                                      (and (pair? p) (integer? (car p)) (string? (cdr p)))) selected))
-              (error 'restore "invalid files view descriptor" reference))
+              (error 'restore "invalid finder descriptor" reference))
             (ensure!)
             (head:buffer-name-set! view name)
             (set! query filter) (set! sorts keys) (show-hidden hidden?)
@@ -724,16 +724,16 @@
             (navigate! path #t #f)
             (values view positions)) reference)))
     (doc:register!
-      '(((file-view:open!) (("procedure" . "(file-view:open!)")) "void"
-         ("(apps file-view)") file-view "Files" #f
-         "Open `<files>` in this window at the current file's directory; `(file-view:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
-        ((file-view:expansion-limit) (("parameter" . "(file-view:expansion-limit [count])")) "integer"
-         ("(apps file-view)") file-view "Files" #f
+      '(((finder:open!) (("procedure" . "(finder:open!)")) "void"
+         ("(apps finder)") finder "Finder" #f
+         "Open `<finder>` in this window at the current file's directory; `(finder:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
+        ((finder:expansion-limit) (("parameter" . "(finder:expansion-limit [count])")) "integer"
+         ("(apps finder)") finder "Finder" #f
          "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")
-        ((file-view:show-hidden) (("parameter" . "(file-view:show-hidden [boolean])")) "boolean"
-         ("(apps file-view)") file-view "Files" #f
-         "Whether files scanning includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
-        ((file-view:refresh!) (("procedure" . "(file-view:refresh!)")) "void"
-         ("(apps file-view)") file-view "Files" #f
-         "Rescan the files app's current directory with its current filter and options, preserving candidate identities where possible."))))
+        ((finder:show-hidden) (("parameter" . "(finder:show-hidden [boolean])")) "boolean"
+         ("(apps finder)") finder "Finder" #f
+         "Whether the finder's scan includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
+        ((finder:refresh!) (("procedure" . "(finder:refresh!)")) "void"
+         ("(apps finder)") finder "Finder" #f
+         "Rescan the finder's current directory with its current filter and options, preserving candidate identities where possible."))))
 )

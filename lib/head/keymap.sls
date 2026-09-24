@@ -315,7 +315,7 @@
   (define-record-type (prefill-action make-prefill-action prefill-action?)
     (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
 
-  (edoc "Bind a key to a call: the command applied, when the key is pressed, to what the producers return and to the other arguments as given, (keymap:call edit:kill-buffer! head:current-buffer) say, or (keymap:call file-view:sort-column! 2)."
+  (edoc "Bind a key to a call: the command applied, when the key is pressed, to what the producers return and to the other arguments as given, (keymap:call edit:kill-buffer! head:current-buffer) say, or (keymap:call finder:toggle-sort-column! 2)."
         (procedure procedure "the command to call")
         (producers (list-of any) "its arguments in order: a procedure produces one at the press, any other value stands as it is")
         (returns (record call-action)))

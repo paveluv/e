@@ -15,7 +15,7 @@ above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
 first, as its app declares them, then the bindings of its mode contexts,
 then the global ones, each section's title in bold, with a scrollbar for
 its length. It lists what works here: a key a nearer context takes, `RET`
-in `<files>` say, is left out of the global section, and where the text is
+in `<finder>` say, is left out of the global section, and where the text is
 read-only, an app's buffer or one made read-only, the editing commands are
 left out, those whose edoc declares `(edits)`. Keys that run one
 command share a row, one key per line joined by a line in the margin, beside
@@ -32,8 +32,8 @@ pop-up to browse or copy from it like any buffer, and the `↓` on its status
 line puts it away, as `(keys:hide!)` does. `(keys:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and
 `C-x TAB` pages it there. An app binds its keys in its
-mode's context to its own commands, `file-view:choose!` for Enter in
-`<files>` say, so they list like any others, run from M-x and are described
+mode's context to its own commands, `finder:choose!` for Enter in
+`<finder>` say, so they list like any others, run from M-x and are described
 by `C-h k`; an app that captures keys, the terminal, lists its toggle and a
 row saying what it takes.
 
@@ -69,7 +69,7 @@ argument, so completion asks for it:
 
 ```scheme
 (keymap:bind! "C-x k" (keymap:call edit:kill-buffer! head:current-buffer))
-(keymap:bind! "F2" (keymap:call file-view:toggle-sort-column! 2))
+(keymap:bind! "F2" (keymap:call finder:toggle-sort-column! 2))
 (keymap:bind! "C-c a" (keymap:prefill edit:answer!))
 ```
 
@@ -107,7 +107,7 @@ Named terminal keys are:
 
 Named keys accept `C-`, `M-` and `S-` modifiers, such as `M-S-UP` and
 `C-LEFT`. The terminal must send a distinguishable sequence, and its own
-shortcuts can intercept a key before e receives it. Files and Buffers use
+shortcuts can intercept a key before e receives it. Finder and Buffers use
 `F1`–`F6` for column sorting while their app is focused; these are app controls,
 so a global binding lookup can still report the key as unbound.
 
@@ -116,7 +116,7 @@ bracketed paste produces, bound to `edit:paste!`. `SELF-INSERT` is what a
 printable character without a binding of its own resolves to, in the mode's
 context first, then the global map, and its command receives the character
 through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
-inserts it, while in `<files>` and `<buffers>` the context binds it to
+inserts it, while in `<finder>` and `<buffers>` the context binds it to
 `extend-filter!`, so typing grows the filter. The keys listing shows the
 pseudo-key as `any character`. `MOUSE-CLICK`
 fires in a mode's context after a text click has placed point, so a mode can

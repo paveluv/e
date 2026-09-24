@@ -67,7 +67,7 @@ print in that form.
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
 | `C-x k` | Kill the current buffer at once; a document goes to the trash. |
 
-`C-x C-f` opens the [files app](FILES.md) for directory navigation and recursive
+`C-x C-f` opens the [finder](FINDER.md) for directory navigation and recursive
 filename filtering, with the same column-sorting controls as buffers.
 `M-x (edit:visit-file! ` completes a path. Both buffer-switch shortcuts use
 the [live table](#the-buffers-app) below. An unmatched filter stays in the
@@ -128,7 +128,7 @@ text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
 ## File buffers
 
-`C-x C-f` opens the files app, `C-x C-s` saves, and `C-x C-w` saves under a
+`C-x C-f` opens the finder, `C-x C-s` saves, and `C-x C-w` saves under a
 new path. The direct path prompt, `M-x (edit:visit-file!)`, offers the current
 file's directory, a terminal's launch directory, or the head's working
 directory for other buffers. Clearing the offered path
@@ -565,7 +565,7 @@ may have several links out and several in, and a link lives while both
 windows are on screen. `(window:link! (window 2) (window-link-tag 'target))`
 links the current window to window 2 under a tag, `(window:link-target!
 (window 2))` under the `target` tag, the window a chooser in this one opens
-its pick in: with targets, `<files>` opens a chosen file in every target
+its pick in: with targets, `<finder>` opens a chosen file in every target
 window and keeps its own pane and the focus. `(window:linked 'target)` lists
 the current window's targets, `(window:links)` every link as data by window
 indexes, and `(window:unlink! (window 2))` removes the links to a window,

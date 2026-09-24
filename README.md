@@ -37,7 +37,7 @@ Highlights:
   pages, rendered Markdown, and the file and buffer pickers.
 - **Easy filesystem navigation.** The `files` and `buffers` apps have live,
   filterable tables with multi-column sorting and keyboard or mouse
-  navigation. Files supports recursive path matching, clickable directory
+  navigation. Finder supports recursive path matching, clickable directory
   breadcrumbs and explicit file/directory creation.
 - **Tiling.** Windows form a recursive tiling layout that is easy to reshape:
   split in either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
@@ -149,7 +149,7 @@ for configuration, lifecycle and scripted clients.
 
 | Key | Action |
 |---|---|
-| `C-x C-f` | Browse and recursively filter files in the `<files>` app |
+| `C-x C-f` | Browse and recursively filter files in `<finder>` |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
 | `C-x C-c` | Detach this screen; keep shared buffers and terminals running |
@@ -173,10 +173,10 @@ for configuration, lifecycle and scripted clients.
 | `C-c a` | Answer a question another actor left for you |
 | `C-g`, Escape | Cancel the current interaction |
 
-In Files, type to filter, use Left/Right to navigate directories and Enter
+In Finder, type to filter, use Left/Right to navigate directories and Enter
 to open a row. `M-c` enters Create mode: Enter creates the typed file, or
 directories when the path ends in `/`. Existing names are refused. In both
-Files and Buffers, click column headings or use `F1`–`F6` to cycle ascending,
+Finder and Buffers, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.
 The original path-entry command remains available as `M-x (find-file!!)`.
 
@@ -205,7 +205,7 @@ immediately.
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
   numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
-- [Files app](manual/FILES.md): directory navigation, recursive path filtering,
+- [Finder](manual/FINDER.md): directory navigation, recursive path filtering,
   completion, explicit creation, match counts and sortable filesystem metadata.
 - [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
   reattaching named screens, what is shared and what is local, questions
@@ -254,7 +254,7 @@ same glyph rules as the terminal emulator.
 
 - **Current development version (unreleased)** -- a persistent daemon with named screens,
   saved-session recovery and reviewed restart; shared terminals and attributed undo;
-  agent-ready APIs; interactive Files
+  agent-ready APIs; interactive Finder
   and Buffers apps with filtering, compound sorting and per-window column
   widths. The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:

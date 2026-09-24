@@ -52,7 +52,7 @@ used by head commands, not the base's producer and session-control APIs.
 The editor is layered seam modules -- `kernel`, `store`, `file`, `head`,
 `paint`, `prompt`, `mode`, `keymap`, ... -- with `main.sls` running the loop on
 top, `edit.sls`, the command layer, as the default app, and the other apps
-(`terminal`, `git-view`, `file-view`, `describe`, `eval`, ...) beside it.
+(`terminal`, `git-view`, `finder`, `describe`, `eval`, ...) beside it.
 `sys.sls` owns libc, termios, ioctl, signals, PTYs, and other foreign procedures.
 Feature modules compose the command API and the seams and, when necessary,
 narrowly scoped system facilities.

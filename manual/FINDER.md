@@ -1,8 +1,8 @@
-# Files
+# Finder
 
-`C-x C-f` opens the `<files>` app in the current window. It starts in the
+`C-x C-f` opens the `<finder>` app in the current window. It starts in the
 current file's directory, an app's working directory, or the head's launch
-directory. `M-x (file-view:open-directory! "/some/directory")` starts elsewhere.
+directory. `M-x (finder:open-directory! "/some/directory")` starts elsewhere.
 The original path-entry prompt remains available as `M-x (edit:visit-file!)`.
 `C-x f` has no default binding.
 
@@ -83,7 +83,7 @@ only when you press Enter.
 Creation is explicit and works regardless of what the filter matches. For
 example, type `notes`, press M-c, then Enter to create a new file called `notes`,
 even if the list contains `notes.txt`. The prompt uses the literal path rather
-than the selected search result. Open existing files from normal Files mode.
+than the selected search result. Open existing files from the finder's browsing mode.
 
 For a new file, Enter creates missing parent directories and an empty file on
 disk, then opens its buffer. No save is needed to create it. Creation refuses
@@ -93,7 +93,7 @@ directories only and enter the last one: `drafts/research/` creates both
 levels if necessary. The new directory opens with an empty filter. An existing directory with a trailing slash is refused
 with the same transient inline ghost, `[directory already exists]`. Without
 a trailing slash the request is for a file, so any existing name is refused
-with `[file already exists]`. Use normal Files mode to enter existing directories.
+with `[file already exists]`. Use the finder's browsing mode to enter existing directories.
 
 Each newly created directory is logged as `Created directory /path/`, from
 parent to child, followed by `Created file /path/name` for a file. Existing
@@ -122,7 +122,7 @@ filter to search for `foo` there, or use M-c to work with a literal path.
 The threshold does not limit counting or hide direct files inside the current
 directory.
 
-`(file-view:expansion-limit 10)` changes the per-directory expansion threshold;
+`(finder:expansion-limit 10)` changes the per-directory expansion threshold;
 zero keeps all nonempty groups collapsed. Use `C-r` after changing it through
 M-x. A count includes matching directories as well as files. A directory's own
 name may match independently of its descendant count.
@@ -139,7 +139,7 @@ This is a live filesystem inventory, not an atomic filesystem snapshot; use
 filesystem operations.
 
 Dotfiles and dot directories are excluded by default. `M-.` includes them;
-`(file-view:show-hidden #t)` enables them in configuration. Directory symlinks
+`(finder:show-hidden #t)` enables them in configuration. Directory symlinks
 are marked `@/` and can be entered explicitly. Recursive searches do not
 follow them, so links cannot create loops or duplicate entire subtrees. Files
 inside a link can be reached by entering that directory; a typed path through
@@ -175,9 +175,9 @@ size and creation time unknown. Inode-change time is never labeled Created.
 
 ## The app as an API
 
-The files pane is driven entirely through `file-view:` commands, so M-x or
+The finder pane is driven entirely through `finder:` commands, so M-x or
 an agent can do everything a key does. Every key of the pane is bound in
-the `files` context to one of them: `file-view:choose!` for Enter, `enter!`,
+the `files` context to one of them: `finder:choose!` for Enter, `enter!`,
 `parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
 `first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
 `(toggle-sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
@@ -193,12 +193,12 @@ pane on a directory.
 
 ## Windows and heads
 
-Like `<buffers>`, `<files>` shares its directory, filter and sort order between
+Like `<buffers>`, `<finder>` shares its directory, filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
 While Create owns one pane, sorting can still be changed from another
-files pane. Navigating from that other pane ends path entry and keeps the
+finder pane. Navigating from that other pane ends path entry and keeps the
 chosen destination, using the prompt's usual focus-loss behavior.
 
 The focused pane's keyboard choice is bold with a soft blue background:
@@ -214,8 +214,8 @@ A chosen file, by Enter or by a click, opens in the focused window, and the
 files view steps behind in the recency list, so `C-x b` offers the document
 the view replaced and Enter returns to it. When the window has target links,
 `(window:link-target! (window 2))` say, the file opens in every target window
-instead and the files pane keeps its view and the focus. A directory click
+instead and the finder keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
-browses rows in the pointed files pane without opening files. Named-head
+browses rows in the pointed finder pane without opening files. Named-head
 reattachment restores the directory, filter, sorts, hidden-entry setting and
-selected paths, then rescans. Other heads have independent files apps.
+selected paths, then rescans. Other heads have independent finders.

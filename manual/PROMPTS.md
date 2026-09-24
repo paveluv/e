@@ -3,7 +3,7 @@
 Prompts share one editing and presentation engine. Create mode, the original
 find-file command, `M-x`, describe, and command-specific text questions use
 the same movement, history, completion, wrapping, and styling behavior.
-The default [Files](FILES.md) and [Buffers](BUFFERS.md#the-buffers-app) pickers
+The default [Finder](FINDER.md) and [Buffers](BUFFERS.md#the-buffers-app) pickers
 are table apps with their own navigation and filtering controls.
 
 ## Editing
@@ -70,7 +70,7 @@ styles, suggestions and text
 cursor as an echo-area prompt. Clicking the input moves its insertion point.
 
 `C-x b` and `C-x C-b` use the [filterable buffers app](BUFFERS.md#the-buffers-app).
-The [files app's M-c mode](FILES.md#create-mode) uses the same input editor
+The [finder's M-c mode](FINDER.md#create-mode) uses the same input editor
 below a live directory table, with sortable columns and paged matches.
 
 Long input wraps above the bottom row. Tab lists candidates above the input;

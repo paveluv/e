@@ -391,15 +391,15 @@ while an app is focused.
 Each window keeps its own point and viewport, including multiple
 windows showing the same app.
 
-## The files app
+## The finder
 
-`C-x C-f` opens `<files>`: a local directory browser with incremental recursive
+`C-x C-f` opens `<finder>`: a local directory browser with incremental recursive
 filename filtering, ancestor navigation, match counts and sortable metadata.
 It shares the buffers table's sort-key cycling and column fitting. Its
 directory, filter and sorting are shared within one head; formatting,
 selection and scrolling belong to each window. Filesystem work runs outside
 refresh callbacks and publishes only while its request and registration are
-still current. See [Files](FILES.md) for controls and search behavior.
+still current. See [Finder](FINDER.md) for controls and search behavior.
 
 ## The buffers app
 
