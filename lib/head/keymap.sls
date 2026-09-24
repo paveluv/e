@@ -55,16 +55,26 @@
                          special-key-names)))
           special-key-prefixes)))
 
-  (define (key-token s)
+  ;; The short spellings of the long-named keys, accepted under any
+  ;; modifiers: S-PGUP binds the shifted PAGEUP.
+  (define key-aliases '(("BS" . "BACKSPACE") ("DEL" . "DELETE") ("PGUP" . "PAGEUP") ("PGDN" . "PAGEDOWN")))
+
+  (define (expand-alias s)
+    ;; a spelling with its short key name written long, modifiers kept
+    (let loop ([prefix ""] [rest s])
+      (cond
+        [(find (lambda (m) (and (string:prefix? m rest) (> (string-length rest) (string-length m)))) '("C-" "M-" "S-"))
+         => (lambda (m) (loop (string-append prefix m) (string:tail rest (string-length m))))]
+        [(assoc rest key-aliases) => (lambda (hit) (string-append prefix (cdr hit)))]
+        [else s])))
+
+  (define (key-token spelled)
+    (define s (expand-alias spelled))
     (cond
       [(string=? s "SPC") " "]
       [(string=? s "TAB") "TAB"]
       [(string=? s "RET") "RET"]
       [(string=? s "ESC") "ESC"]
-      [(string=? s "DEL") "DELETE"]
-      [(string=? s "BS") "BACKSPACE"]
-      [(string=? s "PGUP") "PAGEUP"]
-      [(string=? s "PGDN") "PAGEDOWN"]
       [(string=? s "BACKSPACE") "BACKSPACE"]
       [(and (= (string-length s) 3) (string:prefix? "C-" s))
        (format "C-~c" (char-downcase (string-ref s 2)))]
