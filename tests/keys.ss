@@ -69,8 +69,13 @@
          ;; the wrapped description runs on below the first line, however narrow the column
          (list (contains? (line-at (+ at 1)) "M-w") (not (contains? (line-at (+ at 1)) "kill-line!"))
                (exists (lambda (i) (contains? (line-at i) "accumulate")) (map (lambda (k) (+ at k)) (iota 8)))
-               (string:prefix? "  " (line-at (+ at 1)))))
+               (char=? (string-ref (line-at (+ at 1)) 0) #\space)))
        '(#t #t #t #t))
+     (check 'the-keys-of-a-group-are-joined-by-a-line-in-the-margin
+       (let* ([at (index-of "M-q")] [styles (mode:line-styles (view))])
+         (list (substring (line-at at) 0 2) (substring (line-at (+ at 1)) 0 2) (vector-ref (styles (line-at at)) 1)
+               (substring (line-at (index-of "RET")) 0 2)))
+       '(" ╷" " ╵" chrome "  "))
      (check 'a-row-with-a-short-description-takes-one-line
        (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
        '(#t #t))

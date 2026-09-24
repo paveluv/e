@@ -101,10 +101,22 @@
         [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (substring s start i) out))]
         [else (loop (+ i 1) start out)])))
 
+  (define (bracket keys i)
+    ;; the margin of a group's row i: a line down the keys sharing the
+    ;; command, from the middle of the first key's row to the middle of the
+    ;; last's; nothing beside a lone key or a description running on
+    (let ([last (- (length keys) 1)])
+      (cond [(< last 1) "  "]
+            [(= i 0) " ╷"]
+            [(< i last) " │"]
+            [(= i last) " ╵"]
+            [else "  "])))
+
   (define (section title groups width)
     ;; a heading, then each group's keys down the first column beside its
     ;; command, a long call wrapped at its spaces, and its description
-    ;; wrapped in the last column
+    ;; wrapped in the last column, the keys of a group joined by a line in
+    ;; the margin
     (if (null? groups)
         '()
         (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
@@ -120,7 +132,7 @@
                              (if (= i height) (reverse out)
                                  (loop (+ i 1)
                                        (cons (string-append
-                                               "  " (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
+                                               (bracket keys i) (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
                                                (pad (if (< i (length command)) (list-ref command i) "") command-width) "  "
                                                (if (< i (length text)) (list-ref text i) ""))
                                              out))))))
@@ -152,8 +164,11 @@
     (and (> (string-length line) 0) (not (char=? (string-ref line 0) #\space))))
 
   (define (styles line)
-    ;; the section titles in bold
-    (make-vector (string-length line) (if (heading? line) 'bold 'plain)))
+    ;; the section titles in bold, the grouping line in the margin faint
+    (let ([v (make-vector (string-length line) (if (heading? line) 'bold 'plain))])
+      (when (and (> (string-length line) 1) (memv (string-ref line 1) '(#\╷ #\│ #\╵)))
+        (vector-set! v 1 'chrome))
+      v))
 
   ;;; The buffer in the pop-up ------------------------------------------------------------
 

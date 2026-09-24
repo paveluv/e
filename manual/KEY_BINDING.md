@@ -15,8 +15,9 @@ above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
 first, as its app declares them, then the bindings of its mode contexts,
 then the global ones, each section's title in bold, with a scrollbar for
 its length. Keys that run one
-command share a row, one key per line, beside the command, `edit:kill-line!`
-say, and what it does, from its documentation, wrapped in its column. The
+command share a row, one key per line joined by a line in the margin, beside
+the command, `edit:kill-line!` say, and what it does, from its documentation,
+wrapped in its column. The
 listing follows the active window: switch to another buffer or app and it
 lists that one's keys. Every binding is listed; a key bound to a lambda,
 in `config.e` say, shows as `anonymous command` with nothing to say about
