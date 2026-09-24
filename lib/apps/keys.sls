@@ -79,8 +79,19 @@
     (if (>= (cells s) width) s (string-append s (make-string (- width (cells s)) #\space))))
 
   (define (wrap text width)
-    ;; the text as lines of at most width cells, broken at spaces
-    (let loop ([words (filter (lambda (w) (> (string-length w) 0)) (split-words text))] [line ""] [out '()])
+    ;; the text as lines of at most width cells, broken at spaces, a word
+    ;; wider than the column broken where the column ends
+    (define (chop word)
+      ;; a word as pieces the column holds
+      (let loop ([word word] [out '()])
+        (if (<= (cells word) width)
+            (reverse (cons word out))
+            (let cut ([n (string-length word)])
+              (if (or (<= n 1) (<= (cells (substring word 0 n)) width))
+                  (loop (substring word n (string-length word)) (cons (substring word 0 n) out))
+                  (cut (- n 1)))))))
+    (let loop ([words (apply append (map chop (filter (lambda (w) (> (string-length w) 0)) (split-words text))))]
+               [line ""] [out '()])
       (cond
         [(null? words) (reverse (if (string=? line "") out (cons line out)))]
         [(string=? line "") (loop (cdr words) (car words) out)]
