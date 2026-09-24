@@ -173,6 +173,16 @@ Linux uses `statx`; unavailable fields show `—`. On other supported systems,
 the current fallback supplies type, permissions and modification time, with
 size and creation time unknown. Inode-change time is never labeled Created.
 
+## Keys as commands
+
+Every key of the files pane runs a `file-view:` command bound in the `files`
+context: `file-view:choose!` for Enter, `enter!`, `parent!`, `next-row!`,
+`previous-row!`, `page-down!`, `page-up!`, `first-row!`, `last-row!`,
+`erase!`, `clear-filter!`, `create!`, `sort-column!` for `F1` to `F6`,
+`toggle-hidden!`, `refresh!`, `return!` and `paste-filter!`. `C-x TAB` lists
+them with their descriptions, `C-h k` describes one, and M-x runs any of
+them; typed characters grow the filter directly.
+
 ## Windows and heads
 
 Like `<buffers>`, `<files>` shares its directory, filter and sort order between

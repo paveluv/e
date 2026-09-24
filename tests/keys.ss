@@ -33,35 +33,35 @@
      (define (lines) (vector->list (head:buffer-lines (view))))
      (define (index-of part) (let loop ([ls (lines)] [i 0]) (cond [(null? ls) #f] [(contains? (car ls) part) i] [else (loop (cdr ls) (+ i 1))])))
      (define (line-at i) (list-ref (lines) i))
-     (define long (apply string-append (map (lambda (i) "word ") (iota 40))))
+     (define (heading-or-key? line) (or (not (char=? (string-ref line 0) #\space)) (not (char=? (string-ref line 2) #\space))))
      (define w1 (head:current-window))
      (define b (head:new-buffer! "keyed"))
      (head:show-buffer! b)
-     (head:buffer-fact-set! b 'keys (list (list "RET" "open" "Open the row") (list "M-l" "long" long)))
      (mode:register! "keys-test" '() '() (lambda (line) #f))
      (head:with-buffer b (mode:choose! "keys-test"))
      (keymap:bind-default! 'keys-test "M-q" kill-line!)
      (keymap:bind-default! 'keys-test "M-w" kill-line!)
      (keymap:bind-default! 'keys-test "M-z" (lambda () #f))
+     (keymap:bind-default! 'keys-test "RET" beginning-of-line!)
 
      (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
      (keys:show!)
      (head:before-frame!)
-     (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-sections-in-order
+     (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-mode-section-first
        (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
-             (index-of "keyed keys") (< 1 (index-of "keys-test keys") (index-of "Global keys"))
-             (contains? (line-at 1) "RET") (contains? (line-at 1) "open  Open the row"))
-       (list "<keys>" #t "keys" #t 0 #t #t #t))
-     (check 'a-long-description-wraps-in-its-column
-       (let ([at (index-of "M-l")])
-         (list (> (length (lines)) 8) (contains? (line-at at) "long") (contains? (line-at (+ at 1)) "word")
-              (string:prefix? "  " (line-at (+ at 1))) (not (contains? (line-at (+ at 1)) "long"))))
-       '(#t #t #t #t #t))
-     (check 'keys-running-one-command-share-a-row
+             (index-of "keys-test keys") (< 0 (index-of "Global keys"))
+             (contains? (line-at 1) "M-q") (contains? (line-at 1) "kill-line!") (contains? (line-at 1) "Kill from point"))
+       (list "<keys>" #t "keys" #t 0 #t #t #t #t))
+     (check 'a-long-description-wraps-in-its-column-and-keys-running-one-command-share-the-row
        (let ([at (index-of "M-q")])
-         (list (contains? (line-at at) "kill-line!") (contains? (line-at at) "Kill from point")
-               (contains? (line-at (+ at 1)) "M-w") (not (contains? (line-at (+ at 1)) "kill-line!"))))
+         ;; the wrapped description runs on below the first line, however narrow the column
+         (list (contains? (line-at (+ at 1)) "M-w") (not (contains? (line-at (+ at 1)) "kill-line!"))
+               (exists (lambda (i) (contains? (line-at i) "accumulate")) (map (lambda (k) (+ at k)) (iota 8)))
+               (string:prefix? "  " (line-at (+ at 1)))))
        '(#t #t #t #t))
+     (check 'a-row-with-a-short-description-takes-one-line
+       (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
+       '(#t #t))
      (check 'a-key-bound-to-an-anonymous-command-is-left-out (index-of "M-z") #f)
      (check 'section-titles-are-bold-and-rows-plain
        (let ([styles (mode:line-styles (view))])
@@ -78,10 +78,23 @@
 
      ;; the listing follows the active window
      (define other (head:new-buffer! "other"))
-     (head:buffer-fact-set! other 'keys '(("F9" "fire" "Fire away")))
+     (mode:register! "keys-other" '() '() (lambda (line) #f))
+     (head:with-buffer other (mode:choose! "keys-other"))
+     (keymap:bind-default! 'keys-other "F9" kill-line!)
      (head:show-buffer! other)
      (head:before-frame!)
-     (check 'the-listing-follows-the-active-window (list (line-at 0) (contains? (line-at 1) "F9")) '("other keys" #t))
+     (check 'the-listing-follows-the-active-window (list (line-at 0) (contains? (line-at 1) "F9")) '("keys-other keys" #t))
+     ;; a capturing context counts for an app buffer only, and lists what it takes
+     (define captured (head:register-view! (head:new-local-buffer! "captured") void))
+     (mode:register! "keys-cap" '() '() (lambda (line) #f))
+     (mode:choose! "keys-cap" captured)
+     (keymap:set-context-capture! 'keys-cap "C-]" beginning-of-line! '("C-x" "M-x"))
+     (head:show-buffer! captured)
+     (head:before-frame!)
+     (check 'a-capturing-context-says-what-it-takes
+       (let ([at (index-of "other keys")])
+         (list (and at #t) (contains? (line-at at) "to the app") (exists (lambda (i) (contains? (line-at i) "C-x and M-x")) (map (lambda (k) (+ at k)) (iota 4)))))
+       '(#t #t #t))
 
      ;; the shown pop-up is selectable, read-only, and gives focus back when hidden
      (check 'the-shown-pop-up-can-be-selected-and-is-read-only

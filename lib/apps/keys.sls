@@ -1,7 +1,6 @@
 ;; keys.sls -- the key bindings helper: C-x TAB shows in the pop-up the
-;; keys that work in the active window's buffer, the app's own keys first
-;; as it declares them under its keys fact, then its mode contexts'
-;; bindings, then the global ones; keys running one command share a row,
+;; keys that work in the active window's buffer, its mode contexts'
+;; bindings first, an app's own keys among them, then the global ones; keys running one command share a row,
 ;; with the command and its description beside them, the description
 ;; wrapped in its column.  The listing is a local read-only buffer,
 ;; <keys>, browsed like any other; C-x TAB pages it down from anywhere,
@@ -58,10 +57,6 @@
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
-  (define (declared-groups b)
-    ;; the app's own keys, (key action description) each, as groups
-    (map (lambda (entry) (list (list (car entry)) (cadr entry) (caddr entry))) (head:buffer-fact b 'keys '())))
-
   ;;; The text -------------------------------------------------------------------------
 
   (define (pad s width)
@@ -108,12 +103,24 @@
                                              out))))))
                        groups))))))
 
+  (define (capture-note context)
+    ;; a capturing context's other keys go to the app: one row saying so,
+    ;; with the toggle and the keys the editor keeps
+    (let ([capture (keymap:context-capture context)])
+      (if (not capture) '()
+          (list (list (list "other keys") "to the app"
+                      (format "Every other key goes to the app; ~a keep~a to the editor unless ~a toggles full capture"
+                              (string:join (map (lambda (k) (keymap:sequence-text (list k))) (cddr capture)) " and ")
+                              (if (= (length (cddr capture)) 1) "s" "")
+                              (keymap:sequence-text (list (car capture)))))))))
+
   (define (listing b)
-    ;; the buffer's own keys, its mode contexts' bindings, then the global ones
+    ;; the buffer's mode contexts' bindings, an app's own keys among them,
+    ;; then the global ones
     (let ([width (max 40 (paint:screen-cols))])
-      (append (section (format "~a keys" (head:buffer-name b)) (declared-groups b) width)
-              (apply append
-                (map (lambda (context) (section (format "~a keys" context) (context-groups context) width))
+      (append (apply append
+                (map (lambda (context)
+                       (section (format "~a keys" context) (append (context-groups context) (capture-note context)) width))
                      (mode:key-contexts b)))
               (section "Global keys" (context-groups 'global) width))))
 
@@ -170,7 +177,7 @@
       (head:window-prow-set! w top)
       (head:window-pcol-set! w 0)))
 
-  (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: the buffer's own keys as its app declares them, then its mode contexts' bindings, then the global ones, keys running one command sharing a row with the command and what it does; shown already, page it down, and from the top again past the end. The listing follows the active window.")
+  (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, page it down, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
     (cond
       [(showing?) (page-down!)]

@@ -410,6 +410,12 @@ changes appear on redraw.
 
 ### Keyboard and mouse controls
 
+Every key of the app runs a `buffer-view:` command bound in the `buffers`
+context: `buffer-view:choose!` for Enter, `next-row!`, `previous-row!`,
+`page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
+`clear-filter!`, `sort-column!` for `F1` to `F6`, `return!` and
+`paste-filter!`, so `C-x TAB` lists them and `C-h k` describes them.
+
 - Up / `C-p` / Shift-Tab, Down / `C-n` / Tab: move the candidate row.
 - Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.
 - Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.

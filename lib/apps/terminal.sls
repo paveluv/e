@@ -5,7 +5,7 @@
   (export (rename (terminal-close! close!)) (rename (terminal-color-scheme! color-scheme!))
           (rename (terminal-yank! edit:yank!))
           (rename (terminal-forward-clipboard-to-copy-buffer forward-clipboard-to-copy-buffer))
-          init! (rename (terminal! open!)) (rename (vt:scrollback scrollback))
+          init! (rename (terminal! open!)) page-down! page-up! (rename (vt:scrollback scrollback))
           (rename (terminal-send! send!)) (rename (vt:shell shell))
           (rename (terminal-toggle-capture! toggle-capture!)))
   (import (chezscheme)
@@ -118,7 +118,13 @@
                     (log:add! 'terminal (format "~a: ~a" (head:buffer-name buffer) message)))) diagnostics)))))
       (head:buffers)))
 
-  (edoc "Install the terminal app: its mode, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
+  (edoc "Scroll the terminal window a page up into its scrollback.")
+  (define (page-up!) (edit:page-window-fraction! -1 1))
+
+  (edoc "Scroll the terminal window a page down toward the live screen.")
+  (define (page-down!) (edit:page-window-fraction! 1 1))
+
+  (edoc "Install the terminal app: its mode with the keys of its context, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
   (define (init!)
     (mode:register! "terminal" '() '() (lambda (line) #f))
     (terminal-color-scheme! (head:host-color-scheme))
@@ -126,8 +132,8 @@
     (head:add-pre-redraw-hook! present-notices!)
     (keymap:bind-default! "C-c t" terminal!)
     (keymap:set-context-capture! 'terminal "C-]" terminal-toggle-capture! '("C-x" "M-x"))
-    (keymap:bind-default! 'terminal "S-PAGEUP" (lambda () (edit:page-window-fraction! -1 1)))
-    (keymap:bind-default! 'terminal "S-PAGEDOWN" (lambda () (edit:page-window-fraction! 1 1)))
+    (keymap:bind-default! 'terminal "S-PGUP" page-up!)
+    (keymap:bind-default! 'terminal "S-PGDN" page-down!)
     (doc:register!
       '(((terminal:open!)
          (("procedure" . "(terminal:open! [command])")) "void"

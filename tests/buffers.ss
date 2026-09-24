@@ -13,14 +13,16 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:)
+     (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:) (prefix (head dispatch) dispatch:)
              (prefix (apps buffer-view) buffer-view:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
+     ;; the app's keys are bound in its mode's context by its install
+     (buffer-view:init!)
      (putenv "TZ" "UTC")               ; deterministic clock cells
-     (define (press! . events) (for-each head:dispatch-app-event! events))
-     (define (type! text) (for-each (lambda (c) (head:dispatch-app-event! (string c))) (string->list text)))
+     (define (press! . events) (for-each dispatch:key! events))
+     (define (type! text) (for-each (lambda (c) (dispatch:key! (string c))) (string->list text)))
      (define (sequence proc items)
        ;; map does not promise effect order; event sequences do.
        (reverse (fold-left (lambda (acc item) (cons (proc item) acc)) '() items)))

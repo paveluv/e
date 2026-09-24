@@ -14,7 +14,7 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:)
+     (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
              (prefix (foundation string) string:) (prefix (head window) window:) (prefix (test) test:))
 
      (define check test:check)
@@ -60,8 +60,8 @@
                (not (visible? "Searching…"))))))
      (define (press! . events)
        ;; Each key sees a settled scan, as a user's next key would.
-       (for-each (lambda (event) (head:dispatch-app-event! event) (settle!)) events))
-     (define (type! text) (for-each (lambda (c) (head:dispatch-app-event! (string c))) (string->list text)) (settle!))
+       (for-each (lambda (event) (dispatch:key! event) (settle!)) events))
+     (define (type! text) (for-each (lambda (c) (dispatch:key! (string c))) (string->list text)) (settle!))
      (define (filter! text) (press! "C-u") (type! text))
      (define (files-open! . directory)
        ((top-level-value 'file-view:expansion-limit) 2)
@@ -118,7 +118,7 @@
              ;; shifts on each keystroke would show here.
              (let ([header (list-ref (lines) 2)])
                (define (sample event)
-                 (head:dispatch-app-event! event)
+                 (dispatch:key! event)
                  (let ([lines (lines)])
                    (define (has? name) (exists (lambda (s) (string:prefix? name s)) lines))
                    (list (for-all has? '("large/" "small/" "small/needle-one.txt" "small/nested/needle-only.txt"))
@@ -206,14 +206,14 @@
      ;; Identity: a killed view's scan is rejected by its recreation, and a
      ;; real reload replaces the worker's owner while restoring the app state.
      (files-open! root)
-     (head:dispatch-app-event! "n")
+     (dispatch:key! "n")
      (kill-buffer! (head:current-buffer))
      (files-open! (path "empty"))
      (check 'files-kill-and-recreate-rejects-the-old-scan
        (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter: " #t))
      (define same-view
        (let ([before (head:current-buffer)])
-         (head:dispatch-app-event! "n") (head:dispatch-app-event! "M-.")
+         (dispatch:key! "n") (dispatch:key! "M-.")
          (kernel:reload-module! "file-view")
          (eq? before (head:current-buffer))))
      (settle!)

@@ -1,7 +1,9 @@
 ;; file-view.sls -- the local, filterable <files> app.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps file-view)
-  (export expansion-limit init! open! open-directory! refresh! show-hidden)
+  (export choose! clear-filter! create! enter! erase! expansion-limit first-row! init! last-row! next-row! open!
+          open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! show-hidden
+          sort-column! toggle-hidden!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
@@ -349,6 +351,8 @@
         (vector-for-each (lambda (choice) (hashtable-set! (choice-history choice) parent (cons query child)))
           (hashtable-values choices))
         (if (string=? parent path) (navigate! path #t child) (branch parent)))))
+
+  (edoc "Go up to the parent directory, the way back remembered for every window.")
   (define (parent!)
     (unless (string=? location "/")
       (up-to! (directory:parent location))))
@@ -469,36 +473,89 @@
   (define (refresh!)
     (when view (start-scan!)) (void))
 
+  (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
+
+  (edoc "Open the chosen file in this window, or in the window's target windows when it has any; a chosen directory is entered instead."
+        (prompts))
+  (define (choose!) (activate! #f))
+
+  (edoc "Enter the chosen directory; a chosen file stays where it is."
+        (prompts))
+  (define (enter!) (activate! #t))
+
+  (edoc "Move the choice to the next entry.")
+  (define (next-row!) (move! 1))
+
+  (edoc "Move the choice to the previous entry.")
+  (define (previous-row!) (move! -1))
+
+  (edoc "Move the choice a page of entries down.")
+  (define (page-down!) (move! (page)))
+
+  (edoc "Move the choice a page of entries up.")
+  (define (page-up!) (move! (- (page))))
+
+  (edoc "Move the choice to the first entry.")
+  (define (first-row!) (move! (- (length rows))))
+
+  (edoc "Move the choice to the last entry.")
+  (define (last-row!) (move! (length rows)))
+
+  (edoc "Erase the filter's last character; with the filter empty, go up to the parent directory.")
+  (define (erase!)
+    (if (string=? query "") (parent!)
+        (filter! (substring query 0 (- (string-length query) (caar (reverse (glyph:clusters query))))))))
+
+  (edoc "Clear the filter, every entry of the directory listed again.")
+  (define (clear-filter!) (filter! ""))
+
+  (edoc "Create a file or a directory at a path typed at the prompt, the browsing filter set aside meanwhile."
+        (prompts))
+  (define (create!) (path!))
+
+  (edoc "Sort by the column of the function key pressed, F1 to F6, the same key again reversing the order.")
+  (define (sort-column!)
+    (let ([key (and (pair? (head:current-keys)) (car (head:current-keys)))])
+      (if (and key (member key '("F1" "F2" "F3" "F4" "F5" "F6")))
+          (cycle! (- (char->integer (string-ref key 1)) 49))
+          (edit:set-message! "Press F1 to F6 to sort by a column"))))
+
+  (edoc "Show the dot entries, or hide them again.")
+  (define (toggle-hidden!)
+    (show-hidden (not (show-hidden)))
+    (filter! query))
+
+  (edoc "Return to the buffer the files view replaced in this window.")
+  (define (return!)
+    (let ([origin (choice-origin (choice-for (head:current-window)))])
+      (set! hover #f)
+      (let ([target (if (memq origin (head:buffers)) origin
+                        (find (lambda (b) (not (eq? b view))) (head:buffers)))])
+        (when target (head:show-buffer! target)))))
+
+  (edoc "Add the pasted text to the filter, control characters dropped.")
+  (define (paste-filter!)
+    (filter! (string-append query
+               (list->string (filter (lambda (c) (not (eq? (char-general-category c) 'Cc)))
+                               (string->list (head:read-paste)))))))
+
+  ;; The keys of the files view, bound in its mode's context to the commands
+  ;; above, so the keys helper lists them and C-h k describes them
+  (define files-keys
+    `((("RET") ,choose!) (("RIGHT") ,enter!) (("LEFT") ,parent!)
+      (("DOWN" "C-n" "TAB") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!)
+      (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
+      (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
+      (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!) (("M-c") ,create!)
+      (("F1" "F2" "F3" "F4" "F5" "F6") ,sort-column!) (("M-.") ,toggle-hidden!) (("C-r") ,refresh!)
+      (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)))
+
   (define (handle! event)
+    ;; what the files context leaves to the app: focus, the wheel, the
+    ;; pointer, and the typed characters that grow the filter
     (cond [(string=? event "FOCUS") (render!) #t]
-          [(sort-event! event) #t]
-          [(member event '("UP" "C-p" "S-TAB" "WHEEL-UP")) (move! -1) #t]
-          [(member event '("DOWN" "C-n" "TAB" "WHEEL-DOWN")) (move! 1) #t]
-          [(member event '("HOME" "C-a" "M-<")) (move! (- (length rows))) #t]
-          [(member event '("END" "C-e" "M->")) (move! (length rows)) #t]
-          [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
-           (move! (* (if (member event '("PAGEUP" "M-v")) -1 1)
-                     (max 1 (- (head:window-size (head:current-window)) first-row)))) #t]
-          [(string=? event "LEFT") (parent!) #t]
-          [(string=? event "RIGHT") (activate! #t) #t]
-          [(string=? event "RET") (activate! #f) #t]
-          [(member event '("ESC" "C-g"))
-           (let ([origin (choice-origin (choice-for (head:current-window)))])
-             (set! hover #f)
-             (let ([target (if (memq origin (head:buffers)) origin
-                               (find (lambda (b) (not (eq? b view))) (head:buffers)))])
-               (when target (head:show-buffer! target)))) #t]
-          [(string=? event "C-u") (filter! "") #t]
-          [(string=? event "C-r") (refresh!) #t]
-          [(string=? event "M-c") (path!) #t]
-          [(string=? event "M-.") (show-hidden (not (show-hidden))) (filter! query) #t]
-          [(member event '("BACKSPACE" "C-h"))
-           (if (string=? query "") (parent!)
-               (filter! (substring query 0 (- (string-length query) (caar (reverse (glyph:clusters query))))))) #t]
-          [(string=? event "PASTE")
-           (filter! (string-append query
-                      (list->string (filter (lambda (c) (not (eq? (char-general-category c) 'Cc)))
-                                      (string->list (head:read-paste)))))) #t]
+          [(string=? event "WHEEL-UP") (move! -1) #t]
+          [(string=? event "WHEEL-DOWN") (move! 1) #t]
           [(tty:key-event-character event) => (lambda (c) (filter! (string-append query (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
@@ -548,20 +605,6 @@
       (head:set-app-selectable! view #f)
       (head:set-app-status-position! view head:buffer-name)
       (head:buffer-fact-set! view 'resume-kind 'file-view)
-      ;; the keys helper lists these under C-x TAB, the app handling them itself
-      (head:buffer-fact-set! view 'keys
-        '(("RET" "open" "Open the chosen file here, or in the window's target windows; enter a chosen directory")
-          ("RIGHT" "enter" "Enter the chosen directory")
-          ("LEFT" "parent" "Go up to the parent directory")
-          ("UP, DOWN" "move" "Move the choice; PGUP and PGDN by a page, HOME and END to the ends")
-          ("text" "filter" "Filter the entries by name, or by path with a slash in the text")
-          ("BS" "erase" "Erase the filter's last character, or go up when it is empty")
-          ("C-u" "clear" "Clear the filter")
-          ("M-c" "create" "Create a file or a directory at a typed path")
-          ("F1 to F6" "sort" "Sort by a column, again for the other direction")
-          ("M-." "hidden" "Show or hide the dot entries")
-          ("C-r" "refresh" "Scan the directory again")
-          ("ESC, C-g" "return" "Return to the buffer the view replaced")))
       (mode:choose! "files" view))
     view)
 
@@ -584,10 +627,11 @@
       (if (and (eq? was view) (not explicit?)) (refresh!)
           (navigate! dir #f selected))) (void))
 
-  (edoc "Install the files app: its mode, the C-x C-f binding, its status hints and buffer-kill hook.")
+  (edoc "Install the files app: its mode with its keys bound in the files context, the C-x C-f binding, its status hints and buffer-kill hook.")
   (define (init!)
     (mode:register! "files" '() '() (lambda (line) #f) #f styles)
     (keymap:bind-default! "C-x C-f" open!)
+    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'files key (cadr entry))) (car entry))) files-keys)
     (paint:add-status-hint! hints)
     (head:add-buffer-kill-hook!
       (lambda (b)

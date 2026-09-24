@@ -22,9 +22,11 @@ lists that one's keys. A key bound to an unnamed procedure, a lambda in
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
-line puts it away, as `(keys:hide!)` does. An app that handles its keys
-itself declares them for the listing under its buffer's `keys` fact, as
-`(key action description)` triples.
+line puts it away, as `(keys:hide!)` does. An app binds its keys in its
+mode's context to its own commands, `file-view:choose!` for Enter in
+`<files>` say, so they list like any others, run from M-x and are described
+by `C-h k`; an app that captures keys, the terminal, lists its toggle and a
+row saying what it takes.
 
 ## Global bindings
 

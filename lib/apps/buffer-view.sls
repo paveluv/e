@@ -9,7 +9,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffer-view)
-  (export init! next! open! previous!)
+  (export choose! clear-filter! erase! first-row! init! last-row! next! next-row! open! page-down! page-up!
+          paste-filter! previous! previous-row! return! sort-column!)
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (head dispatch) dispatch:)
@@ -298,12 +299,71 @@
                           (string-append text "  " (car hints)) text)
                    (cdr hints)))))))
 
+  (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
+
+  (edoc "Switch this window to the chosen buffer, or restore a chosen trashed one.")
+  (define (choose!) (activate-row!))
+
+  (edoc "Move the choice to the next buffer.")
+  (define (next-row!) (move-row! 1))
+
+  (edoc "Move the choice to the previous buffer.")
+  (define (previous-row!) (move-row! -1))
+
+  (edoc "Move the choice a page of rows down.")
+  (define (page-down!) (move-row! (page)))
+
+  (edoc "Move the choice a page of rows up.")
+  (define (page-up!) (move-row! (- (page))))
+
+  (edoc "Move the choice to the first buffer.")
+  (define (first-row!) (move-row! (- (length rows))))
+
+  (edoc "Move the choice to the last buffer.")
+  (define (last-row!) (move-row! (length rows)))
+
+  (edoc "Erase the filter's last character.")
+  (define (erase!)
+    (unless (string=? buffer-filter "")
+      (filter! (substring buffer-filter 0
+                 (- (string-length buffer-filter) (car (car (reverse (glyph:clusters buffer-filter)))))))))
+
+  (edoc "Clear the filter, every buffer listed again.")
+  (define (clear-filter!) (filter! ""))
+
+  (edoc "Sort by the column of the function key pressed, F1 to F6, the same key again reversing the order.")
+  (define (sort-column!)
+    (let ([key (and (pair? (head:current-keys)) (car (head:current-keys)))])
+      (if (and key (member key '("F1" "F2" "F3" "F4" "F5" "F6")))
+          (cycle-sort! (- (char->integer (string-ref key 1)) (char->integer #\1)))
+          (edit:set-message! "Press F1 to F6 to sort by a column"))))
+
+  (edoc "Return to the buffer the buffers app replaced in this window.")
+  (define (return!)
+    (let* ([origin (choice-origin (choice-for (head:current-window)))]
+           [b (if (memq origin (head:buffers)) origin (other-buffer view))])
+      (set! hover #f)
+      (when b (head:show-buffer! b))))
+
+  (edoc "Add the pasted text to the filter, control characters dropped.")
+  (define (paste-filter!)
+    (filter! (string-append buffer-filter
+               (list->string (filter (lambda (c) (>= (char->integer c) 32)) (string->list (head:read-paste)))))))
+
+  ;; The keys of the buffers app, bound in its mode's context to the
+  ;; commands above, so the keys helper lists them and C-h k describes them
+  (define buffers-keys
+    `((("RET") ,choose!)
+      (("DOWN" "C-n" "TAB") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!)
+      (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
+      (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
+      (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!)
+      (("F1" "F2" "F3" "F4" "F5" "F6") ,sort-column!) (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)))
+
   (define (handle! event)
+    ;; what the buffers context leaves to the app: focus, the wheel, the
+    ;; pointer, and the typed characters that grow the filter
     (cond [(string=? event "FOCUS") (refresh!) #t]
-          [(member event '("F1" "F2" "F3" "F4" "F5" "F6"))
-           (cycle-sort! (- (char->integer (string-ref event 1)) (char->integer #\1))) #t]
-          [(member event '("UP" "C-p" "S-TAB")) (move-row! -1) #t]
-          [(member event '("DOWN" "C-n" "TAB")) (move-row! 1) #t]
           [(member event '("WHEEL-UP" "WHEEL-DOWN"))
            (let ([target (head:app-event-focus)] [up? (string=? event "WHEEL-UP")])
              (if (and target (not (eq? target (head:current-window))) (memq target (head:windows)))
@@ -311,27 +371,6 @@
                    (head:set-current! target)
                    (dispatch:global-key! (if up? "M-S-UP" "M-S-DOWN")))
                  (move-row! (if up? -1 1)))) #t]
-          [(member event '("HOME" "C-a" "M-<")) (move-row! (- (length rows))) #t]
-          [(member event '("END" "C-e" "M->")) (move-row! (length rows)) #t]
-          [(member event '("PAGEUP" "M-v" "PAGEDOWN" "C-v"))
-           (move-row! (* (if (member event '("PAGEUP" "M-v")) -1 1)
-                         (max 1 (- (head:window-size (head:current-window)) first-row)))) #t]
-          [(string=? event "RET") (activate-row!) #t]
-          [(member event '("ESC" "C-g"))
-           (let* ([origin (choice-origin (choice-for (head:current-window)))]
-                  [b (if (memq origin (head:buffers)) origin (other-buffer view))])
-             (set! hover #f)
-             (when b (head:show-buffer! b))) #t]
-          [(string=? event "C-u") (filter! "") #t]
-          [(member event '("BACKSPACE" "C-h"))
-           (unless (string=? buffer-filter "")
-             (filter!
-               (substring buffer-filter 0
-                 (- (string-length buffer-filter) (car (car (reverse (glyph:clusters buffer-filter)))))))) #t]
-          [(string=? event "PASTE")
-           (filter! (string-append buffer-filter
-                      (list->string (filter (lambda (c) (>= (char->integer c) 32))
-                                      (string->list (head:read-paste)))))) #t]
           [(tty:key-event-character event)
            => (lambda (c) (filter! (string-append buffer-filter (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
@@ -392,15 +431,6 @@
           (head:set-app-cursor-visible! view #f)
           (head:set-app-selectable! view #f)
           (head:set-app-status-position! view head:buffer-name)
-          ;; the keys helper lists these under C-x TAB, the app handling them itself
-          (head:buffer-fact-set! view 'keys
-            '(("RET" "switch" "Switch to the row's buffer, or restore a trashed one")
-              ("UP, DOWN" "move" "Move the choice; PGUP and PGDN by a page, HOME and END to the ends")
-              ("text" "filter" "Filter the buffers by name")
-              ("BS" "erase" "Erase the filter's last character")
-              ("C-u" "clear" "Clear the filter")
-              ("F1 to F6" "sort" "Sort by a column, again for the other direction")
-              ("ESC, C-g" "return" "Return to the buffer the app replaced")))
           (mode:choose! "buffers" view)
           (refresh!)
           view)))
@@ -425,9 +455,10 @@
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the buffers app: its mode and view, its status hint, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
+  (edoc "Install the buffers app: its mode with its keys bound in the buffers context, its view, status hint, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
   (define (init!)
     (mode:register! "buffers" '() '() (lambda (line) #f) #f styles)
+    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'buffers key (cadr entry))) (car entry))) buffers-keys)
     (ensure!)
     (paint:add-status-hint! status-hint)
     (head:add-buffer-kill-hook!
