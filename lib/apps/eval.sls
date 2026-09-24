@@ -557,6 +557,7 @@
     ;; wraps it as needed. Cached per procedure -- stripping a source datum
     ;; is costly and the answer never changes for the same procedure -- and
     ;; per name for the rest.
+    (refresh-signatures!)
     (let* ([bound? (top-level-bound? sym)]
            [value (and bound? (top-level-value sym))]
            [key (if (procedure? value) value sym)])
@@ -690,18 +691,24 @@
 
   (define signature-table #f) ; (source . index): the base's signatures last seen, indexed by name
 
-  (edoc "The documented procedure forms recorded for a name, as text: the base's corpus and registered modules come in one piece, indexed once per version, and the hints computed against an older version go with it."
-        (sym symbol "the name")
-        (returns (list-of string))
-        (effects internal))
-  (define (described-forms sym)
+  (define (refresh-signatures!)
+    ;; the base's signatures as the hints know them: a new version, after a
+    ;; fetch say, is indexed anew and every hint computed against the old
+    ;; one is forgotten, so the cache is checked only after this
     (let ([source (guard (ex [else '()]) (reference:signatures))])
       (unless (and signature-table (eq? (car signature-table) source))
         (let ([index (make-eq-hashtable)])
           (for-each (lambda (entry) (eq-hashtable-set! index (car entry) (cdr entry))) source)
           (set! signature-table (cons source index))
-          (hashtable-clear! hint-cache)))
-      (eq-hashtable-ref (cdr signature-table) sym '())))
+          (hashtable-clear! hint-cache)))))
+
+  (edoc "The documented procedure forms recorded for a name, as text: the base's corpus and registered modules come in one piece, indexed once per version."
+        (sym symbol "the name")
+        (returns (list-of string))
+        (effects internal))
+  (define (described-forms sym)
+    (refresh-signatures!)
+    (eq-hashtable-ref (cdr signature-table) sym '()))
 
   (define (described-params sym)
     ;; Pick the longest documented procedure form for this name.

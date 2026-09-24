@@ -303,4 +303,8 @@
      (check 'a-described-procedure-completes-with-its-parameter-names (eval:completion-hint 'mx-plain-proc) "(alpha beta ...)")
      (check 'an-undescribed-procedure-completes-with-its-source-parameters
        (begin (define-top-level-value 'mx-bare-proc (lambda (a b . c) #f)) (eval:completion-hint 'mx-bare-proc)) "(a b . c)")
+     ;; a hint cached against one version of the documentation is forgotten
+     ;; when the documentation changes, a fetch or a registration later
+     (doc:register! '(((mx-bare-proc) (("procedure" . "(mx-bare-proc gamma)")) "void" ("(mx)") mx "Fixture" #f "Documented later.")))
+     (check 'a-cached-hint-follows-newly-arrived-documentation (eval:completion-hint 'mx-bare-proc) "(gamma)")
      (test:finish! 'mx)))
