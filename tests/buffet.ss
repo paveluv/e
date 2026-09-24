@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 
-;; The <buffers> app as a table: one live model behind switching, filtering
+;; The <buffet> app as a table: one live model behind switching, filtering
 ;; by name or path, ordered ascending/descending/off sorts with compound
 ;; priorities, modification clocks, and identity through renames, kills and
 ;; recreation. Headless: the app handler receives the events the dispatcher
@@ -14,12 +14,12 @@
 (eval
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:) (prefix (head dispatch) dispatch:)
-             (prefix (apps buffer-view) buffer-view:)
+             (prefix (apps buffet) buffet:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
      ;; the app's keys are bound in its mode's context by its install
-     (buffer-view:init!)
+     (buffet:init!)
      (putenv "TZ" "UTC")               ; deterministic clock cells
      (define (press! . events) (for-each dispatch:key! events))
      (define (type! text) (for-each (lambda (c) (dispatch:key! (string c))) (string->list text)))
@@ -58,10 +58,10 @@
      ;; Enter initially selects the previous document; the app itself never
      ;; becomes the default, even after repeated quick switches.
      (check 'switching-defaults-to-the-previous-document
-       (sequence (lambda (i) (buffer-view:open!) (press! "RET") (state)) (iota 4))
+       (sequence (lambda (i) (buffet:open!) (press! "RET") (state)) (iota 4))
        '(("<picker-alpha>" (3 . 2)) ("<picker-beta>" (4 . 1)) ("<picker-alpha>" (3 . 2)) ("<picker-beta>" (4 . 1))))
 
-     (buffer-view:open!)
+     (buffet:open!)
      (check 'filter-matches-names-and-full-paths-without-case-or-prefix-restrictions
        (sequence (lambda (needle) (press! "C-u") (type! needle) (list (length (rows)) (name-in (car (rows)))))
          '("kEr-BeTa" "project/alpha/src" "日本語"))
@@ -69,7 +69,7 @@
      (press! "C-u") (type! "no-such-buffer") (press! "RET")
      (check 'empty-results-never-create-a-buffer-or-leave-the-list
        (list (rows) (head:buffer-name (head:current-buffer)) (head:buffer-named "no-such-buffer"))
-       '(("No matching buffers") "<buffers>" #f))
+       '(("No matching buffers") "<buffet>" #f))
      (press! "C-g")
      (check 'cancel-restores-the-origin-and-its-point (state) '("<picker-beta>" (4 . 1)))
 
@@ -79,7 +79,7 @@
      (head:buffer-fact-set! (buffer "<picker-alpha>") 'modified-at 1704164645000000900)
      (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at 1704078245000000900)
      (for-each (lambda (name) (head:buffer-read-only-set! (buffer name) #t)) '("<picker-beta>" "<picker-gamma>"))
-     (buffer-view:open!) (type! "picker-")
+     (buffet:open!) (type! "picker-")
      (define (sort! key labels)
        ;; One snapshot covers the heading marks, row order and selection.
        (press! (format "F~a" key))
@@ -151,11 +151,11 @@
 
      ;; A recreated switcher lists itself with current metadata; visiting a
      ;; row and retiring that buffer does not return to the switcher.
-     (kill-buffer! (head:find-tool-buffer "*buffers*"))
-     (buffer-view:open!)
+     (kill-buffer! (head:find-tool-buffer "*buffet*"))
+     (buffet:open!)
      (check 'recreated-switcher-lists-itself-with-current-metadata
        (let* ([b (head:current-buffer)] [lines (head:buffer-lines b)]
-              [needle (format "<buffers>  ~a" (vector-length lines))])
+              [needle (format "<buffet>  ~a" (vector-length lines))])
          (list (head:app-buffer? b) (head:buffer-selectable? b) (head:app-cursor-visible-in? (head:current-window))
                (= (vector-length lines) (+ 2 (length (head:buffers))))
                (exists (lambda (line) (and (string:search line needle 0 (string-length line)) #t))
@@ -166,7 +166,7 @@
      ;; own heading, dimmed, and Enter on it restores.
      (define doomed (head:new-buffer! "picker-doomed"))
      (kill-buffer! doomed)
-     (buffer-view:open!)
+     (buffet:open!)
      (check 'the-trash-lists-killed-shared-buffers-below-the-live-rows
        (let ([lines (rows)])
          (list (and (member "Trash: Enter restores" lines) #t)
@@ -178,24 +178,24 @@
      (check 'enter-on-a-trash-row-restores-the-buffer
        (list (head:buffer-name (head:current-buffer)) (and (head:buffer-named "picker-doomed") #t))
        '("picker-doomed" #t))
-     (buffer-view:open!)
+     (buffet:open!)
      (check 'a-restored-buffer-leaves-the-trash-section
        (and (member "Trash: Enter restores" (rows)) #t) #f)
      (press! "C-g")
      (type! "picker-beta") (press! "RET")
      (kill-buffer! (head:current-buffer))
      (check 'retiring-a-visited-buffer-does-not-return-to-the-switcher
-       (list (eq? (head:current-buffer) (head:find-tool-buffer "*buffers*")) (and (memq (head:current-buffer) (head:buffers)) #t))
+       (list (eq? (head:current-buffer) (head:find-tool-buffer "*buffet*")) (and (memq (head:current-buffer) (head:buffers)) #t))
        '(#f #t))
 
      (head:show-buffer! origin)
      (kill-buffer! (buffer "<picker-gamma>"))
      (kernel:retract-module! 'picker-fixture)
      ;; the app as an API: the filter set, a buffer chosen, the choice told
-     (buffer-view:open!)
-     (buffer-view:filter! "picker-b")
-     (buffer-view:select! (buffer "<picker-beta>"))
+     (buffet:open!)
+     (buffet:filter! "picker-b")
+     (buffet:select! (buffer "<picker-beta>"))
      (check 'the-api-filters-selects-and-tells-the-choice
-       (list (eq? (buffer-view:chosen) (buffer "<picker-beta>")) (test:raises? (lambda () (buffer-view:select! (buffer "<picker-gamma>")))))
+       (list (eq? (buffet:chosen) (buffer "<picker-beta>")) (test:raises? (lambda () (buffet:select! (buffer "<picker-gamma>")))))
        '(#t #t))
-     (test:finish! 'buffers)))
+     (test:finish! 'buffet)))

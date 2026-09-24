@@ -107,7 +107,7 @@ Named terminal keys are:
 
 Named keys accept `C-`, `M-` and `S-` modifiers, such as `M-S-UP` and
 `C-LEFT`. The terminal must send a distinguishable sequence, and its own
-shortcuts can intercept a key before e receives it. Finder and Buffers use
+shortcuts can intercept a key before e receives it. Finder and Buffet use
 `F1`–`F6` for column sorting while their app is focused; these are app controls,
 so a global binding lookup can still report the key as unbound.
 
@@ -116,7 +116,7 @@ bracketed paste produces, bound to `edit:paste!`. `SELF-INSERT` is what a
 printable character without a binding of its own resolves to, in the mode's
 context first, then the global map, and its command receives the character
 through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
-inserts it, while in `<finder>` and `<buffers>` the context binds it to
+inserts it, while in `<finder>` and `<buffet>` the context binds it to
 `extend-filter!`, so typing grows the filter. The keys listing shows the
 pseudo-key as `any character`. `MOUSE-CLICK`
 fires in a mode's context after a text click has placed point, so a mode can

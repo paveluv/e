@@ -12,7 +12,7 @@ it in their tab or window title.
 The initial `*scratch*` buffer is an ordinary shared, unvisited buffer in
 Scheme mode.
 Local buffers belong to this head and have names in angle brackets:
-`<buffers>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
+`<buffet>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
 Shared buffers retain file names or names such as `*scratch*`. Describe's
 private `*describe*` source belongs to the base, while its rendered
 `<describe>` companion belongs to the head. Shared names
@@ -61,7 +61,7 @@ print in that form.
 
 | Key | Action |
 |---|---|
-| `C-x b` / `C-x C-b` | Open the buffers app. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
+| `C-x b` / `C-x C-b` | Open the buffet, the buffers laid out to pick from. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
 | `M-x (edit:new-buffer! "name")` | Create an empty unvisited buffer with that name and show it. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
 | `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
@@ -70,7 +70,7 @@ print in that form.
 `C-x C-f` opens the [finder](FINDER.md) for directory navigation and recursive
 filename filtering, with the same column-sorting controls as buffers.
 `M-x (edit:visit-file! ` completes a path. Both buffer-switch shortcuts use
-the [live table](#the-buffers-app) below. An unmatched filter stays in the
+the [live table](#the-buffet-app) below. An unmatched filter stays in the
 table; it never creates a buffer. Use `edit:new-buffer!` for creation; an
 existing name receives a unique suffix.
 
@@ -301,15 +301,15 @@ not part of buffer text, point cannot enter it, and selections cannot include
 it. Clicking or dragging there addresses column zero of the corresponding text
 line.
 
-## The `<buffers>` app
+## The `<buffet>` app
 
 `C-x b` and `C-x C-b` show the same app in the current window. The initial
 candidate is the most recently used other buffer, so either shortcut followed
 by Enter switches back immediately. Repeated quick switches alternate between
 the documents; the switcher itself never becomes the default. The table
-includes `<buffers>` so every buffer reachable through global switching
+includes `<buffet>` so every buffer reachable through global switching
 also has a row when the filter is clear. Its own row can be filtered,
-sorted and opened like the others. `M-x (buffer-view:open!)` is the same
+sorted and opened like the others. `M-x (buffet:open!)` is the same
 command.
 
 Below the live rows, while the trash holds anything, a `Trash` section
@@ -390,7 +390,7 @@ which buffer a row opens.
 
 The blue `active` face marks the document in the focused window, only in
 unfocused buffers panes. A focused buffers pane does not mark its own
-`<buffers>` row as active; another pane showing the same list still can. The
+`<buffet>` row as active; another pane showing the same list still can. The
 `candidate` face marks the keyboard choice with bold text and a soft
 blue background, pale in light themes and dark navy in dark themes.
 Unfocused panes show no candidate emphasis unless the pointer hovers over a row.
@@ -403,15 +403,15 @@ configurable through [Styles](STYLES.md).
 
 There is no text cursor or text selection; C-Space does not set a mark.
 The keyboard candidate still scrolls into view. The status bar shows
-`<buffers>` and, only in the focused window, hints for
+`<buffet>` and, only in the focused window, hints for
 F1–F6 and C-u as space permits. Window numbers and controls remain available
 in every window. Creation, deletion, edits, saves, renames and mode/file
 changes appear on redraw.
 
 ### Keyboard and mouse controls
 
-Every key of the app runs a `buffer-view:` command bound in the `buffers`
-context: `buffer-view:choose!` for Enter, `next-row!`, `previous-row!`,
+Every key of the app runs a `buffet:` command bound in the `buffers`
+context: `buffet:choose!` for Enter, `next-row!`, `previous-row!`,
 `page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
 `clear-filter!`, `(toggle-sort-column! n)` for `F1` to `F6`, `return!` and
 `paste-filter!`, and typing is the context's `SELF-INSERT` binding,
@@ -435,7 +435,7 @@ way: `(filter! text)` sets the filter,
 - Wheel over an unfocused app: run `M-Shift-Up` / `M-Shift-Down` in the focused
   window. By default this switches buffers alphabetically with wraparound,
   independently of the panel's filter, sorting and hovered row. Focus stays put.
-- Click the app's status line: focus `<buffers>`.
+- Click the app's status line: focus `<buffet>`.
 
 Kept in another window, the same app is a control panel: a click or wheel tick
 switches the focused window without taking focus. Click the panel's status
@@ -447,7 +447,7 @@ The public app API is documented in [App buffers](APPS.md).
 ## Scrollbars
 
 Ordinary buffers show no head:scrollbar by default; `(head:scrollbar #t)` in config.e
-enables a one-column vertical bar for them, and `<buffers>` shows one while
+enables a one-column vertical bar for them, and `<buffet>` shows one while
 its rows overflow the window. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
 visible in the window, and its position reflects the scrollable range. Sticky
@@ -467,7 +467,7 @@ Configure scrollbars in `config.e`:
 ```
 
 An app may force a scrollbar, a side, or an automatic bar through
-`head:set-app-presentation!`. `<buffers>` uses the automatic bar: it appears
+`head:set-app-presentation!`. `<buffet>` uses the automatic bar: it appears
 on the `head:scrollbar-position` side only when the list is taller than the
 window.
 

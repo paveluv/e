@@ -4,7 +4,7 @@ e is one editor state with any number of screens on it. The **base** owns
 what is shared: the buffer store with its text, undo history and marks,
 terminal processes, the log, describe's documentation sources and the
 permission policy. A **head** is one user's screen: windows, prompts, local
-buffers such as `<buffers>` and `<log>`, the copy buffer and `config.e`. Plain
+buffers such as `<buffet>` and `<log>`, the copy buffer and `config.e`. Plain
 `e` starts or attaches to the installation's base; `e --base` runs the base
 alone for a supervisor. Scripted clients -- agents -- connect
 to the same base under their own permissions.
@@ -104,7 +104,7 @@ screen. It asks for consent when there are local unsaved drafts, running
 terminals, agent sessions, pending interactions or other heads. Shared
 unsaved text is saved automatically and needs no confirmation. With no
 transient work to review, shutdown proceeds immediately. `n`, `v`, Esc or C-g
-cancels; `v` opens the buffers app. New transient work while the question is
+cancels; `v` opens the buffet. New transient work while the question is
 open requires a fresh review; shared edits are included in the save without
 another question. New attachments receive a temporary busy refusal while a
 review is open and can retry after it ends. Existing heads and terminals
@@ -221,7 +221,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Shared, owned by the base | Local, owned by each head |
 |---|---|
 | Buffer text, file facts, undo and redo history, marks | Windows, points, viewports and the selection |
-| Terminal processes and their screens | Prompts, `<completions>`, `<buffers>`, `<copy>` |
+| Terminal processes and their screens | Prompts, `<completions>`, `<buffet>`, `<copy>` |
 | The log's records | `<log>` renderings and the echo area |
 | Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |
 | Questions waiting for a named head | Plain local buffers with their text, `<copy>` among them, checkpointed under the head's name |

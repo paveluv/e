@@ -97,7 +97,7 @@ window overlays and hit testing. Ordinary buffers use their existing text
 and rendition through the same accessors. Mode stylers receive the displayed
 row text. Buffer text queries continue to
 read the common rows; changing only a window's formatting does not create
-a content revision. The buffers app uses this facility to share filtering
+a content revision. The buffet uses this facility to share filtering
 and sorting while fitting each pane independently.
 
 `(head:view-append! buffer lines [drop])` appends a line list and optionally
@@ -268,7 +268,7 @@ presentation path.
 App input is layered: an active prompt first, then the focused app, then e's
 global bindings, then the ordinary buffer fallback such as self-insertion.
 Most apps are partial: their handler consumes only their own controls and
-returns false for everything else. Thus `<buffers>` owns navigation and row
+returns false for everything else. Thus `<buffet>` owns navigation and row
 activation while `M-x`, window commands, and other global bindings pass
 through naturally.
 
@@ -367,7 +367,7 @@ text scroll.
 returned zero-based `(row . column)` projects the status position onto source
 text. A returned string replaces the usual buffer details with operation
 text, while retaining the window number and controls. Temporary prompts use
-this for key hints and completion page counts; the buffers app shows its
+this for key hints and completion page counts; the buffet shows its
 name and adds keyboard hints only in the focused window. Status text fits
 terminal cells, including wide characters, so window controls keep their
 positions. `#f` restores the default.
@@ -375,7 +375,7 @@ positions. `#f` restores the default.
 The same bar is off for ordinary buffers by default; `(head:scrollbar #t)`
 enables it there. `(head:scrollbar-position 'left)` and `(head:scrollbar-position 'right)`
 select the global side, which defaults to the right. An app's explicit side
-overrides that position. `<buffers>` uses `auto`: its bar appears on the
+overrides that position. `<buffet>` uses `auto`: its bar appears on the
 global side when the list is taller than its window and disappears when
 everything fits.
 
@@ -395,22 +395,22 @@ windows showing the same app.
 
 `C-x C-f` opens `<finder>`: a local directory browser with incremental recursive
 filename filtering, ancestor navigation, match counts and sortable metadata.
-It shares the buffers table's sort-key cycling and column fitting. Its
+It shares the buffet's sort-key cycling and column fitting. Its
 directory, filter and sorting are shared within one head; formatting,
 selection and scrolling belong to each window. Filesystem work runs outside
 refresh callbacks and publishes only while its request and registration are
 still current. See [Finder](FINDER.md) for controls and search behavior.
 
-## The buffers app
+## The buffet
 
-`<buffers>` is the shared implementation of `C-x b` and `C-x C-b`: a live
+`<buffet>` is the shared implementation of `C-x b` and `C-x C-b`: a live
 table of all buffers, including itself, with a name/path filter, ordered
 column sort keys, modification times, read-only flags, and a candidate
 preserved by buffer identity. Click headings or use F1–F6 to cycle sorting.
 Each window keeps its own candidate and point; the filter and sort belong
 to the local app. Its rows fit each window independently, with sticky filter
 and heading rows, elided paths, an automatic scrollbar, a hidden cursor and
-disabled text selection. See [Using the buffers app](BUFFERS.md#the-buffers-app)
+disabled text selection. See [Using the buffet](BUFFERS.md#the-buffet-app)
 for the complete keyboard, mouse and cancellation behavior. Wheel input
 in an unfocused pane runs the global `M-Shift-Up` / `M-Shift-Down` binding
 in the focused window, preserving focus. Its default alphabetical traversal
@@ -418,7 +418,7 @@ and wraparound are independent of the table's filter, sorting and hovered
 row. Wheel input in the focused app browses rows without opening a buffer.
 
 Status-bar clicks always focus their window; app handlers cannot override
-them. `<buffers>` returns `keep-focus` for content clicks because the click's
+them. `<buffet>` returns `keep-focus` for content clicks because the click's
 purpose is to switch a buffer, not to enter the app.
 
 The `active` face marks the document in the focused window. The `candidate`

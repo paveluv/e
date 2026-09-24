@@ -1,4 +1,4 @@
-;; buffer-view.sls -- the <buffers> app: the library (buffer-view).
+;; buffet.sls -- the <buffet> app, a spread of the buffers to pick from: the library (buffet).
 ;;
 ;; A live table of the head's buffers behind both switching keys, with a
 ;; name and path filter, ordered column sorts, modification clocks and a
@@ -8,7 +8,7 @@
 ;; headless.
 
 (import (only (foundation edoc) elibrary))
-(elibrary (apps buffer-view)
+(elibrary (apps buffet)
   (export choose! (rename (chosen-entry chosen)) clear-filter! erase! extend-filter! filter! first-row! init! last-row! next! next-row!
           open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) toggle-sort-column!)
   (import (chezscheme)
@@ -363,7 +363,7 @@
       (error 'toggle-sort-column! "expected a column, 1 to 6" column))
     (cycle-sort! (- column 1)))
 
-  (edoc "Return to the buffer the buffers app replaced in this window.")
+  (edoc "Return to the buffer the buffet replaced in this window.")
   (define (return!)
     (let* ([origin (choice-origin (choice-for (head:current-window)))]
            [b (if (memq origin (head:buffers)) origin (other-buffer view))])
@@ -375,9 +375,9 @@
     (filter! (string-append buffer-filter
                (list->string (filter (lambda (c) (>= (char->integer c) 32)) (string->list (head:read-paste)))))))
 
-  ;; The keys of the buffers app, bound in its mode's context to the
+  ;; The keys of the buffet, bound in its mode's context to the
   ;; commands above, so the keys helper lists them and C-h k describes them
-  (define buffers-keys
+  (define buffet-keys
     `((("RET") ,choose!)
       (("DOWN" "C-n" "TAB") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!)
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
@@ -389,7 +389,7 @@
       ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call toggle-sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
-    ;; what the buffers context leaves to the app: focus, the wheel and the
+    ;; what the buffet context leaves to the app: focus, the wheel and the
     ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (refresh!) #t]
           [(member event '("WHEEL-UP" "WHEEL-DOWN"))
@@ -438,17 +438,17 @@
                             (loop (cdr left))))])])
           (if (eq? next view) (open!) (head:show-buffer! next))))))
 
-  (edoc "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning; the buffers app's own turn opens the app.")
+  (edoc "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning; the buffet's own turn opens the app.")
   (define (previous!) (switch-by-row! -1))
 
-  (edoc "Switch the current window to the next buffer in alphabetical order, wrapping at the end; the buffers app's own turn opens the app.")
+  (edoc "Switch the current window to the next buffer in alphabetical order, wrapping at the end; the buffet's own turn opens the app.")
   (define (next!) (switch-by-row! 1))
 
   (define (ensure!)
     ;; Created at startup, or recreated after the user kills the view.
     (or (and view (memq view (head:buffers)) view)
         (begin
-          (set! view (head:register-app! "*buffers*" refresh! handle!))
+          (set! view (head:register-app! "*buffet*" refresh! handle!))
           ;; inventory, not a visit: head:show-buffer! keeps it behind the documents
           (head:buffer-fact-set! view 'recency 'behind)
           ;; A position bar on the configured side, only while the rows
@@ -457,11 +457,11 @@
           (head:set-app-cursor-visible! view #f)
           (head:set-app-selectable! view #f)
           (head:set-app-status-position! view head:buffer-name)
-          (mode:choose! "buffers" view)
+          (mode:choose! "buffet" view)
           (refresh!)
           view)))
 
-  (edoc "Show the buffers app in the current window with the most recently used other buffer selected: type to filter, arrows choose, Enter switches to the row's buffer or restores a trashed one, Esc returns.")
+  (edoc "Show the buffet in the current window with the most recently used other buffer selected: type to filter, arrows choose, Enter switches to the row's buffer or restores a trashed one, Esc returns.")
   (define (open!)
     ;; Both switch shortcuts use one app. The app itself never displaces the
     ;; previous document as the default, even after repeated quick switches.
@@ -481,10 +481,10 @@
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the buffers app: its mode with its keys bound in the buffers context, its view, status hint, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
+  (edoc "Install the buffet: its mode with its keys bound in the buffet context, its view, status hint, kill hook and highlighter, and the keys C-x b, C-x C-b, M-S-UP and M-S-DOWN.")
   (define (init!)
-    (mode:register! "buffers" '() '() (lambda (line) #f) #f styles)
-    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'buffers key (cadr entry))) (car entry))) buffers-keys)
+    (mode:register! "buffet" '() '() (lambda (line) #f) #f styles)
+    (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! 'buffet key (cadr entry))) (car entry))) buffet-keys)
     (ensure!)
     (paint:add-status-hint! status-hint)
     (head:add-buffer-kill-hook!

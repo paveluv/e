@@ -193,7 +193,7 @@ pane on a directory.
 
 ## Windows and heads
 
-Like `<buffers>`, `<finder>` shares its directory, filter and sort order between
+Like `<buffet>`, `<finder>` shares its directory, filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.

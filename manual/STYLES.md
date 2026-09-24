@@ -129,7 +129,7 @@ The built-in faces available to `style:set!` are:
 | `rainbow1` … `rainbow7` | Foregrounds `196`, `208`, `220`, `40`, `33`, `57`, `129` | Pretty-Scheme nesting colors |
 | `mark` | `(underline)` | Generic highlighted ranges, including matching delimiters |
 | `selection` | `((background blue))` | The active selected region |
-| `active` | `((background 31))` | The `<buffers>` row of the buffer the selected window shows |
+| `active` | `((background 31))` | The `<buffet>` row of the buffer the selected window shows |
 | `candidate` | Dark: `(bold (background (rgb 28 40 60)))`; light: `(bold (background (rgb 226 235 250)))` | The keyboard candidate in an app; files and buffers show it only in the focused pane |
 | `candidate-hover` | The same bold text and background as `candidate`, plus `dotted-underline` and the theme's `underline-color` from `hover` | A hovered files or buffers row, taking precedence over the keyboard candidate |
 | `choice` | `(bold (foreground 135))` | The initial letters of choices in focused dialog prompts |

@@ -1893,14 +1893,14 @@
         (when (and s ready) (ready)))))
 
   (define (view-quit-buffers!)
-    (let ([b (head:find-tool-buffer "*buffers*")])
+    (let ([b (head:find-tool-buffer "*buffet*")])
       (if b
           (let ([w (window:display! b)])
             (when w
               (window:focus! w)
               (head:dispatch-app-event! "FOCUS")
               (set! message "")))
-          (set-message! "The <buffers> app is not available"))))
+          (set-message! "The <buffet> app is not available"))))
 
   (edoc "Quit this head at once: shared text stays in the base, the screen is checkpointed for the next attach, and the exit notice names every buffer with unsaved work.")
   (define (quit!)
@@ -2042,7 +2042,7 @@
   ;; Everything the layer registers -- owned by edit, so a reload
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
-  (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffers app.")
+  (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet.")
   (define (init!)
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.

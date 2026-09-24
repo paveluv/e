@@ -176,7 +176,7 @@ for configuration, lifecycle and scripted clients.
 In Finder, type to filter, use Left/Right to navigate directories and Enter
 to open a row. `M-c` enters Create mode: Enter creates the typed file, or
 directories when the path ends in `/`. Existing names are refused. In both
-Finder and Buffers, click column headings or use `F1`–`F6` to cycle ascending,
+Finder and Buffet, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.
 The original path-entry command remains available as `M-x (find-file!!)`.
 
@@ -204,7 +204,7 @@ immediately.
 ## Documentation
 
 - [Buffers and windows](manual/BUFFERS.md): files, splits, scrolling, line
-  numbers, scrollbars, mouse behavior, `<buffers>`, and the buffer API.
+  numbers, scrollbars, mouse behavior, `<buffet>`, and the buffer API.
 - [Finder](manual/FINDER.md): directory navigation, recursive path filtering,
   completion, explicit creation, match counts and sortable filesystem metadata.
 - [Base, heads and agents](manual/MULTIHEAD.md): the daemon, attaching and
@@ -234,7 +234,7 @@ immediately.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
 - [App buffers](manual/APPS.md): dynamic views, interaction, the escape
-  prefix, mouse events, and the `<buffers>` switcher.
+  prefix, mouse events, and the `<buffet>` switcher, the buffers laid out to pick from.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.
@@ -255,7 +255,7 @@ same glyph rules as the terminal emulator.
 - **Current development version (unreleased)** -- a persistent daemon with named screens,
   saved-session recovery and reviewed restart; shared terminals and attributed undo;
   agent-ready APIs; interactive Finder
-  and Buffers apps with filtering, compound sorting and per-window column
+  and Buffet apps with filtering, compound sorting and per-window column
   widths. The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query

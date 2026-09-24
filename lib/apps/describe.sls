@@ -298,7 +298,7 @@
         ((main:shutdown!)
          (("procedure" . "(main:shutdown!)")) "does not return after acceptance"
          ("(run main)") main "Editor lifecycle" #f
-         "Save shared text and named views through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Ask about local drafts, other heads, terminals, agent sessions and pending interactions; shared unsaved text is saved without a question. No, View, Esc and C-g cancel; View opens the buffers app. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores the snapshot; processes, undo history and local drafts do not survive the stop.")
+         "Save shared text and named views through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Ask about local drafts, other heads, terminals, agent sessions and pending interactions; shared unsaved text is saved without a question. No, View, Esc and C-g cancel; View opens the buffet. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores the snapshot; processes, undo history and local drafts do not survive the stop.")
         ((main:shutdown-on-exit)
          (("thread parameter" . "main:shutdown-on-exit")) "boolean"
          ("(run main)") main "Editor lifecycle" #f
