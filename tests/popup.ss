@@ -36,10 +36,11 @@
        (list #t #t (let ([s path]) (substring s (+ 1 (let loop ([i (- (string-length s) 1)]) (if (char=? (string-ref s i) #\/) i (loop (- i 1))))) (string-length s))) #t))
      (define status-row (+ (cadr entry) (caddr entry)))
      (define left (head:window-xoff popup))
-     (check 'the-pop-ups-bar-has-one-clear-button-at-its-left
-       (list (head:window-button-at left status-row) (head:window-button-at (+ left 1) status-row)
-             (head:window-button-at (+ left (head:window-width popup) -2) status-row))
-       (list (cons 'clear popup) #f #f))
+     (define right (+ left (head:window-width popup)))
+     (check 'the-pop-ups-bar-has-one-clear-button-where-the-close-button-would-be
+       (list (head:window-button-at (- right 2) status-row) (head:window-button-at (- right 1) status-row)
+             (head:window-button-at (- right 4) status-row) (head:window-button-at left status-row))
+       (list (cons 'clear popup) #f #f #f))
      (define b (head:window-buffer popup))
      (window:clear-pop-up!)
      (head:before-frame!)

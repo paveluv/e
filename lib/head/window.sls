@@ -196,7 +196,7 @@
            (prune-links!)
            (focus! next))])))
 
-  (edoc "Empty the pop-up, window 0: a buffer sent there, by a link say, gives way to the pane's own placeholder and the pane hides; the buffer stays in the list. The × at the left of the pane's status line does the same.")
+  (edoc "Empty the pop-up, window 0: a buffer sent there, by a link say, gives way to the pane's own placeholder and the pane hides; the buffer stays in the list. The ↓ at the right of the pane's status line, where the other windows' × is, does the same.")
   (define (clear-pop-up!)
     (head:hide-popup!))
 

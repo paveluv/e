@@ -526,8 +526,8 @@ their buffers, points and viewports. The split tree is the only source of
 windows, the pop-up included: it is the root split's second leaf. Any other
 buffer sent to the pop-up, by a link with `(window 0)` as its target say,
 shows there at a third of the screen; its status line carries no split or
-close buttons, only a `×` at its left, which empties the pane, as
-`(window:clear-pop-up!)` does: the pane shows its own `<pop-up>` placeholder
+close buttons, only a `↓` where the other windows' `×` is, which empties the
+pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>` placeholder
 again and hides, and the buffer stays in the list.
 `M-Up`, `M-Down`,
 `M-Left`, and `M-Right` cast an imaginary ray from the cursor in that direction

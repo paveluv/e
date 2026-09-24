@@ -912,9 +912,7 @@
       ;; the window's number, then a hairline flush against it (U+258F,
       ;; the left one-eighth block: single width, in every monospace
       ;; font's block range) so the gap falls after the line, not before
-      (let* ([number (let ([n (format "~a\x258F;" (head:window-index w))])
-                       ;; the pop-up's bar starts with its one button, × clearing it
-                       (if (head:popup? w) (string-append "×│" n) n))]
+      (let* ([number (format "~a\x258F;" (head:window-index w))]
              [app-position
               (let* ([a (head:app-of b)]
                      [position (and a (head:app-status-position a))])
@@ -942,10 +940,10 @@
               (append (app-status-values w current?) (status-hint-values b current?))]
              [hint-text (apply string-append (map car hint-values))]
              [status (string-append head mode-text hint-text)]
-             ;; the pop-up is never split or closed: no buttons at the right of
-             ;; its bar, the × at its left clears it
-             [buttons? (not (head:popup? w))]
-             [status-width (max 0 (- (head:window-width w) (if buttons? head:window-buttons-width 0) 1))]
+             ;; the pop-up is never split or closed: its bar has one button
+             ;; instead, ↓ where the others' × is, clearing it
+             [buttons (if (head:popup? w) head:popup-buttons head:window-buttons)]
+             [status-width (max 0 (- (head:window-width w) (head:buttons-width buttons) 1))]
              [pointed (let ([at (head:mouse-position)])
                         (head:window-status-actions-set! w
                           (status-actions (string-append head mode-text) hint-values
@@ -984,11 +982,8 @@
                             (if stale? (min (+ number-end 2) content-end) number-end)])
                       (ansi! bar)
                       ;; the window's number and its bar, then the state
-                      ;; marker -- a stale buffer's !! in red; the pop-up's ×
-                      ;; first, lit while the mouse is on it
-                      (if (and (head:popup? w) (eq? hovered 'clear) (>= number-end 1))
-                          (ansi! (style:code 'hover) (substring text 0 1) "\x1b;[0m" bar (substring text 1 number-end))
-                          (ansi! (substring text 0 number-end)))
+                      ;; marker -- a stale buffer's !! in red
+                      (ansi! (substring text 0 number-end))
                       (when stale?
                         (ansi! "\x1b;[31m" (substring text number-end normal-start)
                           fg))
@@ -1013,15 +1008,14 @@
                               [(italic) (ansi! "\x1b;[23m")]
                               [(red) (ansi! fg)])
                             (loop (cdr values) end))))
-                      (ansi! (substring text he content-end) (if buttons? " │" " "))
-                      (when buttons?
-                        (for-each
-                          (lambda (button)
-                            (when (eq? (car button) hovered) (ansi! (style:code 'hover)))
-                            (ansi! (cdr button))
-                            (when (eq? (car button) hovered) (ansi! "\x1b;[0m" bar))
-                            (ansi! "│"))
-                          head:window-buttons))
+                      (ansi! (substring text he content-end) " │")
+                      (for-each
+                        (lambda (button)
+                          (when (eq? (car button) hovered) (ansi! (style:code 'hover)))
+                          (ansi! (cdr button))
+                          (when (eq? (car button) hovered) (ansi! "\x1b;[0m" bar))
+                          (ansi! "│"))
+                        buttons)
                       (ansi! "\x1b;[0m"))))))))
 
 

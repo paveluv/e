@@ -36,7 +36,7 @@
           buffer-stale-set! buffer-stamp buffer-stamp-set! buffer-state buffer-sticky-lines
           buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
-          bump-buffer-revision! call-uninterrupted call-with-display-update call-with-interrupt
+          bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
           checkpoint! clamp-buffer-positions! copy-buffer copy-text current-buffer current-keys
           (rename (current current-window)) default-directory depart! detach-app!
           dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
@@ -49,7 +49,7 @@
           layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
           layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
           make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
-          open-file! point popup popup-rows popup? prepare-quit quit! quit-command! quitting?
+          open-file! point popup popup-buttons popup-rows popup? prepare-quit quit! quit-command! quitting?
           read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
           register-app! register-resume! register-view! registered-apps replace-layout-window!
           request-app-size! request-frame-at! resume! resume-source! root run-deferred!
@@ -1041,13 +1041,22 @@
              (receiver (car entries))]
             [else (loop (cdr entries))])))
 
-  (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing; the pop-up's bar has instead one × at its left, the clear action, emptying it."
+  (edoc "The status-line buttons: (action . label) for splitting below, splitting right and closing, flush right on the bar."
         (value list))
   (define window-buttons '((below . "↕") (right . "↔") (close . "×")))
 
-  (edoc "The columns the status-line buttons take."
+  (edoc "The pop-up's one status-line button, where the closing × of the other windows is: ↓, the clear action, emptying the pane."
+        (value list))
+  (define popup-buttons '((clear . "↓")))
+
+  (edoc "The columns a list of status-line buttons takes, a bar before each label and after the last."
+        (buttons list "(action . label) pairs")
+        (returns integer))
+  (define (buttons-width buttons) (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) buttons))))
+
+  (edoc "The columns the ordinary windows' status-line buttons take."
         (value integer))
-  (define window-buttons-width (+ 1 (apply + (map (lambda (b) (+ 1 (string-length (cdr b)))) window-buttons))))
+  (define window-buttons-width (buttons-width window-buttons))
 
   (edoc "The (action . window) of the status-line button under a screen position, or #f."
         (x0 integer "the column")
@@ -1056,28 +1065,28 @@
   (define (window-button-at x0 r0)
     ;; Paint and hit-test the same single-cell labels, flush right,
     ;; with an inert │ before each label and after the final one; the
-    ;; pop-up's one label, ×, sits at the left of its bar.
+    ;; pop-up has its own one label where the others' × is.
     ;; Inline controls carry painted, window-relative cell ranges. Return
     ;; (action . window), or #f outside a visible control.
     (window-at x0 r0
       (lambda (entry)
-        (let ([w (car entry)])
+        (let* ([w (car entry)]
+               [buttons (if (popup? w) popup-buttons window-buttons)]
+               [taken (buttons-width buttons)])
           (and (= r0 (+ (cadr entry) (caddr entry)))
-               (if (popup? w)
-                   (and (= x0 (window-xoff w)) (cons 'clear w))
-                   (or (let ([column (- x0 (window-xoff w))])
-                         (cond [(find (lambda (span)
-                                        (and (<= 0 (car span) column) (< column (cadr span))
-                                          (<= (cadr span) (- (window-width w) window-buttons-width 1))))
-                                  (window-status-actions w))
-                                => (lambda (span) (cons (caddr span) w))]
+               (or (let ([column (- x0 (window-xoff w))])
+                     (cond [(find (lambda (span)
+                                    (and (<= 0 (car span) column) (< column (cadr span))
+                                         (<= (cadr span) (- (window-width w) taken 1))))
+                              (window-status-actions w))
+                            => (lambda (span) (cons (caddr span) w))]
                            [else #f]))
-                     (let loop ([buttons window-buttons]
-                                [column (- x0 (+ (window-xoff w) (window-width w) (- window-buttons-width)))])
-                       (and (pair? buttons) (> column 0)
-                         (let ([width (string-length (cdar buttons))])
-                           (if (<= column width) (cons (caar buttons) w)
-                             (loop (cdr buttons) (- column width 1)))))))))))))
+                   (let loop ([buttons buttons]
+                              [column (- x0 (+ (window-xoff w) (window-width w) (- taken)))])
+                     (and (pair? buttons) (> column 0)
+                       (let ([width (string-length (cdar buttons))])
+                         (if (<= column width) (cons (caar buttons) w)
+                             (loop (cdr buttons) (- column width 1))))))))))))
 
   (edoc "The divider descriptor under a screen position, or #f; a crossing belongs to the horizontal split."
         (x0 integer "the column")
