@@ -20,15 +20,22 @@
           (prefix (head style) style:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
+          (prefix (service log) log:)
           (prefix (service reference) reference:))
 
   ;;; Fetching --------------------------------------------------------------------
 
-  (edoc "Ask the base to download the reference corpus, TSPL and CSUG, and rebuild the describe database: the command returns at once, each page's progress is redrawn in place in the echo area as it comes, and the completion or a failure is announced there; one fetch at a time.")
+  (edoc "Ask the base to download the reference corpus, TSPL and CSUG, and rebuild the describe database: the command announces the fetch and returns at once, each page's progress replaces the announcement in the echo area as it comes, and the completion or a failure is announced there; one fetch at a time.")
   (define (fetch-data!)
-    ;; the base downloads in a worker on this head's behalf: its records
-    ;; are this head's, presented as progress while the editor stays free
-    (reference:fetch!))
+    ;; the base downloads in a worker on this head's behalf: its records are
+    ;; this head's, presented as progress while the editor stays free. The
+    ;; announcement is the command's own word, spoken before M-x reports a
+    ;; result, so it reports none; logging it also delivers the base's first
+    ;; records, and every later one replaces the line in place
+    (reference:fetch!)
+    (parameterize ([edit:message-progress #t])
+      (log:add! 'describe "Fetching the reference corpus..." #t))
+    (void))
 
   ;;; Display -------------------------------------------------------------------
 
