@@ -370,7 +370,9 @@ the body calls. Three edoc clauses declare the exceptions: `(prompts)` for
 a procedure that waits for a key, `(effects internal)` for a query whose
 only changes are its own caches, and `(effects remote)` for a transport
 such as `client:request`, whose effect is the message's and whose caller
-keeps the bang. Its verdict is on the name importers see, so an export
+keeps the bang. A fourth, `(edits)`, marks a command whose purpose is
+editing the buffer's text; the check confirms such a command reaches an
+edit, and the keys listing leaves it out where the text is read-only. Its verdict is on the name importers see, so an export
 renamed with `rename` is judged by its exported spelling.
 
 The check is one of the linter's, `tools/elinter.sps`, beside two layout

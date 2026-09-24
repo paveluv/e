@@ -141,9 +141,9 @@
     (when (pair? spec)
       (for-each
         (lambda (clause)
-          ;; a flag, (prompts) or (effects kind), names no type
+          ;; a flag, (prompts), (edits) or (effects kind), names no type
           (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause))
-                     (not (memq (car clause) '(prompts effects)))
+                     (not (memq (car clause) '(prompts effects edits)))
                      (not (known? (cadr clause))))
             (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
         (cddr spec))))
@@ -214,7 +214,7 @@
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
-         (clause list "(name type note ...) for a formal or field, (returns type note ...), or a flag the effects check reads: (prompts) for a command that waits for input, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's")
+         (clause list "(name type note ...) for a formal or field, (returns type note ...), or a flag the effects check reads: (prompts) for a command that waits for input, (edits) for one that edits the buffer's text, refused where it is read-only, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (meta define (kept-datum doc extra library)
@@ -248,7 +248,7 @@
     ;; (prompts), (effects internal) or (effects remote): what a procedure
     ;; does beyond its bang, named for the effects check; none names a formal
     (syntax-case clause ()
-      [(head) (and (identifier? #'head) (eq? (syntax->datum #'head) 'prompts))]
+      [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits)))]
       [(head kind) (and (identifier? #'head) (identifier? #'kind)
                         (eq? (syntax->datum #'head) 'effects) (memq (syntax->datum #'kind) '(internal remote)) #t)]
       [_ #f]))
@@ -789,7 +789,7 @@
           (arguments (list-of (record argument)) "the typed arguments")
           (returns (or (record argument) #f) "the return, as an argument named returns")
           (library (or string #f) "the defining library, (edit) say")
-          (flags (list-of list) "the declarations beyond the bang: (prompts), (effects internal), (effects remote)"))
+          (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote)"))
     (fields kind formals summary arguments returns library flags))
   (edefine-record-type argument
     (edoc "One typed clause of an edoc."
@@ -821,7 +821,7 @@
                                (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library flags)))
                          lambda-lists)
                     (list (make-signature kind formals summary arguments returns library flags))))]
-             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects)))
+             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects edits)))
               (loop (cdr clauses) arguments returns library kind lambda-lists (cons (car clauses) flags))]
              [(and (pair? (car clauses)) (pair? (cdar clauses)))
               (let ([c (car clauses)])

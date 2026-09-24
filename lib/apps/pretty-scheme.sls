@@ -288,10 +288,12 @@
                (when (pair? stack) (set! stack (cdr stack)))]))))
       (and (pair? stack) (car stack))))
 
-  (edoc "Close the innermost open construct as typing a round bracket does: with the bracket the construct opened with, whatever was typed.")
+  (edoc "Close the innermost open construct as typing a round bracket does: with the bracket the construct opened with, whatever was typed."
+        (edits))
   (define (close-round!) (close! #\)))
 
-  (edoc "Close the innermost open construct as typing a square bracket does: with the bracket the construct opened with, whatever was typed.")
+  (edoc "Close the innermost open construct as typing a square bracket does: with the bracket the construct opened with, whatever was typed."
+        (edits))
   (define (close-square!) (close! #\]))
 
   (define (close! typed)

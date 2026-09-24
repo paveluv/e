@@ -79,13 +79,15 @@
           (edit:set-message! "Not in a conflict"))
       (void)))
 
-  (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step.")
+  (edoc "Resolve the merge conflict at point in the buffer's favor, as one undo step."
+        (edits))
   (define (keep-mine!)
     (resolve! "keep mine"
       (lambda (c) (delete-rows! (cadr c) (caddr c)) (delete-rows! (car c) (car c)))
       "Kept the buffer side"))
 
-  (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step.")
+  (edoc "Resolve the merge conflict at point in the disk's favor, as one undo step."
+        (edits))
   (define (keep-disk!)
     (resolve! "keep disk"
       (lambda (c) (delete-rows! (caddr c) (caddr c)) (delete-rows! (car c) (cadr c)))

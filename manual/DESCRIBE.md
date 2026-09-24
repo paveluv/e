@@ -140,10 +140,11 @@ the predicate and the field procedures; a record with a protocol or a
 parent documents its constructor only through a `(constructor field ...)`
 clause naming the arguments among the fields. A condition type's edoc
 names its fields the same way. A keyword's clauses name the parts of its
-form. Three clauses are declarations rather than formals: `(prompts)` for
-a procedure that waits for a key, `(effects internal)` for a query whose
-only changes are its own caches, and `(effects remote)` for a transport
-whose effect is the message's; the effects check in
+form. Four clauses are declarations rather than formals: `(prompts)` for
+a procedure that waits for a key, `(edits)` for a command whose purpose is
+editing the buffer's text, refused where it is read-only, `(effects
+internal)` for a query whose only changes are its own caches, and `(effects
+remote)` for a transport whose effect is the message's; the effects check in
 [Modules](MODULES.md) reads them. `returns` appears at most once, and every type is in the vocabulary:
 the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
 `position`, `command`, `symbol`, `key`, `mode`, `style`; the language's

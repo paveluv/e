@@ -303,7 +303,8 @@
   (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one undo step, point left where it was."
         (from string "the text to find, within one line")
         (to string "its replacement")
-        (returns integer "how many occurrences were replaced"))
+        (returns integer "how many occurrences were replaced")
+        (edits))
   (define (replace-all! from to)
     (define m (string-length from))
     (define (replace-line s)
@@ -366,7 +367,8 @@
   (edoc "Query-replace in the current buffer from point to the end: each occurrence of from is highlighted and offered, y or SPC replaces, n or DEL skips, q stops; one undo step, point following."
         (from string "the text to find, within one line")
         (to string "its replacement")
-        (prompts))
+        (prompts)
+        (edits))
   (define (replace! from to)
     ;; Each occurrence is highlighted and offered -- y (or SPC) replaces,
     ;; n (or DEL) skips, q / RET / C-g / ESC stops.  The whole run is one

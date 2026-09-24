@@ -410,18 +410,21 @@
     message)
 
   (edoc "Undo one action in the current buffer within the undo-scope: this head's latest under mine, any actor's under all."
-        (returns string "the report shown in the echo area"))
+        (returns string "the report shown in the echo area")
+        (edits))
   (define (undo!)
     (history-shift! 0 1 "Undo" (undo-scope)))
 
   (edoc "Reverse this head's latest undo."
-        (returns string "the report shown in the echo area"))
+        (returns string "the report shown in the echo area")
+        (edits))
   (define (redo!)
     (history-shift! 1 0 "Redo" 'mine))
 
   (edoc "Undo an actor's latest live action in the current shared buffer."
         (who actor "the actor's identity")
-        (returns string "the report shown in the echo area"))
+        (returns string "the report shown in the echo area")
+        (edits))
   (define (undo-actor! who)
     (history-shift! 0 1 "Undo" (list 'actor who)))
 
@@ -466,12 +469,14 @@
         (kill! text prepend?)
         (changed!))))
 
-  (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs.")
+  (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs."
+        (edits))
   (define (kill-expression!)
     (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
       (if end (kill-between! (head:point) end #f) (set-message! "No expression after point"))))
 
-  (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs.")
+  (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs."
+        (edits))
   (define (backward-kill-expression!)
     (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
       (if start (kill-between! start (head:point) #t) (set-message! "No expression before point"))))
@@ -525,7 +530,8 @@
     (let ([end (expression:form-end (head:current-buffer) (head:point))])
       (if end (head:goto! end) (set-message! "No top-level form after point"))))
 
-  (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs.")
+  (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs."
+        (edits))
   (define (transpose-expressions!)
     (let ([b (head:current-buffer)] [point (head:point)])
       (let-values ([(as ae) (expression:backward b point)] [(bs be) (expression:forward b point)])
@@ -537,7 +543,8 @@
               (replace-region-text! as be (string-append after between before))
               (head:goto! be))))))
 
-  (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs.")
+  (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs."
+        (edits))
   (define (indent-expression!)
     (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
       (cond [(not end) (set-message! "No expression after point")]
@@ -649,7 +656,8 @@
               [else (loop (+ i 1) start acc)]))))
 
   (edoc "Insert text at point as one undo entry; its newlines become line breaks."
-        (s string "the text to insert"))
+        (s string "the text to insert")
+        (edits))
   (define (insert-text! s)
     (insert-text-as! s (format "insert ~s" s)))
 
@@ -666,11 +674,13 @@
             (submit-edit! b (text:make-span row col row col) parts))
           (changed!)))))
 
-  (edoc "Insert a line break at point.")
+  (edoc "Insert a line break at point."
+        (edits))
   (define (newline!)
     (insert-text-as! "\n" "newline"))
 
-  (edoc "Delete the character after point, or join the next line at a line end.")
+  (edoc "Delete the character after point, or join the next line at a line end."
+        (edits))
   (define (delete-forward!)
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
            [row point-row] [col point-col] [line (current-line)])
@@ -685,7 +695,8 @@
                  (submit-edit! b (text:make-span row col (+ row 1) 0) '("")))
                (changed!))])))
 
-  (edoc "Delete the character before point, or join with the previous line at a line start.")
+  (edoc "Delete the character before point, or join with the previous line at a line start."
+        (edits))
   (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
@@ -806,7 +817,8 @@
     (replace-copy-text! text "copy")
     (void))
 
-  (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate.")
+  (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate."
+        (edits))
   (define (kill-line!)
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
            [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
@@ -826,7 +838,8 @@
   (define (copy-text)
     (head:copy-text))
 
-  (edoc "Insert the copy buffer's text at point.")
+  (edoc "Insert the copy buffer's text at point."
+        (edits))
   (define (yank!)
     ;; The copy buffer can span lines after consecutive C-k commands.  Insert
     ;; newlines as buffer structure rather than embedding them in a line string.
@@ -853,7 +866,8 @@
   (edoc "Replace the text between two ordered points with new text, in one structural edit."
         (start position "where the replaced text starts")
         (end position "where it ends")
-        (text string "the replacement"))
+        (text string "the replacement")
+        (edits))
   (define (replace-region-text! start end text)
     ;; Replace one ordered buffer range in a single structural operation.
     ;; Bulk editors use this instead of rebuilding a line once per match.
@@ -868,7 +882,8 @@
         (basis list "the edit basis the text was computed against")
         (start position "where the replaced text starts")
         (end position "where it ends")
-        (text string "the replacement"))
+        (text string "the replacement")
+        (edits))
   (define (rewrite-region! basis start end text)
     ;; the editing operation behind the bulk replacers: an explicit basis
     ;; and a kept point, with the undo grouping and mark handling of every
@@ -890,7 +905,8 @@
                 (set! mark-active? #f)
                 (set! message "Copied"))))))
 
-  (edoc "Kill the text between mark and point into the copy buffer.")
+  (edoc "Kill the text between mark and point into the copy buffer."
+        (edits))
   (define (kill-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
@@ -1550,7 +1566,8 @@
               (apply-indent! from cols #f))
             #t))))
 
-  (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation.")
+  (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation."
+        (edits))
   (define (indent-line!)
     ;; TAB's work: indent the current line, cycling through its stops
     ;; -- the nearest stop right of the current indentation, wrapping
@@ -1574,13 +1591,15 @@
                   (set! point-col col)))))))
     (void))
 
-  (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing.")
+  (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing."
+        (edits))
   (define (indent-tab!)
     ;; TAB: the mode indents when it asked to; otherwise nothing.
     (when (mode-tool mode:indent-on-tab?)
       (indent-line!)))
 
-  (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop.")
+  (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop."
+        (edits))
   (define (indent-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
@@ -1591,7 +1610,8 @@
                                   (if (= from to) "" "s"))))))
     (void))
 
-  (edoc "Indent every line of the current buffer by the mode's indenter.")
+  (edoc "Indent every line of the current buffer by the mode's indenter."
+        (edits))
   (define (indent-buffer!)
     (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
       (when (indent-rows! 0 (- n 1))
@@ -1650,7 +1670,8 @@
                                (if (= last (- (vector-length v) 1)) '((trailing . #t)) '())))
               #t]))])))
 
-  (edoc "Rewrite the lines between mark and point with the mode's formatter.")
+  (edoc "Rewrite the lines between mark and point with the mode's formatter."
+        (edits))
   (define (format-region!)
     (if (not mark-active?)
         (set! message "The mark is not set now")
@@ -1660,7 +1681,8 @@
             (set! message "Formatted region"))))
     (void))
 
-  (edoc "Rewrite the whole current buffer with the mode's formatter.")
+  (edoc "Rewrite the whole current buffer with the mode's formatter."
+        (edits))
   (define (format-buffer!)
     (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
       (when (format-rows! 0 (- n 1))
@@ -1886,7 +1908,8 @@
 
   ;;; Pasting and typed runs --------------------------------------------------
 
-  (edoc "Insert a bracketed paste, the PASTE key, as one edit, its newlines real line breaks.")
+  (edoc "Insert a bracketed paste, the PASTE key, as one edit, its newlines real line breaks."
+        (edits))
   (define (paste-into-buffer!)
     ;; A bracketed paste: the whole text becomes one labeled edit, its
     ;; newlines becoming real line breaks.
@@ -1910,7 +1933,8 @@
         (and (keymap:call-action? action) (eq? (keymap:call-action-procedure action) type!))))
 
   (edoc "Type text: inserted at point as typing does, joining the run of typing before it, so a run undoes as one step and shares one batch; SELF-INSERT, any character without a binding of its own, runs it with the character typed."
-        (text string "the text to type"))
+        (text string "the text to type")
+        (edits))
   (define (type! text)
     (let ([b (head:window-buffer current-window)]
           [chain (and (typing? (head:last-command)) insert-chain)])
@@ -1955,7 +1979,8 @@
     (tty:query-color-scheme!)
     (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
 
-  (edoc "Insert a line break after point, leaving point where it is.")
+  (edoc "Insert a line break after point, leaving point where it is."
+        (edits))
   (define (open-line!)
     (parameterize ([edit-point 'start]) (newline!)))
 

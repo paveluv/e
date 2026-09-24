@@ -316,6 +316,16 @@
   ;; (library-name . names) whose call waits for a key
   '(((head head) read-key-event)))
 
+(define editing-procedures
+  ;; (library-name . names) whose call edits the current buffer's text: what
+  ;; a command declaring (edits) must reach
+  '(((head edit) check-editable!)))
+
+(define macro-calls
+  ;; (macro . procedure) within one library: a syntax form standing for a
+  ;; call of the procedure its template makes, followed as a callee
+  '((with-recorded-edit . call-with-recorded-edit!)))
+
 (define higher-order
   ;; (form . positions): arguments that are procedures the form calls
   '((apply 0) (for-each 0) (map 0) (vector-for-each 0) (vector-map 0) (string-for-each 0)
@@ -558,7 +568,7 @@
            fields)))))
 
 (define (flag-clauses clauses)
-  (filter (lambda (c) (and (pair? c) (memq (car c) '(prompts effects)))) clauses))
+  (filter (lambda (c) (and (pair? c) (memq (car c) '(prompts effects edits)))) clauses))
 
 (define (definition-bodies library)
   ;; (name kind bodies documented? flags) for every top-level definition
@@ -647,6 +657,7 @@
 ;; fields: 0 kind 1 documented? 2 flags 3 witnesses ((kind . text) ...) 4 callees ((key args ctx) ...)
 ;;         5 prompts-direct? 6 effect (#f, opaque or #t) 7 prompts? 8 changed-argument indices
 ;;         9 library 10 exported name 11 bang? 12 bodies 13 fresh result (unknown, #t or #f)
+;;         14 edits-direct? 15 edits?
 
 (define (resolve-name path sym)
   ;; the definition key a symbol denotes in the library at path, or
@@ -675,6 +686,11 @@
        (let ([entry (assoc (name-at (car key)) prompting-procedures)])
          (and entry (memq (cdr key) (cdr entry)) #t))))
 
+(define (editing-key? key)
+  (and (pair? key)
+       (let ([entry (assoc (name-at (car key)) editing-procedures)])
+         (and entry (memq (cdr key) (cdr entry)) #t))))
+
 (define (analyze-library! entry)
   ;; every definition of a library, an assigned one a hook whatever it
   ;; held; the bang judged is the name importers see
@@ -686,7 +702,8 @@
                [key (cons path name)]
                [external (let ([e (find (lambda (e) (eq? (cdr e) name)) exports)]) (if e (car e) name))])
           (hashtable-set! all-definitions key
-            (vector kind (cadddr def) (car (cddddr def)) '() '() #f #f #f '() (car entry) external (bang-name? external) (caddr def) 'unknown))
+            (vector kind (cadddr def) (car (cddddr def)) '() '() #f #f #f '() (car entry) external (bang-name? external) (caddr def) 'unknown
+                    #f #f))
           (set! definition-order (cons key definition-order))))
       (definition-bodies (cadr entry)))))
 
@@ -694,7 +711,7 @@
   ;; direct witnesses, callees and prompting for one definition
   (let* ([v (hashtable-ref all-definitions key #f)] [path (car key)] [bodies (vector-ref v 12)])
     (when (eq? (vector-ref v 0) 'procedure)
-      (let ([witnesses '()] [callees '()] [prompts? #f])
+      (let ([witnesses '()] [callees '()] [prompts? #f] [edits? #f])
         (define (witness! kind text) (set! witnesses (cons (cons kind text) witnesses)))
         (for-each
           (lambda (body)
@@ -722,12 +739,18 @@
                            (when (< i (length arglist)) (judge-subject! op (list-ref arglist i))))]
                         [(or (memq op formals) (memq op inner)) (witness! 'opaque (format "~a, an argument it calls" op))]
                         [(memq op locals) (void)]   ; a helper the body binds: its calls are here already
+                        [(assq op macro-calls)
+                         ;; a macro of the library standing for a call: its procedure is a callee
+                         => (lambda (implied)
+                              (let ([t (resolve-name path (cdr implied))])
+                                (when (pair? t) (set! callees (cons (list t '() ctx) callees)))))]
                         [else
                          (let ([target (resolve-name path op)])
                            (cond
                              [(pair? target)
                               (let ([tv (hashtable-ref all-definitions target #f)])
                                 (when (prompting-key? target) (set! prompts? #t))
+                                (when (editing-key? target) (set! edits? #t))
                                 (case (vector-ref tv 0)
                                   [(foreign) (witness! 'opaque (format "~a, a foreign procedure" op))]
                                   [(hook) (witness! 'opaque (format "~a, a hook installed at run time" op))]
@@ -746,13 +769,15 @@
           bodies)
         (vector-set! v 3 (reverse witnesses))
         (vector-set! v 4 (reverse callees))
-        (vector-set! v 5 prompts?)))))
+        (vector-set! v 5 prompts?)
+        (vector-set! v 14 edits?)))))
 
 (define (flagged? v kind)
   (exists (lambda (f) (and (eq? (car f) 'effects) (pair? (cdr f)) (eq? (cadr f) kind))) (vector-ref v 2)))
 (define (internal-effects? v) (flagged? v 'internal))
 (define (remote-effects? v) (flagged? v 'remote))
 (define (declares-prompts? v) (exists (lambda (f) (eq? (car f) 'prompts)) (vector-ref v 2)))
+(define (declares-edits? v) (exists (lambda (f) (eq? (car f) 'edits)) (vector-ref v 2)))
 
 (define (scoped-name? sym)
   ;; call-with-x and with-x run a thunk inside a setting: their effects are
@@ -798,17 +823,21 @@
                  [effect (fold-left (lambda (acc w) (join acc (case (car w) [(definite) #t] [(opaque) 'opaque] [else #f])))
                                     (vector-ref v 6) (vector-ref v 3))]
                  [indices (append (filter integer? (map car (vector-ref v 3))) (vector-ref v 8))]
-                 [prompts? (or (vector-ref v 7) (vector-ref v 5))])
+                 [prompts? (or (vector-ref v 7) (vector-ref v 5))]
+                 [edits? (or (vector-ref v 15) (vector-ref v 14))])
             (for-each
               (lambda (callee)
                 (let ([change (callee-change callee)])
                   (when (vector-ref (hashtable-ref all-definitions (car callee) #f) 7) (set! prompts? #t))
+                  (when (vector-ref (hashtable-ref all-definitions (car callee) #f) 15) (set! edits? #t))
                   (cond [(pair? change) (set! indices (append change indices))]
                         [else (set! effect (join effect change))])))
               (vector-ref v 4))
             (let ([indices (let dedupe ([l indices] [out '()]) (cond [(null? l) out] [(memv (car l) out) (dedupe (cdr l) out)] [else (dedupe (cdr l) (cons (car l) out))]))])
-              (unless (and (eq? effect (vector-ref v 6)) (= (length indices) (length (vector-ref v 8))) (eq? prompts? (vector-ref v 7)))
-                (vector-set! v 6 effect) (vector-set! v 8 indices) (vector-set! v 7 prompts?) (set! changed #t)))))
+              (unless (and (eq? effect (vector-ref v 6)) (= (length indices) (length (vector-ref v 8))) (eq? prompts? (vector-ref v 7))
+                           (eq? edits? (vector-ref v 15)))
+                (vector-set! v 6 effect) (vector-set! v 8 indices) (vector-set! v 7 prompts?) (vector-set! v 15 edits?)
+                (set! changed #t)))))
         definition-order)
       (when changed (loop)))))
 
@@ -872,7 +901,13 @@
                           (cond
                             [(and (vector-ref v 7) (not (declares-prompts? v))) (say (format "prompts, through ~a, without (prompts)" (prompt-chain key 0)))]
                             [(and (declares-prompts? v) (not (vector-ref v 7))) (say "declares (prompts) yet reaches none")]
-                            [else (void)]))))))
+                            [else (void)])
+                          ;; a command whose purpose is editing the text declares (edits), for
+                          ;; a listing to leave it out where the buffer is read-only; the
+                          ;; declaration must reach an edit, while reaching one without it is
+                          ;; allowed, a visit merging or a copy writing <copy> say
+                          (when (and (declares-edits? v) (not (vector-ref v 15)))
+                            (say "declares (edits) yet edits nothing")))))))
                 definition-order)
               (unless (null? lines)
                 (printf "~s  ~a\n" name path)
