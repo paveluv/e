@@ -163,7 +163,7 @@ for configuration, lifecycle and scripted clients.
 | `C-x 0`, `C-x 1` | Delete this window or every other window |
 | `M-Arrows` | Move between windows along the cursor's screen ray |
 | `C-s` | Incremental search |
-| `M-%` | Query replace |
+| `M-%` | Replace all, over the region or the buffer |
 | `C-_`, `C-M-_` | Undo, redo |
 | `C-@`, `C-w`, `M-w`, `C-y` | Mark, kill, copy, yank |
 | `M-x` | Evaluate Scheme interactively |
@@ -193,7 +193,7 @@ modules. You can call it via `M-x`:
 
 ```scheme
 M-x (head:buffer-name (head:current-buffer))
-M-x (search:replace-all! "old" "new")
+M-x (search:replace! "old" "new")
 M-x (log-view:buffer! 'eval)
 M-x (terminal:open!)
 M-x (describe:this terminal:open!)
@@ -221,7 +221,7 @@ immediately.
 - [Terminal buffers](manual/TERMINAL.md): full/partial capture, emulation, scrollback,
   titles, process lifetime, and the terminal API.
 - [Search and replacement](manual/SEARCH.md): incremental search, smart case,
-  query replace, and structured replacement targets.
+  replacement over the region or the buffer, and structured replacement targets.
 - [Indentation and formatting](manual/FORMATTING.md): Scheme layout, conservative
   and intrusive formatting, save hooks, and the CLI formatter.
 - [Interactive prompts](manual/PROMPTS.md): editing, multiline input, completion,

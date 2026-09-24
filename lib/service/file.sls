@@ -4,29 +4,26 @@
 ;; and base parts, shared (path) expansion/canonicalization, abbreviation,
 ;; the stable identity of a visited file), reading, modification stamps,
 ;; permission-preserving writes, the line/trailing-newline algebra a
-;; file's text and a buffer's line vector convert through, the
-;; three-way merge of base, buffer, and disk, and completion over a
-;; directory listing.  No dialogs and no bookkeeping: what to do when
+;; file's text and a buffer's line vector convert through, and
+;; completion over a directory listing.  No dialogs and no bookkeeping: what to do when
 ;; the disk disagrees with a buffer is the commands' decision; this
-;; module only reads, compares, merges, and writes.
+;; module only reads, compares and writes.
 ;;
 ;; This iteration's attached heads run on the same SSH host and call
 ;; this module directly; a future remote transport needs a file service.
 ;; Exported names
 ;; drop the module stem: (file:read path), (file:lines text),
-;; (file:write! path lines trailing?), (file:merge path base mine
-;; disk).
+;; (file:write! path lines trailing?).
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service file)
   (export abbreviate absolute add-post-save-hook! add-pre-save-hook! base-name call-with-port
-          (rename (path:canonical canonical)) complete completion conflict-count create!
+          (rename (path:canonical canonical)) complete completion create!
           data-directory directory-part ends-in-newline? (rename (path:expand expand)) lines
-          make-directories! merge read read-state run-post-save-hooks! run-pre-save-hooks! stamp
+          make-directories! read read-state run-post-save-hooks! run-pre-save-hooks! stamp
           state-clean? text visit-path write!)
   (import (except (chezscheme) read expand merge call-with-port)
           (prefix (core kernel) kernel:)
-          (prefix (only (foundation diff) merge3 merge-report-lines) diff:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (service log) log:)
@@ -353,48 +350,6 @@
          (char=? (string-ref s (- (string-length s) 1)) #\newline)))
 
   (define text text:to-string)
-
-  ;;; Merging -----------------------------------------------------------------------
-
-  (define (merge-trailing-newline base mine theirs)
-    ;; Three-way merge for the one bit line vectors do not carry.  With a
-    ;; boolean, two sides that both differ from base necessarily agree.
-    (cond [(eq? mine base) theirs]
-          [(eq? theirs base) mine]
-          [else mine]))
-
-  (edoc "The three-way merge of a file's text as loaded, as the buffer has it and as the disk has it: (values merged-lines trailing? conflicts report-lines), conflicts left as markers."
-        (path file "the file, for the report")
-        (base string "the text as loaded")
-        (mine string "the buffer's text")
-        (disk string "the disk's text"))
-  (define (merge path base mine disk)
-    ;; The three-way merge of a file's text as loaded (base), as the
-    ;; buffer has it (mine), and as the disk has it now: -> (values
-    ;; merged-lines trailing? conflicts report-lines).  Conflicts stay
-    ;; in the lines as markers; the report is diff's rendering of the
-    ;; merge, for a *merge-...* buffer.
-    (let ([base-lines (lines base)])
-      (let-values ([(merged conflicts report)
-                    (diff:merge3 base-lines (lines mine) (lines disk))])
-        (values (if (null? merged) (vector "") (list->vector merged))
-                (merge-trailing-newline (ends-in-newline? base)
-                                        (ends-in-newline? mine)
-                                        (ends-in-newline? disk))
-                conflicts
-                (diff:merge-report-lines path base-lines report conflicts)))))
-
-  (edoc "How many merge conflict markers a line vector still holds."
-        (v vector "the lines")
-        (returns integer))
-  (define (conflict-count v)
-    ;; how many merge conflict markers a line vector still holds
-    (let loop ([i 0] [n 0])
-      (if (= i (vector-length v))
-          n
-          (loop (+ i 1)
-                (if (string:prefix? "<<<<<<<" (vector-ref v i)) (+ n 1) n)))))
-
 
   ;;; Save hooks --------------------------------------------------------------------
 

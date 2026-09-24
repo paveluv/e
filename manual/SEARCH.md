@@ -29,43 +29,44 @@ prompt to `I-search (exact):`.
 ```
 
 This setting affects incremental search only. Other matching operations,
-including query replacement, remain exact.
+including replacement, remain exact.
 
-## Query replacement
+## Replacement
 
-`M-%` opens M-x with `(search:replace! ` typed; give the text to find and its
-replacement as strings. From point to the end of the current buffer it
-highlights each occurrence before asking:
-
-| Key | Action |
-|---|---|
-| `y` or Space | Replace this occurrence |
-| `n` or Backspace | Skip this occurrence |
-| `q`, Return, `C-g`, or Escape | Stop |
-
-The complete run is one undo step. Point follows the operation and finishes at
-the last replaced, skipped, or pending occurrence.
+`M-%` opens M-x with `(search:replace! ` typed; give the text to find and
+its replacement as strings. The command replaces every occurrence in the
+selected region, else in the whole current buffer, and leaves point where it
+was. Every occurrence is an entry of the buffer's delta log, all under one
+batch, and the whole replacement is one undo step. Reviewing the occurrences
+happens in the delta log rather than one question at a time: the buffer shows
+the result at once, and the delta log browser opens on the replacement's
+batch in the companion window below the buffer, the window a split below
+made, else a fresh split, one row per occurrence, where a replacement that
+should not have happened is toggled out of a view and the view committed, or
+the whole step undone. `(search:review-replacements #f)` keeps the browser
+closed, for scripts; `(delta-log:open! ` followed by Tab offers the buffer's
+batches newest first to reopen it later.
 
 The text to find is a `needle`: while you type it at M-x, its matches
 highlight in the current buffer as a search would, the prompt notes `[1 of
 3]`, and Tab visits the next occurrence, Shift-Tab the previous, inserting
-nothing. Point follows to the occurrence's start, so `replace!` begins there;
-cancelling the prompt restores point. `search:count` and `search:replace-all!`
-take a needle too. Matching is exact, as the replace commands match.
+nothing. Point follows to the occurrence's start; cancelling the prompt
+restores point. `search:count` takes a needle too. Matching is exact.
 
-For noninteractive replacement, `search:replace-all!` works on the selected
-region, else on the whole current buffer; the scope forms retarget it:
+`search:replace!` is scoped by the selection or the scope forms:
 
 ```scheme
-(search:replace-all! "old" "new")
-(head:with-buffer (buffer "notes.md") (search:replace-all! "old" "new"))
+(search:replace! "old" "new")
+(head:with-buffer (buffer "notes.md") (search:replace! "old" "new"))
 (edit:with-region (region (buffer "notes.md") '(0 . 0) '(4 . 0))
-  (search:replace-all! "old" "new"))
-(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (search:replace-all! "old" "new"))))
+  (search:replace! "old" "new"))
+(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (search:replace! "old" "new"))))
           (head:buffers))
 ```
 
 Each call is one undo step in its buffer and retains its point, through
-`edit:rewrite-region!`, the editing operation that takes the basis the
-replacement was computed against. `search:count` counts the same way.
+`edit:rewrite-regions!`, the editing operation that takes the basis the
+occurrences were found against and replaces each in its own edit, carrying
+the ones still to come across the changes the store reports meanwhile, other
+actors' included. `search:count` counts the same way.
 

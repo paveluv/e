@@ -363,12 +363,17 @@
 
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
-  (edoc "A completion candidate."
+  (define-record-type (candidate %make-candidate candidate?)
+    (fields value label styles preview))
+
+  (edoc "A completion candidate: the text inserted on selection, the label the list shows with its styles, and an optional preview, a thunk that shows the candidate's value in the editor while it is the inserted one and gives the thunk undoing the showing."
         (value string "the text inserted on selection")
         (label string "the text shown in the list")
-        (styles (or vector #f) "the label's styles"))
-  (define-record-type candidate
-    (fields value label styles))
+        (styles (or vector #f) "the label's styles")
+        (preview (list-of procedure) "the preview thunk, at most one")
+        (returns (record candidate)))
+  (define (make-candidate value label styles . preview)
+    (%make-candidate value label styles (and (pair? preview) (car preview))))
 
   ;; A live completion view supplies its minimum height, renderer and key
   ;; handler. (render input window available-height page) returns styled lines
@@ -648,6 +653,9 @@
     (define searcher #f)
     (define searcher-needle #f)
     (define search-hit #f)
+    (define previewed #f)
+    (define preview-undo #f)
+    (define previewed-input #f)
     (define highlight? (completion-highlight))
     (define styler (paint:echo-highlight))
     (define ghost (prompt-ghost))
@@ -732,6 +740,20 @@
       (when searcher
         (guard (ex [else (void)]) ((searcher-done searcher) accepted?))
         (set! searcher #f) (set! searcher-maker #f) (set! searcher-needle #f) (set! search-hit #f)))
+    (define (end-preview!)
+      (when preview-undo (guard (ex [else (void)]) (preview-undo)))
+      (set! previewed #f) (set! preview-undo #f) (set! previewed-input #f))
+    (define (preview! candidate)
+      ;; show the candidate now inserted, the previous showing undone; the
+      ;; showing lasts while the input stays as the completion left it
+      (unless (eq? candidate previewed)
+        (end-preview!)
+        (when (and (candidate? candidate) (candidate-preview candidate))
+          (set! previewed candidate)
+          (set! preview-undo (guard (ex [else #f]) ((candidate-preview candidate)))))))
+    (define (candidate-for text)
+      ;; the candidate whose insertion is text, among the current matches
+      (find (lambda (v) (and (candidate? v) (string=? (candidate-value v) text))) completion-matches))
     (define (sync-searcher! s pos)
       ;; the live search the completer wants at the cursor: started when the
       ;; cursor enters a searching argument, fed the needle as it changes,
@@ -966,6 +988,11 @@
           (dismiss-completions!))
         (invalidate-input! s pos)
         (sync-searcher! s pos)
+        ;; a previewed candidate stays shown while the input is as its
+        ;; completion left it; typing on ends the showing
+        (when previewed
+          (cond [(not previewed-input) (set! previewed-input s)]
+                [(not (string=? previewed-input s)) (end-preview!)]))
         (set! input s) (set! position pos)
         (set! note (if (and searcher (string=? next-note "")) (search-note) next-note))
         (when draft (set-box! draft (cons s pos)))
@@ -1034,6 +1061,7 @@
                               (if (and (string=? (car settled) s) (= (cdr settled) pos))
                                   (begin (dismiss-completions!) (loop s pos ""))
                                   (begin
+                                    (preview! value)
                                     (continue-or-end! completer (car settled) (cdr settled))
                                     (edited (car settled) (cdr settled)))))]
                            [(prepared? completer s pos)
@@ -1042,13 +1070,15 @@
                                 (begin
                                   (set! option-index (mod (+ option-index 1) (length completion-options)))
                                   (set-candidates! completion-matches) (take-view!)
-                                  (let ([next (replace-completion s (list-ref completion-options option-index))])
+                                  (let* ([text (list-ref completion-options option-index)] [next (replace-completion s text)])
+                                    (preview! (candidate-for text))
                                     (edited (car next) (cdr next) completer))))]
                            [else
                             (set! completion-options (if (procedure? options) (options) options)) (set! option-index 0)
                             (set! completion-matches values)
                             (when candidates (set-candidates! values))
                             (let ([next (replace-completion s (car completion-options))])
+                              (preview! (candidate-for (car completion-options)))
                               (if (string=? (car next) s)
                                   (begin
                                     (set! prepared (list completer s (cdr next)))
@@ -1166,6 +1196,7 @@
               (lambda () (when in-window? (take-view!)))
               run-prompt
               (lambda ()
+                (end-preview!)
                 (end-search! #f)
                 (release-view!)
                 (clear-validation!)

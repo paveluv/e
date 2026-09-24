@@ -20,6 +20,7 @@
 
      (define bot '(agent conflict-test))
      (define check test:check)
+     (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -135,7 +136,7 @@
      (check 'store-error-propagates
             (failed? (lambda ()
                        (head:store-edit! failed (text:make-span 0 2 0 2) '("LOST")
-                                         '(bad-context "invalid" ((42 . bad)))))) #t)
+                                         '(bad-context "invalid" (undo . ((42 . bad))))))) #t)
      (check 'store-error-keeps-cache (eq? before-failure (head:buffer-lines failed)) #t)
      (check 'store-error-keeps-revision (store:revision failed-id) before-failure-revision)
      (foreign! failed (text:make-span 0 0 0 0) '("remote "))

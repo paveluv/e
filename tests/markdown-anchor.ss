@@ -22,6 +22,7 @@
 
      (define bot '(agent markdown-anchor))
      (define check test:check)
+     (store:log-retention 256)   ; the bound these checks exercise
      (define (foreign! b span replacement)
        (let ([id (head:buffer-store-id b)])
          (store:edit! bot id (store:revision id) span replacement)))

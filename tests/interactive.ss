@@ -242,6 +242,28 @@
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
      (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+     ;; A revision candidate previews its entry: a sole completion highlights
+     ;; the text the entry wrote and brings point there; C-g undoes both.
+     (evaluate '(let ([b (head:new-buffer! "previews")])
+                  (head:show-buffer! b)
+                  (head:goto! '(0 . 0))
+                  (edit:insert-text! "alpha ")
+                  (edit:insert-text! "beta")
+                  (head:goto! '(0 . 0))
+                  (head:buffer-name b)))
+     (send! "\x1b;xdelta-log:show! (revision 2\t")
+     (wait-for! 'a-sole-revision-settles-and-previews
+                (lambda () (find-cell "λ (delta-log:show! (revision 2))")) 5000)
+     (check 'the-previewed-entry-is-highlighted
+       (let ([cell (find-cell "alpha beta")])
+         (and cell (not (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain)))))
+     (send! "\x7;")                     ; C-g
+     (wait-for! 'the-preview-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
+     (check 'cancelling-the-preview-restores-point-and-the-style
+       (equal? (list (evaluate '(head:point))
+                     (let ([cell (find-cell "alpha beta")]) (and cell (style-at (cons (car cell) (+ (cdr cell) 6))))))
+               (list '(0 . 0) 'plain)))
+     (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
      ;; A closed string is final: Tab settles the forms around it, the file
      ;; literal closing at its one argument and the command at its one,
      ;; whether or not the path exists.

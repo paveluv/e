@@ -35,7 +35,7 @@
           edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-returns signature-summary signature? type-accepts? type-completions
-          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-prose type-read
+          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-preview type-prose type-read
           type-searcher type-spelling
           type-text type-value type-within)
   (import (rnrs)
@@ -114,15 +114,16 @@
   (define-record-type (type make-type type?)
     (fields (immutable name type-name-of) (immutable prose type-prose-of) (immutable predicate type-predicate-of)
             (immutable complete type-complete-of) (immutable read type-read-of) (immutable write type-write-of)
-            (immutable owner type-owner-of) (immutable within type-within-of) (immutable search type-search-of)))
+            (immutable owner type-owner-of) (immutable within type-within-of) (immutable search type-search-of)
+            (immutable preview type-preview-of)))
   (define types (make-eq-hashtable))
   (define record-predicates (make-eq-hashtable))
 
-  (define (register-type! name prose predicate complete read write owner within search)
+  (define (register-type! name prose predicate complete read write owner within search preview)
     (let ([existing (eq-hashtable-ref types name #f)])
       (when (and existing (type-owner-of existing) (not (equal? (type-owner-of existing) owner)))
         (error 'edoc-type (format "type ~a is defined by ~a" name (type-owner-of existing)) owner))
-      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner within search))))
+      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner within search preview))))
 
   (define (register-record-type! name predicate)
     (eq-hashtable-set! record-predicates name predicate))
@@ -162,9 +163,9 @@
 
   (define base-types
     (begin
-      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(foundation edoc)" #f #f)
+      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(foundation edoc)" #f #f #f)
       (for-each
-        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(foundation edoc)" #f #f))
+        (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(foundation edoc)" #f #f #f))
         (list (list 'string "a string" string?)
               (list 'char "a character" char?)
               (list 'integer "an exact integer" (lambda (v) (and (integer? v) (exact? v))))
@@ -183,7 +184,7 @@
               (list 'datum "plain data: pairs, vectors, strings and atoms" plain-datum?)
               (list 'any "anything" always)))
       (for-each
-        (lambda (entry) (register-type! (car entry) (cadr entry) always #f #f #f #f #f #f))
+        (lambda (entry) (register-type! (car entry) (cadr entry) always #f #f #f #f #f #f #f))
         '((file "a file, by its path") (directory "a directory, by its path") (buffer "a buffer")
           (window "a window") (region "a region of a buffer") (position "a (row . col) position")
           (command "a command") (key "a key spelling") (mode "a mode") (style "a face")
@@ -204,10 +205,10 @@
   ;; the coverage tool reads these attach-name! definitions as documentation.
   (define edoc-type-documentation
     (attach-name! 'edoc-type
-      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (search s) (read r) (write w) (within t)), all but the predicate optional; registered when the library initializes."
+      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (search s) (preview p) (read r) (write w) (within t)), all but the predicate optional; registered when the library initializes."
          (name symbol "the type's name")
          (prose string "what values of the type are")
-         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (search s) giving a live search over the current buffer in place of a candidate list, (read r) text to value, (write w) value to expression text, (within t) the type this one refines")
+         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (search s) giving a live search over the current buffer in place of a candidate list, (preview p) showing a value in the editor while a prompt has it as the inserted candidate and giving the thunk that undoes the showing, (read r) text to value, (write w) value to expression text, (within t) the type this one refines")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (define edoc-documentation
@@ -561,13 +562,14 @@
                  (and hit (syntax-case hit () [(_ e) #'e] [_ (syntax-violation who "expected (field expression)" form hit)]))))
              (for-each
                (lambda (f)
-                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete search read write within))
-                   (syntax-violation who "expected a predicate, complete, search, read, write or within field" form f)))
+                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete search read write within preview))
+                   (syntax-violation who "expected a predicate, complete, search, read, write, within or preview field" form f)))
                fields)
              (unless (field-of 'predicate) (syntax-violation who "a type needs a predicate" form))
              (with-syntax ([predicate (field-of 'predicate)]
                            [complete (or (field-of 'complete) #'#f)]
                            [search (or (field-of 'search) #'#f)]
+                           [preview (or (field-of 'preview) #'#f)]
                            [read (or (field-of 'read) #'#f)]
                            [write (or (field-of 'write) #'#f)]
                            [within (let ([w (field-of 'within)])
@@ -575,7 +577,7 @@
                                            [(identifier? w) (list #'quote w)]
                                            [else (syntax-violation who "within names a type" form w)]))]
                            [library library-name])
-               #'(register-type! 'name prose predicate complete read write library within search)))]
+               #'(register-type! 'name prose predicate complete read write library within search preview)))]
           [_ (syntax-violation who "expected (edoc-type name prose (predicate p) field ...)" form)]))
       (define (export-identifiers exports)
         ;; the internal identifiers the export clause names
@@ -931,7 +933,10 @@
           (t datum "the type") (value any "the value") (returns string))
     (cond
       [(and (pair? t) (eq? (car t) 'or))
-       (let ([m (find (lambda (m) (type-accepts? m value)) (cdr t))])
+       ;; a member with a literal spells the value it accepts, (or list
+       ;; batch) a batch as its literal rather than as a bare list
+       (let ([m (or (find (lambda (m) (and (symbol? m) (literal-type? m) (type-accepts? m value))) (cdr t))
+                    (find (lambda (m) (type-accepts? m value)) (cdr t)))])
          (if m (type-literal-spelling m value) (type-spelling t value)))]
       [(and (symbol? t) (literal-type? t))
        ;; a spelling that is a form already, (agent "helper") for an actor
@@ -963,6 +968,14 @@
          [else #t])]
       [else #t]))
 
+  (edefine (type-preview t)
+    (edoc "The procedure showing a value of a type in the editor while a prompt has it as the inserted candidate, giving the thunk that undoes the showing: a name's own, the first member's of an or; #f without one."
+          (t datum "the type") (returns (or procedure #f)))
+    (cond
+      [(symbol? t) (let ([type (type-named t)]) (and type (type-preview-of type)))]
+      [(and (pair? t) (list? t) (eq? (car t) 'or)) (exists type-preview (cdr t))]
+      [else #f]))
+
   (edefine (type-searcher t)
     (edoc "The procedure making a live search for a type's values, standing in for a candidate list at a prompt: a name's own, the first member's of an or; #f without one."
           (t datum "the type") (returns (or procedure #f)))
@@ -989,9 +1002,9 @@
       [else '()]))
 
   (edefine (type-spelling t value)
-    (edoc "A value of a type as the expression denoting it: the type's writer, else written, a symbol quoted."
+    (edoc "A value of a type as the expression denoting it: the type's writer, else written, a symbol or a list quoted."
           (t datum "the type") (value any "the value") (returns string))
-    (define (default v) (if (symbol? v) (format "'~s" v) (format "~s" v)))
+    (define (default v) (if (or (symbol? v) (pair? v) (null? v)) (format "'~s" v) (format "~s" v)))
     (cond
       [(symbol? t)
        (let ([type (type-named t)])

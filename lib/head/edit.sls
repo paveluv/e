@@ -3,11 +3,11 @@
 ;;
 ;; Everything a user does to text and to the seat that shows it: the
 ;; buffer commands (the window commands are (window)'s), visiting,
-;; saving, merging with the disk,
+;; saving, reloading from the disk,
 ;; editing with undo, the copy buffer and the clipboard, indentation and
 ;; formatting through the modes' registered indenters,
 ;; the default key bindings, and the generic editing helpers (regions;
-;; search and replace are (search)'s, merge conflicts (merge)'s).  It
+;; search and replace are (search)'s, the log's views and conflicts (delta-log)'s).  It
 ;; composes the seams below --
 ;; store, head, paint, prompt, file, mode, keymap -- and is what M-x
 ;; sees bare: the loader imports (edit) into the top level.
@@ -29,7 +29,7 @@
 (elibrary (head edit)
   (export answer! backspace! backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
           beginning-of-line! buffer-clean? buffer-text
-          call-as-one-edit! copy-region! copy-text copy-text! current-region
+          call-as-one-edit! copy-region! copy-text copy-text! current-batch current-region
           delete-forward! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
           format-region!
           forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-expression! indent-line!
@@ -40,8 +40,8 @@
           new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
           page-window-fraction! (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
-          prompt-file! quit! redo! redraw-command! region-text replace-region-text! restore!
-          rewrite-region! save! save-file! set-mark-command! set-message!
+          prompt-file! quit! redo! redraw-command! region-text replace-region-text! reread! restore!
+          rewrite-region! rewrite-regions! save! save-file! set-mark-command! set-message!
           set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! undo-scope up-expression!
           visit-file! with-region
           yank!)
@@ -199,7 +199,8 @@
       (unless (and action (eq? (car action) b))
         (error 'submit-edit! "edit has no pending action"))
       (head:store-edit! b span replacement
-                        (append (list key (caddr action)) properties)
+                        (append (list key (caddr action)) properties
+                                (list (cons 'labels (list (cons 'batch (list-ref action 4))))))
                         (cons (cons current-window (edit-point))
                               (if (edit-mark) (list (cons 'mark (edit-mark))) '()))
                         (edit-basis-for b))
@@ -224,9 +225,9 @@
     ;; snapshot; the store's inverse operation owns its history.
     (let-values ([(span replacement) (text:difference lines (car snapshot))])
       (head:store-edit! (head:window-buffer current-window) span replacement
-                        (list #f #f (list (cons 'trailing (cadddr snapshot))))
+                        (list #f #f (cons 'undo (list (cons 'trailing (cadddr snapshot)))))
                         (list (cons current-window (cons (cadr snapshot) (caddr snapshot))))))
-    ;; The buffer may have been saved or merged since this snapshot was
+    ;; The buffer may have been saved or reloaded since this snapshot was
     ;; taken, changing its current disk base.  For a file buffer, derive
     ;; modified state from that base instead of restoring a stale flag.
     (let* ([b (head:window-buffer current-window)]
@@ -240,13 +241,23 @@
     (paint:invalidate-screen-cache!))
 
   ;; Undo entries are labeled with the user-level action that made them
-  ;; -- "insert \"hello\"", "(search:replace-all! \"xx\" \"yy\")" -- and undo
+  ;; -- "insert \"hello\"", "(search:replace! \"xx\" \"yy\")" -- and undo
   ;; and redo report the label.  Inside a call-as-one-edit! group, the
   ;; box holds (label . buffer-entries): one entry per buffer the
   ;; group touches, labeled with the group's label (or, lacking one,
   ;; that buffer's first edit's).
   (define edit-group (make-parameter #f))
   (define pending-edit (make-parameter #f))
+
+  ;; The batch label every edit carries: one per outermost group, so a
+  ;; command's edits across buffers share it; one per fresh undo entry
+  ;; otherwise, chained typing sharing its entry's.
+  (define edit-batch (make-parameter #f))
+  (define batch-counter 0)
+  (define entry-batches (make-weak-eq-hashtable))
+  (define (mint-batch!)
+    (set! batch-counter (+ batch-counter 1))
+    (list head:ui-actor batch-counter))
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -307,6 +318,10 @@
                                 [group (or (car (unbox group)) label)]
                                 [else label])]
                    [entry (or previous (cons label (editor-snapshot)))]
+                   [batch (or (hashtable-ref entry-batches entry #f)
+                              (let ([fresh (or (edit-batch) (mint-batch!))])
+                                (hashtable-set! entry-batches entry fresh)
+                                fresh))]
                    [committed? #f]
                    [commit!
                     (lambda ()
@@ -320,13 +335,17 @@
                             (cons (car (unbox group))
                                   (cons (cons b entry) (remq group-hit (cdr (unbox group)))))))
                         (set! committed? #t)))])
-              (parameterize ([pending-edit (list b entry label commit!)])
+              (parameterize ([pending-edit (list b entry label commit! batch)])
                 (thunk)))))))
 
   (define-syntax with-recorded-edit
     (syntax-rules ()
       [(_ label body ...)
        (call-with-recorded-edit! label (lambda () body ...))]))
+
+  (edoc "The batch label of the edits in the current one-edit group, the (actor counter) pair they share in the delta log, or #f outside a group."
+        (returns (or list #f)))
+  (define (current-batch) (edit-batch))
 
   (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
         (label (or string #f) "the undo label")
@@ -338,7 +357,7 @@
     ;; Nested groups defer to the outermost.
     (if (edit-group)
         (thunk)
-        (parameterize ([edit-group (box (cons label '()))]) (thunk))))
+        (parameterize ([edit-group (box (cons label '()))] [edit-batch (mint-batch!)]) (thunk))))
 
   (define (check-undo-scope scope)
     (unless (memq scope '(mine all))
@@ -679,37 +698,85 @@
   (define (newline!)
     (insert-text-as! "\n" "newline"))
 
-  (edoc "Delete the character after point, or join the next line at a line end."
+  ;;; The typing run ------------------------------------------------------------
+  ;;
+  ;; Typed characters, backspaces and forward deletes coalesce into one undo
+  ;; entry and one batch of the delta log (up to twenty keys, as in Emacs),
+  ;; so undo removes the run, a typo and its correction together, not one
+  ;; key.  The chain is (buffer row col count left before after): where
+  ;; point must stand for the next of these commands to continue the run,
+  ;; how many keys it has, the run's own text standing before point, and
+  ;; the older text it deleted before and after that.  Any other command
+  ;; breaks the run: it only continues when the last command was one of the
+  ;; three, type! itself or its call from the SELF-INSERT key, and point is
+  ;; where that command left it.
+  (define typing-chain #f)
+
+  (define no-run '(#f 0 0 0 "" "" ""))
+
+  (define (typing-run b)
+    ;; the run the next key continues, or #f
+    (and typing-chain
+         (let ([last (head:last-command)]) (or (typing? last) (memq last (list backspace! delete-forward!))))
+         (eq? (car typing-chain) b)
+         (= (cadr typing-chain) point-row)
+         (= (caddr typing-chain) point-col)
+         (< (cadddr typing-chain) 20)
+         typing-chain))
+
+  (define (typing-label left before after)
+    ;; the run's net effect as its undo label
+    (let ([removed (string-append before after)])
+      (cond [(string=? removed "") (format "insert ~s" left)]
+            [(string=? left "") (format "delete ~s" removed)]
+            [else (format "replace ~s with ~s" removed left)])))
+
+  (define (typing-edit! b run left before after thunk)
+    ;; one key of a run: the edit joins the run's undo entry and batch when
+    ;; the run continues, and the chain remembers where point now stands
+    (parameterize ([suppress-history (and run #t)])
+      (with-recorded-edit (typing-label left before after)
+        (thunk)
+        (changed!)))
+    (set! typing-chain (list b point-row point-col (+ (cadddr (or run no-run)) 1) left before after)))
+
+  (edoc "Delete the character after point, or join the next line at a line end; a run of typing, backspaces and deletes is one undo step."
         (edits))
   (define (delete-forward!)
     (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-           [row point-row] [col point-col] [line (current-line)])
-      (cond [(< col (string-length line))
-             (with-recorded-edit (format "delete ~s" (string (string-ref line col)))
-               (parameterize ([edit-source source])
-                 (submit-edit! b (text:make-span row col row (+ col 1)) '("")))
-               (changed!))]
-            [(< row (- (vector-length (car source)) 1))
-             (with-recorded-edit "delete newline"
-               (parameterize ([edit-source source])
-                 (submit-edit! b (text:make-span row col (+ row 1) 0) '("")))
-               (changed!))])))
+           [row point-row] [col point-col] [line (current-line)]
+           [span (cond [(< col (string-length line)) (text:make-span row col row (+ col 1))]
+                       [(< row (- (vector-length (car source)) 1)) (text:make-span row col (+ row 1) 0)]
+                       [else #f])])
+      (when span
+        (let* ([deleted (if (< col (string-length line)) (string (string-ref line col)) "\n")]
+               [run (typing-run b)] [chain (or run no-run)])
+          ;; the text after point is never the run's own: it goes with the older text deleted after
+          (typing-edit! b run (list-ref chain 4) (list-ref chain 5) (string-append (list-ref chain 6) deleted)
+            (lambda ()
+              (parameterize ([edit-source source])
+                (submit-edit! b span '("")))))))))
 
-  (edoc "Delete the character before point, or join with the previous line at a line start."
+  (edoc "Delete the character before point, or join with the previous line at a line start; a run of typing, backspaces and deletes is one undo step."
         (edits))
   (define (backspace!)
     (when (or (> point-col 0) (> point-row 0))
       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
              [end-row point-row] [end-col point-col]
              [row (if (> end-col 0) end-row (- end-row 1))]
-             [col (if (> end-col 0) (- end-col 1) (string-length (line-at row)))])
-        (with-recorded-edit
-          (if (> end-col 0)
-              (format "delete ~s" (string (string-ref (line-at row) col)))
-              "delete newline")
-          (parameterize ([edit-source source])
-            (submit-edit! b (text:make-span row col end-row end-col) '("")))
-          (changed!)))))
+             [col (if (> end-col 0) (- end-col 1) (string-length (line-at row)))]
+             [deleted (if (> end-col 0) (string (string-ref (line-at row) col)) "\n")]
+             [run (typing-run b)] [chain (or run no-run)]
+             [left (list-ref chain 4)] [n (string-length left)])
+        ;; a typo corrected takes the run's own last character back; past
+        ;; the run's text, the character goes with the older text deleted before it
+        (typing-edit! b run
+          (if (> n 0) (substring left 0 (- n 1)) left)
+          (if (> n 0) (list-ref chain 5) (string-append deleted (list-ref chain 5)))
+          (list-ref chain 6)
+          (lambda ()
+            (parameterize ([edit-source source])
+              (submit-edit! b (text:make-span row col end-row end-col) '(""))))))))
 
   ;;; Kill and yank ---------------------------------------------------------
 
@@ -794,7 +861,7 @@
         (head:with-buffer b
           (parameterize ([edit-source #f])
             (with-recorded-edit (format "~a ~s" label (string:elide text 40))
-              (replace-buffer-lines! b lines (list (cons 'trailing trailing?)))))))
+              (replace-buffer-lines! b lines (cons 'undo (list (cons 'trailing trailing?))))))))
       (note-copy-published! b)
       (publish-system-clipboard! text)))
 
@@ -891,6 +958,32 @@
     (parameterize ([edit-source basis] [edit-point (head:point)])
       (replace-region-text! start end text)))
 
+  (edoc "Replace several ordered ranges of the current buffer with texts computed against a basis, one structural edit each in the current undo group, point kept where it was: the ranges are in the basis's coordinates, disjoint and in the text's order, and each later one is carried across the changes the store reports after an edit, this head's own and other actors', a range whose text changed under it being skipped."
+        (basis list "the edit basis the ranges were computed against")
+        (regions (list-of list) "(start end text) each, in the text's order")
+        (returns integer "how many ranges were replaced")
+        (edits))
+  (define (rewrite-regions! basis regions)
+    (define (span-of region)
+      (text:make-span (car (car region)) (cdr (car region)) (car (cadr region)) (cdr (cadr region))))
+    (define (carry regions changes)
+      ;; the ranges still to replace, mapped through the changes since the
+      ;; last basis, those a change touched dropped
+      (filter values
+        (map (lambda (region)
+               (let ([span (fold-left (lambda (span change) (and span (text:rebase-span span (caddr change))))
+                                      (car region) changes)])
+                 (and span (cons span (cdr region)))))
+             regions)))
+    (let ([b (head:window-buffer current-window)])
+      (let loop ([regions (map (lambda (region) (cons (span-of region) (caddr region))) regions)] [basis basis] [n 0])
+        (if (null? regions) n
+            (let ([span (car (car regions))] [text (cdr (car regions))])
+              (rewrite-region! basis (text:span-start span) (text:span-end span) text)
+              (let-values ([(lines revision changes) (head:snapshot-since b (caddr basis))])
+                (unless changes (error 'rewrite-regions! "the changes since the basis are no longer available"))
+                (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1))))))))
+
   (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates.")
   (define (copy-region!)
     ;; Save the region to the copy buffer without deleting it -- M-w, as
@@ -978,7 +1071,7 @@
         (prompts))
   (define (visit-file! path)
     ;; Direct visits and the interactive picker share acquisition and the
-    ;; buffer-only merge/reread/cancel flow. Visiting never writes to disk.
+    ;; buffer-only reload or reread flow. Visiting never writes to disk.
     (guard (ex [else
                 (parameterize ([message-source 'visit-file!])
                   (set-message! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))))])
@@ -1012,7 +1105,7 @@
     (unless (property:matches? review facts)
       (refuse-file! "Buffer's file or baseline changed; operation cancelled. Review the file again.")))
 
-  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, ask whether to overwrite, merge three-way or cancel."
+  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, reload it first and write when no conflict pends, else stop for their resolution; where the store cannot reload, ask whether to overwrite."
         (target file "where to write: the buffer's own file, or a new destination it visits from then on")
         (returns boolean "whether the file was written")
         (prompts))
@@ -1020,7 +1113,7 @@
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
     ;; A mismatch means somebody changed the file meanwhile -- the
-    ;; save stops and asks: overwrite, merge three-way, or cancel.
+    ;; save reloads first, writing when nothing conflicts.
     (define path (file:visit-path target))
     (define b (head:window-buffer current-window))
     (define adopted? #f)
@@ -1059,14 +1152,6 @@
               (refuse-file! "Buffer's file state changed; saved baseline was not updated."))))
         ;; File facts, label and adopted mode commit together. No follow-up
         ;; write may overwrite a subscriber's newer choice. Re-save keeps mode.
-        ;; a conflicted merge reports its details once resolved --
-        ;; saved with no markers left; the resolution preceded the
-        ;; write, so its record does too
-        (let ([pending (assq b merge-reports)])
-          (when (and pending (not (buffer-has-conflicts? b)))
-            (set! merge-reports (remq pending merge-reports))
-            (log:add! 'save-file!
-              (format "Merge resolved -- details in ~a" (cdr pending)))))
         (log:add! 'save-file! (cons "Wrote" path))
         (file:run-post-save-hooks! path)
         #t))
@@ -1101,39 +1186,26 @@
                  [else (ask)])))]
           [else (write! review)]))))
 
-  (define (merge-report! b report-lines)
-    ;; The merge's paper trail: a read-only <merge-buffer> holding
-    ;; diff's unified-diff-style rendering -- built quietly, never
-    ;; displayed; the echo names it.  -> the report buffer's name.
-    (let* ([name (format "*merge-~a*" (head:buffer-name b))]
-           [rb (head:fresh-buffer! name)])
-      (when (pair? report-lines) (apply head:buffer-append! rb report-lines))
-      (head:buffer-read-only-set! rb #t)
-      (head:buffer-name rb)))
-
-  (define (merge-from-disk! b path disk review)
-    ;; Replace the buffer with the three-way merge of its base, its
-    ;; text, and the disk; -> the conflict count and the report
-    ;; buffer's name.  The buffer adopts the disk as its new base
-    ;; either way -- the external change is incorporated, so the next
-    ;; save writes cleanly.  One undo entry.
-    (let-values ([(text revision facts) (head:buffer-state b)])
-      (check-file-review! facts review)
-      (check-file-review! facts (list (cons 'file path)))
-      (unless (cond [(assq 'base facts) => cdr] [else #f])
-        (refuse-file! "Cannot merge: this buffer has no saved disk baseline."))
-      (let ([disk (review-disk! path disk)]
-            [source (head:edit-basis b)] [wanted (head:point)])
-        (let-values ([(merged merged-trailing conflicts report-lines)
-                      (file:merge path (cdr (assq 'base facts))
-                        (file:text (car source) (cond [(assq 'trailing facts) => cdr] [else #t])) (car disk))])
-          (with-recorded-edit "merge from disk"
-            (parameterize ([edit-source source] [edit-point wanted])
-              (replace-buffer-lines! b merged (list (cons 'trailing merged-trailing))
-                                     (list (cons 'base (car disk)) (cons 'stamp (cdr disk)) '(stale . #f))
-                                     (property:select facts '(file base trailing))))
-            (changed!)
-            (values conflicts (merge-report! b report-lines)))))))
+  (define (reload-from-disk! b path disk)
+    ;; The buffer reloaded from its file through the store: the disk's text
+    ;; the baseline again, the buffer's entries reapplied on top, an entry the
+    ;; disk contradicts pending as a conflict with the disk's side shown;
+    ;; -> (values status detail), applied with (revision conflicts), and the
+    ;; echo told. Nothing is written.
+    (let ([disk (review-disk! path disk)])
+      (let-values ([(status detail)
+                    (head:store-reload! b (file:lines (car disk))
+                      (list (cons 'trailing (file:ends-in-newline? (car disk)))
+                            (cons 'base (car disk)) (cons 'stamp (cdr disk)) '(stale . #f)))])
+        (when (eq? status 'applied)
+          (let ([n (length (cadr detail))])
+            (parameterize ([message-source 'visit-file!])
+              (set-message!
+                (if (zero? n)
+                    (format "Reloaded ~a" path)
+                    (format "Reloaded ~a with ~a conflict~a, the disk's side shown; (delta-log:conflicts!) reviews them"
+                            path n (if (= n 1) "" "s")))))))
+        (values status detail))))
 
   (define (reread-from-disk! b path disk review)
     ;; Discard the buffer's copy and adopt the disk verbatim.  Rereading is a
@@ -1150,96 +1222,62 @@
       ;; Its history and selection belong to that work, not this reread.
       (when (and accepted (= accepted (caddr (head:edit-basis b))))
         (head:buffer-history-set! b (vector '() '()))
-        (head:buffer-marked-set! b #f)
-        (set! merge-reports (remp (lambda (p) (eq? (car p) b)) merge-reports)))
+        (head:buffer-marked-set! b #f))
       (parameterize ([message-source 'visit-file!])
         (set-message! (if accepted (format "Reread ~a" path)
                         "Buffer changed; reread cancelled. Reopen the file to review it again.")))
       (and accepted #t)))
 
   (define (reopen-changed-file! b path disk review)
-    (let ([facts (cdr review)])
-      (let ask ()
-        (let* ([k (prompt:key!
-                    (format "~a changed on disk: m)erge, r)eread, c)ancel"
-                            (file:base-name path))
-                    "mrc")]
-               [n (and k (char->integer k))])
-          (cond
-            [(memv n '(109 77))                                 ; m
-             (let-values ([(conflicts report-name)
-                           (merge-from-disk! b path disk (file-review facts))])
-               ;; The merge incorporated this disk version into the buffer's
-               ;; baseline.  It remains modified only when it differs from disk.
-               (when (> conflicts 0)
-                 (set! merge-reports
-                   (cons (cons b report-name)
-                     (remp (lambda (p) (eq? (car p) b)) merge-reports))))
-               (parameterize ([message-source 'visit-file!])
-                 (set-message!
-                   (if (zero? conflicts)
-                     (format "Merged from disk -- details in ~a" report-name)
-                     (format "Merged with ~a conflict~a -- resolve (~a)"
-                             conflicts (if (= conflicts 1) "" "s")
-                             (keymap:command-hint
-                               '(merge:next! merge:keep-mine! merge:keep-disk!))))))
-               #t)]
-            [(memv n '(114 82)) (reread-from-disk! b path disk review)] ; r
-            [(or (not n) (memv n '(99 67 7 27)))                ; c, C-g, ESC
-             (keyboard-quit!)
-             #f]
-            [else (ask)])))))
+    ;; The file changed on disk since the buffer's baseline: reload it, and
+    ;; where the store cannot, a local buffer or a baseline the log no longer
+    ;; reaches, ask to reread instead
+    (let-values ([(status detail) (reload-from-disk! b path disk)])
+      (or (eq? status 'applied)
+          (let ask ()
+            (let* ([k (prompt:key! (format "~a changed on disk: r)eread, c)ancel" (file:base-name path)) "rc")]
+                   [n (and k (char->integer k))])
+              (cond
+                [(memv n '(114 82)) (reread-from-disk! b path disk review)] ; r
+                [(or (not n) (memv n '(99 67 7 27)))                ; c, C-g, ESC
+                 (keyboard-quit!)
+                 #f]
+                [else (ask)]))))))
 
-  ;; Merge reports awaiting resolution -- (buffer . report-name): a
-  ;; conflicted merge does not announce its report buffer up front;
-  ;; the save that carries the resolved text does, separately.
-  (define merge-reports '())
-
-  (define (buffer-conflict-count b)
-    ;; How many merge conflict markers are left in b.
-    (file:conflict-count (head:buffer-lines b)))
-
-  (define (buffer-has-conflicts? b)
-    (> (buffer-conflict-count b) 0))
+  (edoc "Reread the current buffer's file, adopting the disk verbatim: the text, the modification state, the history and any pending conflicts start over from the disk's copy; nothing is written.")
+  (define (reread!)
+    (let ([b (head:current-buffer)])
+      (let-values ([(text revision facts) (head:buffer-state b)])
+        (let ([path (cond [(assq 'file facts) => cdr] [else #f])])
+          (unless path (refuse-file! "This buffer visits no file"))
+          (let ([disk (guard (ex [else #f]) (read-disk path))])
+            (unless disk (refuse-file! (format "Cannot read ~a" path)))
+            (reread-from-disk! b path disk (cons revision facts)))))))
 
   (define (stale-save! b path disk review write!)
-    (define merge?
-      (exists (lambda (entry) (and (pair? entry) (eq? (car entry) 'base) (cdr entry))) review))
-    (let ask ()
-      (let* ([k (prompt:key!
-                  (format "~a changed on disk: ~a" (file:base-name path)
-                    (if merge? "o)verwrite, m)erge, c)ancel"
-                        "no saved baseline; o)verwrite, c)ancel"))
-                  (if merge? "omc" "oc"))]
-             [n (and k (char->integer k))])
-        (cond
-          [(memv n '(111 79)) (write! review)]                ; o
-          [(memv n '(109 77))                                 ; m
-           (let-values ([(conflicts report-name)
-                         (merge-from-disk! b path disk review)])
-             (if (zero? conflicts)
-                 (and
-                   (write! (list (car review) (cons 'base (car disk))))
-                   (parameterize ([message-source 'save-file!])
-                     (set-message!
-                       (format "Merged and saved -- details in ~a"
-                               report-name)))
-                   #t)
-                 (begin
-                   (set! merge-reports
-                     (cons (cons b report-name)
-                           (remp (lambda (p) (eq? (car p) b))
-                                 merge-reports)))
-                   (parameterize ([message-source 'save-file!])
-                     (set-message!
-                       (format "Merged with ~a conflict~a -- resolve (~a), then save"
-                               conflicts (if (= conflicts 1) "" "s")
-                               (keymap:command-hint
-                                 '(merge:next! merge:keep-mine! merge:keep-disk!)))))
-                   #f)))]
-          [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
-          [(not n) #f]
-          [else (ask)]))))
+    ;; The file changed on disk since the baseline: reload first, then write
+    ;; when no conflict pends, else leave the conflicts to the user; where
+    ;; the store cannot reload, ask to overwrite
+    (let-values ([(status detail) (reload-from-disk! b path disk)])
+      (cond
+        [(and (eq? status 'applied) (null? (cadr detail)))
+         (write! (list (car review) (cons 'base (car disk))))]
+        [(eq? status 'applied)
+         (parameterize ([message-source 'save-file!])
+           (set-message! (format "Reloaded ~a with ~a conflict~a; (delta-log:conflicts!) reviews them, then save"
+                                 (file:base-name path) (length (cadr detail)) (if (= (length (cadr detail)) 1) "" "s"))))
+         #f]
+        [else
+         (let ask ()
+           (let* ([k (prompt:key! (format "~a changed on disk: ~ao)verwrite, c)ancel" (file:base-name path)
+                                          (if (eq? detail 'no-base) "no saved baseline; " ""))
+                                  "oc")]
+                  [n (and k (char->integer k))])
+             (cond
+               [(memv n '(111 79)) (write! review)]                ; o
+               [(memv n '(99 67 7 27)) (set! message "Save cancelled") #f]
+               [(not n) #f]
+               [else (ask)])))])))
 
   (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
         (b buffer "the buffer to read")
@@ -1300,7 +1338,7 @@
           thunk
           (lambda () (select! saved-mark saved-point saved-active))))))
 
-  (edoc "Run body with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (search:replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a region selected: its buffer current, the mark at its start and point at its end; the previous selection and point return on exit and on escape: (with-region (region (buffer \"a\") '(0 . 0) '(4 . 0)) (search:replace! \"x\" \"y\"))."
         (r region "the region to select")
         (body (list-of any) "the forms to run"))
   (define-syntax with-region
@@ -1667,7 +1705,7 @@
               ;; transaction, including a change only to that fact.
               (parameterize ([edit-source source] [edit-point wanted])
                 (replace-rows! from last lines
-                               (if (= last (- (vector-length v) 1)) '((trailing . #t)) '())))
+                               (cons 'undo (if (= last (- (vector-length v) 1)) '((trailing . #t)) '()))))
               #t]))])))
 
   (edoc "Rewrite the lines between mark and point with the mode's formatter."
@@ -1919,39 +1957,24 @@
           (lambda ()
             (insert-text! (string:join (tty:paste-lines text) "\n")))))))
 
-  ;; Consecutive typed characters coalesce into one undo entry (up to
-  ;; twenty, as in Emacs), so undo removes the run, not one character.
-  ;; The chain is (buffer row col run-length text): where the next typed
-  ;; text must land to continue the run.  Any other command breaks it:
-  ;; the chain only continues when the last command was typing, the
-  ;; SELF-INSERT key's call of type! with the character typed.
-  (define insert-chain #f)
-
   (define (typing? action)
     ;; whether a key's action typed: type! itself, or its call from SELF-INSERT
     (or (eq? action type!)
         (and (keymap:call-action? action) (eq? (keymap:call-action-procedure action) type!))))
 
-  (edoc "Type text: inserted at point as typing does, joining the run of typing before it, so a run undoes as one step and shares one batch; SELF-INSERT, any character without a binding of its own, runs it with the character typed."
+  (edoc "Type text: inserted at point as typing does, continuing the run of typing, backspaces and deletes before it, so a run undoes as one step and shares one batch; SELF-INSERT, any character without a binding of its own, runs it with the character typed."
         (text string "the text to type")
         (edits))
   (define (type! text)
-    (let ([b (head:window-buffer current-window)]
-          [chain (and (typing? (head:last-command)) insert-chain)])
-      (unless (string=? text "")
-        (if (and chain
-                 (eq? (car chain) b)
-                 (= (cadr chain) point-row)
-                 (= (caddr chain) point-col)
-                 (< (cadddr chain) 20))
-            (let ([whole (string-append (list-ref chain 4) text)])
-              (parameterize ([suppress-history #t])
-                (insert-text-as! text (format "insert ~s" whole)))
-              (set! insert-chain
-                (list b point-row point-col (+ (cadddr chain) 1) whole)))
-            (begin
-              (insert-text! text)
-              (set! insert-chain (list b point-row point-col 1 text)))))))
+    ;; one key of the typing run, above
+    (unless (string=? text "")
+      (let* ([b (head:window-buffer current-window)]
+             [run (typing-run b)] [chain (or run no-run)]
+             [source (edit-basis-for b)] [row point-row] [col point-col])
+        (typing-edit! b run (string-append (list-ref chain 4) text) (list-ref chain 5) (list-ref chain 6)
+          (lambda ()
+            (parameterize ([edit-source source])
+              (submit-edit! b (text:make-span row col row col) (split-inserted-lines text))))))))
 
   ;;; Small commands and key description -------------------------------------
 
@@ -2064,15 +2087,6 @@
                      (format "~a" d)))])
       (log:register-formatter! 'visit-file! fmt)
       (log:register-formatter! 'save-file! fmt))
-    ;; the status line shows a merge's conflicts as a hint the files code
-    ;; owns -- painting knows nothing about merges
-    (paint:add-buffer-status-hint!
-      (lambda (b active?)
-        (and (assq b merge-reports)
-             (let ([n (buffer-conflict-count b)])
-               (and (> n 0)
-                    (list (cons (format "  ~a conflict~a" n (if (= n 1) "" "s"))
-                                'red)))))))
     (style:set-changed-hook!
       (lambda () (paint:invalidate-screen-cache!)))
     (style:color-scheme! (head:host-color-scheme))

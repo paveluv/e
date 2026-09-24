@@ -162,10 +162,12 @@ edits continue and the save captures their latest accepted state. With no
 live work the omission notice remains, but no question is needed.
 
 The snapshot keeps shared text, names, buffer IDs and revisions, file
-baselines and modification times, and named screen checkpoints. Generated
-tool buffers are omitted. Live and ended terminal buffers become ordinary
-read-only text containing their last published output; shells and other
-processes are not restarted. Undo/redo history, old deltas and blame, the
+baselines and modification times, named screen checkpoints, and each
+buffer's delta log with its undo groups, so undo, redo, blame, history and
+`store:log` reach back across a restart as far as `store:log-retention`
+entries. Generated tool buffers are omitted. Live and ended terminal
+buffers become ordinary read-only text containing their last published
+output, without a log; shells and other processes are not restarted. The
 structured log, local draft text and pending interactions are not saved.
 Older checkpoints without an edit chain clamp their positions to restored text.
 
@@ -463,7 +465,7 @@ The receipt is owned plain data captured at the transaction, with each change
 represented as `(revision actor delta-datum)`; use `text:datum->delta` to
 reconstruct a delta. `edit-facts` contains the `modified` and `modified-at`
 pairs from that same commit. Stale/refused outcomes keep their existing meanings.
-Context is `#f` or `(key label [undo-facts [commit-facts [expected]]])`. Reuse a key for
+Context is `#f` or `(key label . options)`, the options an alist among `undo`, `commit`, `expected` and `labels`. Reuse a key for
 the parts of one action in one buffer; keys belong to the session actor.
 Undo reverses text and undo facts together. Commit facts describe external
 state and survive undo/redo. Expected facts are pairs for exact present values

@@ -280,8 +280,8 @@ through the same commands. Typing that should feed the app, a filter say, is
 the context's `SELF-INSERT` binding, a call of the app's command with
 `head:typed-text`. The handler keeps only what is not a key: focus, the
 pointer and the wheel. A key that applies only in some state of the buffer,
-the merge keys while its text holds conflict markers, gets a state context
-through `mode:add-context!`.
+the delta log browser's conflict keys while its rows are a reload's
+conflicts, gets a state context through `mode:add-context!`.
 
 The handler has first refusal on every key the buffer's mode context leaves
 unbound: a true result consumes the event, a false one lets it continue

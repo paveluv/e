@@ -192,7 +192,11 @@ argument may search instead of completing: a `needle`, the text
 `search:replace!` finds, highlights its matches in the current buffer as it
 is typed, the prompt notes `[1 of 3]`, and Tab visits the matches in turn,
 Shift-Tab backwards, inserting nothing; a type asks for this with an
-`edoc-type` `(search s)` clause.
+`edoc-type` `(search s)` clause. A candidate may also preview itself: a
+`revision` at a `delta-log:` command highlights the text its entry wrote
+while Tab has it inserted, and undoes that as the input changes or the
+prompt closes; a type asks for this with a `(preview p)` clause, `(p value)`
+showing the value and returning the thunk that undoes the showing.
 
 Bracketed multiline paste keeps its line breaks and runs the same Scheme
 indenter over the resulting expression. This makes copied definitions and

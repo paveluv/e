@@ -20,6 +20,7 @@
              (prefix (core kernel) kernel:))
 
      (define check test:check)
+     (store:log-retention 256)   ; the bound these checks exercise
      (define bot '(agent undo-test))
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])

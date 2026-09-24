@@ -194,11 +194,12 @@ individual decoded key events; global keymaps provide arbitrary multi-key
 chords.
 
 A context may also come from a buffer's state rather than its mode. An app
-registers it with a predicate, `(mode:add-context! 'merge merging?)`, and
-every buffer the predicate holds of has the context, before its mode's: the
-merge keys `M-n`, `M-m` and `M-d` are bound in `merge`, which a buffer has
-while its text holds conflict markers, so elsewhere those keys keep their
-other meanings and the keys listing shows them only where they work.
+registers it with a predicate, `(mode:add-context! 'delta-log-conflicts
+conflicts-browser?)`, and every buffer the predicate holds of has the
+context, before its mode's: the delta log browser's conflict keys `M-/`,
+`M-d` and `M-m` are bound in `delta-log-conflicts`, which the browser has
+while its rows are a reload's pending conflicts, so elsewhere those keys keep
+their other meanings and the keys listing shows them only where they work.
 
 Buffer-mode contexts can bind command procedures and complete chords. Terminals
 also declare which keys reach e during partial capture. To include `C-c` as

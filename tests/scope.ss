@@ -19,6 +19,7 @@
              (prefix (head window) window:))
 
      (define check test:check)
+     (search:review-replacements #f)
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -53,7 +54,7 @@
      (check 'with-region-selects-the-region
        (with-region r (list (head:current-buffer) (head:mark) (head:point)))
        (list b '(1 . 0) '(1 . 3)))
-     (check 'replace-all-stays-inside-the-region (with-region r (search:replace-all! "x" "y")) 2)
+     (check 'replace-stays-inside-the-region (with-region r (search:replace! "x" "y")) 2)
      (check 'the-rest-of-the-buffer-is-untouched (text-of b) '("x three" "y y"))
      (check 'the-selection-and-point-return (list (head:current-buffer) (head:mark) (head:point)) (list a #f '(0 . 0)))
      (check 'count-matches-under-with-region (with-region (region a '(0 . 0) '(0 . 3)) (search:count "x")) 1)

@@ -3551,7 +3551,8 @@
                                     (values 'applied (list revision old '())))
                                   (let-values ([(span replacement) (text:difference old text)])
                                     (store:edit-with-snapshot! owner id revision span replacement
-                                                               (list (list owner 'output) "terminal output" '() live-facts))))])
+                                                               (list (list owner 'output) "terminal output"
+                                                                     (cons 'commit live-facts)))))])
                   (cond
                     [(or (not (eq? status 'applied)) (not (equal? text (cadr receipt)))
                          (not (= (car receipt) (store:revision id))))

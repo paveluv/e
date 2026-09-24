@@ -1,7 +1,7 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export (rename (validate-edit-context edit-context)) edit-keys matches? select
+  (export context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys matches? select
           (rename (validate-properties validate)) validate-expected
           (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
@@ -94,23 +94,56 @@
                        (not (assq entry facts))))
                  expected)))
 
-  (edoc "Check an edit context: a group label and optional undo, commit and expected facts, no key in two sets."
+  (edoc "Check an edit context, (key label . options): a group key and label, then an alist among undo facts, commit facts, expected facts and labels, no fact key in two sets."
         (context any "the context, or #f"))
   (define (validate-edit-context context)
     ;; Undo facts travel with the inverse.  Commit facts describe external
     ;; state (e.g. a disk baseline) and survive undo, but commit atomically
     ;; with the text. A key cannot appear in both sets. Expected facts
-    ;; guard the commit without becoming part of its undo history.
+    ;; guard the commit without becoming part of its undo history. Labels
+    ;; ride on the log entry: (batch . id) names the edits made together.
     (unless (or (not context)
-                (and (list? context) (memv (length context) '(2 3 4 5))
-                     (or (not (cadr context)) (string? (cadr context)))))
-      (error 'validate-edit-context "expected (key label [undo-facts [commit-facts [expected]]])" context))
-    (when (and context (>= (length context) 3))
+                (and (list? context) (>= (length context) 2)
+                     (or (not (cadr context)) (string? (cadr context)))
+                     (for-all (lambda (option)
+                                (and (pair? option) (memq (car option) '(undo commit expected labels))))
+                              (cddr context))
+                     (let unique ([options (cddr context)])
+                       (or (null? options)
+                           (and (not (assq (caar options) (cdr options))) (unique (cdr options)))))))
+      (error 'validate-edit-context
+             "expected (key label . options), the options among undo, commit, expected and labels" context))
+    (when context
       (writable-properties
-        (append (validate-properties (caddr context))
-                (if (>= (length context) 4) (validate-properties (cadddr context)) '()))))
-    (when (and context (= (length context) 5))
-      (validate-expected (list-ref context 4)))
+        (append (validate-properties (context-undo context)) (validate-properties (context-commit context))))
+      (validate-expected (context-expected context))
+      (let ([labels (context-labels context)])
+        (unless (and (list? labels) (for-all (lambda (label) (and (pair? label) (symbol? (car label)))) labels))
+          (error 'validate-edit-context "expected labels as an alist with symbol keys" labels))))
     context)
+
+  (define (context-option context key fallback)
+    (cond [(and context (pair? (cdr context)) (assq key (cddr context))) => cdr]
+          [else fallback]))
+
+  (edoc "An edit context's undo facts, the facts that travel with the inverse; none without."
+        (context any "the context, or #f")
+        (returns list))
+  (define (context-undo context) (context-option context 'undo '()))
+
+  (edoc "An edit context's commit facts, the facts that survive undo; none without."
+        (context any "the context, or #f")
+        (returns list))
+  (define (context-commit context) (context-option context 'commit '()))
+
+  (edoc "An edit context's expected facts, the review guarding the commit, or #f."
+        (context any "the context, or #f")
+        (returns any))
+  (define (context-expected context) (context-option context 'expected #f))
+
+  (edoc "An edit context's labels for the log entry, (batch . id) among them; none without."
+        (context any "the context, or #f")
+        (returns list))
+  (define (context-labels context) (context-option context 'labels '()))
 
 )

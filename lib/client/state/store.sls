@@ -5,11 +5,12 @@
 ;; delta on the wire, never the buffer's text.
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export blame buffer-list buffer-name create! delete! discard! edit! edit-with-snapshot! exists?
-          extract find-file find-named history history-step! line line-count marks properties
-          property rename! reset! revision set-marks! set-properties! set-property! snapshot
-          snapshot-since snapshot-state trash-retention undo-authors unsubscribe!
-          validate-edit-context validate-properties visible? visit! watch!)
+  (export blame buffer-list buffer-name conflicts create! delete! discard! edit! edit-with-snapshot! exists?
+          extract find-file find-named history history-step! line line-count
+          (rename (log-entries log)) marks properties property reload! rename! reset! resolve! revision rewrite!
+          set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
+          trash-retention undo-authors unsubscribe! validate-edit-context validate-properties
+          view visible? visit! watch!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core identity) identity:)
@@ -361,9 +362,7 @@
       ;; A plain delta receipt carries its modification facts; explicit
       ;; committed facts leave the entry stale.
       (if (and (eq? status 'applied) delta?
-               (not (and context (>= (length context) 3)
-                         (or (pair? (caddr context))
-                             (and (>= (length context) 4) (pair? (cadddr context)))))))
+               (not (or (pair? (property:context-undo context)) (pair? (property:context-commit context)))))
           (hashtable-delete! stale id)
           (stale! id 'facts))
       (values status
@@ -411,6 +410,55 @@
         (returns list))
   (define (history id . count)
     (apply client:request 'history id count))
+
+  (edoc "A buffer's retained log entries as data, newest first, (revision actor labels delta origin state) each, narrowed by a selector alist among count, actor, batch, since and until."
+        (id integer "the buffer id")
+        (selector (list-of any) "constraints, at most one alist")
+        (returns list))
+  (define (log-entries id . selector)
+    (apply client:request 'log id selector))
+
+  (edoc "A view of a buffer with entries disabled, from the base: (values text mapping conflicts)."
+        (id integer "the buffer id")
+        (disabled (list-of integer) "the revisions to disable")
+        (returns any "(values text mapping conflicts)"))
+  (define (view id disabled)
+    (apply values (client:request 'view id disabled)))
+
+  (edoc "Disable entries of a buffer for everyone through the base: (values status detail)."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (disabled (list-of integer) "the revisions to disable")
+        (access (list-of any) "write access, at most one"))
+  (define (rewrite! actor id disabled . access)
+    (unless (<= (length access) 1) (error 'rewrite! "expected one write access"))
+    (apply values (mutate actor id 'rewrite (list disabled))))
+
+  (edoc "Reload a buffer from its file through the base: (values status detail), applied with (revision conflicts)."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit")
+        (access (list-of any) "write access, at most one"))
+  (define (reload! actor id lines facts . access)
+    (unless (<= (length access) 1) (error 'reload! "expected one write access"))
+    (apply values (mutate actor id 'reload (list lines facts))))
+
+  (edoc "Settle a reload conflict through the base: (values status detail)."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (revision integer "the conflicted entry")
+        (choice any "disk, mine or the replacement lines")
+        (access (list-of any) "write access, at most one"))
+  (define (resolve! actor id revision choice . access)
+    (unless (<= (length access) 1) (error 'resolve! "expected one write access"))
+    (apply values (mutate actor id 'resolve (list revision choice))))
+
+  (edoc "A buffer's pending reload conflicts from the base, (entry disk inverse) revisions each."
+        (id integer "the buffer id")
+        (returns list))
+  (define (conflicts id)
+    (client:request 'conflicts id))
 
   (edoc "A buffer's newest edits with their spans in the current text: (span actor revision) each."
         (id integer "the buffer id")

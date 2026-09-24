@@ -624,7 +624,7 @@
              [disk (string-append root "/persistent-file")]
              [initialized (string-append root "/restored-before-config")]
              [saved #f] [note #f] [file #f] [term #f] [ended #f] [omitted #f] [gap #f]
-             [checkpoint #f] [expected #f])
+             [checkpoint #f] [expected #f] [expected-history '()])
          (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
          (base-config!
            `((vt:shell "/bin/sh")
@@ -751,6 +751,7 @@
                  (set! checkpoint `(future-view (,note 1) (,gap missing) (,omitted unsupported)))
                  (rpc head 'checkpoint checkpoint)
                  (set! expected (rpc head 'snapshot note))
+                 (set! expected-history (rpc head 'history note))
                  (test:check 'restart-saves-latest-shared-edits-without-reprompt
                    (exchange control (list 'request 7 'restart (cadr review))) '(closing restart)))
                (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
@@ -774,7 +775,7 @@
                      (let ([facts (caddr (rpc head 'snapshot file))])
                        (map (lambda (key) (cdr (assq key facts))) '(base stamp modified)))
                      (rpc head 'history note) (rpc head 'read-marks note))
-                   (list expected '("disk baseline\n" (10 . 9) #f) '() '()))
+                   (list expected '("disk baseline\n" (10 . 9) #f) expected-history '()))
                  ;; a transcript's rows are as wide as the terminal was: its wrap fact,
                  ;; #f, is kept, or a head would soft-wrap every full row by a character;
                  ;; its mode stays too, as when a process ends in a session, while the
@@ -788,13 +789,15 @@
                    (map (lambda (id) (list (list-ref (assv id states) 3) #t '(wrap . #f) '((mode . "terminal")))) (list term ended)))
                  (let* ([revision (cadr expected)] [notice (rpc head 'startup-notice)])
                    (rpc head 'edit note revision '(0 0 0 0) '("new base "))
-                   (test:check 'restored-revisions-cannot-reuse-unrelated-deltas
-                     (list (cadddr (rpc head 'snapshot note (- revision 1)))
+                   ;; The restored log keeps the deltas: a basis from before the
+                   ;; stop still rebases, through the saved edit and the new one.
+                   (test:check 'restored-revisions-keep-their-deltas
+                     (list (length (cadddr (rpc head 'snapshot note (- revision 1))))
                        (length (cadddr (rpc head 'snapshot note revision)))
                        (> (occurrences notice "restored a session saved") 0)
                        (rpc head 'startup-notice) (cdr (assq 'saved-at (rpc head 'status)))
                        (equal? saved (call-with-input-file path read)))
-                     (list #f 1 #t #f (caddr saved) #t)))
+                     (list 2 1 #t #f (caddr saved) #t)))
                  (test:check 'restore-does-not-overwrite-externally-changed-file
                    (call-with-input-file disk get-string-all) "changed while stopped\n")
                  ;; A crash after import leaves the previous snapshot intact.
@@ -817,7 +820,7 @@
                            (list-sort < (car before)) (cadr before)
                            (rpc head 'history note)
                            (map (lambda (id) (car (rpc head 'snapshot id))) (list term ended)))
-                     (list expected checkpoint (map car (cdr (list-ref saved 4))) (cadddr saved) '()
+                     (list expected checkpoint (map car (cdr (list-ref saved 4))) (cadddr saved) expected-history
                            (map (lambda (id) (list-ref (assv id (cdr (list-ref saved 4))) 3)) (list term ended))))
                    (let ([review (and (eq? mode 'shutdown) (rpc head 'prepare-close))])
                      ;; Shared edits during a shutdown review need no new
@@ -826,6 +829,7 @@
                      (set! checkpoint `(future-view (,note ,cycle) (,gap missing) (,omitted unsupported)))
                      (rpc head 'checkpoint checkpoint)
                      (set! expected (rpc head 'snapshot note))
+                     (set! expected-history (rpc head 'history note))
                      (test:check (list 'repeated-stops-save-without-reprompt mode cycle)
                        (if review
                            (exchange head (list 'request 7 'shutdown (cadr review)))
@@ -1507,7 +1511,7 @@
                ;; describe exactly its own accepted revision and anchor chain.
                (wire:send! (sys:connection-output first)
                  '(request 7 edit 1 0 (0 0 0 5) ("HELLO")
-                    ((batch 1) "replace and prefix" ((trailing . #f)) ((saved-stamp . "observed"))) #t))
+                    ((batch 1) "replace and prefix" (undo . ((trailing . #f))) (commit . ((saved-stamp . "observed")))) #t))
                (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
                (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
                  (write-text edit-release "continue")
@@ -1575,11 +1579,11 @@
                      undo-group undo-other (car (rpc agent 'snapshot 1)))
                    '((nothing #f) (applied 7) (applied 9) #("AHELLO λ!")
                      (trailing . #f) (saved-stamp . "observed") (applied 11) (applied 12) #("hello λ"))))
-               (rpc first 'edit 1 12 '(0 0 0 0) '("") '(protect "protect" ((read-only . #t))))
+               (rpc first 'edit 1 12 '(0 0 0 0) '("") '(protect "protect" (undo . ((read-only . #t)))))
                (let ([before (rpc agent 'snapshot 1)])
                  (test:check 'wire-clients-cannot-bypass-read-only-with-facts-or-history
                    (list (rpc first 'edit 1 13 '(0 0 0 0) '("bad")
-                              '(escape "escape" ((read-only . #f)) () (read-only)))
+                              '(escape "escape" (undo . ((read-only . #f))) (expected . (read-only))))
                      (rpc second 'edit 1 13 '(0 0 0 0) '("bad"))
                      (rpc first 'undo 1 'all) (rpc first 'redo 1)
                      (equal? before (rpc agent 'snapshot 1)))
@@ -1899,9 +1903,9 @@
                               (list (head:buffer-facts-set! b '((base . "lost")) '((base . "keep\n")) "lost name")
                                     (guard (ex [else (kernel:refusal? ex)])
                                       (head:store-edit! b (text:make-span 0 0 0 4) '("lost")
-                                        '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))))))
+                                        '(merge "merge" (undo . ()) (commit . ((base . "lost"))) (expected . ((base . "keep\n")))))))))
                          (rpc head 'edit target 0 '(0 0 0 4) '("lost")
-                              '(merge "merge" () ((base . "lost")) ((base . "keep\n"))))
+                              '(merge "merge" (undo . ()) (commit . ((base . "lost"))) (expected . ((base . "keep\n")))))
                          (equal? before (rpc head 'snapshot target)) (rpc head 'history target)
                          (rpc head 'name target))
                        '((#f #t) (stale property-changed) #t () "guarded facts")))
@@ -1910,7 +1914,7 @@
                        '(let* ([b (head:current-buffer)]
                                [accepted (head:buffer-facts-set! b '((stamp . #f)) '((base . "other\n") stamp) "accepted facts")])
                           (head:store-edit! b (text:make-span 0 0 0 4) '("disk")
-                            '(merge "merge" ((trailing . #f)) ((base . "disk")) ((base . "other\n") (trailing . #t))))
+                            '(merge "merge" (undo . ((trailing . #f))) (commit . ((base . "disk"))) (expected . ((base . "other\n") (trailing . #t)))))
                           (let ([clean? (not (head:buffer-modified b))])
                             (edit:undo!)
                             (list accepted clean? (head:buffer-lines b) (head:buffer-base b)
@@ -2031,13 +2035,15 @@
                             (lambda (target)
                               (when (string=? target ,path) (file:write! target '#("from hook") #t))))) #t))
                    (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                   (head-wait 'pre-save-disk-write-is-reviewed a (lambda () (head-sees? a "changed on disk")))
-                   (head-send! a "c")
-                   (test:check 'cancel-keeps-a-pre-save-hooks-disk-write
+                   ;; the hook's write is what the disk holds at save time: the save
+                   ;; reloads it, the buffer clean against its baseline, then writes
+                   (head-wait 'a-pre-save-hooks-disk-write-is-reloaded a
+                     (lambda () (equal? (car (rpc head 'snapshot id)) '#("from hook"))))
+                   (test:check 'the-hooks-write-is-reloaded-then-written
                      (list (head-read a '(begin (kernel:retract-module! 'wire-save-hook)
                                                 (head:buffer-facts-set! (head:current-buffer) '((file . #f) (base . #f))) #t))
                            (call-with-input-file path get-string-all) (car (rpc head 'snapshot id)))
-                     '(#t "from hook\n" #("shared text B")))
+                     '(#t "from hook\n" #("from hook")))
                    ;; Each destructive choice reviews both the disk and its
                    ;; source. Keep the real prompt open through the change;
                    ;; rejected choices preserve text, facts and head history.
@@ -2108,10 +2114,9 @@
                            (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                            (rpc head 'delete target))))
                      '((edit:visit-file! "r" text) (edit:visit-file! "r" facts)
-                       (edit:visit-file! "r" disk) (edit:visit-file! "m" disk)
+                       (edit:visit-file! "r" disk)
                        (edit:save-file! "o" disk) (edit:save-file! "o" deleted)
-                       (edit:save-file! "o" unreadable) (edit:save-file! "o" file)
-                       (edit:save-file! "m" base) (edit:save-file! "m" disk)
+                       (edit:save-file! "o" unreadable) (edit:save-file! "o" file) (edit:save-file! "o" base)
                        (save-as "y" disk) (save-as "y" file))))
 
                  ;; No common ancestor exists when a newly visited path

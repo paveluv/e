@@ -2,7 +2,7 @@
 
 ;; The disk seam: path algebra, the line/trailing-newline algebra,
 ;; reading and permission-preserving writing, stamps, completion over
-;; a directory, and the three-way merge over text.  Works in a
+;; a directory.  Works in a
 ;; scratch directory it creates and removes.  Run from the repository
 ;; root.
 
@@ -354,31 +354,8 @@
                  (list interrupted? (string=? old (car result)) (cdr result)) '(#t #t #f))))
            (lambda () (set-timer 0) (timer-interrupt-handler handler)))))
 
-     ;; -- merging -------------------------------------------------------------
 
-     (let-values ([(merged trailing conflicts report)
-                   (file:merge "f" "a\nb\nc\n" "a\nB\nc\n" "a\nb\nc\nd\n")])
-       (check 'merge-clean (vector->list merged) '("a" "B" "c" "d"))
-       (check 'merge-clean-trailing trailing #t)
-       (check 'merge-clean-conflicts conflicts 0)
-       (check 'merge-clean-report (list? report) #t))
 
-     (let-values ([(merged trailing conflicts report)
-                   (file:merge "f" "a\nb\n" "a\nX\n" "a\nY\n")])
-       (check 'merge-conflict-count conflicts 1)
-       (check 'merge-conflict-markers (file:conflict-count merged) 1)
-       (check 'merge-conflict-keeps-common (vector-ref merged 0) "a"))
-
-     (let-values ([(merged trailing conflicts report)
-                   (file:merge "f" "a\n" "a" "a\nb\n")])
-       (check 'merge-trailing-mine-differs trailing #f)
-       (check 'merge-trailing-lines (vector->list merged) '("a" "b")))
-
-     (let-values ([(merged trailing conflicts report)
-                   (file:merge "f" "a\n" "a\n" "a")])
-       (check 'merge-trailing-theirs-differs trailing #f))
-
-     (check 'conflict-count-none (file:conflict-count (vector "a" "<<< not a marker")) 0)
 
      ;; -- clean up ------------------------------------------------------------
 

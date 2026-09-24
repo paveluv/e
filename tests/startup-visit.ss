@@ -2,7 +2,7 @@
 
 ;; A head started with a file argument visits it once the terminal is live:
 ;; when the base already holds the file and the disk changed since, the
-;; merge/reread/cancel question appears on screen and takes its key, where
+;; head reloads it, or asks to reread where it cannot, once keys arrive, where
 ;; it used to wait before the input reader ran and hang the editor. Run
 ;; from the repository root.
 
@@ -46,7 +46,8 @@
      (check (list 'the-base-holds-the-file visited) (and (pair? visited) (cadr visited)))
 
      (define (run-head! name answer expected-line)
-       ;; a head on the file: the question shows, the answer lands, the text follows
+       ;; a head on the file: with an answer, the reread question shows and
+       ;; the answer lands; without one, the reload needs none; the text follows
        (let* ([mirror (vt:make-emulator 24 80)]
               [process (sys:spawn-terminal-process "/bin/sh" (fixture:command test-base "--name" name path)
                                                    (current-directory) 24 80)]
@@ -67,19 +68,23 @@
                      (begin (for-each (lambda (line) (display (format "|~a|\n" line))) (screen-lines))
                             (error 'startup-visit (format "~s" label)))
                      (begin (sleep (make-time 'time-duration 25000000 0)) (loop (- left 1)))))))
-         (wait-for! (list 'the-question-shows-once-keys-arrive name)
-                    (lambda () (find-cell "changed on disk: merge, reread, cancel")) 30000)
-         (send! answer)
-         (wait-for! (list 'the-answer-takes-effect name)
-                    (lambda () (and (find-cell expected-line) (not (find-cell "changed on disk")))) 5000)
+         (when answer
+           (wait-for! (list 'the-question-shows-once-keys-arrive name)
+                      (lambda () (find-cell "changed on disk: reread, cancel")) 30000)
+           (send! answer))
+         (wait-for! (list 'the-text-follows name)
+                    (lambda () (and (find-cell expected-line) (not (find-cell "changed on disk")))) 30000)
          (send! "\x18;\x3;")                ; C-x C-c
          (test:await (list 'head-exits name) drain!)
          (sys:reap-terminal-process! process)))
 
-     ;; m)erge: the buffer had no changes of its own, so the disk side wins
+     ;; the disk changed since the baseline: the head reloads without asking,
+     ;; the buffer having no changes of its own
      (write-disk! "new\n")
-     (run-head! "merging" "m" "new")
-     ;; r)eread: the buffer adopts the disk verbatim
+     (run-head! "reloading" #f "new")
+     ;; a baseline the log no longer reaches cannot be reloaded: the reread
+     ;; question shows, and r)eread adopts the disk verbatim
+     (rpc 'properties (car visited) '((base . "elsewhere\n")))
      (write-disk! "newer\n")
      (run-head! "rereading" "r" "newer")
 

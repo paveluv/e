@@ -175,6 +175,22 @@
        (arity 3)
        (call-with-values (lambda () (apply policy:session-history-step! session args)) list)]
       [(undo-authors) (arity 1) (store:undo-authors (car args))]
+      [(log)
+       (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional selector"))
+       (apply store:log args)]
+      [(view)
+       (arity 2)
+       (call-with-values (lambda () (store:view (car args) (cadr args))) list)]
+      [(rewrite)
+       (arity 2)
+       (call-with-values (lambda () (policy:session-rewrite! session (car args) (cadr args))) list)]
+      [(reload)
+       (arity 3)
+       (call-with-values (lambda () (policy:session-reload! session (car args) (cadr args) (caddr args))) list)]
+      [(resolve)
+       (arity 3)
+       (call-with-values (lambda () (policy:session-resolve! session (car args) (cadr args) (caddr args))) list)]
+      [(conflicts) (arity 1) (store:conflicts (car args))]
       [(history blame)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional count"))
        (if (eq? operation 'history) (apply store:history args)

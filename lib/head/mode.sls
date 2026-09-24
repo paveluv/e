@@ -249,7 +249,7 @@
   ;; with the module.  Such a context comes before the mode's.
   (define state-contexts (kernel:make-registry))
 
-  (edoc "Register a keymap context a buffer has while a predicate holds of it, before its mode's contexts: (mode:add-context! 'merge merging?) say, by the app that binds keys in the context."
+  (edoc "Register a keymap context a buffer has while a predicate holds of it, before its mode's contexts: (mode:add-context! 'delta-log-conflicts conflicts-browser?) say, by the app that binds keys in the context."
         (name symbol "the context")
         (holds? procedure "(holds? buffer) giving whether the buffer has the context now"))
   (define (add-context! name holds?)

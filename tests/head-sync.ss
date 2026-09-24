@@ -18,6 +18,7 @@
              (prefix (test) test:))
 
      (define check test:check)
+     (store:log-retention 256)   ; the bound these checks exercise
 
      (define b (head:window-buffer (head:current-window)))
      (define id (head:buffer-store-id b))

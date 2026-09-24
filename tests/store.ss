@@ -21,6 +21,7 @@
                    box unbox set-box! parameterize))
 
      (define check test:check)
+     (store:log-retention 256)   ; the bound these checks exercise
 
      (define alice '(human alice))
      (define bot '(agent claude 1))
@@ -141,8 +142,8 @@
                              [(edit)
                               (let-values ([(status detail)
                                             (store:edit! alice id revision (span 0 9 0 9) '("?")
-                                              (list 'merge "merge" '() '((base . "disk\n"))
-                                                (property:select facts '(base read-only))) 'any)])
+                                              (list 'merge "merge" (cons 'commit '((base . "disk\n")))
+                                                (cons 'expected (property:select facts '(base read-only)))) 'any)])
                                 (and (eq? status 'applied) detail))])]
                           [still-here? (store:exists? id)]
                           [intact?
@@ -601,7 +602,7 @@
              (cons (list (store:line factful 0) (store:property factful 'trailing))
                    fact-observations)))))
      (store:edit! alice factful 0 (span 0 0 0 4) '("BASE")
-                  '(format "format" ((trailing . #t))))
+                  '(format "format" (undo . ((trailing . #t)))))
      (check 'text-and-facts-commit-together fact-observations '(("BASE" #t) ("BASE" #t)))
      (store:unsubscribe! fact-token)
      (store:undo! reviewer factful 'all)
@@ -622,8 +623,8 @@
      ;; Multiple changes of one property in a group restore the right
      ;; version in each inverse.  Even an absent property has a version.
      (define absent (store:create! alice "undo-absent-fact" '("a" "b")))
-     (store:edit! alice absent 0 (span 0 0 0 1) '("A") '(g "group" ((trailing . #f))))
-     (store:edit! alice absent 1 (span 1 0 1 1) '("B") '(g "group" ((trailing . #t))))
+     (store:edit! alice absent 0 (span 0 0 0 1) '("A") '(g "group" (undo . ((trailing . #f)))))
+     (store:edit! alice absent 1 (span 1 0 1 1) '("B") '(g "group" (undo . ((trailing . #t)))))
      (store:undo! reviewer absent 'all)
      (check 'grouped-fact-undo-restores-absence
             (remp (lambda (entry) (memq (car entry) property:edit-keys)) (store:properties absent)) '())
@@ -640,7 +641,7 @@
      (check 'duplicate-transaction-properties-refuse
             (guard (ex [else #t])
               (store:edit! alice absent invalid-context-revision (span 0 0 0 1) '("bad")
-                           '(g "bad" ((trailing . #t) (trailing . #f))))
+                           '(g "bad" (undo . ((trailing . #t) (trailing . #f)))))
               #f)
             #t)
      (check 'invalid-context-never-commits (store:revision absent) invalid-context-revision)
@@ -705,6 +706,84 @@
             '((1 . 0) (1 . 0) (1 . 2)))
      (store:reset! alice h '("fresh"))
      (check 'reset-clears-history (store:history h) '())
+
+     ;; The log: entries as data with their labels, a batch among them,
+     ;; narrowed by a selector; an inverse carries its origin and no labels
+     (define logged (store:create! alice "logged" '("one" "two")))
+     (define batch-a (list alice 'batch 1))
+     (define batch-b (list bot 'batch 7))
+     (store:edit! alice logged 0 (span 0 0 0 0) '("A") (list 'k1 "typing" (cons 'labels (list (cons 'batch batch-a)))))
+     (store:edit! alice logged 1 (span 0 4 0 4) '("B") (list 'k1 "typing" (cons 'labels (list (cons 'batch batch-a)))))
+     (store:edit! bot logged 2 (span 1 0 1 0) '("C") (list 'k2 "bot" (cons 'labels (list (cons 'batch batch-b)))))
+     (check 'log-lists-entries-newest-first-with-labels
+            (store:log logged)
+            (list (list 3 bot (list (cons 'batch batch-b)) '((1 0 1 0) ("") ("C")) #f 'enabled)
+                  (list 2 alice (list (cons 'batch batch-a)) '((0 4 0 4) ("") ("B")) #f 'enabled)
+                  (list 1 alice (list (cons 'batch batch-a)) '((0 0 0 0) ("") ("A")) #f 'enabled)))
+     (check 'log-selects-by-count-actor-batch-and-revision
+            (list (map car (store:log logged '((count . 2))))
+                  (map car (store:log logged (list (cons 'actor bot))))
+                  (map car (store:log logged (list (cons 'batch batch-a))))
+                  (map car (store:log logged '((since . 1))))
+                  (map car (store:log logged '((until . 1))))
+                  (map car (store:log logged (list (cons 'batch batch-a) '(count . 1)))))
+            '((3 2) (3) (2 1) (3 2) (1) (2)))
+     (store:undo! bot logged)
+     (check 'an-inverse-entry-carries-its-origin-and-no-labels
+            (let ([row (car (store:log logged))]) (list (car row) (caddr row) (list-ref row 4)))
+            (list 4 '() (list 'undo bot 3 3)))
+     (check 'log-refuses-an-unknown-selector
+            (guard (ex [else 'refused]) (store:log logged '((colour . red)))) 'refused)
+     (check 'a-context-with-unknown-options-is-refused
+            (guard (ex [else 'refused])
+              (store:edit! alice logged (store:revision logged) (span 0 0 0 0) '("x") '(k "l" (bogus . 1))))
+            'refused)
+     (check 'log-entries-are-owned-copies
+            (let ([row (car (store:log logged))])
+              (set-car! (cadr row) 'damaged)
+              (cadr (car (store:log logged))))
+            bot)
+
+     ;; Views and rewrites: entries disabled and the rest rebased over their
+     ;; absence, as a value or for everyone
+     (define viewed (store:create! alice "viewed" '("abc" "def")))
+     (store:edit! alice viewed 0 (span 0 0 0 0) '("X"))
+     (store:edit! bot viewed 1 (span 1 3 1 3) '("Y"))
+     (store:edit! alice viewed 2 (span 0 4 0 4) '("Z"))
+     (let-values ([(text mapping conflicts) (store:view viewed '(1))])
+       (check 'a-view-disables-an-entry-and-rebases-the-rest
+              (list (vector->list text) (length mapping) conflicts)
+              '(("abcZ" "defY") 1 ())))
+     (check 'the-buffer-is-untouched-by-a-view (store:line viewed 0) "XabcZ")
+     (store:edit! alice viewed 3 (span 0 0 0 1) '("W"))
+     (let-values ([(text mapping conflicts) (store:view viewed '(1))])
+       (check 'a-view-names-the-entry-that-overlaps-a-disabled-one
+              (list (vector->list text) mapping conflicts)
+              '(("WabcZ" "defY") () ((1 . 4)))))
+     (check 'a-rewrite-disables-for-everyone
+            (call-with-values (lambda () (store:rewrite! bot viewed '(2))) list) '(applied 5))
+     (check 'the-rewrite-installs-the-inverse-and-marks-the-entry
+            (list (store:line viewed 1)
+                  (list-ref (car (store:log viewed)) 4)
+                  (list-ref (car (store:log viewed '((until . 2)))) 5)
+                  (map car (store:log viewed '((state . disabled)))))
+            (list "def" (list 'rewrite bot 5 2) 'disabled '(2)))
+     (check 'a-rewrite-blocked-by-an-overlap-names-it
+            (call-with-values (lambda () (store:rewrite! alice viewed '(1))) list) '(blocked ((1 . 4))))
+     (store:undo! bot viewed)
+     (check 'undoing-a-rewrite-re-enables-the-entry
+            (list (store:line viewed 1) (map car (store:log viewed '((state . disabled)))))
+            '("defY" (5)))
+     (check 'a-view-refuses-an-unknown-or-disabled-entry
+            (list (guard (ex [else 'refused]) (store:view viewed '(99)))
+                  (guard (ex [else 'refused]) (store:view viewed '(5))))
+            '(refused refused))
+     (define grouped2 (store:create! alice "grouped2" '("aaaa")))
+     (store:edit! alice grouped2 0 (span 0 0 0 0) '("1") '(g "two"))
+     (store:edit! alice grouped2 1 (span 0 5 0 5) '("2") '(g "two"))
+     (store:rewrite! bot grouped2 '(1))
+     (store:undo! alice grouped2)
+     (check 'a-disabled-entry-leaves-its-group-so-undo-takes-the-rest (store:line grouped2 0) "aaaa")
 
      ;; Metadata is owned at admission and at every history read. Keys copy
      ;; plain structure but retain opaque in-process leaves by identity.
@@ -1053,12 +1132,12 @@
                (lambda ()
                  (if (eq? direction 'edit)
                      (store:edit-with-snapshot! alice id (store:revision id)
-                       (span 0 0 0 0) '("Y") '(change "edit" ((read-only . #f))) access)
+                       (span 0 0 0 0) '("Y") '(change "edit" (undo . ((read-only . #f)))) access)
                      (store:history-step! alice id direction 'mine access))) list))
            (define (state)
              (list (call-with-values (lambda () (store:snapshot-state id)) list)
                    (store:history id) (store:marks alice id) (store:undo-authors id)))
-           (store:edit! alice id 0 (span 0 0 0 0) '("x") '(seed "seed" ((trailing . #f))))
+           (store:edit! alice id 0 (span 0 0 0 0) '("x") '(seed "seed" (undo . ((trailing . #f)))))
            (when (eq? direction 'redo) (store:undo! alice id))
            (store:set-mark! alice id 'point '(0 . 2))
            (store:set-property! alice id 'read-only #t)
@@ -1112,7 +1191,7 @@
                             [(reset) (store:reset! alice id '("seed") facts) id]
                             [(edit)
                              (store:edit! alice id (store:revision id) (span 0 0 0 3) '("seed")
-                                          (list 'owned "facts" facts (list (cons 'commit commit))))
+                                          (list 'owned "facts" (cons 'undo facts) (cons 'commit (list (cons 'commit commit)))))
                              id]))]
                 [cycle (list 'cycle)]
                 [before (list (store:buffer-list) (and id (store:properties id))
@@ -1290,8 +1369,8 @@
                        (test:raises?
                          (lambda () (store:edit! (fresh-author) lb 0 (span 0 0 0 1) '("bad") context))))
                      (list '(key 42) (list cycle "cyclic key")
-                           (list 'key "cyclic expected fact" '() '() (list (cons 'metadata cycle)))
-                           (list 'key "runtime expected fact" '() '() (list (cons 'metadata void))))) #t)
+                           (list 'key "cyclic expected fact" (cons 'expected (list (cons 'metadata cycle))))
+                           (list 'key "runtime expected fact" (cons 'expected (list (cons 'metadata void)))))) #t)
      (check 'metadata-refusals-preserve-store-state-and-events
             (list (store:buffer-list) (call-with-values (lambda () (store:snapshot-state lb)) list)
                   (store:buffer-name lb) (store:history lb) (store:marks (fresh-author) lb)
@@ -1390,8 +1469,14 @@
              '(20 ((2 8 "saved" #("text") ((read-only . yes)))) )
              '(20 ((2 8 "saved" #("text") ((stamp 10 . 1000000000)))))
              '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))
-             '(20 ((2 8 "saved" #("text") ((wrap . 3)))))))
-         (append '(#t #t #t) (make-list 14 #f))))
+             '(20 ((2 8 "saved" #("text") ((wrap . 3)))))
+             ;; a journal rides as a sixth element: entries newest first below the revision, then groups
+             '(20 ((2 8 "saved" #("text") () (((8 (human alice) ((batch . 1)) ((0 0 0 0) ("") ("t")) #f ())) ()))))
+             '(20 ((2 8 "saved" #("text") () (bogus))))
+             '(20 ((2 8 "saved" #("text") () (((9 (human alice) () ((0 0 0 0) ("") ("t")) #f ())) ()))))
+             '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) #t #f #t))))))
+             '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) yes #f #t))))))))
+         (append '(#t #t #t) (make-list 14 #f) '(#t #f #f #t #f))))
      (let* ([id (store:create! alice "persistent" '("kept") '((trailing . #t) (mode . "scheme") (wrap . #f) (transient . ignored)))]
             [omitted (store:create! alice "generated" '("not kept") '((disposable . #t)))]
             [gap (store:create! alice "gone" '(""))])
@@ -1405,9 +1490,96 @@
              (list #t (store:revision id) '#("kept") #f #f #f (store:property id 'modified-at) '(wrap . #f)))
            (check 'import-never-overlays-a-running-store
              (list (test:raises? (lambda () (store:import! next-id (list saved))))
-                   (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))) '(#t #t)))))
+                   (equal? before (call-with-values (lambda () (store:snapshot-state id)) list))) '(#t #t))))
+       ;; The journal: the log and its undo groups travel with the saved
+       ;; state as data that writes and reads back, dropped for a state a
+       ;; converter replaced
+       (let ([r (store:revision id)])
+         (store:edit! alice id r (span 0 0 0 0) '("J") (list 'jk "journal" (cons 'labels '((batch . (j 1))))))
+         (store:undo! alice id)
+         (let-values ([(next-id states) (store:export)])
+           (let* ([saved (assv id states)] [journal (list-ref saved 5)]
+                  [text (call-with-string-output-port (lambda (port) (write states port)))])
+             (check 'export-carries-the-journal
+               (list (length saved) (map car (car journal)) (caddr (cadr (car journal)))
+                     (list-ref (car (car journal)) 4)
+                     (map (lambda (g) (list (car g) (caddr g) (cadddr g) (list-ref g 4) (list-ref g 5))) (cadr journal))
+                     (store:valid-import? next-id states)
+                     (equal? (read (open-string-input-port text)) states))
+               (list 6 (list (+ r 2) (+ r 1)) '((batch . (j 1))) (list 'undo alice (+ r 1) (+ r 1))
+                     ;; an undone group's parts are its inverses, ready for redo
+                     (list (list (+ r 1) 'jk "journal" (list (+ r 2)) #f)) #t #t))))
+         (let-values ([(next-id states) (store:export (lambda (state) (append (list-head state 4) (list (list-ref state 4)))))])
+           (check 'a-converted-state-carries-no-journal (length (assv id states)) 5))))
 
      ;; All writers share the final lifetime guard. Keep this last:
+     ;; Reloading from disk: the disk's text becomes the baseline and the
+     ;; entries since the old one are reapplied on top, carried across the
+     ;; disk's changes; an entry a disk change overlaps is disabled and pends
+     ;; as a conflict, the disk's side standing, until it is resolved
+     (define notes (store:create! alice "notes" '("alpha" "beta" "gamma")))
+     (store:set-properties! alice notes (list (cons 'base "alpha\nbeta\ngamma\n") (cons 'trailing #t)))
+     (edit! alice notes (store:revision notes) 0 0 0 5 '("ALPHA"))
+     (edit! alice notes (store:revision notes) 2 5 2 5 '(" tail"))
+     (define (lines-of id) (map (lambda (i) (store:line id i)) (list 0 1 2)))
+     (define (reload! id lines)
+       (call-with-values
+         (lambda () (store:reload! alice id lines (list (cons 'base (apply string-append (map (lambda (l) (string-append l "\n")) lines))) (cons 'trailing #t))))
+         list))
+     (check 'a-reload-rebases-the-log-onto-the-disk-and-disables-what-a-change-overlaps
+            (list (reload! notes '("omega" "beta" "GAMMA")) (lines-of notes) (store:property notes 'base) (store:property notes 'modified)
+                  (map (lambda (row) (list (car row) (cadr row) (cadddr row))) (store:log notes)))
+            (list (list 'applied (list 5 (list (list 1 alice '() '(0 0 0 5) '("ALPHA") '("omega")))))
+                  '("omega" "beta" "GAMMA tail") "omega\nbeta\nGAMMA\n" #t
+                  (list (list 5 alice '((2 5 2 5) ("") (" tail"))))))
+     (check 'the-conflict-pends-with-both-sides (store:conflicts notes) (list (list 1 alice '() '(0 0 0 5) '("ALPHA") '("omega"))))
+     (check 'resolving-for-mine-writes-the-entrys-side-over-the-disks
+            (list (call-with-values (lambda () (store:resolve! alice notes 1 'mine)) list)
+                  (lines-of notes) (store:conflicts notes) (caddr (car (store:log notes))))
+            (list '(applied 6) '("ALPHA" "beta" "GAMMA tail") '() '((conflict . 1))))
+     (check 'resolving-a-settled-conflict-is-refused
+            (call-with-values (lambda () (store:resolve! alice notes 1 'disk)) list) '(refused no-conflict))
+     ;; the disk's side kept: the mark goes and the text stands
+     (edit! alice notes (store:revision notes) 1 0 1 4 '("Beta"))
+     (check 'a-second-reload-finds-its-baseline-behind-the-pending-entries
+            (list (reload! notes '("omega" "BETA" "GAMMA")) (lines-of notes))
+            (list (list 'applied (list 11 (list (list 7 alice '() '(1 0 1 4) '("Beta") '("BETA")))))
+                  '("ALPHA" "BETA" "GAMMA tail")))
+     (check 'resolving-for-the-disk-drops-the-mark
+            (list (car (call-with-values (lambda () (store:resolve! alice notes 7 'disk)) list)) (store:conflicts notes) (lines-of notes))
+            (list 'applied '() '("ALPHA" "BETA" "GAMMA tail")))
+     ;; a change depending on the overlapped one cascades into the conflict,
+     ;; whose region and sides cover them both; replacement lines settle it
+     (edit! alice notes (store:revision notes) 0 0 0 5 '("OMEGA"))
+     (check 'dependents-cascade-into-the-conflict
+            (list (reload! notes '("0mega" "BETA" "GAMMA")) (lines-of notes))
+            (list (list 'applied (list 16 (list (list 11 alice '((conflict . 1)) '(0 0 0 5) '("OMEGA") '("0mega")))))
+                  '("0mega" "BETA" "GAMMA tail")))
+     (check 'resolving-with-lines-writes-them-over-the-region
+            (list (car (call-with-values (lambda () (store:resolve! alice notes 11 '("chosen"))) list)) (lines-of notes) (store:conflicts notes))
+            (list 'applied '("chosen" "BETA" "GAMMA tail") '()))
+     ;; a disk matching the baseline commits its facts and leaves the log alone
+     (check 'a-reload-with-no-disk-change-keeps-the-log
+            (let* ([before (store:revision notes)] [outcome (reload! notes '("0mega" "BETA" "GAMMA"))])
+              (list (car outcome) (cadr (cadr outcome)) (= (store:revision notes) before)))
+            '(applied () #t))
+     ;; refusals: no baseline, and a baseline the log no longer reaches
+     (define loose (store:create! alice "loose" '("x")))
+     (check 'a-reload-without-a-baseline-is-refused
+            (call-with-values (lambda () (store:reload! alice loose '("y") '())) list) '(refused no-base))
+     (store:set-properties! alice loose (list (cons 'base "unrelated\n")))
+     (check 'a-reload-past-the-retained-log-is-refused
+            (call-with-values (lambda () (store:reload! alice loose '("y") '())) list) '(refused basis-too-old))
+     ;; the pending conflicts travel with the journal
+     (edit! alice notes (store:revision notes) 2 0 2 5 '("gamma"))
+     (define e5 (store:revision notes))
+     (reload! notes '("0mega" "BETA" "Gamma"))
+     (check 'pending-conflicts-travel-with-the-journal
+            (let-values ([(next-id states) (store:export)])
+              (let ([saved (assv notes states)])
+                (list (store:valid-import? next-id states) (map car (caddr (list-ref saved 5))))))
+            (list #t (list e5)))
+
      ;; closing is irreversible, but readable state remains available.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]
             [events (test:recorder)] [token (store:subscribe! #f events)])

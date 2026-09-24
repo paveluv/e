@@ -482,8 +482,11 @@
         (cond
           [(null? (cdr options)) (list (sole-insert (car (car options))))]
           ;; a string or bare token becoming a value's spelling: the openings'
-          ;; common prefix when its value extends the token, as inside a string
-          [(memq in-string? '(literal inside)) (list (or (literal-common) (substring s start end)))]
+          ;; common prefix when its value extends the token, as inside a string;
+          ;; else the spellings themselves, for Tab to cycle through
+          [(memq in-string? '(literal inside))
+           (or (let ([common (literal-common)]) (and common (list common)))
+               (map (lambda (entry) (option-insert (car entry))) options))]
           [in-string?
            (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
              (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
@@ -505,7 +508,13 @@
       (let ([inserts (bare-inserts)])
         (if (eq? in-string? #t) (map string-escaped inserts) inserts))))
 
-  (define (typed-candidate entry)
+  (define (candidate-preview type option)
+    ;; the thunk showing a value candidate in the editor while it is the
+    ;; inserted one, from its type's preview clause; #f for the rest
+    (let ([p (and (option-value option) (edoc:type-preview type))])
+      (and p (lambda () (p (option-value option))))))
+
+  (define (typed-candidate type entry)
     ;; a prompt candidate from (option . fragments): the label with its
     ;; matched characters underlined, the hint in grey, the insertion apart
     (let* ([option (car entry)] [fragments (cdr entry)]
@@ -518,7 +527,7 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (prompt:make-candidate (option-insert option) text styles)))
+      (prompt:make-candidate (option-insert option) text styles (candidate-preview type option))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -626,7 +635,7 @@
           (if (not options) (symbols)
               (values (cadr context) (caddr context)
                 (lambda () (typed-inserts s context options))
-                (map typed-candidate options)))))
+                (map (lambda (o) (typed-candidate (car context) o)) options)))))
       ;; a closure: the completers are built while the module loads, before
       ;; the settling procedures below are defined
       (lambda (text pos) (settle-completion text pos))

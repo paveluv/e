@@ -63,8 +63,9 @@
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reset! sync-foreign-edits! tile! tool-buffer! transfer-split! typed-text ui-actor
-          view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
+          store-reload! store-reset! store-resolve! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
+          typed-text
+          ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
           window-buffer-set! window-button-at window-buttons window-buttons-width
           window-content-width window-goal window-goal-set! window-index window-left
@@ -1822,16 +1823,15 @@
                                       (format "Edit not applied: ~a" reason)))))))
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
-            (unless (local-facts-match? b (and context (= (length context) 5) (list-ref context 4)))
+            (unless (local-facts-match? b (property:context-expected context))
               (raise (condition (kernel:make-refusal)
                                 (make-message-condition "Edit not applied: the buffer's reviewed facts changed"))))
             (rebase-buffer-positions! b delta)
             (adopt-local! b text delta)
             (apply-placements! b placed)
             (clamp-buffer-positions! b)
-            (when (and context (>= (length context) 3))
-              (buffer-facts-set! b
-                (append (caddr context) (if (>= (length context) 4) (cadddr context) '()))))))))
+            (let ([facts (append (property:context-undo context) (property:context-commit context))])
+              (when (pair? facts) (buffer-facts-set! b facts)))))))
 
   (define (placement-window place)
     (cond [(window? place) place]
@@ -1905,6 +1905,53 @@
        (let-values ([(status detail)
                      (guard (ex [else (values 'blocked 'store-unavailable)])
                        (store:history-step! ui-actor (buffer-store-id b) direction scope 'any))])
+         (when (eq? status 'applied)
+           (sync-store-buffer! b)
+           (flush-ui-audit! (buffer-store-id b)))
+         (values status detail))]))
+
+  (edoc "Disable entries of a shared buffer through the store, their inverses this head's own action, adopting the result: (values status detail), status applied, blocked or refused, nothing for a local buffer."
+        (b buffer "the buffer")
+        (disabled (list-of integer) "the revisions to disable"))
+  (define (store-rewrite! b disabled)
+    (cond
+      [(not (buffer-store-id b)) (values 'nothing #f)]
+      [else
+       (let-values ([(status detail)
+                     (guard (ex [else (values 'blocked 'store-unavailable)])
+                       (store:rewrite! ui-actor (buffer-store-id b) disabled 'any))])
+         (when (eq? status 'applied)
+           (sync-store-buffer! b)
+           (flush-ui-audit! (buffer-store-id b)))
+         (values status detail))]))
+
+  (edoc "Reload a shared buffer from its file through the store, the disk's changes this head's own entries, adopting the result: (values status detail), applied with (revision conflicts), refused, or nothing for a local buffer."
+        (b buffer "the buffer")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit: base, stamp, trailing, stale"))
+  (define (store-reload! b lines facts)
+    (cond
+      [(not (buffer-store-id b)) (values 'nothing #f)]
+      [else
+       (let-values ([(status detail)
+                     (guard (ex [else (values 'refused 'store-unavailable)])
+                       (store:reload! ui-actor (buffer-store-id b) lines facts 'any))])
+         (when (eq? status 'applied)
+           (sync-store-buffer! b)
+           (flush-ui-audit! (buffer-store-id b)))
+         (values status detail))]))
+
+  (edoc "Settle a reload conflict of a shared buffer through the store as this head's own edit, adopting the result: (values status detail), applied with the revision, refused, or nothing for a local buffer."
+        (b buffer "the buffer")
+        (revision integer "the conflicted entry's revision, as the store's conflicts list it")
+        (choice any "disk, mine or the replacement lines"))
+  (define (store-resolve! b revision choice)
+    (cond
+      [(not (buffer-store-id b)) (values 'nothing #f)]
+      [else
+       (let-values ([(status detail)
+                     (guard (ex [else (values 'refused 'store-unavailable)])
+                       (store:resolve! ui-actor (buffer-store-id b) revision choice 'any))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))
@@ -3513,7 +3560,7 @@
            thunk
            (lambda () (set-window-buffer! the-current old))))]))
 
-  (edoc "Run body with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change: (with-buffer (buffer \"notes.md\") (search:replace-all! \"x\" \"y\"))."
+  (edoc "Run body with a buffer temporarily current: in the window already showing it, else invisibly in the current window; the recency order is untouched and no app hears a focus change: (with-buffer (buffer \"notes.md\") (search:replace! \"x\" \"y\"))."
         (b buffer "the buffer to make current")
         (body (list-of any) "the forms to run"))
   (define-syntax with-buffer

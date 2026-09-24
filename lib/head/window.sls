@@ -10,8 +10,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right!
-          focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse!
+  (export clear-pop-up! companion! delete! delete-others! display! focus! focus-down! focus-left! focus-next!
+          focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse!
           register-link-tag! resize! set-line-numbers! set-wrap! split-above! split-below! split-left!
           split-right! toggle-line-numbers! toggle-wrap! unlink!)
   (import (rnrs)
@@ -351,6 +351,29 @@
            w)]
         [(split-current-window! 'below b #f)]
         [else #f])))
+
+  (define (sibling-below w)
+    ;; the window under w that a split below made, by hand or by a command:
+    ;; the first leaf of the lower half of the vertical split w is the upper
+    ;; half of; never the pop-up, and #f when w is the lower half or the
+    ;; split is side by side
+    (let ([parent (head:layout-parent (head:root) w)])
+      (and parent
+           (eq? (head:layout-split-orientation parent) 'below)
+           (eq? (head:layout-split-first parent) w)
+           (let ([leaf (car (head:layout-leaves (head:layout-split-second parent)))])
+             (and (not (head:popup? leaf)) leaf)))))
+
+  (edoc "Show a buffer in the current window's companion, the window below it that a split below made, so a buffer keeps its helpers under it: the window already showing the buffer, else the sibling below the current window, else a fresh split below; focus stays where it was. The window, or #f when there was no room."
+        (b buffer "the buffer to show")
+        (returns (or window #f)))
+  (define (companion! b)
+    (let ([b (edoc:type-value 'buffer b)])
+      (head:add-buffer! b)
+      (or (window-showing b)
+          (let ([w (sibling-below (head:current-window))])
+            (and w (begin (head:set-window-buffer! w b) w)))
+          (split-current-window! 'below b #f))))
 
   (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was. The window, or #f when there was no room."
         (b buffer "the buffer to show")

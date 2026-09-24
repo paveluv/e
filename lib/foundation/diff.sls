@@ -1,12 +1,12 @@
-;; diff.sls -- line diffs and three-way merge, for the e editor.
+;; diff.sls -- line diffs, for the e editor.
 ;;
-;; A pure library (no init!): a patience diff over line vectors and
-;; the diff3 merge built on it.  The file library imports it for the
-;; stale-file guard; anything else may use it too.
+;; A pure library (no init!): a patience diff over line vectors, the
+;; matching line pairs of two texts.  The store computes the disk's changes
+;; at a reload with it; anything else may use it too.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation diff)
-  (export (rename (diff-matches matches)) merge-report-lines merge3)
+  (export (rename (diff-matches matches)))
   (import (chezscheme))
 
   ;;; Patience diff --------------------------------------------------------------
@@ -101,10 +101,10 @@
                                (cons (cons (+ alo (- n pre))
                                            (+ blo (- n pre)))
                                      acc))))]
-             [tail (let loop ([n 0] [acc '()])
-                     (if (= n suf)
+             [tail (let loop ([n (- suf 1)] [acc '()])
+                     (if (< n 0)
                          acc
-                         (loop (+ n 1)
+                         (loop (- n 1)
                                (cons (cons (+ ahi n) (+ bhi n)) acc))))]
              [anchors (longest-increasing
                         (unique-anchors a alo ahi b blo bhi))])
@@ -124,129 +124,4 @@
                                         acc)))))))
           tail))))
 
-  ;;; Three-way merge -------------------------------------------------------------
-
-  (edoc "The three-way merge of line vectors: (values merged-lines conflicts report), regions one side touched taking that side, the rest marked as conflicts."
-        (base vector "the common ancestor")
-        (mine vector "one side")
-        (theirs vector "the other side"))
-  (define (merge3 base mine theirs)
-    ;; Merge line vectors: three values -- the merged lines (a list),
-    ;; the conflict count, and a report of the changed chunks, each
-    ;; (kind base-pos mine-pos theirs-pos base-lines mine-lines
-    ;; theirs-lines) with kind mine, theirs, both, or conflict and the
-    ;; positions 0-based chunk starts.  Regions only one side touched take
-    ;; that side; regions both touched identically take either; the
-    ;; rest conflict, marked <<<<<<< buffer / ======= / >>>>>>> disk.
-    (let* ([n (vector-length base)]
-           [m1 (make-vector (+ n 1) #f)]
-           [m2 (make-vector (+ n 1) #f)])
-      (define (slice v lo hi)
-        (let loop ([i (- hi 1)] [acc '()])
-          (if (< i lo) acc (loop (- i 1) (cons (vector-ref v i) acc)))))
-      (for-each (lambda (p) (vector-set! m1 (car p) (cdr p)))
-                (diff-matches base mine))
-      (for-each (lambda (p) (vector-set! m2 (car p) (cdr p)))
-                (diff-matches base theirs))
-      (vector-set! m1 n (vector-length mine))
-      (vector-set! m2 n (vector-length theirs))
-      (let loop ([b 0] [i 0] [j 0] [out '()] [conflicts 0] [report '()])
-        (cond
-          [(and (>= b n) (>= i (vector-length mine)) (>= j (vector-length theirs)))
-           (values (reverse out) conflicts (reverse report))]
-          [(and (< b n)
-                (eqv? (vector-ref m1 b) i)
-                (eqv? (vector-ref m2 b) j))
-           ;; all three aligned: the line is common ground
-           (loop (+ b 1) (+ i 1) (+ j 1)
-                 (cons (vector-ref base b) out) conflicts report)]
-          [else
-           ;; a changed chunk: up to the next base line aligned on
-           ;; both sides (or the ends)
-           (let find ([s b])
-             (if (and (< s n)
-                      (not (and (vector-ref m1 s) (vector-ref m2 s))))
-                 (find (+ s 1))
-                 (let* ([i2 (vector-ref m1 s)]
-                        [j2 (vector-ref m2 s)]
-                        [bs (slice base b s)]
-                        [ms (slice mine i i2)]
-                        [ts (slice theirs j j2)])
-                   (define (chunk kind)
-                     (list kind b i j bs ms ts))
-                   (cond
-                     [(equal? ms bs)      ; only theirs changed
-                      (loop s i2 j2 (append (reverse ts) out) conflicts
-                            (cons (chunk 'theirs) report))]
-                     [(equal? ts bs)      ; only mine changed
-                      (loop s i2 j2 (append (reverse ms) out) conflicts
-                            (cons (chunk 'mine) report))]
-                     [(equal? ms ts)      ; both, identically
-                      (loop s i2 j2 (append (reverse ms) out) conflicts
-                            (cons (chunk 'both) report))]
-                     [else
-                      (loop s i2 j2
-                            (append
-                              (reverse
-                                (append '("<<<<<<< buffer") ms
-                                        '("=======") ts
-                                        '(">>>>>>> disk")))
-                              out)
-                            (+ conflicts 1)
-                            (cons (chunk 'conflict) report))]))))]))))
-
-  ;;; The merge report -----------------------------------------------------------
-
-  (edoc "A merge report rendered like a unified diff: hunk headers for all three sides with two lines of base context."
-        (path string "the file, for the header")
-        (base vector "the common ancestor")
-        (report list "merge3's report")
-        (conflicts integer "how many conflicts")
-        (returns (list-of string)))
-  (define (merge-report-lines path base report conflicts)
-    ;; merge3's report rendered in a unified-diff-like shape: @@
-    ;; headers with 1-based positions and lengths for all three sides,
-    ;; two lines of base context around each hunk.  -> a list of lines.
-    (define context 2)
-    (define (ctx lo hi)                  ; base lines [lo, hi) as context
-      (let loop ([k (max 0 lo)] [acc '()])
-        (if (>= k (min hi (vector-length base)))
-            (reverse acc)
-            (loop (+ k 1)
-                  (cons (format "   ~a" (vector-ref base k)) acc)))))
-    (define (tag label ls)
-      (map (lambda (l) (format " ~a ~a" label l)) ls))
-    (define (hunk c)
-      (let* ([kind (car c)]
-             [bp (cadr c)] [mp (caddr c)] [tp (cadddr c)]
-             [bs (list-ref c 4)] [ms (list-ref c 5)] [ts (list-ref c 6)]
-             [head (format "@@ base ~a,~a  buffer ~a,~a  disk ~a,~a @@ ~a"
-                           (+ bp 1) (length bs)
-                           (+ mp 1) (length ms)
-                           (+ tp 1) (length ts)
-                           (case kind
-                             [(theirs) "took the disk side"]
-                             [(mine) "took the buffer side"]
-                             [(both) "both sides made the same change"]
-                             [else "CONFLICT -- markers left in the buffer"]))]
-             [body (case kind
-                     [(theirs) (append (tag "-" bs) (tag "+" ts))]
-                     [(mine) (append (tag "-" bs) (tag "+" ms))]
-                     [(both) (append (tag "-" bs) (tag "+" ms))]
-                     [else (append (tag "b|" bs)
-                                   (tag "<|" ms)
-                                   (tag ">|" ts))])])
-        (append (list head)
-                (ctx (- bp context) bp)
-                body
-                (ctx (+ bp (length bs)) (+ bp (length bs) context))
-                (list ""))))
-    (append
-      (list (format "Three-way merge of ~a" path)
-            (format "~a changed chunk~a, ~a conflict~a"
-                    (length report)
-                    (if (= (length report) 1) "" "s")
-                    conflicts (if (= conflicts 1) "" "s"))
-            "")
-      (apply append (map hunk report))))
 )

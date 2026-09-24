@@ -20,6 +20,8 @@
 
      (define bot '(agent position-test))
      (define check test:check)
+     (search:review-replacements #f)
+     (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -221,12 +223,12 @@
 
      ;; Replace-all's preserved point is expressed in its proposed result;
      ;; a store write ahead of the head must not expand the intended target.
-     (define replaced (fresh "position-replace-all" '("aba" "tail")))
+     (define replaced (fresh "position-replace" '("aba" "tail")))
      (head:goto! '(0 . 1))
      (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
-     (search:replace-all! "a" "ZZ")
-     (check 'replace-all-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
-     (check 'replace-all-projects-preserved-point (head:point) '(0 . 2))
+     (search:replace! "a" "ZZ")
+     (check 'replace-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
+     (check 'replace-projects-preserved-point (head:point) '(0 . 2))
 
      ;; Local edits and local undo use the same anchor geometry.
      (define local (fresh "position-local" '("abc" "tail") #t))

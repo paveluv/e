@@ -180,7 +180,7 @@
             [bypass (mutation-result
                       (lambda () (policy:session-edit! s notes (store:revision notes)
                                    (text:make-span 0 0 0 0) '("bad")
-                                   '(bypass "bypass" ((read-only . #f))))))])
+                                   '(bypass "bypass" (undo . ((read-only . #f)))))))])
        (store:rename! owner notes "renamed")
        (check 'current-read-only-and-name-guard-the-entire-session-mutation
          (list results bypass (try-writes! s notes)

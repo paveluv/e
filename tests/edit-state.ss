@@ -168,8 +168,8 @@
      (define merged-id (head:buffer-store-id merged))
      (head:store-reset! merged '("mine") '((base . "old\n") (trailing . #t)))
      (store:edit! bot merged-id (store:revision merged-id) (text:make-span 0 0 0 4) '("disk")
-                  '(merge "merge" ((trailing . #f)) ((base . "disk") (stamp . 456) (stale . #f))
-                     ((base . "old\n") (trailing . #t))))
+                  '(merge "merge" (undo . ((trailing . #f))) (commit . ((base . "disk") (stamp . 456) (stale . #f)))
+                     (expected . ((base . "old\n") (trailing . #t)))))
      (check 'merge-text-and-new-baseline-are-clean (store:property merged-id 'modified) #f)
      (store:undo! bot merged-id)
      (check 'undo-keeps-the-incorporated-disk-baseline
@@ -220,7 +220,7 @@
                  (list (head:buffer-facts-set! b '((base . "lost")) expected "lost name")
                        (raises? (lambda ()
                                   (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                    (list 'merge "merge" '() '((base . "lost")) expected))))
+                                    (list 'merge "merge" (cons 'commit '((base . "lost"))) (cons 'expected expected)))))
                        (equal? before (state b)) (equal? view (head-state)))
                  '(#f #t #t #t)))
              (head:buffer-fact-set! b 'missing '())
@@ -263,11 +263,11 @@
                    (lambda () (head:buffer-facts-set! b '((file . "changed")) '(base (base . #f))))
                    (lambda () (head:buffer-facts-set! b '((file . "changed")) #f ""))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                '(key "bad" ((trailing . #t) (trailing . #f)))))
+                                '(key "bad" (undo . ((trailing . #t) (trailing . #f))))))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                '(key "bad" ((base . "a")) ((base . "b")))))
+                                '(key "bad" (undo . ((base . "a"))) (commit . ((base . "b"))))))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("lost")
-                                '(key "bad" () () ((trailing . 7)))))
+                                '(key "bad" (expected . ((trailing . 7))))))
                    (lambda () (head:store-reset! b '("embedded\nnewline")))
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
                    (lambda () (head:buffer-append! b "embedded\nnewline"))
@@ -513,5 +513,23 @@
      ;; Before the input reader runs no question can be answered: the prompts
      ;; ask first and cancel instead of waiting forever
      (check 'input-is-not-live-before-the-reader-runs (head:input-live?) #f)
+
+     ;; Every head edit is labelled with a batch: one per action, one per
+     ;; outermost group across its edits
+     (define batched (fresh "batched" #t))
+     (define batched-id (head:buffer-store-id batched))
+     (insert-text! "a")
+     (insert-text! "b")
+     (call-as-one-edit! "two at once" (lambda () (insert-text! "c") (insert-text! "d")))
+     (define batches (map (lambda (row) (cdr (assq 'batch (caddr row)))) (store:log batched-id)))
+     (check 'head-edits-carry-a-batch-per-action-and-per-group
+            (list (length batches) (equal? (car batches) (cadr batches)) (equal? (caddr batches) (cadddr batches))
+                  (equal? (car (car batches)) head:ui-actor))
+            '(4 #t #f #t))
+     (let* ([oldest (car (car (reverse (store:log batched-id))))]
+            [outcome (call-with-values (lambda () (head:store-rewrite! batched (list oldest))) list)])
+       (check 'the-head-rewrites-through-the-store-and-adopts-the-result
+              (list outcome (head:buffer-line batched 0))
+              (list (list 'applied (store:revision batched-id)) "bcd")))
 
      (test:finish! 'edit-state)))

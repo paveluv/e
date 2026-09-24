@@ -176,51 +176,56 @@ Writes preserve existing file permissions, including after interruption.
 Permission restoration is best-effort; a failed or interrupted write can
 still leave partial contents on disk.
 
-### External changes and rereading
+### External changes and reloading
 
-Each file buffer remembers the last disk contents it accepted. e checks at the
-start of an edit group and before saving. A mere `touch` is ignored because the
-contents are compared. A changed file marks the status line with red `!!`.
+Each file buffer remembers the last disk contents it accepted, its baseline.
+e checks at the start of an edit group and before saving; a mere `touch` is
+ignored because the contents are compared, and a changed file marks the
+status line with red `!!`.
 
-Reopening an already visited, externally changed file presents:
+Reopening an already visited file that changed on disk **reloads** it: the
+disk's text becomes the baseline again, and the buffer's own entries since
+the old baseline are reapplied on top, carried across the disk's changes with
+the geometry that carries concurrent editors' edits across each other.
+Changes that touch different text combine silently, character by character.
+An entry the disk's change overlaps is disabled and pends as a **conflict**:
+the disk's side stands in the text, which stays consistent at every moment,
+and the entry's side is kept. `(delta-log:conflicts)` lists them with both
+sides; `(delta-log:flip! (conflict n))` shows the entry's side in place, in a
+read-only `<flip: name>` buffer where the buffer was, and again returns to the
+buffer; `(delta-log:resolve! (conflict n) 'mine)` writes the entry's side over
+the disk's region, `'disk` keeps the disk's side and drops the mark, and
+replacement lines write those; a write is one undoable edit.
+`(delta-log:resolve-all! 'disk)` settles them all. `(delta-log:conflicts!)`
+reviews them in the browser beside the buffer, one row per conflict with the
+current row's region highlighted: `M-/` flips it, `M-d` keeps the disk's
+side, `M-m` writes yours, and with the last one settled the rows return to
+the log. At the λ prompt the `conflict` type completes from the pending
+ones, each hint naming the actor and both sides, and previews a candidate by
+flipping its region while Tab has it. A reload writes nothing; the next save
+writes the buffer's result.
 
-- `merge`: combine the loaded baseline, buffer text, and current disk text;
-- `reread`: replace the buffer from disk, clear modified state and history, and
-  adopt the disk copy as the new baseline;
-- `cancel`: leave the buffer untouched, like `C-g` or Escape.
+Where the store cannot reload, a buffer without a shared store or a baseline
+the log no longer reaches, e asks `reread` or `cancel`; `(reread!)` adopts the
+disk verbatim at any time, dropping the buffer's history and its pending
+conflicts. If the buffer changes while a reread is being reviewed, e cancels
+it and preserves the newer work.
 
-The prompt keeps focus until one of its valid keys is pressed. Invalid keyboard
-or mouse input flashes only the echo area, without sound.
-If the buffer's text or facts change while reread is being reviewed, e cancels
-that reread and preserves the newer work and history. Reopen the file to
-review again. This applies in every head.
-
-Saving an externally changed file offers `overwrite`, `merge`, or `cancel`.
-If the file did not exist when visited and appeared before the first save,
-there is no saved merge baseline: the prompt offers `overwrite` or `cancel`.
-An explicitly unset baseline follows the same rule; a loaded empty file has
-a valid empty baseline and can be merged.
-The disk comparison runs after pre-save hooks, so a hook's write is included
-in that decision. e rechecks the disk contents after a file prompt. Changes
-to those contents or the buffer's file/baseline cancel the choice; run the
-command again to review the new state. A timestamp change with identical
-contents is accepted. These checks also apply when saving over an existing
-file under a new name. A merged buffer is reported as saved only after its
-write succeeds; a failed write leaves the merged text available for review.
-
-Merge uses a three-way patience diff. Independent changes combine silently;
-collisions become `<<<<<<< buffer`, `=======`, and `>>>>>>> disk` regions.
-`M-n` (`merge:next!`) moves to the next conflict, while `M-m` (`merge:keep-mine!`)
-and `M-d` (`merge:keep-disk!`) keep the buffer or disk side; the three keys
-belong to the `merge` context, which the buffer has while its text holds
-conflict markers, so `C-x TAB` lists them only then. Each resolution is one
-undo step, and saving waits until all conflicts are resolved. A read-only
-`<merge-name>` buffer records the merge report.
+Saving an externally changed file reloads it first and writes when no
+conflict pends; with conflicts the save stops, reports them, and waits for
+their resolution. Where the reload is not possible the save offers
+`overwrite` or `cancel`. The disk comparison runs after pre-save hooks, so a
+hook's write is included in that decision; e rechecks the disk contents after
+a file prompt, and a timestamp change with identical contents is accepted.
+These checks also apply when saving over an existing file under a new name.
 
 ## Undo, selections, and the copy buffer
 
 Undo and redo history are per buffer. One typed run, pasted block, formatting
-operation, replacement, or grouped API edit normally forms one undo entry.
+operation, replacement, or grouped API edit normally forms one undo entry. A
+run is up to twenty keys of typing, backspaces and forward deletes without
+moving point, so a typo and its correction undo together and share one batch
+in the delta log.
 `C-_` and `(edit:undo!)` undo this head's latest action by default, preserving
 other actors' disjoint changes. To make ordinary undo include every actor,
 put this in `config.e` or evaluate it with `M-x`:
@@ -286,6 +291,69 @@ does not disappear with the tint.
 `(blame:tint-seconds 8)` sets the lifetime in seconds; fractional values work.
 Zero prevents new tints, while existing ones keep their deadlines.
 `M-x blame:at-point!` reports recent authorship from the retained edit log.
+
+## The delta log
+
+Every edit of a shared buffer is an entry in its delta log: the revision,
+the actor, the labels its command attached (a `batch` for the edits made
+together), the delta itself and, for an inverse, its origin. The log is
+saved with the session and reaches back `store:log-retention` entries. At
+M-x the `delta-log:` commands work on the current buffer's log:
+
+- `(delta-log:log [selector])` lists the entries as data, newest first,
+  `(revision actor labels delta origin state)` each; a selector narrows
+  them, `'((count . 10))`, `'((actor . (agent "helper")))`, `'((state .
+  disabled))`, or by `batch`, `since` and `until`. A batch given alone, as
+  its literal `(batch '(...))`, selects its entries; Tab at the argument
+  offers the buffer's batches newest first, a replacement's the first after
+  one.
+- `(delta-log:show! (revision 12))` describes one entry in the echo area:
+  its actor, where it wrote, what it removed and inserted.
+- `(delta-log:toggle! (revision 12) ...)` disables entries in a **view**: the
+  buffer as it would read with those entries taken back and the later ones
+  rebased over their absence. The view shows at once in the window as a
+  read-only local buffer, `<view: notes.md>`, point carried across; toggling
+  a disabled entry enables it again, and further toggles re-render the view.
+  A later entry that overlaps a disabled one is a conflict, named in the echo
+  area as `5 over 1`; the view then shows the text as it stands there.
+- `(delta-log:commit!)` makes the view the trunk: the store rewrites the
+  buffer for everyone, the inverses being this head's own undoable action,
+  and the window returns to the trunk. A view with conflicts is blocked
+  until they are toggled back. `(delta-log:revert!)` abandons the view.
+- `(delta-log:view)` and `(delta-log:disabled)` report the live view.
+
+`(delta-log:open!)` opens the browser, `<delta-log>`, in the companion
+window below the buffer, the sibling a split below made, by hand or by a
+command, else a fresh split below, and selects it: one row per entry, newest first, with its revision, actor, place,
+removed and inserted text and batch, an inverse naming the entry it undoes,
+redoes or reverts and a disabled entry the inverse it was undone, redone or
+reverted by, an entry
+disabled in the view marked with `-`, the current row's text highlighted in
+the buffer's window and point on it, so the window follows the rows as a
+search's follows its matches.
+`M-n` and `M-p` move, `M-t` toggles the row's entry in the view, which shows
+where the buffer was, `RET` describes the entry, `M-RET` commits the view,
+`ESC` closes the browser leaving point on the row's text and `C-g` closes it
+putting point back where it was; `(delta-log:filter! '((actor . (agent
+"helper"))))` narrows the rows, `(delta-log:open! (batch '(...)))` opens on
+a batch's entries, a replacement's occurrences say, `#f` widens them again,
+and `delta-log:next!` and `previous!` move from anywhere. `(delta-log:conflicts!)` makes a
+reload's pending conflicts the rows instead, newest first, each naming the
+entry's revision and actor, where the disk's side stands and both sides
+elided, the current row's region highlighted in the buffer's window: `M-/`
+shows the entry's side in place and back, `M-d` keeps the disk's side, `M-m`
+writes the entry's, `RET` describes both sides in full, and once the last
+conflict is settled the rows return to the log. The browser is a view over
+the commands above and asks nothing itself; its keys are commands bound in
+its contexts, `delta-log` for every row, `delta-log-entries` and
+`delta-log-conflicts` for what one kind of row allows, so `C-x TAB` lists
+them and M-x reaches them: `delta-log:show-row!`, `toggle-row!`,
+`flip-row!`, `keep-disk!`, `keep-mine!` and `cancel!` act on the current row.
+
+The `revision` and `batch` types complete from the log with the entry as
+the hint, and a revision candidate previews itself: while Tab has it
+inserted, the text it wrote is highlighted in the buffer and point sits on
+it; typing on or leaving the prompt puts both back.
 
 ## Line numbers
 
@@ -600,7 +668,7 @@ whether there are unsaved changes.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
 `head:new-buffer!`, `head:new-local-buffer!`, `head:fresh-buffer!`, `head:show-buffer!`,
 `window:display!`,
-`window:pop-up-or-reuse!`, `edit:kill-buffer!`,
+`window:companion!`, `window:pop-up-or-reuse!`, `edit:kill-buffer!`,
 `head:buffer-append!`, `mode:choose!`, and `head:buffer-read-only-set!` provide
 controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
@@ -822,9 +890,25 @@ helpers do.
 
 `(store:edit! actor id basis span replacement [context])` applies an
 attributed edit or returns a stale refusal.  The optional context is
-`(group-key label [undo-facts [commit-facts [expected]]])`: the same non-false key groups that
+`(group-key label . options)`: the same non-false key groups that
 actor's transactions in this buffer into one undo action.  Without a key,
-each call is an action.  Properties such as `((trailing . #t))` commit with
+each call is an action. The options are an alist: `(undo . facts)`,
+`(commit . facts)`, `(expected . review)` and `(labels . alist)`, the labels
+riding on the log entry with `(batch . id)` naming the edits made together;
+every head edit carries one, per action or per grouped command.
+`(store:log id [selector])` lists the retained entries newest first as
+`(revision actor labels delta origin state)`, narrowed by a selector alist
+among `count`, `actor`, `batch`, `since`, `until` and `state`; an entry is
+`disabled` while a live undo or rewrite reverts it. `(store:view id
+revisions)` gives `(values text mapping conflicts)`, the text with those
+entries disabled and the rest rebased over their absence, the deltas
+taking the current text there, and `(revision . cause)` pairs for the
+entries a later entry overlaps, without changing anything;
+`(store:rewrite! actor id revisions)` disables them for everyone, the
+inverses the actor's own undoable action, blocked with the same conflicts
+when any remain. Undo and redo plan through the same inversion. A buffer
+retains `(store:log-retention)` entries, 4096 by default, and the
+retained log is saved and restored with the session.  Properties such as `((trailing . #t))` commit with
 the text and are included in its inverse.  Property versions are checked
 on undo and redo, so a later write blocks restoration even if it returns
 to the same value.  Public property queries omit deleted properties.

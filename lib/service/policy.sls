@@ -26,8 +26,8 @@
           (rename (policy-grants grants)) live (rename (make-policy make)) mint! policy?
           (rename (reader-policy reader)) revoke! revoke-actor! revoked? session-actor
           session-answer! session-ask! session-cancel! session-edit! session-eval!
-          session-history-step! session-owner session-redo! session-send! session-undo! session?
-          sessions)
+          session-history-step! session-owner session-redo! session-reload! session-resolve! session-rewrite! session-send!
+          session-undo! session? sessions)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
                 current-output-port
@@ -367,6 +367,38 @@
     ;; Redo belongs to the requester who undid, even for another author's edit.
     (let-values ([(status detail) (session-history-step! s id 'redo 'mine)])
       (values status (if (eq? status 'applied) (car detail) detail))))
+
+  (edoc "Disable entries of a shared buffer as a session, their inverses the session's own action: (values status detail), status applied, blocked or refused."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (disabled (list-of integer) "the revisions to disable"))
+  (define (session-rewrite! s id disabled)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s 'rewrite id
+          (lambda (actor access) (store:rewrite! actor id (datum:copy disabled) access))))))
+
+  (edoc "Reload a shared buffer from its file as a session, the disk's changes the session's own entries: (values status detail), applied with (revision conflicts), or refused."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit"))
+  (define (session-reload! s id lines facts)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s 'reload id
+          (lambda (actor access) (store:reload! actor id (datum:copy lines) (datum:copy facts) access))))))
+
+  (edoc "Settle a reload conflict as a session: (values status detail), as store:resolve! gives them."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (revision integer "the conflicted entry")
+        (choice any "disk, mine or the replacement lines"))
+  (define (session-resolve! s id revision choice)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s 'resolve id
+          (lambda (actor access) (store:resolve! actor id revision (datum:copy choice) access))))))
 
   (edoc "Send a message to another actor as the session, in an envelope naming the session as its sender."
         (s (record session) "the session")
