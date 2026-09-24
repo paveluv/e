@@ -221,7 +221,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Shared, owned by the base | Local, owned by each head |
 |---|---|
 | Buffer text, file facts, undo and redo history, marks | Windows, points, viewports and the selection |
-| Terminal processes and their screens | Prompts, `<completions>`, `<buffet>`, `<copy>` |
+| Terminal processes and their screens | Prompts, `<completions>`, `<keys>`, `<buffet>`, `<copy>` |
 | The log's records | `<log>` renderings and the echo area |
 | Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |
 | Questions waiting for a named head | Plain local buffers with their text, `<copy>` among them, checkpointed under the head's name |

@@ -105,7 +105,7 @@ buffers preserves the window preference; opening a new terminal resets it to
 partial capture. Named-head reattachment restores the saved choice.
 
 After the process exits, `■` replaces the running indicator and the capture
-symbol and hint disappear. The terminal keymap becomes inactive: `C-]` is
+symbol disappears. The terminal keymap becomes inactive: `C-]` is
 unbound unless you gave it a global binding. The retained terminal buffer is
 a read-only transcript with the normal vertical read-only cursor.
 It is then an ordinary text buffer:

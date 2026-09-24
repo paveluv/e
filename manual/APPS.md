@@ -272,6 +272,17 @@ returns false for everything else. Thus `<buffet>` owns navigation and row
 activation while `M-x`, window commands, and other global bindings pass
 through naturally.
 
+An app's keys are bindings, not cases of its handler: the app registers a
+mode, binds each key in that mode's context to an exported command with an
+edoc, and `C-x TAB` lists them with their descriptions while `C-h k` and M-x
+reach them; `<finder>` and `<buffet>` are the models, and an agent drives them
+through the same commands. Typing that should feed the app, a filter say, is
+the context's `SELF-INSERT` binding, a call of the app's command with
+`head:typed-text`. The handler keeps only what is not a key: focus, the
+pointer and the wheel. A key that applies only in some state of the buffer,
+the merge keys while its text holds conflict markers, gets a state context
+through `mode:add-context!`.
+
 The handler has first refusal on every key the buffer's mode context leaves
 unbound: a true result consumes the event, a false one lets it continue
 through the keymaps -- the mode context, then the global map.  A key the
@@ -295,7 +306,7 @@ resolution, including any synchronous prompt. The toggle does not pause app
 following. Other context bindings remain editor controls in either state.
 Capture contexts apply only while the buffer hosts a live app. After exit or
 detachment, the mode still supplies presentation, but its keymap is inactive:
-ordinary global bindings apply, and the capture indicator and hint disappear.
+ordinary global bindings apply, and the capture indicator disappears.
 Other live buffers using the same context keep their controls.
 
 `(head:full-capture? window)` reads the preference and

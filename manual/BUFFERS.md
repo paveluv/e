@@ -43,14 +43,16 @@ vertical line, `1▏`, then the state marker:
 | `!!` | the visited file changed on disk |
 | `[]` | dynamic app or view buffer |
 
-The status line also shows the buffer name, one-based line and column, detected
-mode, remaining merge-conflict count, and applicable command hints. Temporary
-interactions such as find-file use that space for operation hints and page
-counts instead of generated-buffer coordinates.
+The status line also shows the buffer name, one-based line and column, the
+detected mode, and the remaining merge-conflict count; it carries no key
+hints, `C-x TAB` listing the keys instead. Temporary interactions such as
+find-file use that space for page counts instead of generated-buffer
+coordinates.
 
 Window 0 is the pop-up window. It has no rows and no status line until a
-completion list or another echo-area pop-up needs it, when it appears above
-the echo area for that interaction; it is never split, deleted or focused.
+completion list needs it or a buffer is sent to it, when it appears above the
+echo area; it is never split or deleted, and is selected only while it shows
+(see [the pop-up](#scrolling-wrapping-and-windows)).
 Ordinary windows are numbered from 1. A new window takes the smallest number no
 window holds, so a closed window's number goes to the next window created and
 the numbers on screen stay small. `(window 1)` names the window numbered 1 in

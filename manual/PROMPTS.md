@@ -39,7 +39,9 @@ with the global commands allowed there.
 
 A prompt does not lock the window layout. The window-management commands
 -- focusing (Meta-arrows, `C-x o`), splitting (`C-x 2`, `C-x 3`),
-and closing (`C-x 0`, `C-x 1`) -- keep working while a prompt runs, under whatever keys they are bound to: events resolve
+and closing (`C-x 0`, `C-x 1`) -- keep working while a prompt runs, and so do
+`C-x TAB` and `C-x S-TAB`, which list the prompt's own keys; all under whatever
+keys they are bound to: events resolve
 through the live global keymap, so rebound or newly bound chords work in
 every prompt as well. Only self-inserting characters always stay with
 the input. The mouse works too: clicks focus windows and the status-bar
@@ -82,7 +84,7 @@ Long input wraps above the bottom row. Tab lists candidates above the input;
 repeated Tab pages through them. Every input change, including history
 recall, clears the old candidates. Up and Down browse history. Clicking a
 candidate fills the input with its complete value; Enter accepts it. The
-status line shows key hints or a page count as space permits. In small panes,
+status line shows a page count as space permits. In small panes,
 the input clips around the cursor to leave a candidate row visible. A pane
 with only one text row asks you to enlarge it to see matches.
 

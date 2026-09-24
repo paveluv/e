@@ -60,11 +60,13 @@ in the echo area.
 
 A command must be a procedure callable with no arguments. Existing commands
 such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:focus-next!` can be
-used directly. A lambda can adapt a command that needs arguments:
+used directly. `keymap:call` adapts a command that needs arguments, and the
+binding then reads as the call it makes in the keys listing and under `C-h k`;
+a lambda works too, but shows as an anonymous command:
 
 ```scheme
-(keymap:bind! "M-g" (lambda () (head:goto! '(0 . 0))))
-(keymap:bind! "C-c n" (lambda () (edit:move-vertical! 10)))
+(keymap:bind! "M-g" (keymap:call head:goto! '(0 . 0)))
+(keymap:bind! "C-c n" (keymap:call edit:move-vertical! 10))
 ```
 
 Two structural actions describe themselves where a lambda shows as an
@@ -87,7 +89,7 @@ Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 
 ```scheme
-(keymap:bind! ";" (lambda () (edit:insert-text! " — ")))
+(keymap:bind! ";" (keymap:call edit:type! " — "))
 ```
 
 ## Key names

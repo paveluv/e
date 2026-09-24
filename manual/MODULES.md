@@ -513,9 +513,10 @@ app without interaction. An app's handler has first refusal on every key its
 mode context leaves unbound and passes the rest through to the keymaps; an app
 that consumes everything (the terminal) names an escape prefix in its mode's
 keymap context, and the dispatcher hands that key to the keymaps before the
-handler sees it. Apps act on the
-selected window, publish status hints, control cursor display, and consume
-mouse events without taking focus.
+handler sees it. An app's keys are commands bound in its mode's context, so
+the keys listing, `C-h k` and M-x know them. Apps act on the selected window,
+publish their status, control cursor display, and consume mouse events without
+taking focus.
 
 See [App buffers](APPS.md) for registration and event propagation, and
 [Buffers](BUFFERS.md) for the `<buffet>` interface.

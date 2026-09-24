@@ -21,7 +21,6 @@ Highlights:
   global ones, each with the command it runs and what that command does,
   straight from the command's documentation. The listing follows the active
   window, works inside prompts too, and `C-x TAB` again pages through it.
-  Status bars carry no key hints; this is where a key is looked up.
 - **Local installation.** All code and state are kept in the installation
   directory (where you cloned `e`), including modules, configuration files,
   and the base's session state and logs. To uninstall `e`, simply remove
@@ -236,7 +235,7 @@ immediately.
 - [Configuration](manual/CONFIGURATION.md): startup options and head names,
   `config.e` and `base-config.e`, reload semantics, precedence, and common
   settings.
-- [Key bindings](manual/KEY_BINDING.md): key syntax, contextual maps, overrides,
+- [Key bindings](manual/KEY_BINDING.md): the `C-x TAB` key listing, key syntax, contextual maps, overrides,
   unbinding, and inspection.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
@@ -261,9 +260,11 @@ same glyph rules as the terminal emulator.
 
 - **Current development version (unreleased)** -- a persistent daemon with named screens,
   saved-session recovery and reviewed restart; shared terminals and attributed undo;
-  agent-ready APIs; interactive Finder
-  and Buffet apps with filtering, compound sorting and per-window column
-  widths. The repository uses the settled R6RS library layout.
+  agent-ready APIs; the `C-x TAB` key listing, every key a documented command
+  and the apps driven by the same commands; the pop-up as a window, and links
+  between windows; interactive Finder and Buffet apps with filtering, compound
+  sorting and per-window column widths. The repository uses the settled R6RS
+  library layout.
 - **v0.1** (2026-09-01) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query
   replace, meaningful undo, mouse support, styles. `M-x` with semantic
