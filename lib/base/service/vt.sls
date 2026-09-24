@@ -3310,11 +3310,14 @@
   (define (transcript snapshot)
     ;; Convert only a VT-owned source, including one whose process already
     ;; ended. Save the last accepted store text, not concurrent emulator data.
+    ;; The mode stays, as it does when the process ends in a session: the
+    ;; transcript reads (terminal) on its bar, its capture context inactive
+    ;; without a live app either way.
     (let* ([facts (list-ref snapshot 4)] [app (cond [(assq 'app facts) => cdr] [else #f])])
       (if (and (list? app) (= (length app) 3) (equal? (list-head app 2) '(app terminal)))
           (append (list-head snapshot 4)
             (list (cons* '(disposable . #f) '(read-only . #t)
-                    (filter (lambda (entry) (not (memq (car entry) '(disposable read-only mode)))) facts))))
+                    (filter (lambda (entry) (not (memq (car entry) '(disposable read-only)))) facts))))
           snapshot)))
 
   ;; Monotonic owner identities distinguish replacement processes. Copy the

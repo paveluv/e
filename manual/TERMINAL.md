@@ -110,6 +110,8 @@ unbound unless you gave it a global binding. The retained terminal buffer is
 a read-only transcript with the normal vertical read-only cursor.
 It is then an ordinary text buffer:
 keyboard and mouse navigation, selection, and `M-w` copying work normally.
+A base restart ends the process and leaves the same transcript, `(terminal)`
+on its bar and its rows unwrapped.
 Killing this buffer terminates a process that is still running; deleting one
 of several windows displaying it does not. Stopping
 the daemon terminates every live terminal process, including terminals whose
