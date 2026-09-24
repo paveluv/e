@@ -62,6 +62,9 @@
       [(string=? s "RET") "RET"]
       [(string=? s "ESC") "ESC"]
       [(string=? s "DEL") "DELETE"]
+      [(string=? s "BS") "BACKSPACE"]
+      [(string=? s "PGUP") "PAGEUP"]
+      [(string=? s "PGDN") "PAGEDOWN"]
       [(string=? s "BACKSPACE") "BACKSPACE"]
       [(and (= (string-length s) 3) (string:prefix? "C-" s))
        (format "C-~c" (char-downcase (string-ref s 2)))]
@@ -97,11 +100,24 @@
                  (cons (key-token (substring spec start i)) parts))]
           [else (loop (+ i 1) start parts)]))))
 
-  (edoc "Event tokens spelled as one key sequence, space-separated."
+  ;; The short spellings the long-named keys show under, SPC for the
+  ;; space; either spelling binds.
+  (define short-names '(("BACKSPACE" . "BS") ("DELETE" . "DEL") ("PAGEUP" . "PGUP") ("PAGEDOWN" . "PGDN") (" " . "SPC")))
+
+  (define (token-text token)
+    ;; a token as shown: its modifiers, then the key's short name
+    (let loop ([prefix ""] [rest token])
+      (cond
+        [(find (lambda (m) (and (string:prefix? m rest) (> (string-length rest) (string-length m)))) '("C-" "M-" "S-"))
+         => (lambda (m) (loop (string-append prefix m) (string:tail rest (string-length m))))]
+        [(assoc rest short-names) => (lambda (hit) (string-append prefix (cdr hit)))]
+        [else token])))
+
+  (edoc "Event tokens spelled as one key sequence, space-separated, the long-named keys short: BS, DEL, PGUP, PGDN and SPC."
         (sequence (list-of string) "the tokens")
         (returns string))
   (define (sequence-text sequence)
-    (string:join sequence " "))
+    (string:join (map token-text sequence) " "))
 
   ;; A key spelling as an edoc type: completion offers the spellings bound
   ;; in the global map now.

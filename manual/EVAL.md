@@ -220,7 +220,7 @@ form still being typed keeps the complete expressions inside it. The rest
 of the Emacs family works on the same expressions: `C-M-n` and `C-M-p` over
 the next or previous list, `C-M-u` and `C-M-d` out of and into a list,
 `C-M-a` and `C-M-e` to a top-level form's start or end, `C-M-k` and
-`C-M-BACKSPACE` to kill the expression after or before point, `C-M-SPC` and
+`C-M-BS` to kill the expression after or before point, `C-M-SPC` and
 `C-M-h` to mark an expression or a top-level form, `C-M-t` to transpose the
 two expressions around point, and `C-M-q` to indent the lines of the next
 one. Each stops with a message where Emacs would signal an error.
