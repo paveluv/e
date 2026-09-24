@@ -42,6 +42,7 @@
      (head:with-buffer b (mode:choose! "keys-test"))
      (keymap:bind-default! 'keys-test "M-q" kill-line!)
      (keymap:bind-default! 'keys-test "M-w" kill-line!)
+     (keymap:bind-default! 'keys-test "M-z" (lambda () #f))
 
      (check 'c-x-tab-is-bound-to-the-helper (eq? (keymap:binding "C-x TAB") keys:show!) #t)
      (keys:show!)
@@ -61,6 +62,7 @@
          (list (contains? (line-at at) "kill-line!") (contains? (line-at at) "Kill from point")
                (contains? (line-at (+ at 1)) "M-w") (not (contains? (line-at (+ at 1)) "kill-line!"))))
        '(#t #t #t #t))
+     (check 'a-key-bound-to-an-anonymous-command-is-left-out (index-of "M-z") #f)
      (check 'section-titles-are-bold-and-rows-plain
        (let ([styles (mode:line-styles (view))])
          (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))

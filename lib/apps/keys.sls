@@ -33,9 +33,15 @@
            [sigs (and proc (edoc:edoc-of proc))])
       (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
 
+  (define (named? command)
+    ;; a command the listing can say anything about: one the top level
+    ;; names; an anonymous procedure has neither a name nor a description
+    (not (or (string=? command "anonymous command") (string:prefix? "(anonymous command" command))))
+
   (define (context-groups context)
-    ;; (keys command description) for a context's live bindings, the keys
-    ;; running one command together, groups by their first key
+    ;; (keys command description) for a context's live bindings to named
+    ;; commands, the keys running one command together, groups by their
+    ;; first key
     (define (add key command description groups)
       (let ([hit (find (lambda (g) (string=? (cadr g) command)) groups)])
         (if hit
@@ -45,10 +51,11 @@
       (if (null? owned)
           (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
                      (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
-          (let* ([b (cdr (car owned))] [action (keymap:binding-action b)])
+          (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
+                 [command (and action (keymap:action-text action))])
             (loop (cdr owned)
-                  (if action
-                      (add (keymap:sequence-text (keymap:binding-sequence b)) (keymap:action-text action) (summary-of action) groups)
+                  (if (and command (named? command))
+                      (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
   (define (declared-groups b)

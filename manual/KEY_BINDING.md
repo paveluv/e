@@ -17,7 +17,9 @@ then the global ones, each section's title in bold. Keys that run one
 command share a row, one key per line, beside the command, `edit:kill-line!`
 say, and what it does, from its documentation, wrapped in its column. The
 listing follows the active window: switch to another buffer or app and it
-lists that one's keys. `C-x TAB` again pages the listing down from wherever
+lists that one's keys. A key bound to an unnamed procedure, a lambda in
+`config.e` say, is left out, since there is nothing to say about it.
+`C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
 line puts it away, as `(keys:hide!)` does. An app that handles its keys
