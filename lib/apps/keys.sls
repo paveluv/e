@@ -146,8 +146,14 @@
     (if (null? groups)
         '()
         (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
-               [command-width (min 40 (apply max (map (lambda (g) (cells (cadr g))) groups)))]
-               [text-width (max 10 (- width key-width command-width 6))])
+               ;; the key column takes what its widest key needs; of what is
+               ;; left, the margin and separators apart, the command column
+               ;; takes what its widest command needs while the description
+               ;; keeps twenty-four cells, and shrinks to eight cells before
+               ;; the description shrinks below that
+               [room (- width key-width 6)]
+               [command-width (min (apply max (map (lambda (g) (cells (cadr g))) groups)) (max 8 (- room 24)))]
+               [text-width (max 8 (- room command-width))])
           (cons title
                 (apply append
                   (map (lambda (g)
@@ -254,18 +260,25 @@
 
   (define (situation b)
     ;; what the listing depends on: the buffer, its contexts, its text being
-    ;; read-only, and an open prompt with its content's context
-    (list b (mode:key-contexts b) (read-only-text? b) (prompt:active?) (prompt-context)))
+    ;; read-only, an open prompt with its content's context, and the width
+    ;; it is laid out for, which a resize of the terminal changes; the width
+    ;; comes last, so the rest compares on its own
+    (list b (mode:key-contexts b) (read-only-text? b) (prompt:active?) (prompt-context) (listing-width)))
 
   (define (fill! b)
-    ;; the listing for a buffer into the view, shown from the top wherever it is
-    (set! listed (situation b))
-    (head:buffer-read-only-set! view #f)
-    (head:buffer-lines-set! view
-      (list->vector (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))))
-    (head:buffer-read-only-set! view #t)
-    (for-each (lambda (w) (head:window-top-set! w 0) (head:window-prow-set! w 0) (head:window-pcol-set! w 0))
-              (view-windows)))
+    ;; the listing for a buffer into the view: from the top for a new
+    ;; subject, in place when only the width changed, a resize say
+    (let* ([now (situation b)]
+           [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
+           [lines (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))])
+      (set! listed now)
+      (head:buffer-read-only-set! view #f)
+      (head:buffer-lines-set! view (list->vector lines))
+      (head:buffer-read-only-set! view #t)
+      (for-each (lambda (w)
+                  (let ([top (if same? (min (head:window-top w) (- (length lines) 1)) 0)])
+                    (head:window-top-set! w top) (head:window-prow-set! w top) (head:window-pcol-set! w 0)))
+                (view-windows))))
 
   (define (ensure-view!)
     ;; the <keys> buffer, made fresh when none is live

@@ -111,6 +111,20 @@
        '(bold plain))
      (check 'the-whole-listing-is-in-the-buffer (> (length (lines)) (head:popup-rows)) #t)
 
+     ;; a narrower terminal lays the listing out again for the new width
+     ;; before the frame paints, the pane's place kept
+     (define wide (length (lines)))
+     (paint:set-screen-cols! 60)
+     (paint:window-layout)
+     (head:before-frame!)
+     (check 'a-resize-lays-the-listing-out-again-for-the-new-width
+       (list (for-all (lambda (l) (< (string-length l) (head:window-content-width popup))) (lines)) (> (length (lines)) wide))
+       '(#t #t))
+     (paint:set-screen-cols! 80)
+     (paint:window-layout)
+     (head:before-frame!)
+     (check 'and-back-again-when-it-widens (length (lines)) wide)
+
      ;; C-x TAB pages the pop-up down from anywhere, back to the top past the end
      (define size (head:popup-rows))
      (keys:page-up!)
