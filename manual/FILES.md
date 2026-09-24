@@ -181,9 +181,10 @@ the `files` context to one of them: `file-view:choose!` for Enter, `enter!`,
 `parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
 `first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
 `(sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
-`return!` and `paste-filter!`, so `C-x TAB` lists them with their
-descriptions and `C-h k` describes one. Beside the keys, `(filter! text)`
-sets the filter that typing grows, `(select! path)` makes a listed entry the
+`return!` and `paste-filter!`, and typing itself is the context's
+`SELF-INSERT` binding, `(extend-filter! text)` with the character typed, so
+`C-x TAB` lists them all, typing as `any character`, and `C-h k` describes
+one. Beside the keys, `(filter! text)` sets the filter that typing grows, `(select! path)` makes a listed entry the
 choice, `(chosen)` is the choice's path, `(entries)` lists what is shown as
 literals, `(file "path")` and `(directory "path")`, so each reads back as a
 value, `(location)` is the directory shown, and `(sorts)` the

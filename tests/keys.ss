@@ -54,10 +54,11 @@
      (head:before-frame!)
      (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
        (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
+             (head:window-scrollbar? (head:popup))
              (begin (head:checkpoint!)
                     (exists (lambda (entry) (let ([r (car entry)]) (and (pair? r) (eq? (car r) 'local) (equal? (cadr r) "<keys>"))))
                             (list-ref (actor:checkpoint head:ui-actor) 4))))
-       '(#f "<keys>" keys #f))
+       '(#f "<keys>" keys right #f))
      (check 'the-listing-is-a-read-only-keys-buffer-in-the-pop-up-with-the-mode-section-first
        (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
              (index-of "keys-test keys") (< 0 (index-of "Global keys"))
@@ -73,7 +74,12 @@
      (check 'a-row-with-a-short-description-takes-one-line
        (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
        '(#t #t))
-     (check 'a-key-bound-to-an-anonymous-command-is-left-out (index-of "M-z") #f)
+     (check 'a-key-bound-to-a-lambda-shows-as-the-anonymous-command-it-is
+       (let ([at (index-of "M-z")]) (and at (contains? (line-at at) "anonymous command"))) #t)
+     (check 'typing-lists-as-any-character-running-type-with-the-typed-text
+       (let ([at (index-of "any character")])
+         (and at (list (contains? (line-at at) "type!") (contains? (line-at at) "(head:typed-text)") (contains? (line-at at) "Type text"))))
+       '(#t #t #t))
      (check 'a-call-with-a-constant-argument-reads-as-the-call
        (let ([text (keymap:action-text (keymap:call beginning-of-line! 3))])
          (list (contains? text "beginning-of-line!") (string:suffix? " 3)" text)))

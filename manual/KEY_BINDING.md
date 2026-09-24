@@ -13,12 +13,15 @@ any meanings the key has inside prompts, incremental search, or query-replace.
 `C-x TAB` shows the keys that work in the active window, in the pop-up window
 above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
 first, as its app declares them, then the bindings of its mode contexts,
-then the global ones, each section's title in bold. Keys that run one
+then the global ones, each section's title in bold, with a scrollbar for
+its length. Keys that run one
 command share a row, one key per line, beside the command, `edit:kill-line!`
 say, and what it does, from its documentation, wrapped in its column. The
 listing follows the active window: switch to another buffer or app and it
-lists that one's keys. A key bound to an unnamed procedure, a lambda in
-`config.e` say, is left out, since there is nothing to say about it.
+lists that one's keys. Every binding is listed; a key bound to a lambda,
+in `config.e` say, shows as `anonymous command` with nothing to say about
+it, so bind a named command instead, and the editor's own libraries never
+bind a lambda, the linter refusing one.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
@@ -105,8 +108,13 @@ shortcuts can intercept a key before e receives it. Files and Buffers use
 so a global binding lookup can still report the key as unbound.
 
 Three pseudo-keys are bindable like any other. `PASTE` is the event a
-bracketed paste produces. `SELF-INSERT` is what an unbound printable
-character resolves to; its binding is the self-inserting command. `MOUSE-CLICK`
+bracketed paste produces, bound to `edit:paste!`. `SELF-INSERT` is what a
+printable character without a binding of its own resolves to, in the mode's
+context first, then the global map, and its command receives the character
+through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
+inserts it, while in `<files>` and `<buffers>` the context binds it to
+`extend-filter!`, so typing grows the filter. The keys listing shows the
+pseudo-key as `any character`. `MOUSE-CLICK`
 fires in a mode's context after a text click has placed point, so a mode can
 act on the click (the markdown viewer follows links with it). Mouse reports
 themselves are handled before key dispatch: clicks, drags, releases, and

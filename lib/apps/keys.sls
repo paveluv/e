@@ -46,15 +46,10 @@
            [sigs (and proc (edoc:edoc-of proc))])
       (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
 
-  (define (named? command)
-    ;; a command the listing can say anything about: one the top level
-    ;; names; an anonymous procedure has neither a name nor a description
-    (not (or (string=? command "anonymous command") (string:prefix? "(anonymous command" command))))
-
   (define (context-groups context)
-    ;; (keys command description) for a context's live bindings to named
-    ;; commands, the keys running one command together, groups by their
-    ;; first key
+    ;; (keys command description) for a context's live bindings, the keys
+    ;; running one command together, groups by their first key; a lambda
+    ;; shows as the anonymous command it is, a name being owed
     (define (add key command description groups)
       (let ([hit (find (lambda (g) (string=? (cadr g) command)) groups)])
         (if hit
@@ -67,7 +62,7 @@
           (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
                  [command (and action (keymap:action-text action))])
             (loop (cdr owned)
-                  (if (and command (named? command))
+                  (if command
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -108,7 +103,8 @@
 
   (define (section title groups width)
     ;; a heading, then each group's keys down the first column beside its
-    ;; command and its description wrapped in the last column
+    ;; command, a long call wrapped at its spaces, and its description
+    ;; wrapped in the last column
     (if (null? groups)
         '()
         (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
@@ -117,15 +113,15 @@
           (cons title
                 (apply append
                   (map (lambda (g)
-                         (let* ([keys (car g)] [command (string:elide (cadr g) command-width)]
+                         (let* ([keys (car g)] [command (wrap (cadr g) command-width)]
                                 [text (wrap (caddr g) text-width)]
-                                [height (max (length keys) (length text) 1)])
+                                [height (max (length keys) (length command) (length text) 1)])
                            (let loop ([i 0] [out '()])
                              (if (= i height) (reverse out)
                                  (loop (+ i 1)
                                        (cons (string-append
                                                "  " (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
-                                               (pad (if (= i 0) command "") command-width) "  "
+                                               (pad (if (< i (length command)) (list-ref command i) "") command-width) "  "
                                                (if (< i (length text)) (list-ref text i) ""))
                                              out))))))
                        groups))))))
@@ -182,7 +178,8 @@
     ;; windows are not yet tiled and report no width to speak of
     (let* ([ws (view-windows)]
            [narrowest (if (null? ws) 0 (apply min (map head:window-content-width ws)))])
-      (- (if (> narrowest 40) narrowest (paint:screen-cols)) 1)))
+      ;; the screen's width less the listing's scrollbar column
+      (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
 
   (define (fill! b)
     ;; the listing for a buffer into the view, shown from the top wherever it is
@@ -201,6 +198,8 @@
       (set! view (head:new-local-buffer! "keys"))
       ;; transient: a checkpoint keeps no listing, so a restart brings none back
       (head:buffer-fact-set! view 'resume-kind 'keys)
+      ;; long, and read by position: a scrollbar on the configured side
+      (head:buffer-fact-set! view 'scrollbar #t)
       (head:add-buffer! view)
       (mode:choose! "keys" view)))
 

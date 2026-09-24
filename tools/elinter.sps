@@ -141,6 +141,47 @@
                             "the definition does not begin on the line after its edoc")])))
         (loop form (cdr rest))))))
 
+;;; Key bindings -------------------------------------------------------------
+
+;; Every key is bound to a named command, so the keys listing and C-h k
+;; can say what it runs: a lambda bound to a key is a finding.
+
+(define (form-end text i)
+  ;; the index after the form opening at i, strings and character
+  ;; literals skipped
+  (let loop ([j i] [depth 0])
+    (if (>= j (string-length text)) j
+        (let ([c (string-ref text j)])
+          (cond
+            [(char=? c #\") (let skip ([k (+ j 1)])
+                              (cond [(>= k (string-length text)) (loop k depth)]
+                                    [(char=? (string-ref text k) #\\) (skip (+ k 2))]
+                                    [(char=? (string-ref text k) #\") (loop (+ k 1) depth)]
+                                    [else (skip (+ k 1))]))]
+            [(and (char=? c #\#) (< (+ j 1) (string-length text)) (char=? (string-ref text (+ j 1)) #\\)) (loop (+ j 3) depth)]
+            [(memv c '(#\( #\[)) (loop (+ j 1) (+ depth 1))]
+            [(memv c '(#\) #\])) (if (= depth 1) (+ j 1) (loop (+ j 1) (- depth 1)))]
+            [else (loop (+ j 1) depth)])))))
+
+(define (index-of text needle start)
+  (let ([n (string-length text)] [m (string-length needle)])
+    (let loop ([i start])
+      (cond [(> (+ i m) n) #f]
+            [(string=? (substring text i (+ i m)) needle) i]
+            [else (loop (+ i 1))]))))
+
+(define (check-bindings! path text report!)
+  (for-each
+    (lambda (opener)
+      (let loop ([from 0])
+        (let ([i (index-of text opener from)])
+          (when i
+            (let* ([end (form-end text i)] [form (substring text i end)])
+              (when (index-of form "(lambda" 0)
+                (report! path (line-of text i) "a key bound to a lambda; bind a named command"))
+              (loop end))))))
+    '("(keymap:bind-default! " "(keymap:bind! ")))
+
 ;;; The run -----------------------------------------------------------------
 
 (define findings 0)
@@ -160,6 +201,7 @@
             (let ([subforms (parts form)])
               (check-exports! path text (caddr subforms) report!)
               (check-imports! path text (cadddr subforms) report!)
+              (check-bindings! path text report!)
               (when (eq? (stripped (car subforms)) 'elibrary)
                 (check-edocs! path text (cdddr subforms) report!)))))
         forms)))

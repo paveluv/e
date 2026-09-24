@@ -63,7 +63,7 @@
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reset! sync-foreign-edits! tile! tool-buffer! transfer-split! ui-actor
+          store-reset! sync-foreign-edits! tile! tool-buffer! transfer-split! typed-text ui-actor
           view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
           window-buffer-set! window-button-at window-buttons window-buttons-width
@@ -948,6 +948,13 @@
         (returns list))
   (define (current-keys)
     the-current-keys)
+
+  (edoc "The text the key being dispatched types, a one-character string, or #f for a key that is no character: what a SELF-INSERT binding's command receives, (keymap:call edit:type! head:typed-text) say."
+        (returns (or string #f)))
+  (define (typed-text)
+    (let ([keys (current-keys)])
+      (and (pair? keys) (string? (car keys))
+           (let ([c (tty:key-event-character (car keys))]) (and c (string c))))))
 
   (edoc "Record the key sequence being dispatched."
         (keys list "the events"))

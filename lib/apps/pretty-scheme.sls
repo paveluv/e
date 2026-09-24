@@ -16,7 +16,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps pretty-scheme)
-  (export (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!))
+  (export close-round! close-square! (rename (pretty-scheme-clusters! clusters!)) (rename (pretty-scheme-depth! depth!))
           init! (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
           (prefix (head edit) edit:)
@@ -288,6 +288,12 @@
                (when (pair? stack) (set! stack (cdr stack)))]))))
       (and (pair? stack) (car stack))))
 
+  (edoc "Close the innermost open construct as typing a round bracket does: with the bracket the construct opened with, whatever was typed.")
+  (define (close-round!) (close! #\)))
+
+  (edoc "Close the innermost open construct as typing a square bracket does: with the bracket the construct opened with, whatever was typed.")
+  (define (close-square!) (close! #\]))
+
   (define (close! typed)
     ;; ")" and "]" both close the innermost open construct with the
     ;; character the source opened it with, as the Scheme REPL does;
@@ -338,8 +344,8 @@
     (mode:derive! "pretty-scheme-clusters" "scheme" '() #f rendered)
     (mode:derive! "pretty-scheme-depth" "scheme" '() #f depth-rendered)
     (mode:derive! "pretty-scheme-rainbow" "scheme" '() #f #f rainbow-styles)
-    (keymap:bind-default! ")" (lambda () (close! #\))))
-    (keymap:bind-default! "]" (lambda () (close! #\])))
+    (keymap:bind-default! ")" close-round!)
+    (keymap:bind-default! "]" close-square!)
     (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)

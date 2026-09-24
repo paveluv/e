@@ -107,9 +107,10 @@
              (run-key-action! (keymap:binding-action (cdr hit)) capture)]
             [(and (= (length sequence) 1)
                   (tty:key-event-character first)
-                  (keymap:resolved-binding 'global '("SELF-INSERT")))
-             ;; an unbound character inserts itself: the command bound to
-             ;; SELF-INSERT reads the key from head:current-keys
+                  (or (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts)
+                      (keymap:resolved-binding 'global '("SELF-INSERT"))))
+             ;; an unbound character goes to SELF-INSERT, the mode's context
+             ;; first: its command receives the key through head:typed-text
              => (lambda (hit)
                   (head:set-current-keys! sequence)
                   (run-key-action! (keymap:binding-action (cdr hit)) capture))]
@@ -129,6 +130,9 @@
            (let ([sequence (list event)] [capture (exists keymap:context-capture contexts)])
              (or (exists (lambda (context) (keymap:resolved-binding context sequence)) contexts)
                  (exists (lambda (context) (keymap:binding-prefix? context sequence)) contexts)
+                 ;; a context binding SELF-INSERT claims every character
+                 (and (tty:key-event-character event)
+                      (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts))
                  (and capture (not (head:full-capture? (head:current-window)))
                       (member event (cddr capture)))))
            #t)))

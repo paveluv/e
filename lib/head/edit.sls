@@ -38,10 +38,11 @@
           mark-expression! mark-form!
           message-progress message-source move-horizontal! move-left! move-right! move-vertical!
           new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
-          page-window-fraction! present-log-entries! present-log-entry! previous-line! previous-list!
+          page-window-fraction! (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
+          previous-list!
           prompt-file! quit! redo! redraw-command! region-text replace-region-text! restore!
           rewrite-region! save! save-file! set-mark-command! set-message!
-          set-point-without-scroll! transpose-expressions! trash undo! undo-actor! undo-scope up-expression!
+          set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! undo-scope up-expression!
           visit-file! with-region
           yank!)
   (import (chezscheme)
@@ -1885,6 +1886,7 @@
 
   ;;; Pasting and typed runs --------------------------------------------------
 
+  (edoc "Insert a bracketed paste, the PASTE key, as one edit, its newlines real line breaks.")
   (define (paste-into-buffer!)
     ;; A bracketed paste: the whole text becomes one labeled edit, its
     ;; newlines becoming real line breaks.
@@ -1897,33 +1899,35 @@
   ;; Consecutive typed characters coalesce into one undo entry (up to
   ;; twenty, as in Emacs), so undo removes the run, not one character.
   ;; The chain is (buffer row col run-length text): where the next typed
-  ;; character must land to continue the run.  Any other command breaks
-  ;; it: the chain only continues when the last command was this one.
+  ;; text must land to continue the run.  Any other command breaks it:
+  ;; the chain only continues when the last command was typing, the
+  ;; SELF-INSERT key's call of type! with the character typed.
   (define insert-chain #f)
 
-  (define (self-insert-command!)
-    ;; the key that reached no binding inserts itself (bound as
-    ;; SELF-INSERT; the dispatcher leaves the key in head:current-keys)
-    (self-insert! (tty:key-event-character (car (head:current-keys)))
-                  (and (eq? (head:last-command) self-insert-command!)
-                       insert-chain)))
+  (define (typing? action)
+    ;; whether a key's action typed: type! itself, or its call from SELF-INSERT
+    (or (eq? action type!)
+        (and (keymap:call-action? action) (eq? (keymap:call-action-procedure action) type!))))
 
-  (define (self-insert! ch chain)
+  (edoc "Type text: inserted at point as typing does, joining the run of typing before it, so a run undoes as one step and shares one batch; SELF-INSERT, any character without a binding of its own, runs it with the character typed."
+        (text string "the text to type"))
+  (define (type! text)
     (let ([b (head:window-buffer current-window)]
-          [s (string ch)])
-      (if (and chain
-               (eq? (car chain) b)
-               (= (cadr chain) point-row)
-               (= (caddr chain) point-col)
-               (< (cadddr chain) 20))
-          (let ([text (string-append (list-ref chain 4) s)])
-            (parameterize ([suppress-history #t])
-              (insert-text-as! s (format "insert ~s" text)))
-            (set! insert-chain
-              (list b point-row point-col (+ (cadddr chain) 1) text)))
-          (begin
-            (insert-text! s)
-            (set! insert-chain (list b point-row point-col 1 s))))))
+          [chain (and (typing? (head:last-command)) insert-chain)])
+      (unless (string=? text "")
+        (if (and chain
+                 (eq? (car chain) b)
+                 (= (cadr chain) point-row)
+                 (= (caddr chain) point-col)
+                 (< (cadddr chain) 20))
+            (let ([whole (string-append (list-ref chain 4) text)])
+              (parameterize ([suppress-history #t])
+                (insert-text-as! text (format "insert ~s" whole)))
+              (set! insert-chain
+                (list b point-row point-col (+ (cadddr chain) 1) whole)))
+            (begin
+              (insert-text! text)
+              (set! insert-chain (list b point-row point-col 1 text)))))))
 
   ;;; Small commands and key description -------------------------------------
 
@@ -2076,7 +2080,7 @@
           ("RIGHT" ,move-right!) ("HOME" ,beginning-of-line!)
           ("END" ,end-of-line!) ("DELETE" ,delete-forward!)
           ("PAGEUP" ,page-up!) ("PAGEDOWN" ,page-down!)
-          ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,self-insert-command!)
+          ("PASTE" ,paste-into-buffer!) ("SELF-INSERT" ,(keymap:call type! head:typed-text))
           ("C-x C-g" ,keyboard-quit!) ("C-x C-s" ,save!)
           ("C-x C-w" ,(keymap:prefill save-file!)) ("C-x C-c" ,quit!)
           ("C-x k" ,(keymap:call kill-buffer! head:current-buffer))

@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps file-view)
   (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
-          expansion-limit filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
+          expansion-limit extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
           open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
           show-hidden sort-column! (rename (sort-order sorts)) toggle-hidden!)
   (import (chezscheme)
@@ -546,6 +546,10 @@
   (edoc "Clear the filter, every entry of the directory listed again.")
   (define (clear-filter!) (filter! ""))
 
+  (edoc "Add text to the filter, as typing does: SELF-INSERT, any character, runs it with the character typed."
+        (text string "the text to add"))
+  (define (extend-filter! text) (filter! (string-append query text)))
+
   (edoc "Create a file or a directory at a path typed at the prompt, the browsing filter set aside meanwhile."
         (prompts))
   (define (create!) (path!))
@@ -585,16 +589,16 @@
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!) (("M-c") ,create!)
       (("M-.") ,toggle-hidden!) (("C-r") ,refresh!) (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
+      (("SELF-INSERT") ,(keymap:call extend-filter! head:typed-text))
       ;; the function keys sort by the column of their number
       ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
-    ;; what the files context leaves to the app: focus, the wheel, the
-    ;; pointer, and the typed characters that grow the filter
+    ;; what the files context leaves to the app: focus, the wheel and the
+    ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (render!) #t]
           [(string=? event "WHEEL-UP") (move! -1) #t]
           [(string=? event "WHEEL-DOWN") (move! 1) #t]
-          [(tty:key-event-character event) => (lambda (c) (filter! (string-append query (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [column (column-at (head:current-window) at)])

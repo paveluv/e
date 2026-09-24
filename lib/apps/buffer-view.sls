@@ -9,7 +9,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffer-view)
-  (export choose! (rename (chosen-entry chosen)) clear-filter! erase! filter! first-row! init! last-row! next! next-row!
+  (export choose! (rename (chosen-entry chosen)) clear-filter! erase! extend-filter! filter! first-row! init! last-row! next! next-row!
           open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) sort-column!)
   (import (chezscheme)
           (prefix (foundation edoc) edoc:)
@@ -352,6 +352,10 @@
   (edoc "Clear the filter, every buffer listed again.")
   (define (clear-filter!) (filter! ""))
 
+  (edoc "Add text to the filter, as typing does: SELF-INSERT, any character, runs it with the character typed."
+        (text string "the text to add"))
+  (define (extend-filter! text) (filter! (string-append buffer-filter text)))
+
   (edoc "Sort the buffers by a column, the same column again reversing the order: 1 modified, 2 read-only, 3 buffer, 4 lines, 5 mode, 6 file; F1 to F6 sort by the column of their number."
         (column integer "the column, 1 to 6"))
   (define (sort-column! column)
@@ -380,12 +384,13 @@
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!)
       (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
+      (("SELF-INSERT") ,(keymap:call extend-filter! head:typed-text))
       ;; the function keys sort by the column of their number
       ,@(map (lambda (n) (list (list (format "F~a" n)) (keymap:call sort-column! n))) '(1 2 3 4 5 6))))
 
   (define (handle! event)
-    ;; what the buffers context leaves to the app: focus, the wheel, the
-    ;; pointer, and the typed characters that grow the filter
+    ;; what the buffers context leaves to the app: focus, the wheel and the
+    ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (refresh!) #t]
           [(member event '("WHEEL-UP" "WHEEL-DOWN"))
            (let ([target (head:app-event-focus)] [up? (string=? event "WHEEL-UP")])
@@ -394,8 +399,6 @@
                    (head:set-current! target)
                    (dispatch:global-key! (if up? "M-S-UP" "M-S-DOWN")))
                  (move-row! (if up? -1 1)))) #t]
-          [(tty:key-event-character event)
-           => (lambda (c) (filter! (string-append buffer-filter (string c))) #t)]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (head:app-event-buffer-position)]
                   [target (or (let ([e (and at (entry-at-row (car at)))]) (and (selectable? e) e))

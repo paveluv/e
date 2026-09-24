@@ -414,8 +414,10 @@ Every key of the app runs a `buffer-view:` command bound in the `buffers`
 context: `buffer-view:choose!` for Enter, `next-row!`, `previous-row!`,
 `page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
 `clear-filter!`, `(sort-column! n)` for `F1` to `F6`, `return!` and
-`paste-filter!`, so `C-x TAB` lists them and `C-h k` describes them, and M-x
-or an agent drives the app the same way: `(filter! text)` sets the filter,
+`paste-filter!`, and typing is the context's `SELF-INSERT` binding,
+`(extend-filter! text)` with the character typed, so `C-x TAB` lists them
+all and `C-h k` describes them, and M-x or an agent drives the app the same
+way: `(filter! text)` sets the filter,
 `(select! (buffer "notes.md"))` makes a listed buffer the choice, and
 `(chosen)` is the choice, a buffer or a trashed buffer's name.
 

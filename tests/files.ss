@@ -256,6 +256,10 @@
        (begin ((api 'file-view:sort-column!) 2) (let ([first ((api 'file-view:sorts))]) ((api 'file-view:sort-column!) 2) (list first ((api 'file-view:sorts)))))
        '(((2 . #f)) ((2 . #t))))
      (check 'the-api-refuses-an-unlisted-path (test:raises? (lambda () ((api 'file-view:select!) "nowhere.txt"))) #t)
+     (check 'typing-is-a-binding-of-the-files-context
+       (let ([hit (keymap:resolved-binding 'files '("SELF-INSERT"))])
+         (and hit (keymap:action-text (keymap:binding-action (cdr hit)))))
+       "(file-view:extend-filter! (head:typed-text))")
      (kill-buffer! (view))
      (for-each (lambda (name) (delete-file (path name))) names)
      (for-each (lambda (name) (delete-directory (path name))) (reverse directories))

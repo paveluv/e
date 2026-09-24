@@ -112,7 +112,9 @@
 
   ;; The short spellings the long-named keys show under, SPC for the
   ;; space; either spelling binds.
-  (define short-names '(("BACKSPACE" . "BS") ("DELETE" . "DEL") ("PAGEUP" . "PGUP") ("PAGEDOWN" . "PGDN") (" " . "SPC")))
+  (define short-names
+    '(("BACKSPACE" . "BS") ("DELETE" . "DEL") ("PAGEUP" . "PGUP") ("PAGEDOWN" . "PGDN") (" " . "SPC")
+      ("SELF-INSERT" . "any character")))
 
   (define (token-text token)
     ;; a token as shown: its modifiers, then the key's short name
@@ -123,7 +125,7 @@
         [(assoc rest short-names) => (lambda (hit) (string-append prefix (cdr hit)))]
         [else token])))
 
-  (edoc "Event tokens spelled as one key sequence, space-separated, the long-named keys short: BS, DEL, PGUP, PGDN and SPC."
+  (edoc "Event tokens spelled as one key sequence, space-separated, the long-named keys short: BS, DEL, PGUP, PGDN and SPC; SELF-INSERT reads any character."
         (sequence (list-of string) "the tokens")
         (returns string))
   (define (sequence-text sequence)
