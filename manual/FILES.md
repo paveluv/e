@@ -185,7 +185,8 @@ the `files` context to one of them: `file-view:choose!` for Enter, `enter!`,
 descriptions and `C-h k` describes one. Beside the keys, `(filter! text)`
 sets the filter that typing grows, `(select! path)` makes a listed entry the
 choice, `(chosen)` is the choice's path, `(entries)` lists what is shown as
-`(path kind)` pairs, `(location)` is the directory shown, and `(sorts)` the
+literals, `(file "path")` and `(directory "path")`, so each reads back as a
+value, `(location)` is the directory shown, and `(sorts)` the
 sort order as `(column . descending?)` pairs; `open-directory!` opens the
 pane on a directory.
 

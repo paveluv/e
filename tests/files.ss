@@ -248,7 +248,7 @@
      (define (api name) (top-level-value name))
      ((api 'file-view:filter!) "long") (settle!)
      (check 'the-api-filters-lists-and-locates
-       (list ((api 'file-view:location)) ((api 'file-view:entries))) (list root (list (list (path "a 日本語 long (name).txt") 'file))))
+       (list ((api 'file-view:location)) ((api 'file-view:entries))) (list root (list (list 'file (path "a 日本語 long (name).txt")))))
      ((api 'file-view:filter!) "") (settle!)
      ((api 'file-view:select!) "zeta.txt")
      (check 'the-api-selects-by-path-and-tells-the-choice ((api 'file-view:chosen)) (path "zeta.txt"))

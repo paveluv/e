@@ -485,10 +485,10 @@
         (returns (or string #f)))
   (define (directory-shown) location)
 
-  (edoc "The entries listed, in the order shown: (path kind) each, the kind file, directory or another of the directory service's."
+  (edoc "The entries listed, in the order shown, each as the literal denoting it, (directory \"path\") for a directory and (file \"path\") for anything else, so an entry reads back as a value."
         (returns list))
   (define (listed-entries)
-    (map (lambda (row) (list (car row) (directory:entry-kind (cdr row)))) rows))
+    (map (lambda (row) (list (if (directory:directory? (cdr row)) 'directory 'file) (car row))) rows))
 
   (edoc "The chosen entry's path in the current window, or #f without one."
         (returns (or string #f)))
