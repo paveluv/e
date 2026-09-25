@@ -1563,6 +1563,37 @@
             (let* ([before (store:revision notes)] [outcome (reload! notes '("0mega" "BETA" "GAMMA"))])
               (list (car outcome) (cadr (cadr outcome)) (= (store:revision notes) before)))
             '(applied () #t))
+     ;; the entries of one batch adjoining the overlapped one join the
+     ;; conflict, so a replacement typed as a deletion and an insertion
+     ;; conflicts whole, whichever key came first, and transitively; the
+     ;; occurrences of one replacement, apart, pend one by one
+     (define (typed-buffer text)
+       (let ([id (store:create! alice "typed" (list text))])
+         (store:set-properties! alice id (list (cons 'base (string-append text "\n")) (cons 'trailing #t)))
+         id))
+     (define (typed! id . edits)
+       (for-each (lambda (e) (store:edit! alice id (store:revision id) (car e) (cadr e)
+                               (list 'typing "typing" (cons 'labels (list (cons 'batch (list alice 1)))))))
+                 edits))
+     (define (reload-one! id disk)
+       (let ([outcome (reload! id (list disk))])
+         (list (store:line id 0) (map (lambda (c) (list (cadddr c) (list-ref c 4) (list-ref c 5))) (cadr (cadr outcome))))))
+     (define t1 (typed-buffer "abcdefgh"))
+     (typed! t1 (list (span 0 3 0 4) '("")) (list (span 0 3 0 3) '("8")))
+     (check 'a-replacement-typed-as-a-deletion-and-an-insertion-conflicts-whole
+            (reload-one! t1 "abcDefgh") '("abcDefgh" (((0 0 0 8) ("abc8efgh") ("abcDefgh")))))
+     (check 'resolving-for-mine-writes-the-typed-replacement
+            (list (car (call-with-values (lambda () (store:resolve! alice t1 1 'mine)) list)) (store:line t1 0)) '(applied "abc8efgh"))
+     (define t2 (typed-buffer "abcdefgh"))
+     (typed! t2 (list (span 0 4 0 4) '("8")) (list (span 0 3 0 4) '("")))
+     (check 'an-insertion-typed-before-the-deletion-joins-it (reload-one! t2 "abcDefgh") '("abcDefgh" (((0 0 0 8) ("abc8efgh") ("abcDefgh")))))
+     (define t3 (typed-buffer "abcdefgh"))
+     (typed! t3 (list (span 0 3 0 4) '("")) (list (span 0 3 0 3) '("8")) (list (span 0 4 0 4) '("9")))
+     (check 'the-batch-joins-transitively (reload-one! t3 "abcDefgh") '("abcDefgh" (((0 0 0 8) ("abc89efgh") ("abcDefgh")))))
+     (define t4 (typed-buffer "old and old"))
+     (typed! t4 (list (span 0 0 0 3) '("new")) (list (span 0 8 0 11) '("new")))
+     (check 'occurrences-of-one-batch-apart-pend-one-by-one
+            (reload-one! t4 "OLD and old") '("OLD and new" (((0 0 0 3) ("new") ("OLD")))))
      ;; refusals: no baseline, and a baseline the log no longer reaches
      (define loose (store:create! alice "loose" '("x")))
      (check 'a-reload-without-a-baseline-is-refused

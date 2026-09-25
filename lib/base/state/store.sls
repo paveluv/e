@@ -1550,51 +1550,176 @@
            (let-values ([(previous d) (text:apply-edit text (text:delta-span inverse) (text:delta-inserted inverse))])
              (walk previous (- (entry-revision (car entries)) 1) (cdr entries))))])))
 
+  (define token-bound 40000) ; tokens on both sides of a hunk beyond which one replacement stands for it
+
+  (define (word-char? ch) (or (char-alphabetic? ch) (char-numeric? ch) (char=? ch #\_)))
+
+  (define (blank-char? ch) (or (char=? ch #\space) (char=? ch #\tab)))
+
+  (define (tokens lines from to)
+    ;; the tokens of lines from..to as (values texts positions): runs of
+    ;; word characters, runs of blanks, any other character alone, and a
+    ;; line break after every line but the text's last, each with the
+    ;; position it starts at
+    (let ([last (- (vector-length lines) 1)])
+      (let rows ([row from] [texts '()] [positions '()])
+        (if (= row to)
+            (values (list->vector (reverse texts)) (list->vector (reverse positions)))
+            (let* ([line (vector-ref lines row)] [n (string-length line)])
+              (let scan ([i 0] [texts texts] [positions positions])
+                (if (= i n)
+                    (if (= row last)
+                        (rows (+ row 1) texts positions)
+                        (rows (+ row 1) (cons "\n" texts) (cons (cons row n) positions)))
+                    (let* ([ch (string-ref line i)]
+                           [class (cond [(word-char? ch) word-char?] [(blank-char? ch) blank-char?] [else #f])]
+                           [j (if class
+                                  (let run ([j (+ i 1)]) (if (and (< j n) (class (string-ref line j))) (run (+ j 1)) j))
+                                  (+ i 1))])
+                      (scan j (cons (substring line i j) texts) (cons (cons row i) positions))))))))))
+
   (define (edits-between base target)
     ;; the changes from one text to another as (span . replacement), each in
     ;; the first text's coordinates and bottom-up, so they apply in turn
-    ;; without shifting one another: the line diff's hunks, each refined to
-    ;; the smallest replacement within its lines, a matched line joining a
-    ;; hunk so that a side left without lines still reads as a text
+    ;; without shifting one another: the line diff's hunks, one with lines
+    ;; on both sides refined token by token, the runs between the tokens a
+    ;; patience diff matches each a replacement, so a word both texts keep
+    ;; is never inside a change and a word changed is changed whole; one
+    ;; with lines on one side only borrows a matched line, so a side left
+    ;; without lines still reads as a text
     (define na (vector-length base))
+    (define nb (vector-length target))
     (define (slice v from to)
       (let ([out (make-vector (- to from))])
         (let fill ([i from]) (when (< i to) (vector-set! out (- i from) (vector-ref v i)) (fill (+ i 1))))
         out))
-    (define (refine alo ahi blo bhi)
-      (let* ([above? (> alo 0)] [below? (and (not above?) (< ahi na))]
-             [alo (if above? (- alo 1) alo)] [blo (if above? (- blo 1) blo)]
-             [ahi (if below? (+ ahi 1) ahi)] [bhi (if below? (+ bhi 1) bhi)])
-        (let-values ([(span replacement) (text:difference (slice base alo ahi) (slice target blo bhi))])
-          (let ([start (text:span-start span)] [end (text:span-end span)])
-            (cons (text:make-span (+ (car start) alo) (cdr start) (+ (car end) alo) (cdr end)) replacement)))))
+    (define (hunk-end lines to)
+      ;; the position just past lines ..to: the next line's start, or the last line's end
+      (if (< to (vector-length lines)) (cons to 0) (let ([r (- to 1)]) (cons r (string-length (vector-ref lines r))))))
+    (define (replacement alo ahi blo bhi)
+      ;; the smallest single replacement taking the hunk's base lines to the target's
+      (let-values ([(span rep) (text:difference (slice base alo ahi) (slice target blo bhi))])
+        (let ([start (text:span-start span)] [end (text:span-end span)])
+          (cons (text:make-span (+ (car start) alo) (cdr start) (+ (car end) alo) (cdr end)) rep))))
+    (define (lent alo ahi blo bhi)
+      ;; lines added or deleted, the hunk with lines on one side only, read
+      ;; with the matched line above, or below at the top: a line break and
+      ;; the lines at the end of the line above, or the lines and a break at
+      ;; the start of the line below
+      (if (> alo 0)
+          (replacement (- alo 1) ahi (- blo 1) bhi)
+          (replacement alo (min na (+ ahi 1)) blo (min nb (+ bhi 1)))))
+    (define (token-edits alo ahi blo bhi)
+      ;; the hunk's differences token by token, top-down: the runs between
+      ;; the tokens the patience diff matches, each the base's run replaced
+      ;; by the target's; a hunk beyond the token bound is one replacement
+      (let-values ([(ta pa) (tokens base alo ahi)] [(tb pb) (tokens target blo bhi)])
+        (if (> (+ (vector-length ta) (vector-length tb)) token-bound)
+            (list (replacement alo ahi blo bhi))
+            (let ([end-a (hunk-end base ahi)] [end-b (hunk-end target bhi)])
+              (define (at positions texts end i) (if (< i (vector-length texts)) (vector-ref positions i) end))
+              (define (between s e) (text:make-span (car s) (cdr s) (car e) (cdr e)))
+              (let runs ([matches (diff:matches ta tb)] [i 0] [j 0] [edits '()])
+                (let-values ([(mi mj rest) (if (null? matches)
+                                               (values (vector-length ta) (vector-length tb) '())
+                                               (values (caar matches) (cdar matches) (cdr matches)))])
+                  (let ([edits (if (and (= i mi) (= j mj)) edits
+                                   (cons (cons (between (at pa ta end-a i) (at pa ta end-a mi))
+                                               (text:extract target (between (at pb tb end-b j) (at pb tb end-b mj))))
+                                         edits))])
+                    (if (null? matches) (reverse edits) (runs rest (+ mi 1) (+ mj 1) edits)))))))))
     (let loop ([matches (diff:matches base target)] [alo 0] [blo 0] [edits '()])
       (let-values ([(ahi bhi rest)
-                    (if (null? matches) (values na (vector-length target) '())
+                    (if (null? matches) (values na nb '())
                         (values (caar matches) (cdar matches) (cdr matches)))])
-        (let ([edits (if (and (= alo ahi) (= blo bhi)) edits (cons (refine alo ahi blo bhi) edits))])
+        (let ([edits (cond [(and (= alo ahi) (= blo bhi)) edits]
+                           [(or (= alo ahi) (= blo bhi)) (cons (lent alo ahi blo bhi) edits)]
+                           [else (fold-left (lambda (acc e) (cons e acc)) edits (token-edits alo ahi blo bhi))])])
           (if (null? matches) edits (loop rest (+ ahi 1) (+ bhi 1) edits))))))
 
   (define (edit-deltas base edits)
     ;; the edits as deltas, each from the base text alone
     (map (lambda (edit) (let-values ([(t d) (text:apply-edit base (car edit) (cdr edit))]) d)) edits))
 
-  (define (carry-chain cs ds)
+  (define (inserts-at? d position)
+    ;; whether a delta inserts at a position without removing anything
+    (let ([span (text:delta-span d)])
+      (and (equal? (text:span-start span) position) (equal? (text:span-end span) position))))
+
+  (define (opens-line? d)
+    ;; whether a delta's inserted text begins with a line break, a line
+    ;; added below the one it stands at
+    (let ([lines (text:delta-inserted d)])
+      (and (pair? lines) (pair? (cdr lines)) (string=? (car lines) ""))))
+
+  (define (removes-break? d)
+    ;; whether a delta's removed text begins with a line break
+    (let ([lines (text:delta-removed d)])
+      (and (pair? lines) (pair? (cdr lines)) (string=? (car lines) ""))))
+
+  (define (inserts-nothing? d) (equal? (text:delta-inserted d) '("")))
+
+  (define (last-char lines)
+    ;; the last character of some lines, or #f when they end in a break or are empty
+    (let ([line (list-ref lines (- (length lines) 1))])
+      (and (> (string-length line) 0) (string-ref line (- (string-length line) 1)))))
+
+  (define (first-char lines)
+    (let ([line (car lines)]) (and (> (string-length line) 0) (string-ref line 0))))
+
+  (define (glue? before after)
+    ;; whether two texts placed one after the other fuse into one word
+    (let ([a (and (pair? before) (last-char before))] [b (and (pair? after) (first-char after))])
+      (and a b (word-char? a) (word-char? b))))
+
+  (define (colliding? c d joins?)
+    ;; whether an entry inserting at a point and a disk delta meeting it
+    ;; there cannot pass each other: both inserting the same text, one copy
+    ;; enough; texts that would fuse into one word, whichever goes first;
+    ;; a line the entry opens at a break the disk removes to join two
+    ;; lines, which would run the entry's line into the joined one; or the
+    ;; entry appending to text the disk deleted, a word or a line's end
+    (let* ([point (text:span-start (text:delta-span c))]
+           [span (text:delta-span d)] [start (text:span-start span)] [end (text:span-end span)]
+           [c-text (text:delta-inserted c)] [d-text (text:delta-inserted d)])
+      (and (inserts-at? c point)
+           (cond
+             [(inserts-at? d point)
+              (or (equal? c-text d-text)
+                  (if (and (opens-line? d) (not (opens-line? c))) (glue? c-text d-text) (glue? d-text c-text)))]
+             [(equal? start point)
+              (or (glue? c-text d-text)
+                  (and joins? (opens-line? c) (removes-break? d) (not (opens-line? d))))]
+             [(equal? end point)
+              (if (inserts-nothing? d)
+                  (let ([last (last-char (text:delta-removed d))]) (and last (not (blank-char? last)) (> (cdr point) 0)))
+                  (glue? d-text c-text))]
+             [else #f]))))
+
+  (define (carry-chain cs ds joins)
     ;; two chains from one text carried across each other, the disk's first
-    ;; where both insert at one point: (values carried ds*), the entries'
-    ;; deltas in the disk's coordinates and the disk's in the entries', or
-    ;; (values #f (index . disk-index)) naming the first entry a disk delta
-    ;; overlaps and which one
-    (let loop ([cs cs] [ds ds] [i 0] [carried '()])
+    ;; where both insert at one point, unless the disk's opens a line there
+    ;; and the entry's continues it, typing at a line's end staying on its
+    ;; line: (values carried ds*), the entries' deltas in the disk's
+    ;; coordinates and the disk's in the entries', or (values #f (index .
+    ;; disk-index)) naming the first entry a disk delta overlaps or collides
+    ;; with and which one; joins says of each disk delta whether its span
+    ;; ends inside a line
+    (let loop ([cs cs] [ds (map cons ds joins)] [i 0] [carried '()])
       (if (null? cs)
-          (values (reverse carried) ds)
+          (values (reverse carried) (map car ds))
           (let carry ([c (car cs)] [rest ds] [j 0] [moved '()])
             (cond
               [(null? rest) (loop (cdr cs) (reverse moved) (+ i 1) (cons c carried))]
+              [(colliding? c (car (car rest)) (cdr (car rest))) (values #f (cons i j))]
               [else
-               (let ([c2 (text:rebase-delta c (car rest))] [d2 (text:rebase-delta (car rest) c 'stay)])
+               (let* ([d (car (car rest))]
+                      [point (text:span-start (text:delta-span c))]
+                      [continues? (and (inserts-at? c point) (inserts-at? d point) (opens-line? d) (not (opens-line? c)))]
+                      [c2 (if continues? (text:rebase-delta c d 'stay) (text:rebase-delta c d))]
+                      [d2 (if continues? (text:rebase-delta d c) (text:rebase-delta d c 'stay))])
                  (if (and c2 d2)
-                     (carry c2 (cdr rest) (+ j 1) (cons d2 moved))
+                     (carry c2 (cdr rest) (+ j 1) (cons (cons d2 (cdr (car rest))) moved))
                      (values #f (cons i j))))])))))
 
   (define (plan-disabling b actor targets origin-of)
@@ -1637,35 +1762,104 @@
           (let ([s (text:span-start (car spans))] [e (text:span-end (car spans))])
             (loop (cdr spans) (if (text:position<? s start) s start) (if (text:position<? end e) e end))))))
 
-  (define (steps-region steps)
-    ;; the region the planned inverses leave, oldest first, in the text after them
-    (let loop ([steps steps] [spans '()])
-      (if (null? steps) (span-union spans)
-          (let ([d (cadr (car steps))])
-            (loop (cdr steps) (cons (result-span d) (map (lambda (s) (rebase-mark-value s d)) spans)))))))
+  (define (entry-batch entry)
+    ;; the batch label an entry carries, or #f
+    (cond [(assq 'batch (entry-labels entry)) => cdr] [else #f]))
 
-  (define (settle-overlaps! b id actor basis ds)
+  (define (spans-touch? a b)
+    ;; whether two spans overlap or share an end
+    (and (not (text:position<? (text:span-end a) (text:span-start b)))
+         (not (text:position<? (text:span-end b) (text:span-start a)))))
+
+  (define (batch-mates b chain blocker)
+    ;; the blocker with the entries of its batch whose text adjoins its own
+    ;; in the current text, transitively: a replacement typed as a deletion
+    ;; and an insertion conflicts whole, both sides shown, while entries
+    ;; apart, the occurrences of one replacement say, pend one by one
+    (let ([batch (entry-batch blocker)])
+      (if (not batch) (list blocker)
+          (let grow ([members (list blocker)] [region (current-span-of b blocker)]
+                     [others (filter (lambda (e) (and (not (= (entry-revision e) (entry-revision blocker))) (equal? (entry-batch e) batch)))
+                                     (map (lambda (e) (entry-at b (entry-revision e))) chain))])
+            (let-values ([(joining apart) (partition (lambda (e) (spans-touch? (current-span-of b e) region)) others)])
+              (if (null? joining) members
+                  (grow (append members joining)
+                        (span-union (cons region (map (lambda (e) (current-span-of b e)) joining)))
+                        apart)))))))
+
+  (define (settle-overlaps! b id actor basis ds joins)
     ;; the entries since the basis a disk delta overlaps, disabled one at a
-    ;; time with their dependents until the whole effective chain carries;
-    ;; the pending conflicts, (revision actor labels mine region), newest
-    ;; first, mine the text the entry and its dependents left and region
-    ;; where the inverses left the disk's side, in the text after them
-    (let settle ([conflicts '()])
+    ;; time with their batch mates and dependents until the whole effective
+    ;; chain carries: (blocker disk-index inverse-revisions) per conflict,
+    ;; newest first, the index that of the disk delta the blocker met and
+    ;; the revisions those of the inverses installed for it
+    (let settle ([disabled '()])
       (let* ([since (or (entries-since b basis) (error 'reload! "the log no longer reaches the baseline" basis))]
              [chain (or (effective-chain since) (error 'reload! "the log since the baseline cannot be carried" basis))])
-        (let-values ([(carried outcome) (carry-chain (map entry-delta chain) ds)])
+        (let-values ([(carried outcome) (carry-chain (map entry-delta chain) ds joins)])
           (if carried
-              conflicts
+              disabled
               (let* ([blocker (entry-at b (entry-revision (list-ref chain (car outcome))))]
                      [first-revision (+ (buffer-revision b) 1)])
                 (let-values ([(steps targets)
-                              (plan-disabling b actor (list blocker)
+                              (plan-disabling b actor (batch-mates b chain blocker)
                                 (lambda (target) (list 'reload actor first-revision (entry-revision target))))])
                   (unless steps (error 'reload! "an entry a disk change overlaps cannot be disabled" targets))
-                  (let ([mine (text:extract (buffer-text b) (span-union (map (lambda (t) (current-span-of b t)) targets)))])
-                    (install-disabling! b id actor steps targets #f)
-                    (settle (cons (list (entry-revision blocker) (entry-actor blocker) (entry-labels blocker) mine (steps-region steps))
-                                  conflicts))))))))))
+                  (install-disabling! b id actor steps targets #f)
+                  (settle (cons (list blocker (cdr outcome)
+                                      (let count ([r (buffer-revision b)] [acc '()])
+                                        (if (< r first-revision) acc (count (- r 1) (cons r acc)))))
+                                disabled)))))))))
+
+  (define (spans-overlap? a b)
+    ;; whether two spans share content: a point strictly inside the other
+    ;; counts, a shared end alone does not
+    (let ([as (text:span-start a)] [ae (text:span-end a)] [bs (text:span-start b)] [be (text:span-end b)])
+      (cond
+        [(and (equal? as ae) (equal? bs be)) #f]
+        [(equal? as ae) (and (text:position<? bs as) (text:position<? as be))]
+        [(equal? bs be) (and (text:position<? as bs) (text:position<? bs ae))]
+        [else (and (text:position<? as be) (text:position<? bs ae))])))
+
+  (define (widen-over region ds)
+    ;; the region grown over the deltas sharing content with it, until none does
+    (let grow ([region region] [ds ds])
+      (let-values ([(overlapping apart) (partition (lambda (d) (spans-overlap? region (text:delta-span d))) ds)])
+        (if (null? overlapping) region
+            (grow (span-union (cons region (map text:delta-span overlapping))) apart)))))
+
+  (define (absorb-region region d)
+    ;; a region carried across an edit of its own side: moved past it and
+    ;; widened over what it wrote, an insertion at the region's edge included
+    (if (spans-touch? region (text:delta-span d))
+        (let ([start (text:rebase-position (text:span-start region) d 'stay)]
+              [end (text:rebase-position (text:span-end region) d)])
+          (span-union (list (text:make-span (car start) (cdr start) (car end) (cdr end)) (result-span d))))
+        (rebase-mark-value region d)))
+
+  (define (pending-conflicts b before disabled ds*)
+    ;; the conflicts as (revision actor labels mine region disk-index),
+    ;; newest first: each one region of the text with the disabled entries
+    ;; inverted, the footprint of a conflict's inverses with the span of the
+    ;; disk delta the blocker met, widened over the disk deltas sharing
+    ;; content with it, whose two images are the sides; the disk's
+    ;; is read where the disk's deltas leave the region, and mine is the
+    ;; text before any inversion over the region carried back through every
+    ;; inverse, those of this conflict absorbing it, so keeping mine writes
+    ;; back exactly what this side had there
+    (let* ([revisions (apply append (map caddr disabled))]
+           [inverses (filter (lambda (e) (memv (entry-revision e) revisions)) (buffer-deltas b))])
+      (map (lambda (conflict)
+             (let* ([blocker (car conflict)]
+                    [met (cadr conflict)]
+                    [own (map (lambda (r) (entry-at b r)) (caddr conflict))]
+                    [region (widen-over (span-union (cons (text:delta-span (list-ref ds* met)) (map (lambda (e) (current-span-of b e)) own))) ds*)]
+                    [mine (fold-left (lambda (region e)
+                                       (let ([d (text:invert-delta (entry-delta e))])
+                                         (if (memq e own) (absorb-region region d) (rebase-mark-value region d))))
+                                     region inverses)])
+               (list (entry-revision blocker) (entry-actor blocker) (entry-labels blocker) (text:extract before mine) region met)))
+           disabled)))
 
   (define (result-span d)
     ;; the region a delta's replacement occupies in the text after it
@@ -1684,7 +1878,8 @@
     ;; the disk's text as the baseline and the carried entries as the log,
     ;; renumbered above a fresh baseline revision; undo groups follow their
     ;; entries, marks and older conflicts cross the disk's changes, and each
-    ;; pending conflict takes its region as the disk left it
+    ;; pending conflict takes its region as the disk left it: the fresh
+    ;; conflict records, newest first
     (let* ([base-revision (+ (buffer-revision b) 1)]
            [mapping (make-eq-hashtable)])
       (let-values ([(text entries)
@@ -1716,14 +1911,21 @@
                  (buffer-undo b))))
         (buffer-marks-set! b (map (lambda (entry) (cons (car entry) (fold-left rebase-mark-value (cdr entry) ds*))) (buffer-marks b)))
         (for-each (lambda (c) (conflict-span-set! c (fold-left carry-region (conflict-span c) ds*))) (buffer-conflicts b))
-        (let ([fresh (map (lambda (p)
-                            (let ([region (fold-left carry-region (list-ref p 4) ds*)])
-                              (make-conflict (car p) (cadr p) (caddr p) region (cadddr p) (text:extract text region))))
-                          pending)])
-          (buffer-conflicts-set! b (append fresh (buffer-conflicts b))))
-        (enqueue-event! `(reset ,id ,base-revision ,actor)))))
+        ;; a conflict whose sides agree, both made the same change, is settled by itself
+        (let ([fresh (filter (lambda (c) (not (equal? (conflict-mine c) (conflict-disk c))))
+                       (map (lambda (p)
+                              ;; the region as the disk's deltas leave it, the one the blocker met absorbed
+                              (let ([region (let carry ([ds ds*] [k 0] [region (list-ref p 4)])
+                                              (cond [(null? ds) region]
+                                                    [(= k (list-ref p 5)) (carry (cdr ds) (+ k 1) (absorb-region region (car ds)))]
+                                                    [else (carry (cdr ds) (+ k 1) (carry-region region (car ds)))]))])
+                                (make-conflict (car p) (cadr p) (caddr p) region (cadddr p) (text:extract text region))))
+                            pending))])
+          (buffer-conflicts-set! b (append fresh (buffer-conflicts b)))
+          (enqueue-event! `(reset ,id ,base-revision ,actor))
+          fresh))))
 
-  (edoc "Reload a buffer from its file: the disk's text becomes the baseline and the entries since the old one, the base fact, are reapplied on top, carried across the disk's changes; an entry a disk change overlaps is disabled with what depends on it and pends as a conflict, the disk's side standing; the facts commit with the text: (values applied (revision conflicts)), the conflicts as store:conflicts lists them; refused no-base without a baseline, refused basis-too-old when the log no longer reaches it, or a write refusal."
+  (edoc "Reload a buffer from its file: the disk's text becomes the baseline and the entries since the old one, the base fact, are reapplied on top, carried across the disk's changes; an entry a disk change overlaps is disabled with what depends on it and with the entries of its batch adjoining it, a replacement typed as a deletion and an insertion whole, and pends as a conflict, the disk's side standing and this side's kept, both the images of one region of the text before either change, unless they agree; the facts commit with the text: (values applied (revision conflicts)), the conflicts as store:conflicts lists them; refused no-base without a baseline, refused basis-too-old when the log no longer reaches it, or a write refusal."
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
@@ -1748,15 +1950,21 @@
                  [(not basis) (values 'refused 'basis-too-old)]
                  [else
                   (let* ([ds (edit-deltas base-lines (edits-between base-lines disk))]
-                         [pending (if (null? ds) '() (settle-overlaps! b id actor basis ds))])
-                    (unless (null? ds)
-                      (let ([chain (effective-chain (entries-since b basis))])
-                        (let-values ([(carried ds*) (carry-chain (map entry-delta chain) ds)])
-                          (rebaseline! b id actor disk chain carried ds* pending))))
+                         ;; a disk delta ending inside a line joins that line to what it keeps before it
+                         [joins (map (lambda (d)
+                                       (let ([end (text:span-end (text:delta-span d))])
+                                         (< (cdr end) (string-length (vector-ref base-lines (car end))))))
+                                     ds)]
+                         [before (buffer-text b)]
+                         [disabled (if (null? ds) '() (settle-overlaps! b id actor basis ds joins))]
+                         [fresh (if (null? ds) '()
+                                    (let ([chain (effective-chain (entries-since b basis))])
+                                      (let-values ([(carried ds*) (carry-chain (map entry-delta chain) ds joins)])
+                                        (rebaseline! b id actor disk chain carried ds* (pending-conflicts b before disabled ds*)))))])
                     (install-properties! b updates)
                     (refresh-edit-facts! b (pair? ds))
                     (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
-                    (values 'applied (list (buffer-revision b) (map conflict-data (list-head (buffer-conflicts b) (length pending))))))]))])))))
+                    (values 'applied (list (buffer-revision b) (map conflict-data fresh))))]))])))))
 
   (edoc "A buffer's pending reload conflicts, newest first, (revision actor labels region mine disk) each: the disabled entry's revision, actor and labels, the region its disk change occupies in the current text, the lines the entry's side left there, and the lines the disk put there."
         (id integer "the buffer id")

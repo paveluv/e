@@ -16,6 +16,7 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
+             (rename (only (head edit) init!) (init! edit-init!))
              (head literal)
              (prefix (apps delta-log) delta-log:)
              (prefix (foundation edoc) edoc:)
@@ -142,6 +143,28 @@
      (check 'conflicts-without-any-pending-shows-the-log (list (delta-log:conflicts!) (rows)) '(0 ("no entries")))
      (dispatch:key! "ESC")
      (check 'esc-closes-the-browser (head:buffer-named "<delta-log>") #f)
+
+     ;; a replacement typed as a backspace and a character is one batch, and
+     ;; the reload conflicts it whole: the disk's side stands, both sides are
+     ;; listed, and keeping mine writes the typed side
+     (edit-init!)
+     (define path2 (string-append dir "/typed.txt"))
+     (file:write! path2 (file:lines "abcdefgh\n") #t)
+     (visit-file! path2)
+     (define t (head:current-buffer))
+     (head:goto! '(0 . 4))
+     (dispatch:key! "BACKSPACE")
+     (dispatch:key! #\8)
+     (file:write! path2 (file:lines "abcDefgh\n") #t)
+     (visit-file! path2)
+     (define typed (delta-log:conflicts))
+     (check 'a-typed-replacement-conflicts-whole-with-the-disks-side-standing
+       (list (vector->list (head:buffer-lines t)) (map (lambda (c) (list (cadddr c) (list-ref c 4) (list-ref c 5))) typed))
+       '(("abcDefgh") (((0 0 0 8) ("abc8efgh") ("abcDefgh")))))
+     (check 'keeping-mine-writes-the-typed-replacement
+       (list (delta-log:resolve! (car (car typed)) 'mine) (vector->list (head:buffer-lines t))) '(applied ("abc8efgh")))
+     (delete-file path2)
+     (head:show-buffer! b)
 
      ;; reread adopts the disk verbatim
      (write-disk! "fresh\n")

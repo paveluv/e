@@ -186,11 +186,26 @@ status line with red `!!`.
 Reopening an already visited file that changed on disk **reloads** it: the
 disk's text becomes the baseline again, and the buffer's own entries since
 the old baseline are reapplied on top, carried across the disk's changes with
-the geometry that carries concurrent editors' edits across each other.
-Changes that touch different text combine silently, character by character.
+the geometry that carries concurrent editors' edits across each other. The
+disk's changes are inferred by a diff of lines, each changed stretch then
+refined token by token, a word, a run of blanks, a punctuation character or
+a line break being the unit, so a reindent, a formatter's line split or a
+rename on the rest of a line combines with your edits there, and a word
+both actors changed conflicts as a word. Changes that touch different
+tokens combine silently, and the same change made by both stands once.
+Where the two texts meet at one point, what would fuse into one word
+conflicts instead, as does a line opened where the disk joined two lines,
+and text appended to a line or a word the disk deleted; typing at the end
+of the line above an added or deleted line stays on its line.
 An entry the disk's change overlaps is disabled and pends as a **conflict**:
 the disk's side stands in the text, which stays consistent at every moment,
-and the entry's side is kept. `(delta-log:conflicts)` lists them with both
+and the entry's side is kept. The entries of its batch whose text adjoins it
+join the conflict, so a replacement typed as a backspace and a character
+conflicts whole, both sides shown, while the occurrences of one `replace!`
+pend one by one. Both sides are the two images of one region of the text
+before either change, so keeping either gives a clean text, and a conflict
+whose sides agree, both actors having made the same change, settles itself.
+`(delta-log:conflicts)` lists them with both
 sides; `(delta-log:flip! (conflict n))` shows the entry's side in place, in a
 read-only `<flip: name>` buffer where the buffer was, and again returns to the
 buffer; `(delta-log:resolve! (conflict n) 'mine)` writes the entry's side over
