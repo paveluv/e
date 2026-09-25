@@ -15,7 +15,7 @@
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:) (prefix (head dispatch) dispatch:)
              (prefix (apps buffet) buffet:)
-             (prefix (foundation string) string:) (prefix (test) test:))
+             (prefix (foundation string) string:) (prefix (state store) store:) (prefix (test) test:))
 
      (define check test:check)
      ;; the app's keys are bound in its mode's context by its install
@@ -191,6 +191,28 @@
      (head:show-buffer! origin)
      (kill-buffer! (buffer "<picker-gamma>"))
      (kernel:retract-module! 'picker-fixture)
+
+     ;; The backups: a version a save wrote over sits under its own heading,
+     ;; with the file it came from, and Enter restores it too
+     (store:create! head:ui-actor "notes.txt.bak" '("old notes")
+       `((trashed ,(time-second (current-time 'time-utc)) ,head:ui-actor) (backup "/tmp/notes.txt" #f "sha256:0")))
+     (buffet:open!)
+     (buffet:filter! "notes.txt.bak")
+     (check 'the-backups-list-under-their-own-heading-with-the-file
+       (let ([lines (rows)] [line (row-of "notes.txt.bak")])
+         (list (and (member "Backups: Enter restores" lines) #t)
+               (and line (string:search line "backup" 0 (string-length line)) #t)
+               (and line (string:search line "/tmp/notes.txt" 0 (string-length line)) #t)
+               (and (member "Trash: Enter restores" lines) #t)))
+       '(#t #t #t #f))
+     (press! "END" "RET")
+     (check 'enter-on-a-backup-row-restores-it
+       (list (head:buffer-name (head:current-buffer)) (vector->list (head:buffer-lines (head:current-buffer))))
+       '("notes.txt.bak" ("old notes")))
+     (buffet:open!)
+     (check 'a-restored-backup-leaves-the-backups-section (and (member "Backups: Enter restores" (rows)) #t) #f)
+     (press! "C-g")
+     (kill-buffer! (buffer "notes.txt.bak"))
      ;; the app as an API: the filter set, a buffer chosen, the choice told
      (buffet:open!)
      (buffet:filter! "picker-b")

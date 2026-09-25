@@ -3,7 +3,7 @@
 ;; A live table of the head's buffers behind both switching keys, with a
 ;; name and path filter, ordered column sorts, modification clocks and a
 ;; candidate kept by buffer identity, each window with its own; below the
-;; live rows the trash, dimmed, one key from restoring.  The app handler
+;; live rows the backups and the trash, dimmed, one key from restoring.  The app handler
 ;; receives the events the dispatcher sends, so the suite drives it
 ;; headless.
 
@@ -30,7 +30,7 @@
   ;;; The model -------------------------------------------------------------------
 
   (define view #f)
-  (define rows '())                 ; the listed entries: buffers, then the trash heading and its rows
+  (define rows '())                 ; the listed entries: buffers, then the backups and the trash under their headings
   (define buffer-filter "")
   (define buffer-sorts '())         ; (column . descending?) in priority order
   (define columns
@@ -39,11 +39,13 @@
   (define first-row 2)              ; sticky filter and column headings
   (define filter-label "Filter: ")
   (define trash-heading "Trash: Enter restores")
+  (define backups-heading "Backups: Enter restores")
   (define-record-type choice (fields (mutable origin) (mutable selected) (mutable columns)))
   (define choices (make-weak-eq-hashtable))
   ;; A trashed buffer's row keeps its identity across refreshes, so a
-  ;; selection or a hover on it survives the next rebuild.
-  (define-record-type trashed (fields name killed-at))
+  ;; selection or a hover on it survives the next rebuild; a backup's row
+  ;; carries the path of the file whose version it holds.
+  (define-record-type trashed (fields name killed-at path))
   (define trash-entries (make-hashtable string-hash string=?))
   ;; The pointer targets an entry or a column number in one window. A
   ;; hovered entry takes precedence over that window's keyboard candidate;
@@ -63,9 +65,13 @@
             [(eq? (car left) entry) row]
             [else (loop (cdr left) (+ row 1))])))
 
+  (define (heading-of entry)
+    ;; a section's heading text, or #f for a buffer's or a trashed row
+    (case entry [(trash) trash-heading] [(backups) backups-heading] [else #f]))
+
   (define (selectable? entry)
-    ;; the trash heading is a row, not a candidate
-    (and entry (not (eq? entry 'trash))))
+    ;; a heading is a row, not a candidate
+    (and entry (not (heading-of entry))))
 
   (define (column-at w at)
     ;; Sorting and hover share the column's padded hit area; gaps are inert.
@@ -97,7 +103,7 @@
              (let ([entry (entry-at-row row)])
                (cond [(zero? row) 'plain]
                      [(< row first-row) 'header]
-                     [(eq? entry 'trash) 'chrome]
+                     [(heading-of entry) 'chrome]
                      [(trashed? entry) 'ghost]
                      [(not entry) 'chrome]
                      [(head:buffer-modified entry) 'italic]
@@ -123,22 +129,29 @@
           [else (format "~a d" (quotient seconds 86400))]))
 
   (define (trash-data e now retention)
-    ;; a trashed buffer's columns: how long ago it was killed, its name, and
-    ;; how long it stays before the base deletes it
+    ;; a trashed buffer's columns: how long ago it was killed, or a backup
+    ;; read, its name, its kind, then a backup's file or how long a trashed
+    ;; buffer stays before the base deletes it
     (let ([left (- (+ (trashed-killed-at e) (* retention 86400)) now)])
       (vector (string-append (age-text (max 0 (- now (trashed-killed-at e)))) " ago") "" (trashed-name e) ""
-              "trash" (if (> left 0) (string-append (age-text left) " left") "expiring"))))
+              (if (trashed-path e) "backup" "trash")
+              (cond [(trashed-path e)] [(> left 0) (string-append (age-text left) " left")] [else "expiring"]))))
 
   (define (trash-rows)
-    ;; the trash as rows, newest first, each name keeping its record
+    ;; the trash, then the backups, as rows, each newest first and each
+    ;; name keeping its record
     (let ([fresh (make-hashtable string-hash string=?)])
       (let ([entries
              (map (lambda (t)
                     (let* ([name (car t)] [old (hashtable-ref trash-entries name #f)]
-                           [e (if (and old (= (trashed-killed-at old) (cadr t))) old (make-trashed name (cadr t)))])
+                           [e (if (and old (= (trashed-killed-at old) (cadr t)) (equal? (trashed-path old) (caddr t)))
+                                  old
+                                  (make-trashed name (cadr t) (caddr t)))])
                       (hashtable-set! fresh name e)
                       e))
-                  (edit:trash))])
+                  (append (map (lambda (t) (list (car t) (cadr t) #f)) (edit:trash))
+                          ;; a backup as (name path observed ...): its time is the read
+                          (map (lambda (b) (list (car b) (caddr b) (cadr b))) (edit:backups))))])
         (set! trash-entries fresh)
         entries)))
 
@@ -171,16 +184,16 @@
     (refresh!))
 
   (define (matches? entry)
-    ;; live rows by name, path and shown path; trash rows by name
+    ;; live and backup rows by name, path and shown path; trash rows by name
     (let ([data (cdr entry)])
       (exists (lambda (s) (string:search s buffer-filter 0 (string-length s) #t))
-        (if (trashed? (car entry))
+        (if (and (trashed? (car entry)) (not (trashed-path (car entry))))
             (list (vector-ref data 2))
             (list (vector-ref data 2) (vector-ref data 5) (cell data 5))))))
 
   (define (table-lines entries all width)
     ;; the fitted rows for one window: the filter line, the headings, then
-    ;; the entries, the trash under its own heading
+    ;; the entries, the backups and the trash under their own headings
     (let-values ([(row cols) (table:layout columns buffer-sorts (map cdr all) cell width)])
       (values
         (cons* (let* ([label filter-label] [n (glyph:cells label)])
@@ -189,7 +202,8 @@
           (row #f)
           (if (null? entries) (list (glyph:fit "No matching buffers" width))
               (map (lambda (entry)
-                     (if (eq? (car entry) 'trash) (glyph:fit trash-heading width) (row (cdr entry))))
+                     (cond [(heading-of (car entry)) => (lambda (text) (glyph:fit text width))]
+                           [else (row (cdr entry))]))
                    entries)))
         cols)))
 
@@ -200,7 +214,7 @@
       (string:join (map heading (iota 6)) "  ")
       (if (null? entries) '("No matching buffers")
           (map (lambda (entry)
-                 (if (eq? (car entry) 'trash) trash-heading
+                 (or (heading-of (car entry))
                      (let ([line (string:join (map (lambda (i) (cell (cdr entry) i)) (iota 6)) "  ")])
                        (glyph:fit line (glyph:cells line)))))
                entries))))
@@ -211,10 +225,13 @@
         (let* ([live (map (lambda (b) (cons b (buffer-data b))) (head:buffers))]
                [now (time-second (current-time 'time-utc))]
                [retention (store:trash-retention)]
-               [trash (map (lambda (e) (cons e (trash-data e now retention))) (trash-rows))]
-               [all (append live trash)]
+               [kept (map (lambda (e) (cons e (trash-data e now retention))) (trash-rows))]
+               [all (append live kept)]
                [matches (filter matches? live)]
-               [trashed (filter matches? trash)]
+               [backups (filter (lambda (entry) (and (trashed-path (car entry)) (matches? entry))) kept)]
+               [trashed (filter (lambda (entry) (and (not (trashed-path (car entry))) (matches? entry))) kept)]
+               ;; a section is its heading over its rows, or nothing
+               [section (lambda (heading entries) (if (null? entries) '() (cons (cons heading #f) entries)))]
                [entries
                 (begin
                   ;; The self row describes this publication, including its
@@ -222,9 +239,9 @@
                   (let ([self (assq view live)])
                     (when self
                       (vector-set! (cdr self) 3
-                        (+ first-row (max 1 (+ (length matches) (if (null? trashed) 0 (+ 1 (length trashed)))))))))
-                  (append (sort entry<? matches)
-                          (if (null? trashed) '() (cons (cons 'trash #f) trashed))))]
+                        (+ first-row (max 1 (+ (length matches) (length (section 'backups backups))
+                                               (length (section 'trash trashed))))))))
+                  (append (sort entry<? matches) (section 'backups backups) (section 'trash trashed)))]
                [saved (map (lambda (w)
                              (list w (choice-for w) (entry-at-row (head:window-top w))))
                         (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))])
@@ -267,7 +284,7 @@
         (let step ([row (min (max first-row (+ from delta)) last)])
           (let ([e (entry-at-row row)])
             (cond [(selectable? e) (select-row! e)]
-                  ;; the trash heading is passed over in the direction of travel
+                  ;; a heading is passed over in the direction of travel
                   [(and (>= delta 0) (< row last)) (step (+ row 1))]
                   [(> row first-row) (step (- row 1))]
                   [(< row last) (step (+ row 1))]
@@ -276,7 +293,7 @@
   (define (activate-row!)
     ;; Panel clicks change the focused window; keyboard use replaces the
     ;; list here. Both use the visible candidate: a buffer is shown, a
-    ;; trashed one restored.
+    ;; trashed one or a backup restored.
     (let* ([e (candidate (head:current-window))]
            [target (head:app-event-focus)])
       (when e
@@ -295,7 +312,7 @@
 
   ;;; The app as an API: what M-x or an agent asks and does --------------------------
 
-  (edoc "The chosen entry in the current window: a buffer, a trashed buffer's name, or #f without one."
+  (edoc "The chosen entry in the current window: a buffer, a trashed or backup buffer's name, or #f without one."
         (returns (or buffer string #f)))
   (define (chosen-entry)
     ;; read without making a window's choice record, as candidate would
@@ -311,7 +328,7 @@
       (unless (memq b rows) (error 'select! "the buffer is not listed" (head:buffer-name b)))
       (select-row! b)))
 
-  (edoc "Switch this window to the chosen buffer, or restore a chosen trashed one.")
+  (edoc "Switch this window to the chosen buffer, or restore a chosen trashed one or backup.")
   (define (choose!) (activate-row!))
 
   (edoc "Move the choice to the next buffer.")
@@ -450,7 +467,7 @@
           (refresh!)
           view)))
 
-  (edoc "Show the buffet in the current window with the most recently used other buffer selected: type to filter, arrows choose, Enter switches to the row's buffer or restores a trashed one, Esc returns.")
+  (edoc "Show the buffet in the current window with the most recently used other buffer selected: type to filter, arrows choose, Enter switches to the row's buffer or restores a trashed one or a backup, Esc returns.")
   (define (open!)
     ;; Both switch shortcuts use one app. The app itself never displaces the
     ;; previous document as the default, even after repeated quick switches.

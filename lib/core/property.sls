@@ -1,7 +1,7 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys matches? select
+  (export backup-value? context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys matches? select
           (rename (validate-properties validate)) validate-expected
           (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
@@ -44,10 +44,24 @@
                                        (or (not v)
                                            (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))
                                                 (identity:valid? (cadr v)))))]
+                          [(backup) (backup-value? (cdr entry))]
                           [else #t])
                         (valid (cdr rest) (cons (car entry) seen)))))))
       (error 'validate-properties "expected unique symbol keys and valid fact values" updates))
     updates)
+
+  (edoc "Whether a value fits a backup fact: (path stamp checksum), the file's canonical path, its modification time as (seconds . nanoseconds) or #f, and a checksum of its text; #f withdraws the fact."
+        (v any "the value")
+        (returns boolean))
+  (define (backup-value? v)
+    (or (not v)
+        (and (list? v) (= (length v) 3)
+             (string? (car v)) (> (string-length (car v)) 0)
+             (let ([stamp (cadr v)])
+               (or (not stamp)
+                   (and (pair? stamp) (integer? (car stamp)) (exact? (car stamp))
+                        (integer? (cdr stamp)) (exact? (cdr stamp)) (<= 0 (cdr stamp)) (< (cdr stamp) 1000000000))))
+             (string? (caddr v)))))
 
   (edoc "Validate facts a writer may set: not the text owner's modification facts, nor the publication identity."
         (updates list "the facts")

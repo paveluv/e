@@ -357,6 +357,12 @@
 
 
 
+     ;; -- checksums ----------------------------------------------------------
+
+     ;; a text's checksum is the digest library's SHA-256 of its UTF-8, tagged
+     (check 'a-text-checksum-is-tagged-sha256
+       (file:checksum "abc") "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+
      ;; -- clean up ------------------------------------------------------------
 
      (for-each (lambda (f) (delete-file (path f))) '("alpha" "alphabet" ".hidden"))

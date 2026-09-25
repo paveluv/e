@@ -27,7 +27,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
-  (export answer! backspace! backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
+  (export answer! backspace! backups backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
           beginning-of-line! buffer-clean? buffer-text
           call-as-one-edit! copy-region! copy-text copy-text! current-batch current-region
           delete-forward! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
@@ -1042,10 +1042,9 @@
     (unless (property:matches? review facts)
       (refuse-file! "Buffer's file or baseline changed; operation cancelled. Review the file again.")))
 
-  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, reload it first and write when no conflict pends, else stop for their resolution; where the store cannot reload, ask whether to overwrite."
+  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, reload it first and write when no conflict pends, else stop for their resolution; where the store cannot reload, reread the disk instead, undoably, and refuse. Saving onto an existing file first reads what it holds into a backup, a trashed buffer named after the file with .bak that backups lists and restore! brings back; nothing asks."
         (target file "where to write: the buffer's own file, or a new destination it visits from then on")
-        (returns boolean "whether the file was written")
-        (prompts))
+        (returns boolean "whether the file was written"))
   (define (save-file! target)
     ;; Saving is guarded by content, not clocks: the disk is read and
     ;; compared with the buffer's base (what it loaded or last saved).
@@ -1055,6 +1054,7 @@
     (define b (head:window-buffer current-window))
     (define adopted? #f)
     (define disk #f)
+    (define kept #f)
     (define (write! review)
       (define written? #f)
       (guard (ex [else (parameterize ([message-source 'save-file!])
@@ -1072,6 +1072,9 @@
           (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
                  [written (file:text text trailing)]
                  [detected (and adopted? (mode:detect path (vector-ref text 0)))])
+            ;; the version written over is kept first, as a backup
+            (when (and disk (not (string=? (car disk) written)))
+              (set! kept (back-up! path disk)))
             (file:write! path text trailing)
             (set! written? #t)
             ;; A stat after writing could belong to another disk writer.
@@ -1109,17 +1112,37 @@
              (not (and base (string=? (car disk) base))))
            (stale-save! b path disk review write!)]
           [(and disk adopted?)
-           ;; saving under a new name onto an existing file
-           (let ask ()
-             (let* ([k (prompt:key! (format "~a exists; overwrite? y)es or n)o"
-                                      (file:base-name path))
-                                    "yn")]
-                    [n (and k (char->integer k))])
-               (cond [(memv n '(121 89)) (write! review)]
-                 [(or (not n) (memv n '(110 78 7 27)))
-                  (set! message "Save cancelled") #f]
-                 [else (ask)])))]
+           ;; saving under a new name onto an existing file: what the file
+           ;; held is backed up first, and the echo says where it went
+           (and (write! review)
+                (begin
+                  (when kept
+                    (parameterize ([message-source 'save-file!])
+                      (set-message! (format "Wrote ~a; what it held is kept as ~a" path kept))))
+                  #t))]
           [else (write! review)]))))
+
+  (define (back-up! path disk)
+    ;; What a file holds before a save writes over it, kept as a backup: a
+    ;; trashed buffer named after the file with .bak, its backup fact the
+    ;; path, the file's stamp and a checksum of its text, for restore! to
+    ;; bring back and the buffet to list; a version the backups already
+    ;; hold is not kept twice. The backup's name.
+    (let* ([text (car disk)] [sum (file:checksum text)]
+           [same (find (lambda (entry)
+                         (let ([backup (list-ref entry 4)])
+                           (and (string=? (car backup) path) (string=? (caddr backup) sum))))
+                       (backup-entries))])
+      (if same
+          (cadr same)
+          (let* ([lines (file:lines text)]
+                 [detected (mode:detect path (vector-ref lines 0))]
+                 [id (store:create! head:ui-actor (string-append (file:base-name path) ".bak") lines
+                       (list (cons 'trailing (file:ends-in-newline? text))
+                             (cons 'mode (and detected (mode:name detected)))
+                             (list 'trashed (now-seconds) head:ui-actor)
+                             (list 'backup path (cdr disk) sum)))])
+            (store:buffer-name id)))))
 
   (define (reload-from-disk! b path disk)
     ;; The buffer reloaded from its file through the store: the disk's text
@@ -1360,15 +1383,18 @@
   (define (now-seconds) (time-second (current-time 'time-utc)))
 
   (define (trashed-entries)
-    ;; (id name killed-at actor), the newest kill first
+    ;; (id name killed-at actor backup), the newest kill first; backup is
+    ;; the backup fact, (path stamp checksum), of a version a save kept
     (list-sort (lambda (a b) (or (> (caddr a) (caddr b)) (and (= (caddr a) (caddr b)) (> (car a) (car b)))))
       (filter values
         (map (lambda (id)
                (let ([t (store:property id 'trashed #f)])
-                 (and t (list id (store:buffer-name id) (car t) (cadr t)))))
+                 (and t (list id (store:buffer-name id) (car t) (cadr t) (store:property id 'backup #f)))))
              (store:buffer-list)))))
 
-  (define (trashed-ids) (map car (trashed-entries)))
+  (define (trash-entries) (filter (lambda (entry) (not (list-ref entry 4))) (trashed-entries)))
+  (define (backup-entries) (filter (lambda (entry) (list-ref entry 4)) (trashed-entries)))
+  (define (trashed-ids) (map car (trash-entries)))
 
   (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
         (b buffer "the buffer to kill"))
@@ -1387,28 +1413,41 @@
                     [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
                     [else (format "Killed ~a; it is in the trash" name)])))))))
 
-  (edoc "The trashed buffers, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
+  (edoc "The trashed buffers, the backups aside, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
         (returns (list-of list)))
   (define (trash)
-    (map cdr (trashed-entries)))
+    (map (lambda (entry) (list-head (cdr entry) 3)) (trash-entries)))
 
-  (edoc-type trashed "the name of a buffer in the trash"
+  (edoc "The backups, the versions saves wrote over, newest first, as (name path observed stamp checksum actor): the file's path, when it was read in UTC seconds, its modification time then as (seconds . nanoseconds) or #f, the checksum of its text and who saved; each expires store:trash-retention days after it was read, and a file keeps store:backups-kept of them."
+        (returns (list-of list)))
+  (define (backups)
+    (map (lambda (entry)
+           (let ([backup (list-ref entry 4)])
+             (list (cadr entry) (car backup) (caddr entry) (cadr backup) (caddr backup) (cadddr entry))))
+         (backup-entries)))
+
+  (edoc-type trashed "the name of a buffer in the trash, a backup included"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
     (complete (lambda (partial)
                 (let ([now (now-seconds)])
-                  (map (lambda (entry) (cons (car entry) (format "killed ~a ago" (age-text (- now (cadr entry))))))
-                       (trash)))))
+                  (map (lambda (entry)
+                         (let ([backup (list-ref entry 4)] [ago (age-text (- now (caddr entry)))])
+                           (cons (cadr entry)
+                                 (if backup
+                                     (format "backup of ~a, ~a ago" (file:abbreviate (car backup)) ago)
+                                     (format "killed ~a ago" ago)))))
+                       (trashed-entries)))))
     (write (lambda (v) (format "~s" v)))
     (within string))
 
-  (edoc "Bring a buffer back from the trash, the newest of that name, with its text and history, and show it in the current window; it takes a unique name when another buffer holds its own."
+  (edoc "Bring a buffer back from the trash, a backup included, the newest of that name, with its text and history, and show it in the current window; it takes a unique name when another buffer holds its own."
         (name trashed "the buffer's name in the trash")
         (returns buffer))
   (define (restore! name)
     (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
       (unless entry (error 'restore! "no such buffer in the trash" name))
       (let ([id (car entry)])
-        (store:set-properties! head:ui-actor id '((trashed . #f)))
+        (store:set-properties! head:ui-actor id '((trashed . #f) (backup . #f)))
         (let ([b (head:adopt-store-buffer! id)])
           (unless b (error 'restore! "the buffer did not come back" name))
           (head:show-buffer! b)
@@ -1416,7 +1455,7 @@
             (set-message! (format "Restored ~a" (head:buffer-name b))))
           b))))
 
-  (edoc "Delete every trashed buffer for good; how many went."
+  (edoc "Delete every trashed buffer for good, the backups kept; how many went."
         (returns integer))
   (define (empty-trash!)
     (let ([ids (trashed-ids)])
@@ -1804,8 +1843,7 @@
         (file:base-name path)))
 
   (edoc "Save the current buffer to its file; a buffer without one refuses and names save-file!, which takes a path."
-        (returns boolean "whether the file was written")
-        (prompts))
+        (returns boolean "whether the file was written"))
   (define (save!)
     (if file-name
         (save-file! file-name)

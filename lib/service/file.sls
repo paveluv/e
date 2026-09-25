@@ -18,12 +18,13 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service file)
   (export abbreviate absolute add-post-save-hook! add-pre-save-hook! base-name call-with-port
-          (rename (path:canonical canonical)) complete completion create!
+          (rename (path:canonical canonical)) checksum complete completion create!
           data-directory directory-part ends-in-newline? (rename (path:expand expand)) lines
           make-directories! read read-state run-post-save-hooks! run-pre-save-hooks! stamp
           state-clean? text visit-path write!)
   (import (except (chezscheme) read expand merge call-with-port)
           (prefix (core kernel) kernel:)
+          (prefix (foundation digest) digest:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (service log) log:)
@@ -348,6 +349,14 @@
   (define (ends-in-newline? s)
     (and (> (string-length s) 0)
          (char=? (string-ref s (- (string-length s) 1)) #\newline)))
+
+  (edoc "A checksum of a text: SHA-256 over its UTF-8 bytes, as sha256: and sixty-four hex digits."
+        (s string "the text")
+        (returns string))
+  (define (checksum s)
+    ;; the digest library's SHA-256, tagged with its name so a later
+    ;; algorithm can take the place in the facts that keep one
+    (string-append "sha256:" (digest:hex (digest:sha256 s))))
 
   (define text text:to-string)
 

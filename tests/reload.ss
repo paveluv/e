@@ -190,6 +190,49 @@
      (check 'settled-conflicts-make-the-buffer-savable-again
        (list (head:buffer-conflicted b) (save!) (file:read path)) (list #f #t (string-append (string:join (lines) "\n") "\n")))
 
+     ;; Saving onto an existing file asks nothing: what the file held is read
+     ;; first into a backup, a trashed buffer named after it with .bak that
+     ;; backups lists with the path, the stamp and a checksum, and restore!
+     ;; brings back; a plain save keeps the previous version too, and a
+     ;; version the backups already hold is not kept twice
+     (define path3 (string-append dir "/other.txt"))
+     (file:write! path3 (file:lines "keep me\n") #t)
+     (define scratch (head:new-buffer! "scratch-save"))
+     (head:show-buffer! scratch)
+     (head:goto! '(0 . 0))
+     (insert-text! "new text")
+     (define (backups-of path) (filter (lambda (entry) (string=? (cadr entry) path)) (backups)))
+     (check 'a-save-as-over-a-file-backs-up-what-it-held
+       (let* ([saved (save-file! path3)] [on-disk (file:read path3)] [entry (car (backups-of path3))])
+         (list saved on-disk (head:buffer-file scratch) (car entry) (list-ref entry 4) (and (list-ref entry 3) #t)
+               (and (find (lambda (t) (string=? (car t) "other.txt.bak")) (trash)) #t)))
+       (list #t "new text\n" path3 "other.txt.bak" (file:checksum "keep me\n") #t #f))
+     (insert-text! " again")
+     (check 'a-save-backs-up-the-version-it-writes-over
+       (let* ([saved (save-file! path3)] [names (map car (backups-of path3))])
+         (list saved names))
+       '(#t ("other.txt.bak<2>" "other.txt.bak")))
+     (define (save-as-from! name text)
+       (let ([b (head:new-buffer! name)])
+         (head:show-buffer! b)
+         (head:goto! '(0 . 0))
+         (insert-text! text)
+         (save-file! path3)
+         b))
+     (define third (save-as-from! "scratch-third" "keep me"))
+     (define fourth (save-as-from! "scratch-fourth" "fourth"))
+     (check 'a-version-the-backups-hold-is-not-kept-twice
+       (list (file:read path3) (map car (backups-of path3)))
+       '("fourth\n" ("other.txt.bak<3>" "other.txt.bak<2>" "other.txt.bak")))
+     (check 'restore-brings-a-backup-back-as-a-buffer
+       (let* ([restored (restore! "other.txt.bak")])
+         (list (eq? restored (head:current-buffer)) (vector->list (head:buffer-lines restored)) (head:buffer-file restored)
+               (map car (backups-of path3))))
+       '(#t ("keep me") #f ("other.txt.bak<3>" "other.txt.bak<2>")))
+     (for-each kill-buffer! (list (head:current-buffer) fourth third scratch))
+     (head:show-buffer! b)
+     (delete-file path3)
+
      ;; reread adopts the disk as one undoable edit: undo brings the buffer back
      (define before-reread (lines))
      (write-disk! "fresh\n")

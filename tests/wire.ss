@@ -2069,14 +2069,21 @@
                          (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                          (rpc head 'delete target)))
                      '(edit:visit-file! edit:save-file!))
-                   ;; saving under a name a file holds still asks, and y writes
+                   ;; saving under a name a file holds asks nothing: what the file held
+                   ;; is kept first as a backup, a trashed buffer named after it with
+                   ;; .bak, and restore! brings it back
                    (write-text path "disk\n")
                    (let ([target (rpc head 'create "file review" '("keep") '((trailing . #t)))])
                      (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine ") #t))
                      (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                     (head-wait 'save-as-asks a (lambda () (head-sees? a "exists; overwrite?")))
-                     (head-send! a "y")
-                     (head-wait 'save-as-writes a (lambda () (string=? (call-with-input-file path get-string-all) "mine keep\n")))
+                     (head-wait 'save-as-writes-and-says-so a (lambda () (head-sees? a "saved.txt.bak")))
+                     (test:check 'a-save-as-over-a-file-keeps-what-it-held-as-a-backup
+                       (list (call-with-input-file path get-string-all)
+                             ;; the newest backup of the path, its name saved.txt.bak or a suffixed one
+                             (head-read a `(let ([kept (find (lambda (b) (equal? (cadr b) ,path)) (edit:backups))])
+                                             (and kept (string? (list-ref kept 4))
+                                                  (begin (edit:restore! (car kept)) (vector->list (head:buffer-lines (head:current-buffer))))))))
+                       '("mine keep\n" ("disk")))
                      (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                      (rpc head 'delete target)))
 

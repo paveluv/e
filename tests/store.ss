@@ -1457,6 +1457,9 @@
            (list (list 20 (list state)) '(1 ())
              ;; a wrap fact is kept: default, a boolean, clean or a clean cap
              (list 20 (list (append (list-head state 4) (list (cons '(wrap . #f) (list-ref state 4))))))
+             ;; a backup rides as a trashed buffer with its file's path, stamp and checksum
+             (list 20 (list (append (list-head state 4)
+                              (list (cons* '(trashed 5 (human alice)) '(backup "/tmp/f" (10 . 5) "sha256:0") (list-ref state 4))))))
              (list 2 (list state)) (list 0 '())
              (list 20 (list state state))
              (list 20 (list state (cons 3 (cdr state))))
@@ -1470,13 +1473,36 @@
              '(20 ((2 8 "saved" #("text") ((stamp 10 . 1000000000)))))
              '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))
              '(20 ((2 8 "saved" #("text") ((wrap . 3)))))
+             '(20 ((2 8 "saved" #("text") ((backup "/tmp/f" 10 "sum")))))
+             '(20 ((2 8 "saved" #("text") ((backup "" #f "sum")))))
              ;; a journal rides as a sixth element: entries newest first below the revision, then groups
              '(20 ((2 8 "saved" #("text") () (((8 (human alice) ((batch . 1)) ((0 0 0 0) ("") ("t")) #f ())) ()))))
              '(20 ((2 8 "saved" #("text") () (bogus))))
              '(20 ((2 8 "saved" #("text") () (((9 (human alice) () ((0 0 0 0) ("") ("t")) #f ())) ()))))
              '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) #t #f #t))))))
              '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) yes #f #t))))))))
-         (append '(#t #t #t) (make-list 14 #f) '(#t #f #f #t #f))))
+         (append '(#t #t #t #t) (make-list 16 #f) '(#t #f #f #t #f))))
+     ;; Backups: a buffer born in the trash takes a name no buffer holds, the
+     ;; trash's included, and a file keeps backups-kept versions, the oldest
+     ;; dropped as a new one arrives
+     (let* ([backup (lambda (n)
+                      (store:create! alice "f.txt.bak" (list (format "v~a" n))
+                        `((trashed ,(+ 100 n) ,alice) (backup "/tmp/f.txt" (,n . 0) ,(format "sum~a" n)))))]
+            [first (backup 1)] [second (backup 2)])
+       (check 'a-backup-born-trashed-takes-a-distinct-name
+         (list (store:buffer-name first) (store:buffer-name second) (store:visible? alice first))
+         '("f.txt.bak" "f.txt.bak<2>" #f))
+       (check 'a-bad-backup-fact-is-refused
+         (guard (ex [else 'refused]) (store:create! alice "bad.bak" '("x") '((backup "/tmp/f.txt" 10 "sum"))))
+         'refused)
+       (parameterize ([store:backups-kept 2])
+         (let ([third (backup 3)])
+           (check 'a-file-keeps-backups-kept-versions
+             (list (store:exists? first) (store:exists? second) (store:exists? third) (store:buffer-name third))
+             '(#f #t #t "f.txt.bak<3>"))
+           (store:delete! alice second)
+           (store:delete! alice third))))
+
      (let* ([id (store:create! alice "persistent" '("kept") '((trailing . #t) (mode . "scheme") (wrap . #f) (transient . ignored)))]
             [omitted (store:create! alice "generated" '("not kept") '((disposable . #t)))]
             [gap (store:create! alice "gone" '(""))])

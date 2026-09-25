@@ -20,7 +20,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export blame buffer-list buffer-name close! conflicts create! delete! discard! drop-mark! drop-property!
+  (export backups-kept blame buffer-list buffer-name close! conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
           mark marks properties property publication publish! redo! reload! rename! reread! reset! resolve! revision
@@ -275,14 +275,21 @@
 
   (define (create-buffer! actor name text updates)
     ;; Caller holds the store lock; creation and publication use one path.
-    (let* ([s (current-store)] [name (unique-name name #f)] [id (store-next-id s)])
+    ;; A buffer born in the trash, a backup, takes a name no buffer holds,
+    ;; trashed ones included: the trash's names stay distinct, as the
+    ;; session file requires, and a backup's file keeps backups-kept versions.
+    (let* ([s (current-store)]
+           [hidden? (cond [(assq 'trashed updates) => (lambda (entry) (and (cdr entry) #t))] [else #f])]
+           [name (unique-name name #f hidden?)] [id (store-next-id s)])
       (store-next-id-set! s (+ id 1))
       (let ([b (make-buffer name text 0 '() '() '() '() #f #f #f '())])
         (install-properties! b updates)
         (refresh-edit-facts! b #f)
         (hashtable-set! (store-buffers s) id b))
-      (evict-trashed-holder! actor name id)
+      (unless hidden? (evict-trashed-holder! actor name id))
       (enqueue-event! `(create ,id ,name ,actor))
+      (let ([backup (assq 'backup updates)])
+        (when (and backup (cdr backup)) (prune-backups! actor (cadr backup) id)))
       id))
 
   (define (file-id path)
@@ -498,7 +505,7 @@
   ;; the facts a session keeps: a buffer's file and baseline, its mode and
   ;; its wrap setting, which every head shares and a restart must not reset,
   ;; a terminal's transcript least of all, whose rows are its columns wide
-  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed wrap))
+  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed backup wrap))
   (define (integer-at-least? n minimum) (and (integer? n) (exact? n) (>= n minimum)))
 
   (define (persistent-facts? facts)
@@ -518,6 +525,7 @@
                         [(trashed) (let ([v (cdr entry)])
                                      (or (not v) (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))
                                                       (actor:identity? (cadr v)))))]
+                        [(backup) (property:backup-value? (cdr entry))]
                         [(stamp)
                          (let ([stamp (cdr entry)])
                            (or (not stamp)
@@ -741,7 +749,7 @@
           (and b (not (property-value b 'trashed #f))
                (actor:in-audience? actor (property-value b 'audience 'all)))))))
 
-  (edoc "How many days a trashed buffer is kept before it is deleted for good, or set it; 30 by default."
+  (edoc "How many days a trashed buffer, a backup included, is kept before it is deleted for good, or set it; 30 by default."
         (days integer "the retention in days")
         (returns integer))
   (define trash-retention
@@ -750,7 +758,7 @@
         (unless (and (integer? days) (exact? days) (>= days 1)) (error 'trash-retention "expected a positive number of days" days))
         days)))
 
-  (edoc "Delete the trashed buffers older than the retention, as the base does daily and at startup; how many went."
+  (edoc "Delete the trashed buffers older than the retention, backups included, as the base does daily and at startup; how many went."
         (actor actor "the actor identity")
         (returns integer))
   (define (expire-trash! actor)
@@ -766,6 +774,34 @@
                   (set! gone (+ gone 1)))))
             (vector->list (hashtable-keys (store-buffers (current-store)))))))
       gone))
+
+  (edoc "How many backups of one file the store keeps, the oldest dropped as a new one arrives, or set it; 10 by default."
+        (n integer "the count")
+        (returns integer))
+  (define backups-kept
+    (make-parameter 10
+      (lambda (n)
+        (unless (and (integer? n) (exact? n) (>= n 1)) (error 'backups-kept "expected a positive count" n))
+        n)))
+
+  (define (prune-backups! actor path self)
+    ;; Caller holds the store lock. The backups of one file beyond
+    ;; backups-kept go, the oldest first; self, the one just made, stays.
+    (let* ([backups
+            (filter values
+              (map (lambda (id)
+                     (let* ([b (hashtable-ref (store-buffers (current-store)) id #f)]
+                            [backup (and b (property-value b 'backup #f))]
+                            [trashed (and b (property-value b 'trashed #f))])
+                       (and backup trashed (string=? (car backup) path) (list id (car trashed)))))
+                   (vector->list (hashtable-keys (store-buffers (current-store))))))]
+           [newest-first (list-sort (lambda (a b) (or (> (cadr a) (cadr b)) (and (= (cadr a) (cadr b)) (> (car a) (car b)))))
+                           backups)])
+      (let drop ([rest newest-first] [n 0])
+        (unless (null? rest)
+          (unless (or (< n (backups-kept)) (eqv? (car (car rest)) self))
+            (delete-buffer! actor (car (car rest))))
+          (drop (cdr rest) (+ n 1))))))
 
   (edoc "A copy of a buffer's name."
         (id integer "the buffer id")

@@ -97,13 +97,27 @@ completes the trashed names, newest first with how long ago each was killed,
 and brings one back into the current window, renamed again with a suffix
 while another buffer holds its name, since several buffers may visit one
 file. `(edit:trash)` lists them as `(name killed-at actor)`, and
-`(edit:empty-trash!)` deletes them for good. The trash survives a base
-restart and empties itself by age, thirty days by default through
-`(store:trash-retention days)` in `base-config.e`. Disposable output,
-generated tools, views and terminals, is deleted outright, and a local
-buffer is simply forgotten. Killing a buffer removes its app registration,
-if any, and every window showing it changes to another live buffer. If the
-last buffer is killed, e creates a new `*scratch*` buffer.
+`(edit:empty-trash!)` deletes them for good, the backups below kept. The
+trash survives a base restart and empties itself by age, thirty days by
+default through `(store:trash-retention days)` in `base-config.e`.
+Disposable output, generated tools, views and terminals, is deleted
+outright, and a local buffer is simply forgotten. Killing a buffer removes
+its app registration, if any, and every window showing it changes to
+another live buffer. If the last buffer is killed, e creates a new
+`*scratch*` buffer.
+
+A save keeps the version it writes over. Before writing onto an existing
+file whose text differs, e reads the file into a backup: a trashed buffer
+named after the file with `.bak`, carrying the file's path, its
+modification time and a checksum of its text, the habit of copying a file
+to `file.bak` before changing it made e's own. The buffet lists the
+backups in their own section, `M-x (edit:restore! ` completes their names
+beside the trash's and brings one back as a buffer to read, copy from or
+save over the file, and `(edit:backups)` lists them as `(name path observed
+stamp checksum actor)`, newest first. A version the backups already hold is
+not kept twice; a file keeps ten versions, the oldest dropped as a new one
+arrives, `(store:backups-kept n)` in `base-config.e` sets how many, and
+backups expire with the trash's retention.
 
 Scratch text written by another actor is unsaved work too, and goes to the
 trash with its buffer. Generated tools and views declare that their output
@@ -252,8 +266,10 @@ such a file rereads it too and waits: undo, then save writes your text.
 Saving an externally changed file reloads it first and writes when no
 conflict pends. The disk comparison runs after pre-save hooks, so a hook's
 write is included in that decision, and a timestamp change with identical
-contents is accepted. Saving over an existing file under a new name still
-asks before overwriting it.
+contents is accepted. Saving under a new name onto an existing file asks
+nothing either: what the file held is backed up first, as a trashed buffer
+named after the file with `.bak`, the echo names it, and `restore!` brings
+it back.
 
 ## Undo, selections, and the copy buffer
 
@@ -422,10 +438,13 @@ also has a row when the filter is clear. Its own row can be filtered,
 sorted and opened like the others. `M-x (buffet:open!)` is the same
 command.
 
-Below the live rows, while the trash holds anything, a `Trash` section
-lists the killed shared buffers, dimmed, with how long ago each was killed
-and how long it stays before the base deletes it; the filter applies to
-their names. Enter on one restores it, as `(edit:restore! name)` does.
+Below the live rows, while saves have kept anything, a `Backups` section
+lists the versions they wrote over, dimmed, with how long ago each was read
+and the file it came from; the filter applies to their names and paths.
+Below that, while the trash holds anything, a `Trash` section lists the
+killed shared buffers, with how long ago each was killed and how long it
+stays before the base deletes it; the filter applies to their names. Enter
+on a row of either restores it, as `(edit:restore! name)` does.
 
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
@@ -528,13 +547,13 @@ context: `buffet:choose!` for Enter, `next-row!`, `previous-row!`,
 all and `C-h k` describes them, and M-x or an agent drives the app the same
 way: `(filter! text)` sets the filter,
 `(select! (buffer "notes.md"))` makes a listed buffer the choice, and
-`(chosen)` is the choice, a buffer or a trashed buffer's name.
+`(chosen)` is the choice, a buffer or a trashed or backup buffer's name.
 
 - Up / `C-p` / Shift-Tab, Down / `C-n` / Tab: move the candidate row.
 - Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.
 - Page Up / `M-v`, Page Down / `C-v`: move by a page of rows.
 - Enter: show the candidate row's buffer in this window, completing the
-  switch in place; on a trash row, restore that buffer.
+  switch in place; on a backup or trash row, restore that buffer.
 - Esc / C-g: return to the invoking document; C-u: clear the filter.
 - F1–F6: cycle sorting for Modified, RO, Buffer, Lines, Mode and File.
 - Move the pointer over a row: emphasize that candidate without taking focus.
