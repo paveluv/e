@@ -23,7 +23,7 @@
           app-facts app-following? app-handle-event! app-manages-window-viewport? app-of
           app-refresh! app-refresh-error app-refresh-error-set! app-status
           app? before-frame! buffer buffer-append! buffer-base
-          buffer-base-set! buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
+          buffer-base-set! buffer-conflicted buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
           buffer-file-set! buffer-line buffer-line-count
           buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
           buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
@@ -32,8 +32,7 @@
           buffer-narrowest-width buffer-of-store-id buffer-placements buffer-point
           buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision
           buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set!
-          buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stale
-          buffer-stale-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines
+          buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines
           buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
           bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
@@ -63,7 +62,7 @@
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reload! store-reset! store-resolve! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
+          store-reload! store-reread! store-reset! store-resolve! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
           typed-text
           ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
@@ -1490,17 +1489,11 @@
   (define (buffer-base-set! b v)
     (buffer-fact-set! b 'base v))
 
-  (edoc "A buffer's stale fact: whether its file changed on disk since."
+  (edoc "Whether a buffer has reload conflicts pending, the red !! of its status line: its conflicts fact, the store's count, above zero."
         (b buffer "the buffer")
         (returns boolean))
-  (define (buffer-stale b)
-    (buffer-fact b 'stale #f))
-
-  (edoc "Set a buffer's stale fact."
-        (b buffer "the buffer")
-        (v boolean "the new value"))
-  (define (buffer-stale-set! b v)
-    (buffer-fact-set! b 'stale v))
+  (define (buffer-conflicted b)
+    (> (buffer-fact b 'conflicts 0) 0))
 
   (define (local-name name)
     ;; Locality is visible in every label, including user renames.
@@ -1989,6 +1982,22 @@
        (let-values ([(status detail)
                      (guard (ex [else (values 'refused 'store-unavailable)])
                        (store:reload! ui-actor (buffer-store-id b) lines facts 'any))])
+         (when (eq? status 'applied)
+           (sync-store-buffer! b)
+           (flush-ui-audit! (buffer-store-id b)))
+         (values status detail))]))
+
+  (edoc "Reread a shared buffer from its file through the store, the disk's text one undoable edit of this head's settling the pending conflicts, adopting the result: (values status detail), applied with the revision, refused, or nothing for a local buffer."
+        (b buffer "the buffer")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit"))
+  (define (store-reread! b lines facts)
+    (cond
+      [(not (buffer-store-id b)) (values 'nothing #f)]
+      [else
+       (let-values ([(status detail)
+                     (guard (ex [else (values 'refused 'store-unavailable)])
+                       (store:reread! ui-actor (buffer-store-id b) lines facts 'any))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))

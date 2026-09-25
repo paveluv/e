@@ -9,7 +9,7 @@
   ;; Maintained by the text owner and carried with incremental edit replies.
   (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."
         (value (list-of symbol)))
-  (define edit-keys '(modified modified-at))
+  (define edit-keys '(modified modified-at conflicts))
 
   (edoc "Check a batch of (key . value) facts before either owner installs any of it; an error names the fault."
         (updates list "the facts"))

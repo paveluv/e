@@ -26,7 +26,7 @@
           (rename (policy-grants grants)) live (rename (make-policy make)) mint! policy?
           (rename (reader-policy reader)) revoke! revoke-actor! revoked? session-actor
           session-answer! session-ask! session-cancel! session-edit! session-eval!
-          session-history-step! session-owner session-redo! session-reload! session-resolve! session-rewrite! session-send!
+          session-history-step! session-owner session-redo! session-reload! session-reread! session-resolve! session-rewrite! session-send!
           session-undo! session? sessions)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
@@ -303,8 +303,9 @@
     (if (revoked? s) (values 'refused 'revoked)
         (let-values ([(status detail)
                       (transact (session-actor s) (policy-buffers-raw (session-policy s)))])
+          ;; an applied receipt begins with its revision; a resolution or a reread is the revision alone
           (audit! (list operation (session-actor s) id status
-                        (if (eq? status 'applied) (car detail) detail)))
+                        (if (and (eq? status 'applied) (pair? detail)) (car detail) detail)))
           (values status (if (eq? status 'applied) (datum:copy detail text:delta->datum) detail)))))
 
   (edoc "Edit a shared buffer as a session: a span replaced by lines against a basis, with an optional edit context and a delta flag; the receipt (revision text changes edit-facts)."
@@ -388,6 +389,17 @@
       (lambda ()
         (session-mutate! s 'reload id
           (lambda (actor access) (store:reload! actor id (datum:copy lines) (datum:copy facts) access))))))
+
+  (edoc "Reread a shared buffer from its file as a session: the disk's text as one undoable edit of the session's, the pending conflicts settled: (values status detail), applied with the revision, or refused."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit"))
+  (define (session-reread! s id lines facts)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s 'reread id
+          (lambda (actor access) (store:reread! actor id (datum:copy lines) (datum:copy facts) access))))))
 
   (edoc "Settle a reload conflict as a session: (values status detail), as store:resolve! gives them."
         (s (record session) "the session")

@@ -28,6 +28,7 @@
              (prefix (state actor) actor:))
 
      (define check test:check)
+     (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (edit-init!)
      (keys:init!)
      ;; a listing an older checkpoint brought back as a plain local buffer
@@ -220,6 +221,22 @@
      (keys:hide!)
      (check 'hiding-takes-the-listing-out-of-the-window
        (list (head:buffer-named "<keys>") (head:buffer-name (head:window-buffer w1))) '(#f "keyed"))
+     ;; ESC and C-g in the listing return the window to what it showed: the
+     ;; pop-up over a buffer shows that buffer again, over nothing it hides
+     (head:set-window-buffer! (head:popup) b)
+     (head:show-popup! (head:popup-default-rows))
+     (window:focus! (head:popup))
+     (keys:show!)
+     (check 'esc-in-the-listing-returns-the-pop-up-to-what-it-showed
+       (list (head:buffer-name (head:current-buffer)) (eq? (bound-to 'keys "ESC") keys:return!)
+             (begin (keys:return!) (head:buffer-name (head:window-buffer (head:popup)))) (> (head:popup-rows) 0))
+       '("<keys>" #t "keyed" #t))
+     (window:clear-pop-up!)
+     (window:focus! w1)
+     (keys:show!)
+     (check 'esc-in-the-listing-over-nothing-hides-the-pop-up
+       (begin (window:focus! (head:popup)) (keys:return!) (list (head:popup-rows) (head:buffer-named "<keys>"))) '(0 #f))
+     (window:focus! w1)
 
      ;; any buffer may carry its own status text, with the window when the
      ;; provider takes it, and taken away with #f

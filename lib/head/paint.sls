@@ -926,7 +926,7 @@
               (if (string? app-position) number
                 (format "~a~a~a  "
                         number
-                        (cond [(head:buffer-stale b) "!!"]
+                        (cond [(head:buffer-conflicted b) "!!"]
                           [(head:view-buffer? b) "[]"]
                           [(head:buffer-read-only b) "%%"]
                           [(head:buffer-modified b) "**"]
@@ -954,7 +954,7 @@
                             (- status-width (if (> (glyph:cells status) status-width) 1 0))))
                         (and at (head:window-button-at (- (car at) 1) (- (cdr at) 1))))]
              [hovered (and pointed (eq? (cdr pointed) w) (car pointed))])
-        (let ([stale? (and (not (string? app-position)) (head:buffer-stale b))])
+        (let ([stale? (and (not (string? app-position)) (head:buffer-conflicted b))])
           (paint! (+ start height) (head:window-xoff w)
                   (list 'status status current? stale? hovered)
                   (lambda ()
@@ -986,7 +986,7 @@
                             (if stale? (min (+ number-end 2) content-end) number-end)])
                       (ansi! bar)
                       ;; the window's number and its bar, then the state
-                      ;; marker -- a stale buffer's !! in red
+                      ;; marker -- a conflicted buffer's !! in red
                       (ansi! (substring text 0 number-end))
                       (when stale?
                         (ansi! "\x1b;[31m" (substring text number-end normal-start)

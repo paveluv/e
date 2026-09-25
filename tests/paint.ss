@@ -216,7 +216,7 @@
      ;; or invalid substring bounds when that standard header is replaced.
      (let ([view (head:register-view! (head:new-local-buffer! "status projection") void)])
        (head:view-replace! view '("generated"))
-       (head:buffer-stale-set! view #t)
+       (head:buffer-fact-set! view 'conflicts 1)
        (head:set-window-buffer! (head:current-window) view)
        (check 'app-status-projection-keeps-default-coordinates-and-operation-text-coherent
          (map (lambda (value)

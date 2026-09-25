@@ -8,7 +8,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps keys)
-  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-page-up! page-up!))
+  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-page-up! page-up!)) (rename (keys-return! return!))
           (rename (keys-show! show!)))
   (import (rnrs)
           (only (chezscheme) format iota list-head make-weak-eq-hashtable quotient void)
@@ -22,6 +22,7 @@
           (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <keys> buffer while it is shown
+  (define over '()) ; ((window . buffer) ...) what a window showed before the listing took it
   (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
 
@@ -391,9 +392,15 @@
       [else
        (let ([b (head:window-buffer (or (subject) (head:current-window)))])
          (ensure-view!)
+         (remember-over! (head:popup))
          (head:set-window-buffer! (head:popup) view)
          (fill! b)
          (head:show-popup! (head:popup-default-rows)))]))
+
+  (define (remember-over! w)
+    ;; what a window shows before the listing takes it, for keys:return!
+    (unless (eq? (head:window-buffer w) view)
+      (set! over (cons (cons w (head:window-buffer w)) (remp (lambda (e) (eq? (car e) w)) over)))))
 
   (edoc "Page the keys listing up where it shows, from the last page again past the top; not shown, show it as C-x TAB does.")
   (define (keys-page-up!)
@@ -403,12 +410,26 @@
   (define (keys-open!)
     (let ([b (head:current-buffer)])
       (ensure-view!)
+      (remember-over! (head:current-window))
       (head:show-buffer! view)
       (unless (eq? b view) (fill! b))))
+
+  (edoc "Put the listing away from the current window and show what the window showed before it, the pop-up hiding when it showed nothing else; ESC and C-g in <keys>.")
+  (define (keys-return!)
+    (let* ([w (head:current-window)] [back (cond [(assq w over) => cdr] [else #f])])
+      (unless (and view (eq? (head:window-buffer w) view)) (error 'keys:return! "the current window shows no keys listing"))
+      (set! over (remp (lambda (e) (eq? (car e) w)) over))
+      (cond
+        [(and (head:popup? w) (or (not back) (not (memq back (head:buffers))) (eq? back (head:window-buffer (head:popup)))))
+         (keys-hide!)]
+        [(and back (memq back (head:buffers))) (head:set-window-buffer! w back)]
+        [else (keys-hide!)])
+      (when (and view (null? (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))) (drop-view!))))
 
   (edoc "Put the key listing away: the pop-up shows its placeholder again and hides, and a window showing the listing shows another buffer.")
   (define (keys-hide!)
     (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
+    (set! over '())
     (drop-view!))
 
   (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
@@ -417,6 +438,8 @@
     (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" keys-show!)
     (keymap:bind-default! "C-x S-TAB" keys-page-up!)
+    (keymap:bind-default! 'keys "ESC" keys-return!)
+    (keymap:bind-default! 'keys "C-g" keys-return!)
     ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
     (prompt:allow! keys-show!)
     (prompt:allow! keys-page-up!)

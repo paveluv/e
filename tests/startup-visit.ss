@@ -2,7 +2,7 @@
 
 ;; A head started with a file argument visits it once the terminal is live:
 ;; when the base already holds the file and the disk changed since, the
-;; head reloads it, or asks to reread where it cannot, once keys arrive, where
+;; head reloads it, or rereads it where it cannot, once keys arrive, where
 ;; it used to wait before the input reader ran and hang the editor. Run
 ;; from the repository root.
 
@@ -45,9 +45,9 @@
             (list (cons 'file (file:visit-path path)) '(base . "old\n") '(trailing . #t))))
      (check (list 'the-base-holds-the-file visited) (and (pair? visited) (cadr visited)))
 
-     (define (run-head! name answer expected-line)
-       ;; a head on the file: with an answer, the reread question shows and
-       ;; the answer lands; without one, the reload needs none; the text follows
+     (define (run-head! name echo-part expected-line)
+       ;; a head on the file: nothing asks; the echo says what happened, a
+       ;; reload or a reread, and the text follows
        (let* ([mirror (vt:make-emulator 24 80)]
               [process (sys:spawn-terminal-process "/bin/sh" (fixture:command test-base "--name" name path)
                                                    (current-directory) 24 80)]
@@ -68,12 +68,8 @@
                      (begin (for-each (lambda (line) (display (format "|~a|\n" line))) (screen-lines))
                             (error 'startup-visit (format "~s" label)))
                      (begin (sleep (make-time 'time-duration 25000000 0)) (loop (- left 1)))))))
-         (when answer
-           (wait-for! (list 'the-question-shows-once-keys-arrive name)
-                      (lambda () (find-cell "changed on disk: reread, cancel")) 30000)
-           (send! answer))
          (wait-for! (list 'the-text-follows name)
-                    (lambda () (and (find-cell expected-line) (not (find-cell "changed on disk")))) 30000)
+                    (lambda () (and (find-cell expected-line) (find-cell echo-part))) 30000)
          (send! "\x18;\x3;")                ; C-x C-c
          (test:await (list 'head-exits name) drain!)
          (sys:reap-terminal-process! process)))
@@ -81,12 +77,12 @@
      ;; the disk changed since the baseline: the head reloads without asking,
      ;; the buffer having no changes of its own
      (write-disk! "new\n")
-     (run-head! "reloading" #f "new")
-     ;; a baseline the log no longer reaches cannot be reloaded: the reread
-     ;; question shows, and r)eread adopts the disk verbatim
+     (run-head! "reloading" "Reloaded" "new")
+     ;; a baseline the log no longer reaches cannot be reloaded: the head
+     ;; rereads the disk instead, undoably, and says so
      (rpc 'properties (car visited) '((base . "elsewhere\n")))
      (write-disk! "newer\n")
-     (run-head! "rereading" "r" "newer")
+     (run-head! "rereading" "Reread" "newer")
 
      (format #t "~a startup-visit checks passed\n" checks)))
 

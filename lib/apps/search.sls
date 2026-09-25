@@ -13,9 +13,8 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps search)
   (export count (rename (search-fold-case fold-case)) (rename (search! incremental!)) init!
-          replace! review-replacements)
+          replace!)
   (import (chezscheme)
-          (prefix (apps delta-log) delta-log:)
           (prefix (foundation string) string:)
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
@@ -362,11 +361,6 @@
   (define (count needle)
     (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
 
-  (edoc "Whether replace! opens the delta log browser on its batch in the companion window below the buffer, to review the occurrences; off for scripts."
-        (value boolean))
-  (define review-replacements
-    (make-parameter #t (lambda (v) (unless (boolean? v) (error 'review-replacements "expected a boolean" v)) v)))
-
   (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one entry of the delta log per occurrence under one batch, one undo step, point left where it was; with occurrences replaced in a shared buffer, the delta log browser opens on the batch in the companion window below, unless review-replacements is off."
         (from needle "the text to find, within one line")
         (to string "its replacement")
@@ -395,14 +389,10 @@
                         (hits (+ hit m) (cons (list (cons row hit) (cons row (+ hit m)) to) out))
                         (rows (+ row 1) out)))))))))
     (when (= m 0) (error 'replace! "empty search string"))
-    (let ([r (edit:current-region)] [b (head:current-buffer)] [basis (head:edit-basis (head:current-buffer))])
-      (let-values ([(count batch)
-                    (edit:call-as-one-edit!
-                      (format "(search:replace! ~s ~s)" from to)
-                      (lambda () (values (edit:rewrite-regions! basis (occurrences r)) (edit:current-batch))))])
-        (when (and (> count 0) (review-replacements) (head:buffer-store-id b) (eq? b (head:current-buffer)))
-          (delta-log:open! batch))
-        count)))
+    (let ([r (edit:current-region)] [basis (head:edit-basis (head:current-buffer))])
+      (edit:call-as-one-edit!
+        (format "(search:replace! ~s ~s)" from to)
+        (lambda () (edit:rewrite-regions! basis (occurrences r))))))
 
   (edoc "Install search: its describe entry, the match highlighters, C-s with the search keymap, and M-% prefilling replace!.")
   (define (init!)

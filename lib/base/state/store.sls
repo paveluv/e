@@ -23,7 +23,7 @@
   (export blame buffer-list buffer-name close! conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
-          mark marks properties property publication publish! redo! reload! rename! reset! resolve! revision
+          mark marks properties property publication publish! redo! reload! rename! reread! reset! resolve! revision
           rewrite! set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
           snapshot-state state subscribe! trash-retention undo! undo-authors undo-labels unsubscribe!
           valid-import? validate-edit-context validate-properties view visible? visit! watch!)
@@ -151,7 +151,8 @@
 
   (define (edit-facts b)
     (list (cons 'modified (buffer-modified b))
-          (cons 'modified-at (buffer-modified-at b))))
+          (cons 'modified-at (buffer-modified-at b))
+          (cons 'conflicts (length (unsettled-conflicts b)))))
 
   (define validate-properties property:validate)
   (define writable-properties property:writable)
@@ -358,11 +359,13 @@
       (buffer-revision-set! b (+ (buffer-revision b) 1))
       (buffer-deltas-set! b '())
       (buffer-undo-set! b '())
-      (buffer-conflicts-set! b '())
-      (buffer-marks-set!
-        b (map (lambda (entry) (cons (car entry) (clamp-mark-value (cdr entry) clamp)))
-               (buffer-marks b)))
-      (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
+      (let ([pending? (pair? (unsettled-conflicts b))])
+        (buffer-conflicts-set! b '())
+        (buffer-marks-set!
+          b (map (lambda (entry) (cons (car entry) (clamp-mark-value (cdr entry) clamp)))
+                 (buffer-marks b)))
+        (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
+        (when pending? (note-conflicts! id actor)))
       (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
       (buffer-revision b)))
 
@@ -553,7 +556,7 @@
                        (map entry-revision (undo-group-parts group))
                        (undo-group-live? group) (undo-group-redo-actor group) (undo-group-complete? group)))
                (buffer-undo b))
-          (map conflict-data (buffer-conflicts b))))
+          (map conflict-data (unsettled-conflicts b))))
 
   (define (valid-journal? journal revision)
     (define (cell-data? c) (and (pair? c) (symbol? (car c))))
@@ -941,7 +944,7 @@
         b (map (lambda (entry)
                  (cons (car entry) (rebase-mark-value (cdr entry) delta)))
                (buffer-marks b)))
-      (for-each (lambda (c) (conflict-span-set! c (rebase-mark-value (conflict-span c) delta))) (buffer-conflicts b))
+      (for-each (lambda (c) (conflict-span-set! c (rebase-mark-value (conflict-span c) delta))) (unsettled-conflicts b))
       (enqueue-event!
         (append (list 'edit id new-revision actor delta)
                 (if origin (list origin) '())))
@@ -1249,12 +1252,13 @@
                                    (values '() '((#f . basis-too-old))))])
                    (if (pair? conflicts)
                      (values 'blocked (conflict-reason conflicts))
-                     (let ([parts '()])
+                     (let ([parts '()] [frozen (map (lambda (c) (cons c (conflict-span c))) (unsettled-conflicts b))])
                        (for-each
                          (lambda (step)
                            (install-edit! b id actor (car step) (cadr step) (caddr step) (cadddr step) '() '())
                            (set! parts (cons (car (buffer-deltas b)) parts)))
                          plan)
+                       (follow-history-conflicts! b id actor direction parts frozen)
                        (undo-group-parts-set! group parts)
                        (undo-group-live?-set! group (eq? direction 'redo))
                        (undo-group-redo-actor-set! group (and (eq? direction 'undo) (list actor)))
@@ -1522,7 +1526,13 @@
   ;; as lines, and resolve! settles it by keeping the disk's, writing the
   ;; entry's lines over the disk's region, or writing lines of its own.
 
-  (define-record-type conflict (fields revision actor labels (mutable span) mine disk))
+  ;; A conflict pends until settled; settled by an entry, a resolution's or a
+  ;; reread's, it stays in the list with its span frozen as that entry found
+  ;; it, so the entry's undo brings it back, and its redo settles it again
+  (define-record-type conflict (fields revision actor labels (mutable span) mine disk (mutable settled) (mutable unsettled-by)))
+
+  (define (unsettled-conflicts b)
+    (filter (lambda (c) (not (conflict-settled c))) (buffer-conflicts b)))
 
   (define (conflict-data c)
     (datum:copy
@@ -1530,7 +1540,11 @@
             (conflict-mine c) (conflict-disk c))))
 
   (define (data->conflict d)
-    (make-conflict (car d) (cadr d) (caddr d) (text:datum->span (cadddr d)) (list-ref d 4) (list-ref d 5)))
+    (make-conflict (car d) (cadr d) (caddr d) (text:datum->span (cadddr d)) (list-ref d 4) (list-ref d 5) #f #f))
+
+  (define (note-conflicts! id actor)
+    ;; the pending conflicts changed: their count is a fact, and heads redraw on it
+    (enqueue-event! `(property ,id conflicts ,actor)))
 
   (define (valid-conflict-data? d)
     (and (list? d) (= (length d) 6)
@@ -1917,7 +1931,7 @@
                                  group))))
                  (buffer-undo b))))
         (buffer-marks-set! b (map (lambda (entry) (cons (car entry) (fold-left rebase-mark-value (cdr entry) ds*))) (buffer-marks b)))
-        (for-each (lambda (c) (conflict-span-set! c (fold-left carry-region (conflict-span c) ds*))) (buffer-conflicts b))
+        (for-each (lambda (c) (conflict-span-set! c (fold-left carry-region (conflict-span c) ds*))) (unsettled-conflicts b))
         ;; a conflict whose sides agree, both made the same change, is settled by itself
         (let ([fresh (filter (lambda (c) (not (equal? (conflict-mine c) (conflict-disk c))))
                        (map (lambda (p)
@@ -1926,17 +1940,18 @@
                                               (cond [(null? ds) region]
                                                     [(= k (list-ref p 5)) (carry (cdr ds) (+ k 1) (absorb-region region (car ds)))]
                                                     [else (carry (cdr ds) (+ k 1) (carry-region region (car ds)))]))])
-                                (make-conflict (car p) (cadr p) (caddr p) region (cadddr p) (text:extract text region))))
+                                (make-conflict (car p) (cadr p) (caddr p) region (cadddr p) (text:extract text region) #f #f)))
                             pending))])
           (buffer-conflicts-set! b (append fresh (buffer-conflicts b)))
           (enqueue-event! `(reset ,id ,base-revision ,actor))
+          (when (pair? fresh) (note-conflicts! id actor))
           fresh))))
 
   (edoc "Reload a buffer from its file: the disk's text becomes the baseline and the entries since the old one, the base fact, are reapplied on top, carried across the disk's changes; an entry a disk change overlaps is disabled with what depends on it and with the entries of its batch adjoining it, a replacement typed as a deletion and an insertion whole, and pends as a conflict, the disk's side standing and this side's kept, both the images of one region of the text before either change, unless they agree; the facts commit with the text: (values applied (revision conflicts)), the conflicts as store:conflicts lists them; refused no-base without a baseline, refused basis-too-old when the log no longer reaches it, or a write refusal."
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
-        (facts list "the facts to commit: base, stamp, trailing, stale")
+        (facts list "the facts to commit: base, stamp, trailing")
         (access* (list-of any) "write access, at most one"))
   (define (reload! actor id lines facts . access*)
     (unless (<= (length access*) 1) (error 'reload! "expected one write access" access*))
@@ -1977,7 +1992,7 @@
         (id integer "the buffer id")
         (returns list))
   (define (conflicts id)
-    (locked (lambda () (map conflict-data (buffer-conflicts (buffer-of 'conflicts id))))))
+    (locked (lambda () (map conflict-data (unsettled-conflicts (buffer-of 'conflicts id))))))
 
   (edoc "Settle a pending reload conflict: disk keeps the disk's lines and drops the pending mark; mine writes the entry's side over the disk's region, replacement lines write those, either the actor's undoable edit labelled (conflict . revision): (values applied revision), refused no-conflict or a write refusal."
         (actor actor "the actor identity")
@@ -1997,18 +2012,102 @@
             [(write-refusal id access) => (lambda (reason) (values 'refused reason))]
             [else
              (let* ([b (buffer-of 'resolve! id)]
-                    [c (find (lambda (c) (= (conflict-revision c) revision)) (buffer-conflicts b))])
-               (define (settled!) (buffer-conflicts-set! b (remq c (buffer-conflicts b))))
+                    [c (find (lambda (c) (= (conflict-revision c) revision)) (unsettled-conflicts b))])
                (cond
                  [(not c) (values 'refused 'no-conflict)]
-                 [(eq? choice 'disk) (settled!) (values 'applied (buffer-revision b))]
+                 [(eq? choice 'disk)
+                  ;; the disk's side stands already: the mark goes, nothing to undo
+                  (buffer-conflicts-set! b (remq c (buffer-conflicts b)))
+                  (refresh-edit-facts! b #f)
+                  (note-conflicts! id actor)
+                  (values 'applied (buffer-revision b))]
                  [else
-                  (let ([lines (if (eq? choice 'mine) (conflict-mine c) choice)])
+                  (let* ([lines (if (eq? choice 'mine) (conflict-mine c) choice)]
+                         [span (conflict-span c)])
                     (let-values ([(new-revision delta)
-                                  (apply-locked! b id actor (conflict-span c) lines #f '() '() (list (cons 'conflict revision)))])
+                                  (apply-locked! b id actor span lines #f '() '() (list (cons 'conflict revision)))])
                       (remember-edit! b actor (list (list 'resolve new-revision) (if (eq? choice 'mine) "keep mine" "resolve conflict")))
-                      (settled!)
+                      (settle-conflicts! b (list c) new-revision (list (cons c span)))
+                      (note-conflicts! id actor)
                       (values 'applied new-revision)))]))])))))
+
+  (define (settle-conflicts! b cs revision spans)
+    ;; conflicts settled by an entry: pending no more, each span frozen as
+    ;; the entry found it, from spans, (conflict . span) pairs
+    (for-each (lambda (c)
+                (conflict-span-set! c (cond [(assq c spans) => cdr] [else (conflict-span c)]))
+                (conflict-settled-set! c revision)
+                (conflict-unsettled-by-set! c #f))
+              cs)
+    (refresh-edit-facts! b #f))
+
+  (define (carry-frozen-span b span from to)
+    ;; a span frozen at revision from, carried across the deltas since,
+    ;; up to but excluding revision to
+    (fold-left (lambda (span entry) (rebase-mark-value span (entry-delta entry)))
+               span
+               (filter (lambda (entry) (< from (entry-revision entry) to)) (reverse (buffer-deltas b)))))
+
+  (define (follow-history-conflicts! b id actor direction installed frozen)
+    ;; the inverses of an undo bring back the conflicts their targets
+    ;; settled, spans carried across what came between; a redo settles
+    ;; again what its target's undo brought back, spans frozen as before it
+    (let ([changed #f])
+      (for-each
+        (lambda (entry)
+          (let ([target (cadddr (entry-origin entry))] [revision (entry-revision entry)])
+            (for-each
+              (lambda (c)
+                (cond
+                  [(and (eq? direction 'undo) (eqv? (conflict-settled c) target))
+                   (conflict-span-set! c (carry-frozen-span b (conflict-span c) target revision))
+                   (conflict-settled-set! c #f)
+                   (conflict-unsettled-by-set! c revision)
+                   (set! changed #t)]
+                  [(and (eq? direction 'redo) (eqv? (conflict-unsettled-by c) target))
+                   (conflict-span-set! c (cond [(assq c frozen) => cdr] [else (conflict-span c)]))
+                   (conflict-settled-set! c revision)
+                   (conflict-unsettled-by-set! c #f)
+                   (set! changed #t)]))
+              (buffer-conflicts b))))
+        installed)
+      (when changed
+        (refresh-edit-facts! b #f)
+        (note-conflicts! id actor))))
+
+  (edoc "Reread a buffer from its file: the disk's text replaces the buffer's as one undoable edit, labelled reread, settling every pending conflict so that its undo brings the text and the conflicts back; the facts commit with the text: (values applied revision), or a write refusal."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit: base, stamp, trailing")
+        (access* (list-of any) "write access, at most one"))
+  (define (reread! actor id lines facts . access*)
+    (unless (<= (length access*) 1) (error 'reread! "expected one write access" access*))
+    (let ([disk (text:normalize lines)]
+          [updates (datum:copy (writable-properties facts))]
+          [access (own-write-access (and (pair? access*) (car access*)))])
+      (transact! actor
+        (lambda (actor)
+          (cond
+            [(write-refusal id access) => (lambda (reason) (values 'refused reason))]
+            [else
+             (let* ([b (buffer-of 'reread! id)]
+                    [text (buffer-text b)]
+                    [pending (unsettled-conflicts b)]
+                    [whole (let ([last (- (vector-length text) 1)])
+                             (text:make-span 0 0 last (string-length (vector-ref text last))))])
+               (if (and (equal? text disk) (null? pending))
+                   (begin
+                     (install-properties! b updates)
+                     (refresh-edit-facts! b #f)
+                     (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)
+                     (values 'applied (buffer-revision b)))
+                   (let ([spans (map (lambda (c) (cons c (conflict-span c))) pending)])
+                     (let-values ([(new-revision delta) (apply-locked! b id actor whole (vector->list disk) #f '() updates '())])
+                       (remember-edit! b actor (list (list 'reread new-revision) "reread"))
+                       (settle-conflicts! b pending new-revision spans)
+                       (when (pair? pending) (note-conflicts! id actor))
+                       (values 'applied new-revision)))))])))))
 
   ;;; Marks -------------------------------------------------------------------
 
@@ -2233,6 +2332,7 @@
           (case key
             [(modified) (buffer-modified b)]
             [(modified-at) (buffer-modified-at b)]
+            [(conflicts) (length (unsettled-conflicts b))]
             [else
              (let ([cell (property-cell (buffer-properties b) key)])
                (if (and cell (not (eq? (cdr cell) missing-property)))

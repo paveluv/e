@@ -104,10 +104,14 @@
                      [else 'plain])))])
       (when (zero? row)
         (style:fill-range! styles 0 (min (string-length filter-label) (vector-length styles)) 'chrome))
+      ;; a conflicted buffer's !! in red, as on its status line
+      (let ([entry (entry-at-row row)])
+        (when (and (>= row first-row) (head:buffer? entry) (head:buffer-conflicted entry))
+          (style:fill-range! styles 0 (min 2 (vector-length styles)) 'error)))
       styles))
 
   (define (buffer-data b)
-    (vector (and (head:buffer-modified b) (head:buffer-modified-at b))
+    (vector (cond [(head:buffer-conflicted b) "!!"] [(head:buffer-modified b) (head:buffer-modified-at b)] [else #f])
             (and (head:buffer-read-only b) #t) (head:buffer-name b) (head:buffer-line-count b)
             (or (mode:name-of b) "") (or (head:buffer-file b) "")))
 

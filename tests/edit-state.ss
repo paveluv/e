@@ -74,7 +74,7 @@
        (map (lambda (key)
               (list (raises? (lambda () (store:set-property! bot id key #f)))
                     (raises? (lambda () (store:drop-property! bot id key))))) property:edit-keys)
-       '((#t #t) (#t #t)))
+       '((#t #t) (#t #t) (#t #t)))
      (define equivalent (store:create! bot "equivalent-lines" '("line" "")))
      (store:set-properties! bot equivalent '((trailing . #f) (base . "line\n")))
      (check 'equivalent-line-representation-is-clean (store:property equivalent 'modified) #f)
@@ -346,7 +346,7 @@
                            (eq? opened (head:current-buffer)) kept?
                            (equal? (reverse events)
                              (case effect [(edit) '(create edit)]
-                               [(revisit) (if content '(create property property edit) '(create edit))]
+                               [(revisit) (if content '(create property edit) '(create edit))]
                                [(metadata) '(create rename property property property property)] [else '(create)]))
                            (equal? (and (file-exists? target) (file:read target)) content)
                            (if (memq effect '(edit revisit))
@@ -388,7 +388,7 @@
                  `((file . ,(and (not adopt?) path)) (base . ,(and (not adopt?) "before\n"))
                    (trailing . #t) (read-only . #f)))
                (insert-text! "written")
-               (head:buffer-facts-set! saved '((read-only . #t) (disposable . #t) (stale . #t)))
+               (head:buffer-facts-set! saved '((read-only . #t) (disposable . #t)))
                (head:buffer-name-set! saved "before save")
                (head:with-buffer saved (mode:choose! "invalid-line-output"))
                (let ([token
@@ -399,7 +399,7 @@
                             (set! observed
                               (cons (store:buffer-name saved-id)
                                 (map (lambda (key) (store:property saved-id key))
-                                  '(file base mode mode-auto read-only disposable stale modified))))
+                                  '(file base mode mode-auto read-only disposable modified))))
                             (case effect
                               [(text) (insert! saved-id 7 "-later")]
                               [(retarget) (head:buffer-facts-set! saved
@@ -420,7 +420,7 @@
                        (let ([dirty? (and (memq effect '(text retarget)) #t)])
                          (list #t (list (file:base-name path) path "written\n"
                                         (if adopt? "save-state" "invalid-line-output") adopt?
-                                        (not adopt?) (not adopt?) #f #f)
+                                        (not adopt?) (not adopt?) #f)
                                "written\n" #t (if (eq? effect 'text) '#("written-later") '#("written"))
                                dirty? (or (not adopt?) (not dirty?))))))
                    (lambda () (store:unsubscribe! token))))))

@@ -12,12 +12,13 @@
           (rename (delta-log-disabled disabled)) (rename (delta-log-filter! filter!)) (rename (delta-log-flip! flip!))
           (rename (delta-log-flip-row! flip-row!)) init! (rename (delta-log-keep-disk! keep-disk!))
           (rename (delta-log-keep-mine! keep-mine!)) (rename (delta-log-entries log)) (rename (delta-log-next! next!))
-          (rename (delta-log-open! open!)) (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
+          (rename (delta-log-open! open!)) (rename (delta-log-page-down! page-down!)) (rename (delta-log-page-up! page-up!))
+          (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
           (rename (delta-log-resolve-all! resolve-all!)) (rename (delta-log-revert! revert!)) (rename (delta-log-show! show!))
           (rename (delta-log-show-row! show-row!)) (rename (delta-log-toggle! toggle!)) (rename (delta-log-toggle-row! toggle-row!))
           (rename (delta-log-view view)))
   (import (rnrs)
-          (only (chezscheme) format void)
+          (only (chezscheme) format make-weak-eq-hashtable void)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
@@ -26,8 +27,10 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head table) table:)
           (prefix (head window) window:)
-          (prefix (state store) store:))
+          (prefix (state store) store:)
+          (prefix (sys glyph) glyph:))
 
   ;;; The log -------------------------------------------------------------------
 
@@ -42,7 +45,10 @@
     ;; the shared buffer whose log b shows: b itself, or the trunk behind
     ;; the view, the browser or a flip
     (cond [(and the-view (eq? b (view-buffer the-view))) (view-trunk the-view)]
-          [(and browser (eq? b browser) browser-trunk) browser-trunk]
+          [(browser-of b) => (lambda (br)
+                               ;; a browser stands for its current row's buffer, else the first it tracks
+                               (let ([row (current-row br)] [tracked (tracked-buffers)])
+                                 (cond [row (car row)] [(pair? tracked) (car tracked)] [else b])))]
           [(and flip (eq? b (car flip))) (caddr flip)]
           [else b]))
 
@@ -274,7 +280,7 @@
                        (cond [(eq? choice 'disk) "the disk's side kept"] [(eq? choice 'mine) "your side written"] [else "your lines written"])
                        left))]
             [else (format "Conflict ~a: ~a ~s" revision status detail)]))
-        (refresh-browser!)
+        (follow!)
         status)))
 
   (edoc "Settle every pending reload conflict of the current buffer the same way."
@@ -288,7 +294,7 @@
                                     (if (eq? status 'applied) (+ n 1) n)))
                                 0 (store:conflicts (trunk-id trunk)))])
         (edit:set-message! (format "~a conflict~a settled, the ~a side kept" settled (if (= settled 1) "" "s") choice))
-        (refresh-browser!)
+        (follow!)
         settled)))
 
   (edoc "Show the other side of a reload conflict in place: the entry's lines over the disk's region, in a read-only local buffer where the buffer was; shown already, the buffer returns."
@@ -361,8 +367,8 @@
             (view-disabled-set! v (if (memv r (view-disabled v)) (remv r (view-disabled v)) (cons r (view-disabled v))))))
         revisions)
       (cond
-        [(null? (view-disabled v)) (drop-view! v) (edit:set-message! "View ended: nothing disabled") (refresh-browser!) '()]
-        [else (render-view! v) (report! v) (refresh-browser!) (view-disabled v)])))
+        [(null? (view-disabled v)) (drop-view! v) (edit:set-message! "View ended: nothing disabled") (follow!) '()]
+        [else (render-view! v) (report! v) (follow!) (view-disabled v)])))
 
   (edoc "Commit the view: the trunk rewritten for everyone with the view's entries disabled, their inverses this head's own undoable action, and the window back on the trunk; blocked when a later entry overlaps a disabled one, the conflicts named."
         (returns symbol "applied, blocked, refused or nothing"))
@@ -374,7 +380,7 @@
            (let ([n (length (view-disabled v))] [name (head:buffer-name (view-trunk v))])
              (drop-view! v)
              (edit:set-message! (format "Rewrote ~a: ~a entr~a disabled, now revision ~a" name n (if (= n 1) "y" "ies") detail))
-             (refresh-browser!))]
+             (follow!))]
           [(blocked) (edit:set-message! (format "Rewrite blocked, a later entry over a disabled one: ~s" detail))]
           [else (edit:set-message! (format "Rewrite ~a: ~s" status detail))])
         status)))
@@ -386,7 +392,7 @@
       (let ([name (head:buffer-name (view-trunk the-view))])
         (drop-view! the-view)
         (edit:set-message! (format "View of ~a abandoned" name))
-        (refresh-browser!))))
+        (follow!))))
 
   (edoc "The live view as data, (trunk-name disabled conflicts), or #f without one."
         (returns (or list #f)))
@@ -407,234 +413,393 @@
         (entry-text (or (find (lambda (row) (= (car row) revision)) rows) (error 'delta-log:show! "no entry at that revision" revision))
                     (disablers rows)))))
 
-  ;;; The browser ------------------------------------------------------------------
+  ;;; The browsers -----------------------------------------------------------------
 
-  ;; The <delta-log> app: one row per entry of a trunk's log, newest first,
-  ;; an entry disabled in the view marked, or one row per pending reload
-  ;; conflict; the current row's span highlighted in the trunk's window
-  ;; while the browser is on screen.
-  (define browser #f) ; the app buffer, while live
-  (define browser-trunk #f) ; the shared buffer whose log it shows
-  (define browser-mode 'entries) ; entries, or conflicts while the pending conflicts are the rows
-  (define browser-rows '()) ; the entries or conflicts listed, one per line
-  (define browser-filter '()) ; the selector narrowing the entries
-  (define browser-disablers '()) ; (revision inverse kind) triples of the whole log, for the rows
-  (define browsed-key #f) ; (mode revision trunk-revision) the browsed span was computed for
-  (define browsed-origin #f) ; (trunk . point) where point stood when the browser opened, for C-g
+  ;; Two apps over the shared buffers on screen, in the finder's manner: a
+  ;; heading row, a tinted current row and no cursor.  <delta-log> lists one
+  ;; row per entry of every shared buffer a window shows, newest first
+  ;; within a buffer, an entry disabled in the view marked; <conflicts> one
+  ;; row per pending reload conflict of them.  A Buffer column tells the
+  ;; buffers apart, the current row's text is highlighted in its buffer's
+  ;; window, which follows, and the rows follow the windows and the store
+  ;; before every frame.  Each opens in the window of the caller's choosing
+  ;; and returns the window to what it showed before when closed.
+  (define-record-type browser
+    (fields name mode table cell (mutable buffer) (mutable rows) (mutable over) (mutable cache)))
 
-  (define (browser-live?) (and browser (memq browser (head:buffers)) #t))
+  (define log-browser
+    (make-browser "<delta-log>" "delta-log" (table:make '#("Buffer" "Rev" "Entry") '#(8 4 24) 2 '(0) '#(text right text))
+                  (lambda (row column)
+                    (let ([b (car row)] [entry (cdr row)])
+                      (case column
+                        [(0) (head:buffer-name b)]
+                        [(1) (number->string (car entry))]
+                        [else (string-append (if (and the-view (eq? (view-trunk the-view) b) (memv (car entry) (view-disabled the-view))) "- " "  ")
+                                             (entry-hint entry (disablers-of b)))])))
+                  #f '() '() (make-weak-eq-hashtable)))
 
-  (define (row-text row)
-    ;; a browser line: a conflict with both sides, or the mark of an entry
-    ;; disabled in the view, then the entry
-    (if (eq? browser-mode 'conflicts)
-        (string-append "  " (conflict-text row 20))
-        (string-append (if (and the-view (memv (car row) (view-disabled the-view))) "- " "  ") (entry-text row browser-disablers))))
+  (define conflicts-browser
+    (make-browser "<conflicts>" "conflicts"
+                  (table:make '#("Buffer" "Rev" "Actor" "At" "Mine" "Disk") '#(8 4 8 6 12 12) 1 '(2 3 0) '#(text right text text text text))
+                  (lambda (row column)
+                    (let ([b (car row)] [c (cdr row)])
+                      (define (side lines) (spell (string:elide (string:join lines "\n") 24)))
+                      (case column
+                        [(0) (head:buffer-name b)]
+                        [(1) (number->string (car c))]
+                        [(2) (spell (cadr c))]
+                        [(3) (let ([start (text:span-start (text:datum->span (cadddr c)))]) (format "~a:~a" (car start) (cdr start)))]
+                        [(4) (side (list-ref c 4))]
+                        [else (side (list-ref c 5))])))
+                  #f '() '() (make-weak-eq-hashtable)))
 
-  (define (current-row)
-    (let ([i (car (head:buffer-point browser))])
-      (and (< i (length browser-rows)) (list-ref browser-rows i))))
+  (define browsers (list log-browser conflicts-browser))
+  (define browser-filter '()) ; the selector narrowing the log's rows
 
-  (define (browser-rows-now)
-    ;; the rows the mode lists, the conflicts pending or the entries the
-    ;; filter selects; none where the trunk is gone
-    (guard (ex [else '()])
-      (let ([id (trunk-id browser-trunk)])
-        (if (eq? browser-mode 'conflicts) (store:conflicts id)
-            (let ([all (store:log id)])
-              (set! browser-disablers (disablers all))
-              (if (null? browser-filter) all (store:log id browser-filter)))))))
+  (define (browser-live? br) (and (browser-buffer br) (memq (browser-buffer br) (head:buffers)) #t))
 
-  (define (refresh-browser!)
-    (when (browser-live?)
-      (let ([rows (browser-rows-now)])
-        (cond
-          [(and (eq? browser-mode 'conflicts) (null? rows))
-           ;; the last conflict settled, the rows return to the log
-           (set! browser-mode 'entries)
-           (head:with-buffer browser (head:goto! '(0 . 0)))
-           (refresh-browser!)]
-          [else
-           (set! browser-rows rows)
-           (head:view-replace! browser (if (null? rows) (list "no entries") (map row-text rows)))
-           (sync-browsed!)]))))
+  (define (browser-of b) (find (lambda (br) (and (browser-buffer br) (eq? (browser-buffer br) b))) browsers))
 
-  (define (browsed-span row)
-    ;; the span a row marks in the trunk: an entry's span rebased into the
-    ;; current text, or the region a conflict's disk side occupies
-    (if (eq? browser-mode 'conflicts)
-        (cons browser-trunk (text:datum->span (cadddr row)))
-        (span-of browser-trunk (car row))))
+  (define (browser-windows br)
+    (filter (lambda (w) (eq? (head:window-buffer w) (browser-buffer br))) (head:windows)))
+
+  (define (tracked-buffers)
+    ;; the shared buffers the windows show, a view or a flip standing for
+    ;; its trunk and a browser for the buffer it replaced, each once, in
+    ;; window order
+    (let loop ([ws (head:windows)] [acc '()])
+      (if (null? ws) (reverse acc)
+          (let* ([shown (head:window-buffer (car ws))]
+                 [br (browser-of shown)]
+                 [b (trunk-of (if br (cond [(assq (car ws) (browser-over br)) => cdr] [else shown]) shown))])
+            (loop (cdr ws) (if (and (head:buffer-store-id b) (memq b (head:buffers)) (not (memq b acc))) (cons b acc) acc))))))
+
+  (define (disablers-of b)
+    ;; the (revision inverse kind) triples of a buffer's whole log, cached with its rows
+    (let ([hit (hashtable-ref (browser-cache log-browser) b #f)])
+      (if hit (caddr hit) '())))
+
+  (define (log-rows-of b)
+    ;; a buffer's log rows and disablers, read again only at a new revision or filter
+    (let* ([key (cons (head:buffer-store-rev b) browser-filter)]
+           [hit (hashtable-ref (browser-cache log-browser) b #f)])
+      (if (and hit (equal? (car hit) key))
+          (cadr hit)
+          (let* ([all (guard (ex [else '()]) (store:log (trunk-id b)))]
+                 [rows (if (null? browser-filter) all (guard (ex [else '()]) (store:log (trunk-id b) browser-filter)))])
+            (hashtable-set! (browser-cache log-browser) b (list key rows (disablers all)))
+            rows))))
+
+  (define (rows-now br)
+    ;; the rows the browser lists, (buffer . datum) each, in window order
+    (apply append
+      (map (lambda (b)
+             (if (eq? br log-browser)
+                 (map (lambda (row) (cons b row)) (log-rows-of b))
+                 (if (head:buffer-conflicted b)
+                     (map (lambda (c) (cons b c)) (guard (ex [else '()]) (store:conflicts (trunk-id b))))
+                     '())))
+           (tracked-buffers))))
+
+  (define (row-key row) (cons (car row) (car (cdr row))))
+
+  (define (browser-width br)
+    ;; the narrowest window showing the browser, a cell short of its edge;
+    ;; the screen's width while the windows are not tiled yet and report no
+    ;; width to speak of
+    (let* ([ws (browser-windows br)]
+           [narrowest (if (null? ws) 0 (apply min (map head:window-content-width ws)))])
+      (- (if (> narrowest 40) narrowest (paint:screen-cols)) 1)))
+
+  (define (rendered-lines br rows)
+    ;; the heading and the rows, or a word for none: the conflicts' columns
+    ;; fitted to the browser's width, the log's Entry column left whole after
+    ;; its Buffer and Rev columns, since the entry's tail names its batch and
+    ;; what undid it
+    (cond
+      [(null? rows) (list (car (rendered-lines br (list #f))) (if (eq? br log-browser) "No entries" "No conflicts pending"))]
+      [(eq? br log-browser)
+       (let* ([cell (browser-cell br)]
+              [names (map (lambda (row) (if row (cell row 0) "Buffer")) rows)]
+              [revisions (map (lambda (row) (if row (cell row 1) "Rev")) rows)]
+              [name-width (apply max 6 (map glyph:cells names))]
+              [revision-width (apply max 3 (map string-length revisions))]
+              [line (lambda (name revision entry)
+                      (string-append (glyph:fit name name-width) "  "
+                                     (make-string (- revision-width (string-length revision)) #\space) revision "  " entry))])
+         (cons (line "Buffer" "Rev" "Entry")
+               (map (lambda (row name revision) (if row (line name revision (cell row 2)) "")) rows names revisions)))]
+      [else
+       (let-values ([(line cols) (table:layout (browser-table br) '() (filter values rows) (browser-cell br) (max 20 (browser-width br)))])
+         (cons (line #f) (map (lambda (row) (if row (line row) "")) rows)))]))
+
+  (define (refresh-browser! br)
+    ;; the rows from the windows and the store, rendered again when their
+    ;; text changed, a toggle's mark say, the current row kept by its buffer
+    ;; and revision when the rows shift, and the highlight synced
+    (when (browser-live? br)
+      (let* ([b (browser-buffer br)] [rows (rows-now br)] [old (browser-rows br)] [lines (rendered-lines br rows)])
+        (unless (equal? lines (vector->list (head:buffer-lines b)))
+          (let ([keys (map (lambda (w) (cons w (let ([row (current-row-in br w)]) (and row (row-key row))))) (browser-windows br))])
+            (browser-rows-set! br rows)
+            (head:view-replace! b lines)
+            (for-each (lambda (entry)
+                        (let ([at (and (cdr entry) (list-index (lambda (row) (equal? (row-key row) (cdr entry))) rows))])
+                          (head:window-prow-set! (car entry) (if at (+ at 1) (min 1 (length rows))))
+                          (head:window-pcol-set! (car entry) 0)))
+                      keys)))
+        (browser-rows-set! br rows)
+        (sync-browsed!))))
+
+  (define (list-index pred lst)
+    (let loop ([lst lst] [i 0]) (cond [(null? lst) #f] [(pred (car lst)) i] [else (loop (cdr lst) (+ i 1))])))
+
+  (define (current-row-in br w)
+    ;; the row under the window's point, or #f on the heading or past the end
+    (let ([i (- (head:window-prow w) 1)] [rows (browser-rows br)])
+      (and (>= i 0) (< i (length rows)) (list-ref rows i))))
+
+  (define (browser-window br)
+    ;; the window the browser's current row is read from: the selected one
+    ;; when it shows the browser, else the first showing it
+    (let ([ws (browser-windows br)])
+      (cond [(null? ws) #f] [(memq (head:current-window) ws) (head:current-window)] [else (car ws)])))
+
+  (define (current-row br)
+    (let ([w (browser-window br)]) (and w (current-row-in br w))))
+
+  (define (current-browser who)
+    (or (browser-of (head:current-buffer)) (error who "the current buffer is no delta log browser")))
+
+  (define (browser-row who)
+    (let ([br (current-browser who)])
+      (or (current-row br) (error who "no row under point"))))
+
+  (define (browsed-span row browser)
+    ;; the span a row marks in its buffer: an entry's span rebased into the
+    ;; text, or the region a conflict's disk side occupies
+    (if (eq? browser conflicts-browser)
+        (cons (car row) (text:datum->span (cadddr (cdr row))))
+        (span-of (car row) (car (cdr row)))))
+
+  (define browsed-key #f) ; (browser buffer revision trunk-revision) the browsed span was computed for
 
   (define (sync-browsed!)
-    ;; the current row's span for the highlighter, recomputed when the row,
-    ;; the mode or the trunk's revision changes, none while the browser is
-    ;; off screen
-    (let* ([row (and (browser-live?) browser-trunk
-                     (exists (lambda (w) (eq? (head:window-buffer w) browser)) (head:windows))
-                     (current-row))]
-           [key (and row (list browser-mode (car row) (head:buffer-store-rev browser-trunk)))])
+    ;; the selected browser's current row highlighted in its buffer, recomputed
+    ;; when the row or the buffer's revision changes; none while no browser shows
+    (let* ([br (or (browser-of (head:current-buffer)) (find (lambda (br) (pair? (browser-windows br))) browsers))]
+           [row (and br (browser-live? br) (current-row br))]
+           [key (and row (list br (car row) (car (cdr row)) (head:buffer-store-rev (car row))))])
       (unless (equal? key browsed-key)
         (set! browsed-key key)
-        (set! browsed (and row (guard (ex [else #f]) (browsed-span row)))))))
+        (set! browsed (and row (guard (ex [else #f]) (browsed-span row br)))))))
+
+  (define origins '()) ; ((buffer . point) ...) where point stood before a browser first moved it
 
   (define (follow-row!)
-    ;; the trunk's point on the browsed span, so its window scrolls to
-    ;; show the highlighted text as a search's does to its match
-    (when (and browsed browser-trunk (memq browser-trunk (head:buffers)))
-      (head:with-buffer browser-trunk (head:goto! (text:span-start (cdr browsed))))))
+    ;; the row's buffer's point on the browsed span, so its window scrolls
+    ;; to the highlighted text as a search's does to its match; where point
+    ;; stood before the first move is kept for C-g
+    (when (and browsed (memq (car browsed) (head:buffers)))
+      (unless (assq (car browsed) origins)
+        (set! origins (cons (cons (car browsed) (head:buffer-point (car browsed))) origins)))
+      (head:with-buffer (car browsed) (head:goto! (text:span-start (cdr browsed))))))
 
-  (define (restore-origin!)
-    ;; point back where it stood in the trunk when the browser opened
-    (when (and browsed-origin (memq (car browsed-origin) (head:buffers)))
-      (head:with-buffer (car browsed-origin) (head:goto! (cdr browsed-origin)))))
+  (define (follow!)
+    ;; before every frame: the rows follow the windows and the store
+    (for-each refresh-browser! browsers))
 
   (define (move-row! delta)
-    (when (pair? browser-rows)
-      (let* ([at (car (head:buffer-point browser))]
-             [row (min (max 0 (+ at delta)) (- (length browser-rows) 1))])
-        (unless (= row at)
-          ;; a flip shown for the row left ends with it
-          (when (eq? browser-mode 'conflicts) (unflip!))
-          (head:with-buffer browser (head:goto! (cons row 0))))
-        (sync-browsed!)
-        (follow-row!))))
+    (let* ([br (current-browser 'delta-log:next!)] [w (head:current-window)] [n (length (browser-rows br))])
+      (when (> n 0)
+        (let* ([at (head:window-prow w)]
+               [row (min (max 1 (+ at delta)) n)])
+          (unless (= row at)
+            (when (eq? br conflicts-browser) (unflip!))
+            (head:goto! (cons row 0)))
+          (sync-browsed!)
+          (follow-row!)))))
 
   (define (browser-status b)
-    (let ([n (length browser-rows)] [i (+ 1 (car (head:buffer-point b)))])
-      (if (eq? browser-mode 'conflicts)
-          (format "delta log conflicts ~a of ~a" (min i n) n)
-          (format "delta log ~a of ~a~a" (min i n) n (if (null? browser-filter) "" (format "  ~s" browser-filter))))))
+    (let* ([br (browser-of b)] [n (length (browser-rows br))] [w (browser-window br)]
+           [i (if w (head:window-prow w) 0)])
+      (if (eq? br conflicts-browser)
+          (format "conflicts  ~a of ~a" (min i n) n)
+          (format "delta log  ~a of ~a~a" (min i n) n (if (null? browser-filter) "" (format "  ~s" browser-filter))))))
 
-  ;;; The browser's keys ---------------------------------------------------------
-  ;;
-  ;; Commands over the current row, bound in the browser's contexts: the
-  ;; delta-log mode's while the browser is on screen, delta-log-entries
-  ;; over the entries and delta-log-conflicts over the conflicts, so
-  ;; C-x TAB lists what works there, and C-h k and M-x reach them.
-  (define (browser-row who)
-    (unless (browser-live?) (error who "the delta log browser is not open"))
-    (or (current-row) (error who "no row under point")))
+  (define (styles b row line)
+    (make-vector (string-length line) (if (zero? row) 'header 'plain)))
 
-  (define (conflict-row who)
-    (let ([row (browser-row who)])
-      (unless (eq? browser-mode 'conflicts) (error who "the rows are entries; delta-log:conflicts! lists the conflicts"))
-      row))
+  (define (ensure-browser! br)
+    (unless (browser-live? br)
+      (let ([b (head:register-app! (browser-name br) (lambda () (refresh-browser! br)))])
+        (browser-buffer-set! br b)
+        (browser-rows-set! br '())
+        (browser-over-set! br '())
+        (head:buffer-fact-set! b 'recency 'behind)
+        (head:set-app-presentation! b 1 'auto #f)
+        (head:set-app-cursor-visible! b #f)
+        (head:set-app-selectable! b #f)
+        (head:set-app-status-position! b browser-status)
+        (mode:choose! (browser-mode br) b))))
 
-  (define (entries-browser? b) (and (browser-live?) (eq? b browser) (eq? browser-mode 'entries)))
+  (define (target-window w*)
+    (if (pair? w*) (edoc:type-value 'window (car w*)) (head:current-window)))
 
-  (define (conflicts-browser? b) (and (browser-live?) (eq? b browser) (eq? browser-mode 'conflicts)))
+  (define (show-browser! br w)
+    ;; the browser in a window, remembering what it showed, the pop-up
+    ;; shown when it is the window, and selected; the first row current
+    (ensure-browser! br)
+    (let ([b (browser-buffer br)])
+      (unless (eq? (head:window-buffer w) b)
+        (browser-over-set! br (cons (cons w (head:window-buffer w)) (remp (lambda (e) (eq? (car e) w)) (browser-over br))))
+        (head:set-window-buffer! w b))
+      (when (and (head:popup? w) (= (head:popup-rows) 0)) (head:show-popup! (head:popup-default-rows)))
+      (window:focus! w)
+      (browser-rows-set! br '())
+      (refresh-browser! br)
+      (head:goto! (cons (min 1 (length (browser-rows br))) 0))
+      (sync-browsed!)
+      (follow-row!)))
 
-  (edoc "Describe the browser's current row in the echo area: the entry's actor, where it wrote, what it removed and inserted, or both sides of the conflict in full.")
-  (define (delta-log-show-row!)
-    (let ([row (browser-row 'delta-log:show-row!)])
-      (edit:set-message! (if (eq? browser-mode 'conflicts) (conflict-text row) (entry-text row browser-disablers)))))
+  (define (close-browser! br)
+    ;; the windows showing the browser show what they showed before, the
+    ;; pop-up hiding again when it showed its placeholder, and the app buffer goes
+    (when (browser-live? br)
+      (let ([b (browser-buffer br)])
+        (when (eq? br conflicts-browser) (unflip!))
+        (for-each
+          (lambda (w)
+            (let ([back (cond [(assq w (browser-over br)) => cdr] [else #f])])
+              (cond
+                [(and (head:popup? w) (or (not back) (not (memq back (head:buffers))) (eq? back (head:window-buffer (head:popup)))))
+                 (head:hide-popup!)]
+                [(and back (memq back (head:buffers))) (head:set-window-buffer! w back)]
+                [else (window:display! (or (find (lambda (o) (not (eq? o b))) (head:buffers)) b))])))
+          (browser-windows br))
+        (head:forget-buffer! b)
+        (browser-buffer-set! br #f)
+        (browser-rows-set! br '())
+        (browser-over-set! br '())
+        (set! origins '())
+        (set! browsed #f) (set! browsed-key #f))))
 
-  (edoc "Close the browser and put point back where it stood in the buffer when the browser opened.")
-  (define (delta-log-cancel!)
-    (restore-origin!)
-    (delta-log-close!))
+  ;;; The browsers' commands ---------------------------------------------------------
 
-  (edoc "Toggle the browser's current row's entry in the view, as delta-log:toggle! does with its revision.")
-  (define (delta-log-toggle-row!)
-    (let ([row (browser-row 'delta-log:toggle-row!)])
-      (when (eq? browser-mode 'conflicts) (error 'delta-log:toggle-row! "the rows are conflicts; delta-log:open! lists the entries"))
-      (delta-log-toggle! (car row))))
+  (edoc "Open the delta log browser, <delta-log>, in a window, the current one by default, and select it: one row per entry of every shared buffer a window shows, newest first within a buffer, its buffer, revision, actor, place, removed and inserted text, batch and what an inverse reverts, an entry disabled in the view marked with -, the current row's text highlighted in its buffer's window, which follows; delta-log:filter! narrows the rows. ESC closes it, the window showing what it showed before."
+        (w* (list-of window) "the window to open it in, at most one; the current window by default"))
+  (define (delta-log-open! . w*)
+    (show-browser! log-browser (target-window w*)))
 
-  (edoc "Show the other side of the browser's current row's conflict in place, or put the disk's side back, as delta-log:flip! does with its revision.")
-  (define (delta-log-flip-row!)
-    (delta-log-flip! (car (conflict-row 'delta-log:flip-row!))))
+  (edoc "Open the conflicts browser, <conflicts>, in a window, the current one by default, and select it: one row per pending reload conflict of every shared buffer a window shows, its buffer, the entry's revision and actor, where the disk's side stands and both sides, the current row's region highlighted in its buffer's window, which follows; LEFT keeps mine, RIGHT keeps the disk's side, SPC shows the other side in place and back. ESC closes it, the window showing what it showed before."
+        (w* (list-of window) "the window to open it in, at most one; the current window by default"))
+  (define (delta-log-conflicts! . w*)
+    (show-browser! conflicts-browser (target-window w*)))
 
-  (edoc "Settle the browser's current row's conflict keeping the disk's side, as delta-log:resolve! does with disk.")
-  (define (delta-log-keep-disk!)
-    (delta-log-resolve! (car (conflict-row 'delta-log:keep-disk!)) 'disk))
-
-  (edoc "Settle the browser's current row's conflict writing the entry's side over the disk's region, as delta-log:resolve! does with mine.")
-  (define (delta-log-keep-mine!)
-    (delta-log-resolve! (car (conflict-row 'delta-log:keep-mine!)) 'mine))
-
-  (define (ensure-browser!)
-    (unless (browser-live?)
-      (set! browser (head:register-app! "<delta-log>" refresh-browser!))
-      (head:buffer-fact-set! browser 'recency 'behind)
-      (head:set-app-presentation! browser 0 'auto #f)
-      (head:set-app-selectable! browser #f)
-      (head:set-app-status-position! browser browser-status)
-      (mode:choose! "delta-log" browser)))
-
-  (define (open-browser! trunk mode selector)
-    ;; the browser over the trunk in a mode, shown beside it and selected,
-    ;; its first row current
-    (unless (and browsed-origin (eq? (car browsed-origin) trunk) (browser-live?))
-      (set! browsed-origin (cons trunk (head:buffer-point trunk))))
-    (set! browser-trunk trunk)
-    (set! browser-mode mode)
-    (set! browser-filter selector)
-    (ensure-browser!)
-    (refresh-browser!)
-    (let ([w (or (window:companion! browser) (window:display! browser))])
-      (when w (window:focus! w)))
-    (head:with-buffer browser (head:goto! '(0 . 0)))
-    (sync-browsed!)
-    (follow-row!))
-
-  (edoc "Open the delta log browser for the current buffer in the companion window below it, the window a split below made, else a fresh split, and select it: one row per entry, newest first, an entry disabled in the view marked, the current row's text highlighted in the buffer's window and point on it, so the window follows; M-n and M-p move, M-t toggles the row's entry in the view, RET describes it, M-RET commits the view, ESC closes the browser leaving point on the row's text, C-g closes it and puts point back. A selector narrows the rows as for delta-log:log, a batch given alone to its entries, a replacement's occurrences say."
-        (selector (list-of (or list batch)) "the selector or a batch, at most one"))
-  (define (delta-log-open! . selector)
-    (open-browser! (current-trunk 'delta-log:open!) 'entries (if (pair? selector) (selector-of (car selector)) '())))
-
-  (edoc "Show the current buffer's pending reload conflicts in the browser, in the companion window below the buffer, and select it: one row each, newest first, the entry's revision and actor, where the disk's side stands and both sides elided, the current row's region highlighted in the buffer's window and point on it, so the window follows; M-n and M-p move, M-/ shows the entry's side in place and back, M-d keeps the disk's side, M-m writes the entry's, RET describes the row in full, ESC closes the browser leaving point on the region, C-g closes it and puts point back. With the last conflict settled the rows return to the log; without any, the log shows and the echo says so."
-        (returns integer "how many conflicts pend"))
-  (define (delta-log-conflicts!)
-    (let* ([trunk (current-trunk 'delta-log:conflicts!)] [n (length (store:conflicts (trunk-id trunk)))])
-      (open-browser! trunk 'conflicts '())
-      (when (zero? n) (edit:set-message! (format "No conflicts pending in ~a" (head:buffer-name trunk))))
-      n))
-
-  (edoc "Narrow the browser's rows to the entries a selector picks, as for delta-log:log, or to a batch's; #f shows every entry again."
+  (edoc "Narrow the delta log browser's rows to the entries a selector picks, as for delta-log:log, or to a batch's; #f shows every entry again."
         (selector (or list batch #f) "the selector, a batch or #f"))
   (define (delta-log-filter! selector)
     (set! browser-filter (if selector (selector-of selector) '()))
-    (set! browser-mode 'entries)
-    (refresh-browser!))
+    (hashtable-clear! (browser-cache log-browser))
+    (refresh-browser! log-browser))
 
-  (edoc "Move the browser to the next row, its text highlighted in the buffer's window and point on it.")
-  (define (delta-log-next!) (when (browser-live?) (move-row! 1)))
+  (edoc "Move the browser to the next row, its text highlighted in its buffer's window and point on it.")
+  (define (delta-log-next!) (move-row! 1))
 
-  (edoc "Move the browser to the previous row, its text highlighted in the buffer's window and point on it.")
-  (define (delta-log-previous!) (when (browser-live?) (move-row! -1)))
+  (edoc "Move the browser to the previous row, its text highlighted in its buffer's window and point on it.")
+  (define (delta-log-previous!) (move-row! -1))
 
-  (edoc "Close the delta log browser: its window shows another buffer, a flip it showed ends, the buffer's window is selected again, and point stays where the last row put it.")
+  (edoc "Move the browser a page of rows down.")
+  (define (delta-log-page-down!) (move-row! (max 1 (- (head:window-size (head:current-window)) 1))))
+
+  (edoc "Move the browser a page of rows up.")
+  (define (delta-log-page-up!) (move-row! (- (max 1 (- (head:window-size (head:current-window)) 1)))))
+
+  (edoc "Describe the browser's current row in the echo area: the entry's actor, where it wrote, what it removed and inserted, or both sides of the conflict in full.")
+  (define (delta-log-show-row!)
+    (let* ([br (current-browser 'delta-log:show-row!)] [row (browser-row 'delta-log:show-row!)])
+      (edit:set-message!
+        (string-append (head:buffer-name (car row)) "  "
+                       (if (eq? br conflicts-browser) (conflict-text (cdr row)) (entry-text (cdr row) (disablers-of (car row))))))))
+
+  (edoc "Close the delta log or conflicts browser the current buffer is: its windows show what they showed before, the pop-up hides when it showed nothing else, a flip it showed ends, and point stays where the last row put it.")
   (define (delta-log-close!)
-    (when (browser-live?)
-      (unflip!)
-      (set! browsed #f) (set! browsed-key #f) (set! browsed-origin #f)
-      (let ([w (and (eq? (head:current-buffer) browser)
-                    (find (lambda (w) (eq? (head:window-buffer w) browser-trunk)) (head:windows)))])
-        (head:forget-buffer! browser)
-        (set! browser #f)
-        (when (and w (memq w (head:windows))) (window:focus! w)))))
+    (close-browser! (current-browser 'delta-log:close!)))
 
-  ;; the browser's keys: what both kinds of row allow in its mode's context,
-  ;; the rest in the state context of the rows shown
+  (edoc "Close the browser the current buffer is, putting point back where it stood in the row's buffer when the browser last moved it.")
+  (define (delta-log-cancel!)
+    (let ([br (current-browser 'delta-log:cancel!)])
+      (for-each (lambda (origin)
+                  (when (memq (car origin) (head:buffers))
+                    (head:with-buffer (car origin) (head:goto! (cdr origin)))))
+                origins)
+      (close-browser! br)))
+
+  (edoc "Toggle the browser's current row's entry in its buffer's view, as delta-log:toggle! does with its revision.")
+  (define (delta-log-toggle-row!)
+    (let ([row (browser-row 'delta-log:toggle-row!)])
+      (unless (eq? (current-browser 'delta-log:toggle-row!) log-browser)
+        (error 'delta-log:toggle-row! "the rows are conflicts; delta-log:open! lists the entries"))
+      (head:with-buffer (car row) (delta-log-toggle! (car (cdr row))))))
+
+  (define (conflict-row who)
+    (let ([row (browser-row who)])
+      (unless (eq? (current-browser who) conflicts-browser) (error who "the rows are entries; delta-log:conflicts! lists the conflicts"))
+      row))
+
+  (edoc "Show the other side of the browser's current row's conflict in place, or put the disk's side back, as delta-log:flip! does with its revision.")
+  (define (delta-log-flip-row!)
+    (let ([row (conflict-row 'delta-log:flip-row!)])
+      (head:with-buffer (car row) (delta-log-flip! (car (cdr row))))))
+
+  (edoc "Settle the browser's current row's conflict writing this side over the disk's region, as delta-log:resolve! does with mine; LEFT, the Mine column's side.")
+  (define (delta-log-keep-mine!)
+    (let ([row (conflict-row 'delta-log:keep-mine!)])
+      (head:with-buffer (car row) (delta-log-resolve! (car (cdr row)) 'mine))))
+
+  (edoc "Settle the browser's current row's conflict keeping the disk's side, as delta-log:resolve! does with disk; RIGHT, the Disk column's side.")
+  (define (delta-log-keep-disk!)
+    (let ([row (conflict-row 'delta-log:keep-disk!)])
+      (head:with-buffer (car row) (delta-log-resolve! (car (cdr row)) 'disk))))
+
+  ;; the browsers' keys: what both list in their modes' contexts, the log's
+  ;; and the conflicts' own beside
   (define browser-keys
-    `((("M-n" "DOWN" "C-n") ,delta-log-next!) (("M-p" "UP" "C-p") ,delta-log-previous!)
+    `((("DOWN" "C-n" "M-n") ,delta-log-next!) (("UP" "C-p" "M-p") ,delta-log-previous!)
+      (("PGDN" "C-v") ,delta-log-page-down!) (("PGUP" "M-v") ,delta-log-page-up!)
       (("RET") ,delta-log-show-row!) (("ESC") ,delta-log-close!) (("C-g") ,delta-log-cancel!)))
 
-  (define entries-keys `((("M-t") ,delta-log-toggle-row!) (("M-RET") ,delta-log-commit!)))
+  (define log-keys `((("M-t") ,delta-log-toggle-row!) (("M-RET") ,delta-log-commit!)))
 
-  (define conflicts-keys `((("M-/") ,delta-log-flip-row!) (("M-d") ,delta-log-keep-disk!) (("M-m") ,delta-log-keep-mine!)))
+  (define conflicts-keys
+    `((("LEFT" "M-m") ,delta-log-keep-mine!) (("RIGHT" "M-d") ,delta-log-keep-disk!) (("SPC" "M-/") ,delta-log-flip-row!)))
 
   (define (bind-keys! context table)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! context key (cadr entry))) (car entry))) table))
 
-  (edoc "Install the delta log: the browser's mode with its keys bound in the delta-log context, the entries' and the conflicts' keys in their state contexts, the highlighter marking a previewed or browsed entry's span, a browsed conflict's region and a flip's, and the browser's highlight following its row before every frame; C-x TAB lists the keys.")
+  (edoc "Install the delta log: the two browsers' modes with their keys bound in the delta-log and conflicts contexts, C-x l and C-x ! opening them in the pop-up, the highlighter marking a previewed or browsed entry's span, a browsed conflict's region and a flip's, and the browsers following the windows and the store before every frame; C-x TAB lists the keys.")
   (define (init!)
-    (mode:register! "delta-log" '() '() (lambda (line) #f))
-    (mode:add-context! 'delta-log-entries entries-browser?)
-    (mode:add-context! 'delta-log-conflicts conflicts-browser?)
+    (mode:register! "delta-log" '() '() (lambda (line) #f) #f styles)
+    (mode:register! "conflicts" '() '() (lambda (line) #f) #f styles)
     (bind-keys! 'delta-log browser-keys)
-    (bind-keys! 'delta-log-entries entries-keys)
-    (bind-keys! 'delta-log-conflicts conflicts-keys)
+    (bind-keys! 'delta-log log-keys)
+    (bind-keys! 'conflicts browser-keys)
+    (bind-keys! 'conflicts conflicts-keys)
+    (keymap:bind-default! "C-x l" (keymap:call delta-log-open! 0))
+    (keymap:bind-default! "C-x !" (keymap:call delta-log-conflicts! 0))
     (paint:add-highlighter! entry-highlights)
-    (head:add-pre-redraw-hook! sync-browsed!)))
+    (paint:add-highlighter!
+      (lambda ()
+        ;; the tinted current row of each window showing a browser
+        (apply append
+          (map (lambda (br)
+                 (if (browser-live? br)
+                     (map (lambda (w)
+                            (let ([row (head:window-prow w)])
+                              (list w row 0 (string-length (vector-ref (head:window-lines w) row)) 'candidate)))
+                          (filter (lambda (w) (> (head:window-prow w) 0)) (browser-windows br)))
+                     '()))
+               browsers))))
+    (head:add-pre-redraw-hook! follow!))
+
+) ;; library (delta-log)

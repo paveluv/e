@@ -10,10 +10,10 @@
           condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery!
           fingerprint init-module! installation-directory load-config! load-module!
           load-modules! loaded-modules mailbox-post! mailbox-receive! make-delivery-queue
-          make-mailbox make-read-only-error make-refusal make-registry module-library
+          make-mailbox make-read-only-error make-refusal make-registry make-reloaded module-library
           module-requires? module-source persistent-cell pin-modules! read-only-error? refusal?
           registering-module registration-conflict? registry-add! registry-entries registry-find
-          registry-items registry-observe! registry-remove! registry-unobserve! reload-module!
+          registry-items registry-observe! registry-remove! registry-unobserve! reload-module! reloaded?
           retract-module! source-library)
   (import (rnrs)
           (only (chezscheme)
@@ -53,6 +53,9 @@
 
   (edoc "A command the user declined mid-flight, or the store refused.")
   (define-condition-type &refused &error make-refusal refusal?)
+
+  (edoc "An edit found its buffer's file changed on disk and reloaded it first, a refusal the command can be run again after, against the merged text.")
+  (define-condition-type &reloaded &refused make-reloaded reloaded?)
 
   ;;; Mailboxes ---------------------------------------------------------------
 

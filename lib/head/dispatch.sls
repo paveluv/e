@@ -12,6 +12,7 @@
 (elibrary (head dispatch)
   (export global-key! (rename (handle-key! key!)) set-prompt-opener!)
   (import (chezscheme)
+          (prefix (core kernel) kernel:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -29,6 +30,11 @@
   (define (set-prompt-opener! open)
     (set! prompt-opener open))
 
+  (define (once-more thunk)
+    ;; an edit that found its file changed on disk reloads the buffer and
+    ;; refuses; the key runs again, against the merged text
+    (guard (ex [(kernel:reloaded? ex) (thunk)]) (thunk)))
+
   (define (run-key-action! action capture)
     ;; Run a resolved binding's action and remember it as the last
     ;; command (an error still counts); an unbound key, or a context
@@ -38,16 +44,18 @@
     (cond [(procedure? action)
            (unless (and capture (eq? action (cadr capture)))
              (head:follow-app! (head:current-window) #f))
-           (dynamic-wind void action
+           (dynamic-wind void (lambda () (once-more action))
              (lambda () (head:set-last-command! action)))]
           [(keymap:call-action? action)
            ;; a call built with keymap:call: the producers run at the press
            (head:follow-app! (head:current-window) #f)
            (dynamic-wind void
              (lambda ()
-               (apply (keymap:call-action-procedure action)
-                      (map (lambda (produce) (if (procedure? produce) (produce) produce))
-                           (keymap:call-action-arguments action))))
+               (once-more
+                 (lambda ()
+                   (apply (keymap:call-action-procedure action)
+                          (map (lambda (produce) (if (procedure? produce) (produce) produce))
+                               (keymap:call-action-arguments action))))))
              (lambda () (head:set-last-command! action)))]
           [(keymap:prefill-action? action)
            ;; a pre-filled M-x built with keymap:prefill

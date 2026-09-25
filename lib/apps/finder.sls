@@ -512,12 +512,10 @@
   (define (sort-order)
     (map (lambda (s) (cons (+ (car s) 1) (cdr s))) sorts))
 
-  (edoc "Open the chosen file in this window, or in the window's target windows when it has any; a chosen directory is entered instead."
-        (prompts))
+  (edoc "Open the chosen file in this window, or in the window's target windows when it has any; a chosen directory is entered instead.")
   (define (choose!) (activate! #f))
 
-  (edoc "Enter the chosen directory; a chosen file stays where it is."
-        (prompts))
+  (edoc "Enter the chosen directory; a chosen file stays where it is.")
   (define (enter!) (activate! #t))
 
   (edoc "Move the choice to the next entry.")

@@ -30,7 +30,6 @@
      (define check test:check)
      (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
-     (search:review-replacements #f)
      (delta-log:init!)
      (define bot '(agent delta-test))
      (define b (head:new-buffer! "log-me"))
@@ -114,10 +113,11 @@
      (check 'show-describes-an-entry (begin (delta-log:show! 5) 'shown) 'shown)
      (check 'show-refuses-a-missing-entry (guard (ex [else 'refused]) (delta-log:show! 99)) 'refused)
 
-     ;; the browser lists a fresh buffer's entries beside it, newest first,
-     ;; the current row's text highlighted in the buffer's window; its keys
-     ;; move, toggle the row's entry into a view shown where the buffer was,
-     ;; commit the view and close the browser
+     ;; the browser opens in a window of the caller's choosing, the pop-up
+     ;; here, and lists every shown buffer's entries under a heading, newest
+     ;; first, the current row's text highlighted in the buffer's window;
+     ;; its keys move, toggle the row's entry into a view shown where the
+     ;; buffer was, commit the view and close the browser
      (define c (head:new-buffer! "browse-me"))
      (head:show-buffer! c)
      (head:goto! '(0 . 0))
@@ -126,47 +126,51 @@
      (insert-text! "z")
      (define (ordinary-windows) (filter (lambda (w) (not (head:popup? w))) (head:windows)))
      (define (window-showing name) (find (lambda (w) (equal? (head:buffer-name (head:window-buffer w)) name)) (ordinary-windows)))
-     (define (marked-ranges) (map (lambda (r) (if (eq? (car r) c) (cdr r) r)) (paint:highlight-ranges)))
-     (delta-log:open!)
+     (define (marked-ranges) (map cdr (filter (lambda (r) (eq? (car r) c)) (paint:highlight-ranges))))
+     (define (rows) (cdr (vector->list (head:buffer-lines (head:current-buffer)))))
+     (define (inserted l) (cond [(contains? l "+\"z\"") 'z] [(contains? l "+\"y\"") 'y] [(contains? l "+\"x\"") 'x] [else #f]))
+     (delta-log:open! 0)
      (head:before-frame!)
-     (check 'the-browser-opens-beside-the-buffer-with-a-row-per-entry
-       (list (head:buffer-name (head:current-buffer)) (length (ordinary-windows)) (and (window-showing "browse-me") #t)
-             (map (lambda (l) (substring l 0 3)) (vector->list (head:buffer-lines (head:current-buffer)))) (head:point))
-       (list "<delta-log>" 2 #t '("  3" "  2" "  1") '(0 . 0)))
+     (check 'the-browser-opens-in-the-pop-up-with-a-heading-and-a-row-per-entry
+       (list (head:buffer-name (head:current-buffer)) (head:popup? (head:current-window)) (> (head:popup-rows) 0)
+             (and (window-showing "browse-me") #t)
+             (contains? (car (vector->list (head:buffer-lines (head:current-buffer)))) "Buffer")
+             (map (lambda (l) (contains? l "browse-me")) (rows)) (map inserted (rows)) (head:point))
+       (list "<delta-log>" #t #t #t #t '(#t #t #t) '(z y x) '(1 . 0)))
      (check 'the-current-rows-text-is-highlighted-in-the-buffer-and-point-is-on-it
        (list (marked-ranges) (head:buffer-point c)) '(((0 2 3 match)) (0 . 2)))
-     ;; the browser's keys are its commands, bound in its mode's context and
-     ;; the entries' state context, so the keys listing shows them
-     (check 'the-browsers-keys-are-commands-in-its-contexts
+     ;; the browser's keys are its commands, bound in its mode's context, so
+     ;; the keys listing shows them
+     (check 'the-browsers-keys-are-commands-in-its-context
        (list (mode:key-contexts (head:current-buffer))
              (eq? (bound-to 'delta-log "M-n") delta-log:next!) (eq? (bound-to 'delta-log "RET") delta-log:show-row!)
-             (eq? (bound-to 'delta-log-entries "M-t") delta-log:toggle-row!) (eq? (bound-to 'delta-log-entries "M-RET") delta-log:commit!)
+             (eq? (bound-to 'delta-log "M-t") delta-log:toggle-row!) (eq? (bound-to 'delta-log "M-RET") delta-log:commit!)
              (bound-to 'global "M-t"))
-       '((delta-log-entries delta-log) #t #t #t #t #f))
+       '((delta-log) #t #t #t #t #f))
      (dispatch:key! "M-n")
      (head:before-frame!)
      (check 'm-n-moves-a-row-and-the-highlight-and-point-follow
-       (list (head:point) (marked-ranges) (head:buffer-point c)) '((1 . 0) ((0 1 2 match)) (0 . 1)))
+       (list (head:point) (marked-ranges) (head:buffer-point c)) '((2 . 0) ((0 1 2 match)) (0 . 1)))
      (dispatch:key! "M-t")
+     (head:before-frame!)
      (check 'm-t-toggles-the-rows-entry-into-a-view-shown-where-the-buffer-was
        (list (head:buffer-name (head:current-buffer)) (delta-log:view)
              (let ([w (window-showing "<view: browse-me>")]) (and w (vector->list (head:buffer-lines (head:window-buffer w)))))
-             (substring (vector-ref (head:buffer-lines (head:current-buffer)) 1) 0 3))
-       (list "<delta-log>" '("browse-me" (2) ()) '("xz") "- 2"))
+             (contains? (cadr (rows)) "- "))
+       (list "<delta-log>" '("browse-me" (2) ()) '("xz") #t))
      (dispatch:key! "M-RET")
+     (head:before-frame!)
      (check 'm-ret-commits-the-view-and-the-buffer-returns
-       (list (delta-log:view) (vector->list (head:buffer-lines c)) (and (window-showing "browse-me") #t)
-             (map (lambda (l) (substring l 0 3)) (vector->list (head:buffer-lines (head:current-buffer)))))
-       (list #f '("xz") #t '("  4" "  3" "  2" "  1")))
-     (dispatch:key! "M-p")
-     (check 'ret-describes-the-row (begin (dispatch:key! "RET") (head:point)) '(0 . 0))
+       (list (delta-log:view) (vector->list (head:buffer-lines c)) (and (window-showing "browse-me") #t) (length (rows)))
+       (list #f '("xz") #t 4))
+     (check 'ret-describes-the-row-and-stays (begin (dispatch:key! "RET") (head:point)) '(3 . 0))
      (delta-log:filter! '((count . 2)))
-     (check 'a-filter-narrows-the-rows (length (vector->list (head:buffer-lines (head:current-buffer)))) 2)
+     (check 'a-filter-narrows-the-rows (length (rows)) 2)
      (dispatch:key! "ESC")
      (head:before-frame!)
-     (check 'esc-closes-the-browser-and-clears-the-highlight
-       (list (head:buffer-named "<delta-log>") (paint:highlight-ranges))
-       '(#f ()))
+     (check 'esc-closes-the-browser-hides-the-pop-up-and-clears-the-highlight
+       (list (head:buffer-named "<delta-log>") (head:popup-rows) (paint:highlight-ranges))
+       '(#f 0 ()))
 
      ;; a replacement is one entry per occurrence under one batch, in the
      ;; text's order and one undo step; the log and the browser take the
@@ -191,20 +195,22 @@
        (let ([offered (edoc:type-completions 'batch "")])
          (list (equal? (car (car offered)) batch-id) (contains? (cdr (car offered)) "4 entries")))
        '(#t #t))
-     (delta-log:open! batch-id)
-     (check 'the-browser-opens-on-the-batchs-entries
-       (list (length (vector->list (head:buffer-lines (head:current-buffer))))
-             (contains? (vector-ref (head:buffer-lines (head:current-buffer)) 3) "0:4  -\"old\"  +\"new\""))
-       '(4 #t))
+     (delta-log:open! 0)
+     (delta-log:filter! batch-id)
+     (check 'the-browser-narrowed-to-the-batch-lists-its-entries
+       (list (length (rows)) (contains? (list-ref (rows) 3) "0:4") (contains? (list-ref (rows) 3) "-\"old\"  +\"new\"")
+             (for-all (lambda (l) (contains? l "replace-me")) (rows)))
+       '(4 #t #t #t))
      (delta-log:filter! #f)
-     (check 'a-false-filter-widens-the-rows-again (length (vector->list (head:buffer-lines (head:current-buffer)))) (+ before 4))
+     (check 'a-false-filter-widens-the-rows-again (length (rows)) (+ before 4))
      (dispatch:key! "ESC")
      (head:show-buffer! d)
      (check 'undo-takes-the-replacement-back-as-one-step
        (begin (undo!) (vector->list (head:buffer-lines d))) '("one old two old" "three" "old four old five"))
-     (delta-log:open!)
+     (define log-of-d (delta-log:log))
+     (delta-log:open! 0)
      (check 'rows-name-the-batch-what-an-inverse-undoes-and-what-undid-an-entry
-       (let* ([log (delta-log:log)] [rows (vector->list (head:buffer-lines (head:current-buffer)))]
+       (let* ([log log-of-d] [rows (rows)]
               [target (list-ref (list-ref (car log) 4) 3)]
               [at (let find ([i 0] [l log]) (if (= (car (car l)) target) i (find (+ i 1) (cdr l))))])
          ;; an inverse carries no batch of its own; the original names its batch
@@ -230,37 +236,32 @@
        (list (search:replace! "old" "new") (vector->list (head:buffer-lines e)))
        (list 3 '("Q new and new and new")))
 
-     ;; a replacement opens the browser on its batch in the companion below
-     ;; the buffer's window; the next one finds that window as the sibling
-     ;; below and reuses it instead of splitting again
+     ;; the browser goes where it is asked, the pop-up by C-x l, and a window
+     ;; returns to what it showed when the browser closes: ESC leaves point
+     ;; on the row's text, C-g puts it back where it stood
      (define f (head:new-buffer! "review-me"))
      (head:show-buffer! f)
      (head:goto! '(0 . 0))
      (insert-text! "old old")
      (window:delete-others!)
      (define fw (head:current-window))
-     (define (rows) (vector->list (head:buffer-lines (head:current-buffer))))
-     (define (below? upper lower)
-       ;; lower is in the lower half of the split upper is the upper half of
-       (let ([p (head:layout-parent (head:root) upper)])
-         (and p (eq? (head:layout-split-orientation p) 'below) (eq? (head:layout-split-first p) upper)
-              (memq lower (head:layout-leaves (head:layout-split-second p))) #t)))
-     (define windows-before (length (ordinary-windows)))
-     (parameterize ([search:review-replacements #t]) (search:replace! "old" "new"))
-     (check 'a-replacement-opens-the-browser-on-its-batch-below-the-buffer
-       (list (head:buffer-name (head:current-buffer)) (length (rows)) (for-all (lambda (l) (contains? l "-\"old\"  +\"new\"")) (rows))
-             (below? fw (head:current-window)) (eq? (head:window-buffer fw) f)
-             (- (length (ordinary-windows)) windows-before) (head:buffer-point f))
-       '("<delta-log>" 2 #t #t #t 1 (0 . 4)))
+     (define batch-f (begin (search:replace! "old" "new") (cdr (assq 'batch (caddr (car (delta-log:log)))))))
+     (delta-log:open! 0)
+     (delta-log:filter! batch-f)
+     (check 'the-browser-in-the-pop-up-lists-the-replacement-and-the-buffer-follows
+       (list (head:buffer-name (head:current-buffer)) (head:popup? (head:current-window)) (length (rows))
+             (for-all (lambda (l) (and (contains? l "review-me") (contains? l "-\"old\"  +\"new\""))) (rows))
+             (eq? (head:window-buffer fw) f) (head:buffer-point f))
+       '("<delta-log>" #t 2 #t #t (0 . 4)))
      (dispatch:key! "C-g")
      (check 'c-g-closes-the-browser-and-puts-point-back
-       (list (head:buffer-named "<delta-log>") (head:buffer-point f) (eq? (head:current-window) fw)) '(#f (0 . 7) #t))
-     (parameterize ([search:review-replacements #t]) (search:replace! "new" "old"))
-     (check 'the-next-replacement-reuses-the-companion
-       (list (head:buffer-name (head:current-buffer)) (length (rows)) (contains? (car (rows)) "-\"new\"  +\"old\"")
-             (- (length (ordinary-windows)) windows-before))
-       '("<delta-log>" 2 #t 1))
+       (list (head:buffer-named "<delta-log>") (head:popup-rows) (head:buffer-point f) (eq? (head:current-window) fw)) '(#f 0 (0 . 7) #t))
+     (delta-log:open!)
+     (check 'the-browser-in-the-buffers-own-window-still-lists-it
+       (list (eq? (head:window-buffer fw) (head:current-buffer)) (for-all (lambda (l) (contains? l "review-me")) (rows)) (> (length (rows)) 0))
+       '(#t #t #t))
      (dispatch:key! "ESC")
-     (check 'esc-leaves-point-on-the-rows-text (list (head:buffer-named "<delta-log>") (head:buffer-point f)) '(#f (0 . 4)))
+     (check 'esc-returns-the-window-to-its-buffer-and-leaves-point-on-the-rows-text
+       (list (head:buffer-named "<delta-log>") (eq? (head:window-buffer fw) f) (head:buffer-point f)) '(#f #t (0 . 4)))
 
      (test:finish! 'delta-log)))

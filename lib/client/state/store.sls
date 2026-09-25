@@ -7,7 +7,7 @@
 (elibrary (state store)
   (export blame buffer-list buffer-name conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks properties property reload! rename! reset! resolve! revision rewrite!
+          (rename (log-entries log)) marks properties property reload! rename! reread! reset! resolve! revision rewrite!
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           view visible? visit! watch!)
@@ -449,6 +449,16 @@
   (define (reload! actor id lines facts . access)
     (unless (<= (length access) 1) (error 'reload! "expected one write access"))
     (apply values (mutate actor id 'reload (list lines facts))))
+
+  (edoc "Reread a buffer from its file through the base, the disk's text one undoable edit settling the pending conflicts: (values status detail), applied with the revision."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (lines (or list vector) "the disk's lines")
+        (facts list "the facts to commit")
+        (access (list-of any) "write access, at most one"))
+  (define (reread! actor id lines facts . access)
+    (unless (<= (length access) 1) (error 'reread! "expected one write access"))
+    (apply values (mutate actor id 'reread (list lines facts))))
 
   (edoc "Settle a reload conflict through the base: (values status detail)."
         (actor actor "the actor identity")

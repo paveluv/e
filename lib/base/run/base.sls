@@ -187,6 +187,9 @@
       [(reload)
        (arity 3)
        (call-with-values (lambda () (policy:session-reload! session (car args) (cadr args) (caddr args))) list)]
+      [(reread)
+       (arity 3)
+       (call-with-values (lambda () (policy:session-reread! session (car args) (cadr args) (caddr args))) list)]
       [(resolve)
        (arity 3)
        (call-with-values (lambda () (policy:session-resolve! session (car args) (cadr args) (caddr args))) list)]

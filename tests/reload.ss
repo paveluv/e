@@ -21,14 +21,17 @@
              (prefix (apps delta-log) delta-log:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation string) string:)
+             (prefix (core kernel) kernel:)
              (prefix (head dispatch) dispatch:)
              (prefix (head head) head:)
+             (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
              (prefix (service file) file:)
              (only (chezscheme) format get-process-id mkdir delete-file delete-directory))
 
      (define check test:check)
+     (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (delta-log:init!)
      (define dir (format "/tmp/e-reload-~a" (get-process-id)))
      (mkdir dir)
@@ -80,18 +83,21 @@
      ;; the rows return to the log, the resolution its newest entry
      (define (ordinary-windows) (filter (lambda (w) (not (head:popup? w))) (head:windows)))
      (define (window-showing name) (find (lambda (w) (equal? (head:buffer-name (head:window-buffer w)) name)) (ordinary-windows)))
-     (define (marked-ranges) (map (lambda (r) (if (eq? (car r) b) (cdr r) r)) (paint:highlight-ranges)))
-     (define (rows) (vector->list (head:buffer-lines (head:current-buffer))))
+     (define (marked-ranges) (map cdr (filter (lambda (r) (eq? (car r) b)) (paint:highlight-ranges))))
+     (define (rows) (cdr (vector->list (head:buffer-lines (head:current-buffer)))))
      (define (range-of c) (let ([r (cadddr c)]) (list (car r) (cadr r) (cadddr r) 'match)))
-     (delta-log:conflicts!)
+     (delta-log:conflicts! 0)
      (head:before-frame!)
-     (check 'the-browser-lists-the-conflicts-with-the-rows-region-highlighted
-       (list (head:buffer-name (head:current-buffer)) (length (rows))
-             (contains? (car (rows)) "mine \"ALPHA\" · disk \"omega\"") (marked-ranges))
-       (list "<delta-log>" 1 #t '((0 0 5 match))))
-     ;; the conflict keys live in the browser's conflicts context, so the
-     ;; keys listing shows them only over conflict rows
-     (check 'the-conflict-rows-bring-the-conflicts-context (mode:key-contexts (head:current-buffer)) '(delta-log-conflicts delta-log))
+     (check 'the-conflicts-browser-lists-the-conflicts-with-the-rows-region-highlighted
+       (list (head:buffer-name (head:current-buffer)) (head:popup? (head:current-window)) (length (rows))
+             (and (contains? (car (rows)) "notes.txt") (contains? (car (rows)) "\"ALPHA\"") (contains? (car (rows)) "\"omega\"")) (marked-ranges))
+       (list "<conflicts>" #t 1 #t '((0 0 5 match))))
+     ;; the conflict keys are the conflicts mode's, LEFT and RIGHT choosing a side
+     (check 'the-conflicts-browsers-keys-are-its-modes
+       (list (mode:key-contexts (head:current-buffer))
+             (eq? (bound-to 'conflicts "LEFT") delta-log:keep-mine!) (eq? (bound-to 'conflicts "RIGHT") delta-log:keep-disk!)
+             (eq? (bound-to 'conflicts " ") delta-log:flip-row!))
+       '((conflicts) #t #t #t))
      (dispatch:key! "M-/")
      (check 'm-slash-flips-the-rows-region-in-place
        (let ([w (window-showing "<flip: notes.txt>")]) (and w (vector->list (head:buffer-lines (head:window-buffer w)))))
@@ -99,50 +105,62 @@
      (dispatch:key! "M-/")
      (check 'm-slash-again-puts-the-buffer-back (and (window-showing "notes.txt") #t) #t)
      (dispatch:key! "M-m")
-     (check 'm-m-writes-the-entrys-side-and-the-rows-return-to-the-log
-       (list (lines) (delta-log:conflicts) (head:buffer-modified b)
+     (head:before-frame!)
+     (check 'm-m-writes-the-entrys-side-and-the-browser-says-nothing-pends
+       (list (lines) (delta-log:conflicts) (head:buffer-modified b) (head:buffer-conflicted b)
              (assq 'conflict (caddr (car (delta-log:log))))
-             (length (rows)) (contains? (car (rows)) "+\"ALPHA\""))
-       (list '("ALPHA" "beta" "GAMMA tail") '() #t (cons 'conflict rev) (length (delta-log:log)) #t))
+             (rows))
+       (list '("ALPHA" "beta" "GAMMA tail") '() #t #f (cons 'conflict rev) '("No conflicts pending")))
      (dispatch:key! "ESC")
 
-     ;; saving writes the buffer; a stale save reloads first and writes when
-     ;; nothing conflicts, else stops with the conflicts pending
+     ;; saving writes the buffer
      (save!)
      (check 'saving-writes-the-text (file:read path) "ALPHA\nbeta\nGAMMA tail\n")
+     ;; an edit attempt on a file changed on disk reloads it first and refuses
+     ;; that once, a refusal the dispatcher runs the key again after, as the
+     ;; test does here; the merged text is then edited and saved
      (write-disk! "ALPHA\nBETA\nGAMMA tail\n")
      (head:goto! '(0 . 5))
+     (check 'an-edit-after-a-disk-change-reloads-first-and-refuses-once
+       (list (guard (ex [(kernel:reloaded? ex) 'reloaded]) (insert-text! "!")) (lines) (head:buffer-conflicted b))
+       '(reloaded ("ALPHA" "BETA" "GAMMA tail") #f))
      (insert-text! "!")
      (save!)
-     (check 'a-stale-save-reloads-then-writes (list (lines) (file:read path)) (list '("ALPHA!" "BETA" "GAMMA tail") "ALPHA!\nBETA\nGAMMA tail\n"))
-     (write-disk! "alpha!\nBETA\ngamma tail\n")
+     (check 'saving-after-the-reload-writes (list (lines) (file:read path)) (list '("ALPHA!" "BETA" "GAMMA tail") "ALPHA!\nBETA\nGAMMA tail\n"))
+     ;; edits made before the disk changed under them: the save reloads, both
+     ;; collide, and the save refuses while the conflicts pend, the red !! on
      (replace-region-text! '(0 . 0) '(0 . 6) "OMEGA!")
      (replace-region-text! '(2 . 0) '(2 . 5) "Gamma")
-     (check 'a-conflicting-stale-save-stops-with-the-conflicts-pending
-       (list (save!) (lines) (length (delta-log:conflicts)) (file:read path))
-       (list #f '("alpha!" "BETA" "gamma tail") 2 "alpha!\nBETA\ngamma tail\n"))
+     (write-disk! "alpha!\nBETA\ngamma tail\n")
+     (check 'a-save-over-a-changed-disk-reloads-and-refuses-while-conflicts-pend
+       (list (guard (ex [(kernel:refusal? ex) (condition-message ex)]) (save!))
+             (lines) (length (delta-log:conflicts)) (head:buffer-conflicted b) (file:read path))
+       (list "Resolve the conflicts first" '("alpha!" "BETA" "gamma tail") 2 #t "alpha!\nBETA\ngamma tail\n"))
 
      ;; two conflict rows: M-n moves to the second, the highlight following,
      ;; and M-d keeps the disk's side there; resolve-all settles the rest and
      ;; the browser returns to the log by itself
      (define pending (delta-log:conflicts))
-     (delta-log:conflicts!)
+     (delta-log:conflicts! 0)
      (head:before-frame!)
      (check 'two-conflicts-make-two-rows (list (length (rows)) (marked-ranges)) (list 2 (list (range-of (car pending)))))
-     (dispatch:key! "M-n")
+     (dispatch:key! "DOWN")
      (head:before-frame!)
-     (check 'm-n-moves-to-the-next-conflict-and-the-highlight-follows
-       (list (head:point) (marked-ranges)) (list '(1 . 0) (list (range-of (cadr pending)))))
-     (dispatch:key! "M-d")
-     (check 'm-d-keeps-the-disks-side-for-the-rows-conflict
-       (list (delta-log:conflicts) (lines) (length (rows))) (list (list (car pending)) '("alpha!" "BETA" "gamma tail") 1))
-     (check 'resolve-all-settles-every-conflict (list (delta-log:resolve-all! 'disk) (delta-log:conflicts)) '(1 ()))
+     (check 'down-moves-to-the-next-conflict-and-the-highlight-follows
+       (list (head:point) (marked-ranges)) (list '(2 . 0) (list (range-of (cadr pending)))))
+     (dispatch:key! "RIGHT")
+     (head:before-frame!)
+     (check 'right-keeps-the-disks-side-for-the-rows-conflict
+       (list (head:with-buffer b (delta-log:conflicts)) (lines) (length (rows))) (list (list (car pending)) '("alpha!" "BETA" "gamma tail") 1))
+     (check 'resolve-all-settles-every-conflict
+       (list (head:with-buffer b (delta-log:resolve-all! 'disk)) (head:with-buffer b (delta-log:conflicts))) '(1 ()))
+     (head:before-frame!)
      ;; both entries conflicted and were kept only by their conflicts, so the
-     ;; log they return to is empty
-     (check 'the-browser-returns-to-the-log-with-nothing-pending (list (rows) (delta-log:log)) '(("no entries") ()))
-     (check 'conflicts-without-any-pending-shows-the-log (list (delta-log:conflicts!) (rows)) '(0 ("no entries")))
+     ;; log is empty, and the conflicts browser says nothing pends
+     (check 'the-browser-says-nothing-pends-and-the-log-is-empty
+       (list (rows) (head:with-buffer b (delta-log:log)) (head:buffer-conflicted b)) '(("No conflicts pending") () #f))
      (dispatch:key! "ESC")
-     (check 'esc-closes-the-browser (head:buffer-named "<delta-log>") #f)
+     (check 'esc-closes-the-browser-and-hides-the-pop-up (list (head:buffer-named "<conflicts>") (head:popup-rows)) '(#f 0))
 
      ;; a replacement typed as a backspace and a character is one batch, and
      ;; the reload conflicts it whole: the disk's side stands, both sides are
@@ -166,10 +184,19 @@
      (delete-file path2)
      (head:show-buffer! b)
 
-     ;; reread adopts the disk verbatim
+     ;; the conflicts settled, the buffer's !! is gone and it is savable again
+     (head:goto! '(0 . 0))
+     (insert-text! "S")
+     (check 'settled-conflicts-make-the-buffer-savable-again
+       (list (head:buffer-conflicted b) (save!) (file:read path)) (list #f #t (string-append (string:join (lines) "\n") "\n")))
+
+     ;; reread adopts the disk as one undoable edit: undo brings the buffer back
+     (define before-reread (lines))
      (write-disk! "fresh\n")
      (reread!)
      (check 'reread-adopts-the-disk (list (lines) (head:buffer-modified b)) '(("fresh") #f))
+     (undo!)
+     (check 'undo-brings-the-text-back-after-a-reread (lines) before-reread)
      (delete-file path)
      (delete-directory dir)
      (test:finish! 'reload)))

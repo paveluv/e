@@ -39,13 +39,11 @@ selected region, else in the whole current buffer, and leaves point where it
 was. Every occurrence is an entry of the buffer's delta log, all under one
 batch, and the whole replacement is one undo step. Reviewing the occurrences
 happens in the delta log rather than one question at a time: the buffer shows
-the result at once, and the delta log browser opens on the replacement's
-batch in the companion window below the buffer, the window a split below
-made, else a fresh split, one row per occurrence, where a replacement that
-should not have happened is toggled out of a view and the view committed, or
-the whole step undone. `(search:review-replacements #f)` keeps the browser
-closed, for scripts; `(delta-log:open! ` followed by Tab offers the buffer's
-batches newest first to reopen it later.
+the result at once, and `C-x l` opens the delta log browser in the pop-up,
+where `(delta-log:filter! ` followed by Tab offers the buffer's batches
+newest first; narrowed to the replacement's, one row per occurrence, a
+replacement that should not have happened is toggled out of a view and the
+view committed, or the whole step undone.
 
 The text to find is a `needle`: while you type it at M-x, its matches
 highlight in the current buffer as a search would, the prompt notes `[1 of

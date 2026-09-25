@@ -156,6 +156,8 @@ for configuration, lifecycle and scripted clients.
 |---|---|
 | `C-x C-f` | Browse and recursively filter files in `<finder>` |
 | `C-x C-s` | Save |
+| `C-x C-r` | Reread the file from disk, undoably |
+| `C-x !`, `C-x l` | Review reload conflicts, or the delta log, in the pop-up |
 | `C-x C-w` | Save as |
 | `C-x C-c` | Detach this screen; keep shared buffers and terminals running |
 | `C-x b`, `C-x C-b` | Filter and switch buffers; Enter initially selects the previous buffer |

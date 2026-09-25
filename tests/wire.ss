@@ -1528,8 +1528,8 @@
                          results actors)
                        (< (cdr (assq 'modified-at (cadddr (cadar results))))
                           (cdr (assq 'modified-at (cadddr (cadadr results))))))
-                     '(((applied 1 #f #("HELLO λ") #t (1) 4 (modified modified-at))
-                        (applied 2 #("HELLO λ!") #("HELLO λ!") #t (1 2) 4 (modified modified-at))) #t))))
+                     '(((applied 1 #f #("HELLO λ") #t (1) 4 (modified modified-at conflicts))
+                        (applied 2 #("HELLO λ!") #("HELLO λ!") #t (1 2) 4 (modified modified-at conflicts))) #t))))
                (test:check 'watchers-adopt-one-text-facts-and-anchor-snapshot
                  (map
                    (lambda (connection)
@@ -1551,7 +1551,7 @@
                      (cadr plain) (cadr future) (list-ref future 4)
                      (map car (cadddr (rpc (car writers) 'state 1 2 'facts)))
                      (and (assq 'trailing (cadddr delta)) #t)))
-                 '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified modified-at) #t))
+                 '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified modified-at conflicts) #t))
                (test:check 'stale-and-permission-refusals-preserve-text
                  (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
                    (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
@@ -2044,118 +2044,60 @@
                                                 (head:buffer-facts-set! (head:current-buffer) '((file . #f) (base . #f))) #t))
                            (call-with-input-file path get-string-all) (car (rpc head 'snapshot id)))
                      '(#t "from hook\n" #("from hook")))
-                   ;; Each destructive choice reviews both the disk and its
-                   ;; source. Keep the real prompt open through the change;
-                   ;; rejected choices preserve text, facts and head history.
+                   ;; Nothing asks about a file changed on disk: a visit merges the
+                   ;; disk's changes, or rereads the disk where the log does not reach
+                   ;; the baseline, undoably; a save reloads first and, where it cannot
+                   ;; merge, rereads instead and refuses, the buffer's text kept in the
+                   ;; log for undo to bring back
                    (for-each
-                     (lambda (scenario)
-                       (let ([command (car scenario)] [answer (cadr scenario)] [change (caddr scenario)])
-                         (write-text path "disk\n")
-                         (let ([target (rpc head 'create "file review" '("keep")
-                                            `((file . ,(and (not (eq? command 'save-as)) path))
-                                              (base . "base\n") (trailing . #t)))])
-                           (head-read a
-                             `(begin (head:show-buffer! (head:adopt-store-buffer! ,target))
-                                     (edit:insert-text! "mine ")
-                                     (head:buffer-marked-set! (head:current-buffer) #t) #t))
-                           (head-send! a (format "\x1b;x~a ~s\r"
-                                                 (if (eq? command 'save-as) 'edit:save-file! command) path))
-                           (head-wait 'file-review a
-                             (lambda () (head-sees? a (if (eq? command 'save-as) "exists; overwrite?" "changed on disk"))))
-                           (case change
-                             [(text) (rpc head 'edit target (cadr (rpc head 'snapshot target)) '(0 0 0 0) '("new "))]
-                             [(facts) (rpc head 'properties target '((trailing . #f)))]
-                             [(file) (rpc head 'properties target `((file . ,(string-append path ".other"))))]
-                             [(base) (rpc head 'properties target '((base . "new baseline\n")))]
-                             [(disk) (write-text path "later\n")]
-                             [(deleted) (delete-file path)]
-                             [(unreadable) (delete-file path) (mkdir path)])
-                           (let ([before (rpc head 'snapshot target)] [history (rpc head 'history target)])
-                             (head-send! a answer)
-                             (head-wait 'file-choice-cancelled a
-                               (lambda () (head-sees? a (if (eq? change 'unreadable) "Cannot verify" "cancelled"))))
-                             (test:check (list scenario 'file-review-preserves-newer-work)
-                               (list (equal? before (rpc head 'snapshot target))
-                                     (equal? history (rpc head 'history target))
-                                     (head-read a '(let ([b (head:current-buffer)])
-                                                     (list (head:buffer-marked b)
-                                                       (pair? (store:history (head:buffer-store-id b))))))
-                                     (cond [(file-directory? path) 'directory]
-                                       [(file-exists? path) (call-with-input-file path get-string-all)]
-                                       [else #f]))
-                               (list #t #t '(#t #t)
-                                     (case change [(disk) "later\n"] [(deleted) #f] [(unreadable) 'directory]
-                                       [else "disk\n"]))))
-                           (when (eq? change 'unreadable) (delete-directory path))
-                           (when (and (eq? change 'disk) (member answer '("o" "y")))
-                             (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                             (head-wait 'new-overwrite-review a
-                               (lambda () (head-sees? a (if (eq? command 'save-as) "exists; overwrite?" "changed on disk"))))
-                             ;; Identical bytes with a new stamp still have consent.
-                             (write-text path "later\n")
-                             (head-send! a answer)
-                             (test:check 'fresh-overwrite-accepts-unchanged-content-and-invalidates-the-stamp
-                               (list (head-read a
-                                       '(let ([b (head:current-buffer)])
-                                          (list (head:buffer-base b) (head:buffer-modified b) (head:buffer-stamp b))))
-                                     (call-with-input-file path get-string-all))
-                               '(("mine keep\n" #f #f) "mine keep\n")))
-                           (when (memq change '(text facts))
-                             (head-send! a (format "\x1b;xedit:visit-file! ~s\r" path))
-                             (head-wait 'reread-reviewed-again a (lambda () (head-sees? a "changed on disk")))
-                             (head-send! a "r")
-                             (test:check 'fresh-reread-adopts-the-disk-and-clears-only-accepted-history
-                               (head-read a
-                                 '(let ([b (head:current-buffer)])
-                                    (list (head:buffer-lines b) (head:buffer-modified b)
-                                          (head:buffer-marked b)
-                                          (store:history (head:buffer-store-id b)))))
-                               '(#("disk") #f #f ())))
-                           (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                           (rpc head 'delete target))))
-                     '((edit:visit-file! "r" text) (edit:visit-file! "r" facts)
-                       (edit:visit-file! "r" disk)
-                       (edit:save-file! "o" disk) (edit:save-file! "o" deleted)
-                       (edit:save-file! "o" unreadable) (edit:save-file! "o" file) (edit:save-file! "o" base)
-                       (save-as "y" disk) (save-as "y" file))))
-
-                 ;; No common ancestor exists when a newly visited path
-                 ;; appears on disk before first save. Keep both valid exits.
-                 (for-each
-                   (lambda (baseline)
-                     (let* ([path (string-append root "/missing-save.txt")]
-                            [target (head-read a
-                                      `(begin (edit:visit-file! ,path) (edit:insert-text! "mine")
-                                              (when (not ',baseline) (head:buffer-base-set! (head:current-buffer) #f))
-                                              (head:buffer-store-id (head:current-buffer))))])
+                     (lambda (command)
                        (write-text path "disk\n")
-                       (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                       (head-wait 'no-merge-ancestor a (lambda () (head-sees? a "no saved baseline")))
-                       (let* ([choices? (not (head-sees? a "merge"))]
-                              [before (rpc head 'snapshot target)] [history (rpc head 'history target)]
-                              [cancelled
-                               (begin
-                                 (head-send! a "mc")
-                                 (head-wait 'no-ancestor-choice-cancelled a
-                                   (lambda () (not (head-sees? a "no saved baseline"))))
-                                 (list (equal? before (rpc head 'snapshot target))
-                                       (equal? history (rpc head 'history target))
-                                       (call-with-input-file path get-string-all)))])
-                         (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                         (head-wait 'review-no-ancestor-again a (lambda () (head-sees? a "no saved baseline")))
-                         (head-send! a "o")
-                         (test:check (list baseline 'missing-ancestor-keeps-cancel-and-overwrite)
-                           (list choices? cancelled
-                                 (head-read a '(let ([b (head:current-buffer)])
-                                                 (list (head:buffer-lines b) (head:buffer-base b)
-                                                       (head:buffer-modified b))))
-                                 (equal? history (rpc head 'history target))
-                                 (call-with-input-file path get-string-all))
-                           '(#t (#t #t "disk\n") (#("mine") "mine\n" #f) #t "mine\n")))
-                       (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                       (rpc head 'delete target)
-                       (delete-file path)))
-                   '(absent #f))
+                       (let ([target (rpc head 'create "file review" '("keep")
+                                          `((file . ,path) (base . "base\n") (trailing . #t)))])
+                         (head-read a
+                           `(begin (head:show-buffer! (head:adopt-store-buffer! ,target))
+                                   (edit:insert-text! "mine ") #t))
+                         (head-send! a (format "\x1b;x~a ~s\r" command path))
+                         (head-wait (list command 'rereads-without-asking) a
+                           (lambda () (head-sees? a (if (eq? command 'edit:save-file!) "was reread" "Reread"))))
+                         (test:check (list command 'a-changed-file-past-the-log-is-reread-undoably)
+                           (list (head-read a '(let ([b (head:current-buffer)])
+                                                 (list (head:buffer-lines b) (head:buffer-modified b) (head:buffer-conflicted b))))
+                                 (call-with-input-file path get-string-all)
+                                 (head-read a '(begin (edit:undo!) (head:buffer-lines (head:current-buffer)))))
+                           '((#("disk") #f #f) "disk\n" #("mine keep")))
+                         (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                         (rpc head 'delete target)))
+                     '(edit:visit-file! edit:save-file!))
+                   ;; saving under a name a file holds still asks, and y writes
+                   (write-text path "disk\n")
+                   (let ([target (rpc head 'create "file review" '("keep") '((trailing . #t)))])
+                     (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine ") #t))
+                     (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
+                     (head-wait 'save-as-asks a (lambda () (head-sees? a "exists; overwrite?")))
+                     (head-send! a "y")
+                     (head-wait 'save-as-writes a (lambda () (string=? (call-with-input-file path get-string-all) "mine keep\n")))
+                     (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                     (rpc head 'delete target)))
+
+                 ;; A newly visited path appearing on disk before the first save has
+                 ;; no baseline to merge from: the save rereads the disk, undoably,
+                 ;; and refuses; undo brings the text back to save
+                 (let* ([path (string-append root "/missing-save.txt")]
+                        [target (head-read a `(begin (edit:visit-file! ,path) (edit:insert-text! "mine")
+                                                     (head:buffer-store-id (head:current-buffer))))])
+                   (write-text path "disk\n")
+                   (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
+                   (head-wait 'no-ancestor-rereads a (lambda () (head-sees? a "was reread")))
+                   (test:check 'a-save-without-a-baseline-rereads-and-undo-restores-the-text-to-save
+                     (list (head-read a '(head:buffer-lines (head:current-buffer)))
+                           (call-with-input-file path get-string-all)
+                           (head-read a `(begin (edit:undo!) (edit:save-file! ,path) (head:buffer-lines (head:current-buffer))))
+                           (call-with-input-file path get-string-all))
+                     '(#("disk") "disk\n" #("mine") "mine\n"))
+                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (rpc head 'delete target)
+                   (delete-file path))
 
                  ;; C-x k kills at once: a document with unsaved work goes to the
                  ;; trash, hidden from every head with its text and history kept,

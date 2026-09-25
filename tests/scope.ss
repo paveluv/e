@@ -19,7 +19,6 @@
              (prefix (head window) window:))
 
      (define check test:check)
-     (search:review-replacements #f)
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))

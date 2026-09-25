@@ -188,60 +188,72 @@ still leave partial contents on disk.
 ### External changes and reloading
 
 Each file buffer remembers the last disk contents it accepted, its baseline.
-e checks at the start of an edit group and before saving; a mere `touch` is
-ignored because the contents are compared, and a changed file marks the
-status line with red `!!`.
+Nothing asks about a file changed on disk; e **reloads** it, and everything
+a reload does is undoable or settled by a command. A reload happens when
+you reopen the file, when you first edit a buffer whose file changed
+meanwhile, when you save one, and on `(reload!)`. A mere `touch` is ignored
+because the contents are compared.
 
-Reopening an already visited file that changed on disk **reloads** it: the
-disk's text becomes the baseline again, and the buffer's own entries since
-the old baseline are reapplied on top, carried across the disk's changes with
-the geometry that carries concurrent editors' edits across each other. The
-disk's changes are inferred by a diff of lines, each changed stretch then
-refined token by token, a word, a run of blanks, a punctuation character or
-a line break being the unit, so a reindent, a formatter's line split or a
-rename on the rest of a line combines with your edits there, and a word
-both actors changed conflicts as a word. Changes that touch different
-tokens combine silently, and the same change made by both stands once.
-Where the two texts meet at one point, what would fuse into one word
-conflicts instead, as does a line opened where the disk joined two lines,
-and text appended to a line or a word the disk deleted; typing at the end
-of the line above an added or deleted line stays on its line.
-An entry the disk's change overlaps is disabled and pends as a **conflict**:
-the disk's side stands in the text, which stays consistent at every moment,
-and the entry's side is kept. The entries of its batch whose text adjoins it
-join the conflict, so a replacement typed as a backspace and a character
-conflicts whole, both sides shown, while the occurrences of one `replace!`
-pend one by one. Both sides are the two images of one region of the text
-before either change, so keeping either gives a clean text, and a conflict
-whose sides agree, both actors having made the same change, settles itself.
-`(delta-log:conflicts)` lists them with both
-sides; `(delta-log:flip! (conflict n))` shows the entry's side in place, in a
-read-only `<flip: name>` buffer where the buffer was, and again returns to the
-buffer; `(delta-log:resolve! (conflict n) 'mine)` writes the entry's side over
-the disk's region, `'disk` keeps the disk's side and drops the mark, and
-replacement lines write those; a write is one undoable edit.
-`(delta-log:resolve-all! 'disk)` settles them all. `(delta-log:conflicts!)`
-reviews them in the browser beside the buffer, one row per conflict with the
-current row's region highlighted: `M-/` flips it, `M-d` keeps the disk's
-side, `M-m` writes yours, and with the last one settled the rows return to
-the log. At the λ prompt the `conflict` type completes from the pending
-ones, each hint naming the actor and both sides, and previews a candidate by
-flipping its region while Tab has it. A reload writes nothing; the next save
-writes the buffer's result.
+A reload makes the disk's text the baseline again and reapplies the
+buffer's own entries since the old baseline on top, carried across the
+disk's changes with the geometry that carries concurrent editors' edits
+across each other. The disk's changes are inferred by a diff of lines, each
+changed stretch then refined token by token, a word, a run of blanks, a
+punctuation character or a line break being the unit, so a reindent, a
+formatter's line split or a rename on the rest of a line combines with your
+edits there, and a word both actors changed conflicts as a word. Changes
+that touch different tokens combine silently, and the same change made by
+both stands once. Where the two texts meet at one point, what would fuse
+into one word conflicts instead, as does a line opened where the disk
+joined two lines, and text appended to a line or a word the disk deleted;
+typing at the end of the line above an added or deleted line stays on its
+line. A reload that merges everything leaves a line in the log and nothing
+else; the edit that found the change runs again against the merged text.
 
-Where the store cannot reload, a buffer without a shared store or a baseline
-the log no longer reaches, e asks `reread` or `cancel`; `(reread!)` adopts the
-disk verbatim at any time, dropping the buffer's history and its pending
-conflicts. If the buffer changes while a reread is being reviewed, e cancels
-it and preserves the newer work.
+An entry the disk's change overlaps is disabled and pends as a
+**conflict**: the disk's side stands in the text, which stays consistent at
+every moment, and the entry's side is kept. The entries of its batch whose
+text adjoins it join the conflict, so a replacement typed as a backspace and
+a character conflicts whole, while the occurrences of one `replace!` pend
+one by one. Both sides are the two images of one region of the text before
+either change, so keeping either gives a clean text, and a conflict whose
+sides agree settles itself. While conflicts pend the buffer's status line and
+its `<buffet>` row show red `!!`, the buffer stays editable, and a save
+refuses: resolve the conflicts first.
+
+`C-x !` opens the **conflicts browser**, `<conflicts>`, in the pop-up,
+window 0, and `(delta-log:conflicts! (window n))` in any window; it lists
+one row per pending conflict of every buffer a window shows, its buffer, the
+entry's revision and actor, where the disk's side stands and both sides,
+with the current row's region highlighted in its buffer's window, which
+follows. `LEFT` keeps the row's Mine side, `RIGHT` the Disk side, `SPC`
+shows the other side in place and back, `RET` describes both sides in full,
+and `ESC` closes the browser, the window showing what it showed before.
+The browser follows the windows and the store, so a conflict settled
+elsewhere leaves its rows, and with the last one settled the red `!!` goes
+and the buffer is savable again. The same at M-x: `(delta-log:conflicts)`
+lists the current buffer's conflicts, `(delta-log:resolve! (conflict n)
+'mine)` writes the entry's side over the disk's region, `'disk` keeps the
+disk's side, replacement lines write those, `(delta-log:resolve-all! 'disk)`
+settles them all, and `(delta-log:flip! (conflict n))` shows the entry's
+side in a read-only `<flip: name>` buffer. The `conflict` type completes from
+the pending ones and previews a candidate by flipping its region while Tab
+has it.
+
+`C-x C-r` **rereads** the file instead: the disk's text replaces the
+buffer's as one undoable edit, settling every pending conflict, so the red
+`!!` goes at once; undo brings the text and the conflicts back. A conflict
+settled by keeping mine comes back with its undo the same way. Where the
+store cannot merge the disk's changes at all, a buffer without a saved
+baseline or one the log no longer reaches, e rereads the disk by itself and
+says so in the echo; undo brings the buffer's text back. A save that finds
+such a file rereads it too and waits: undo, then save writes your text.
 
 Saving an externally changed file reloads it first and writes when no
-conflict pends; with conflicts the save stops, reports them, and waits for
-their resolution. Where the reload is not possible the save offers
-`overwrite` or `cancel`. The disk comparison runs after pre-save hooks, so a
-hook's write is included in that decision; e rechecks the disk contents after
-a file prompt, and a timestamp change with identical contents is accepted.
-These checks also apply when saving over an existing file under a new name.
+conflict pends. The disk comparison runs after pre-save hooks, so a hook's
+write is included in that decision, and a timestamp change with identical
+contents is accepted. Saving over an existing file under a new name still
+asks before overwriting it.
 
 ## Undo, selections, and the copy buffer
 
@@ -349,33 +361,30 @@ M-x the `delta-log:` commands work on the current buffer's log:
   until they are toggled back. `(delta-log:revert!)` abandons the view.
 - `(delta-log:view)` and `(delta-log:disabled)` report the live view.
 
-`(delta-log:open!)` opens the browser, `<delta-log>`, in the companion
-window below the buffer, the sibling a split below made, by hand or by a
-command, else a fresh split below, and selects it: one row per entry, newest first, with its revision, actor, place,
-removed and inserted text and batch, an inverse naming the entry it undoes,
-redoes or reverts and a disabled entry the inverse it was undone, redone or
-reverted by, an entry
-disabled in the view marked with `-`, the current row's text highlighted in
-the buffer's window and point on it, so the window follows the rows as a
-search's follows its matches.
-`M-n` and `M-p` move, `M-t` toggles the row's entry in the view, which shows
-where the buffer was, `RET` describes the entry, `M-RET` commits the view,
-`ESC` closes the browser leaving point on the row's text and `C-g` closes it
-putting point back where it was; `(delta-log:filter! '((actor . (agent
-"helper"))))` narrows the rows, `(delta-log:open! (batch '(...)))` opens on
-a batch's entries, a replacement's occurrences say, `#f` widens them again,
-and `delta-log:next!` and `previous!` move from anywhere. `(delta-log:conflicts!)` makes a
-reload's pending conflicts the rows instead, newest first, each naming the
-entry's revision and actor, where the disk's side stands and both sides
-elided, the current row's region highlighted in the buffer's window: `M-/`
-shows the entry's side in place and back, `M-d` keeps the disk's side, `M-m`
-writes the entry's, `RET` describes both sides in full, and once the last
-conflict is settled the rows return to the log. The browser is a view over
-the commands above and asks nothing itself; its keys are commands bound in
-its contexts, `delta-log` for every row, `delta-log-entries` and
-`delta-log-conflicts` for what one kind of row allows, so `C-x TAB` lists
+`C-x l` opens the **delta log browser**, `<delta-log>`, in the pop-up,
+window 0, and `(delta-log:open! (window n))` in any window, the current one
+without an argument; it lists one row per entry of every buffer a window
+shows, newest first within a buffer, under a heading: the buffer, the
+revision, the actor, the place, the removed and inserted text and the
+batch, an inverse naming the entry it undoes, redoes or reverts and a
+disabled entry the inverse it was undone, redone or reverted by, an entry
+disabled in the view marked with `-`. The current row's text is highlighted
+in its buffer's window and point sits on it, so the window follows the rows
+as a search's follows its matches, and the rows follow the windows and the
+store before every frame. `DOWN` and `UP` move, `PGDN` and `PGUP` page,
+`M-t` toggles the row's entry in its buffer's view, which shows where the
+buffer was, `RET` describes the entry, `M-RET` commits the view, `ESC` closes
+the browser leaving point on the row's text, the window showing what it
+showed before, and `C-g` closes it putting point back where it stood.
+`(delta-log:filter! '((actor . (agent "helper"))))` narrows the rows,
+`(delta-log:filter! (batch '(...)))` to a batch's entries, a replacement's
+occurrences say, and `#f` widens them again. Both browsers look like the
+finder: a heading row, a tinted current row and no cursor. They are views
+over the commands above and ask nothing themselves; their keys are commands
+bound in the `delta-log` and `conflicts` mode contexts, so `C-x TAB` lists
 them and M-x reaches them: `delta-log:show-row!`, `toggle-row!`,
-`flip-row!`, `keep-disk!`, `keep-mine!` and `cancel!` act on the current row.
+`flip-row!`, `keep-disk!`, `keep-mine!`, `next!`, `previous!`, `page-down!`,
+`page-up!`, `close!` and `cancel!`.
 
 The `revision` and `batch` types complete from the log with the entry as
 the hint, and a revision candidate previews itself: while Tab has it

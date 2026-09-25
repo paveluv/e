@@ -20,7 +20,6 @@
 
      (define bot '(agent position-test))
      (define check test:check)
-     (search:review-replacements #f)
      (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer! head:new-buffer!) name)])
