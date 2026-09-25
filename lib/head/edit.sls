@@ -124,10 +124,6 @@
     head:buffer-file head:buffer-file-set!)
   (define-state trailing-newline? (head:window-buffer current-window)
     head:buffer-trailing head:buffer-trailing-set!)
-  (define-state modified? (head:window-buffer current-window)
-    head:buffer-modified head:buffer-modified-set!)
-  (define-state history (head:window-buffer current-window)
-    head:buffer-history head:buffer-history-set!)
   (define-state mark-row (head:window-buffer current-window)
     head:buffer-mark-row head:buffer-mark-row-set!)
   (define-state mark-col (head:window-buffer current-window)
@@ -155,7 +151,9 @@
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  (define suppress-history (make-parameter #f))
+  ;; whether an edit joins the buffer's latest recorded one, its undo group
+  ;; and batch, as the keys of a typing run do
+  (define continuing-edit (make-parameter #f))
   ;; Desired anchors in the command's proposed result.  The head projects
   ;; them into the accepted revision before adopting any later changes.
   (define edit-point (make-parameter 'end))
@@ -185,17 +183,13 @@
   ;; Navigation addresses the window presentation; editing addresses source.
   (define (current-display-line) (vector-ref (head:window-lines current-window) point-row))
 
-  (define (snapshot-key snapshot)
-    (and (> (length snapshot) 6) (list-ref snapshot 6)))
-
   (define (submit-edit! b span replacement . properties)
-    ;; Head snapshots supply grouping and presentation only.  Shared
-    ;; undo is the store's inverse journal, never these saved vectors.
-    ;; The entry is staged: do not clear redo or add it to the group's
-    ;; history until a mutation actually succeeds.
+    ;; The pending action supplies the store's grouping key, the label and
+    ;; the batch; the store owns the undo history. The entry is staged: it
+    ;; becomes the buffer's latest only when a mutation actually succeeds.
     (let* ([action (pending-edit)]
            [entry (and action (cadr action))]
-           [key (and entry (snapshot-key (cdr entry)))])
+           [key (and entry (cadr entry))])
       (unless (and action (eq? (car action) b))
         (error 'submit-edit! "edit has no pending action"))
       (head:store-edit! b span replacement
@@ -212,52 +206,32 @@
     (let-values ([(span replacement) (text:difference (car (edit-basis-for b)) target)])
       (apply submit-edit! b span replacement properties)))
 
-  (define (editor-snapshot . key)
-    ;; the cache vectors are immutable now: snapshots share, never copy
-    (list lines point-row point-col trailing-newline? modified?
-          (head:buffer-store-rev (head:window-buffer current-window))
-          (if (pair? key) (car key)
-              (list 'head-edit head:ui-actor
-                    (head:buffer-store-rev (head:window-buffer current-window))))))
-
-  (define (restore-snapshot! snapshot)
-    ;; This is the local-buffer path.  Shared text never restores a
-    ;; snapshot; the store's inverse operation owns its history.
-    (let-values ([(span replacement) (text:difference lines (car snapshot))])
-      (head:store-edit! (head:window-buffer current-window) span replacement
-                        (list #f #f (cons 'undo (list (cons 'trailing (cadddr snapshot)))))
-                        (list (cons current-window (cons (cadr snapshot) (caddr snapshot))))))
-    ;; The buffer may have been saved or reloaded since this snapshot was
-    ;; taken, changing its current disk base.  For a file buffer, derive
-    ;; modified state from that base instead of restoring a stale flag.
-    (let* ([b (head:window-buffer current-window)]
-           [base (head:buffer-base b)])
-      (set! modified?
-        (if base
-            (not (string=? (buffer-text b) base))
-            (list-ref snapshot 4))))
-    (set! mark-active? #f)
-    (head:clamp-buffer-positions! (head:window-buffer current-window))
-    (paint:invalidate-screen-cache!))
-
   ;; Undo entries are labeled with the user-level action that made them
   ;; -- "insert \"hello\"", "(search:replace! \"xx\" \"yy\")" -- and undo
-  ;; and redo report the label.  Inside a call-as-one-edit! group, the
-  ;; box holds (label . buffer-entries): one entry per buffer the
-  ;; group touches, labeled with the group's label (or, lacking one,
-  ;; that buffer's first edit's).
+  ;; and redo report the label.  An entry is (label key batch): the key
+  ;; the store groups the buffer's edits under, one undo step, and the
+  ;; batch their delta log entries carry; the store owns the history
+  ;; itself.  Inside a call-as-one-edit! group, the box holds (label .
+  ;; buffer-entries): one entry per buffer the group touches, labeled with
+  ;; the group's label (or, lacking one, that buffer's first edit's).
   (define edit-group (make-parameter #f))
   (define pending-edit (make-parameter #f))
 
   ;; The batch label every edit carries: one per outermost group, so a
-  ;; command's edits across buffers share it; one per fresh undo entry
+  ;; command's edits across buffers share it; one per fresh entry
   ;; otherwise, chained typing sharing its entry's.
   (define edit-batch (make-parameter #f))
   (define batch-counter 0)
-  (define entry-batches (make-weak-eq-hashtable))
   (define (mint-batch!)
     (set! batch-counter (+ batch-counter 1))
     (list head:ui-actor batch-counter))
+
+  ;; The entry a buffer's latest recorded edit joined, for the next key of
+  ;; a typing run to continue; an undo, a redo or a reread forgets it, so a
+  ;; run never joins an entry the store has moved
+  (define latest-edits (make-weak-eq-hashtable))
+
+  (define (forget-latest! b) (hashtable-delete! latest-edits b))
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -281,21 +255,20 @@
                       (property:select facts '(file base stamp stale))))))))))))
 
   (define (check-editable!)
-    ;; The same guard protects fresh edits and history restoration:
-    ;; #t forbids all edits, and a procedure decides per edit.
-    (let ([guard (head:buffer-read-only (head:window-buffer current-window))])
+    ;; The same guard protects fresh edits and undo: #t forbids all edits,
+    ;; and a procedure decides per edit. A local buffer, a view or a tool
+    ;; of this head's, is never edited: every text edited is the base's.
+    (let* ([b (head:window-buffer current-window)] [guard (head:buffer-read-only b)])
       ;; the pop-up shows; what it shows is edited in a window of its own
       (when (head:popup? current-window)
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "the pop-up is read-only"))))
+      (unless (head:buffer-store-id b)
+        (raise (condition (kernel:make-read-only-error)
+                          (make-message-condition "local buffers are read-only"))))
       (when (if (procedure? guard) (not (guard)) guard)
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only"))))))
-
-  (define (trim-history b entries)
-    ;; a buffer with a history-limit fact keeps that many undo entries
-    (let ([limit (head:buffer-fact b 'history-limit #f)])
-      (if (and limit (> (length entries) limit)) (list-head entries limit) entries)))
 
   (define (call-with-recorded-edit! label thunk)
     (check-editable!)
@@ -304,38 +277,27 @@
       (if (and pending (eq? (car pending) b))
           (thunk)
           (begin
-            (unless (suppress-history) (check-disk-before-edit!))
-            (let* ([h (head:buffer-history b)]
-                   [group (edit-group)]
+            (unless (continuing-edit) (check-disk-before-edit!))
+            (let* ([group (edit-group)]
                    [group-hit (and group (assq b (cdr (unbox group))))]
-                   [group-entry (and group-hit (memq (cdr group-hit) (vector-ref h 0))
-                                     group-hit)]
-                   [previous
-                    (or (and group-entry (cdr group-entry))
-                        (and (not group) (suppress-history)
-                             (pair? (vector-ref h 0)) (car (vector-ref h 0))))]
-                   [label (cond [group-entry (car previous)]
+                   [previous (or (and group-hit (cdr group-hit))
+                                 (and (not group) (continuing-edit) (hashtable-ref latest-edits b #f)))]
+                   [label (cond [group-hit (car previous)]
                                 [group (or (car (unbox group)) label)]
                                 [else label])]
-                   [entry (or previous (cons label (editor-snapshot)))]
-                   [batch (or (hashtable-ref entry-batches entry #f)
-                              (let ([fresh (or (edit-batch) (mint-batch!))])
-                                (hashtable-set! entry-batches entry fresh)
-                                fresh))]
+                   [entry (or previous
+                              (list label (list 'head-edit head:ui-actor (head:buffer-store-rev b))
+                                    (or (edit-batch) (mint-batch!))))]
                    [committed? #f]
                    [commit!
                     (lambda ()
                       (unless committed?
-                        (unless previous
-                          (vector-set! h 0 (trim-history b (cons entry (vector-ref h 0)))))
-                        (vector-set! h 1 '())
                         (set-car! entry label)
-                        (when (and group (not group-entry))
-                          (set-box! group
-                            (cons (car (unbox group))
-                                  (cons (cons b entry) (remq group-hit (cdr (unbox group)))))))
+                        (hashtable-set! latest-edits b entry)
+                        (when (and group (not group-hit))
+                          (set-box! group (cons (car (unbox group)) (cons (cons b entry) (cdr (unbox group))))))
                         (set! committed? #t)))])
-              (parameterize ([pending-edit (list b entry label commit! batch)])
+              (parameterize ([pending-edit (list b entry label commit! (caddr entry))])
                 (thunk)))))))
 
   (define-syntax with-recorded-edit
@@ -371,87 +333,54 @@
   (define (no-history verb)
     (format "No further ~a information" (string-downcase verb)))
 
-  (define (local-history-shift! from to verb scope)
-    (cond
-      [(and (pair? scope) (not (equal? (cadr scope) head:ui-actor)))
-       "Local buffers have no other actors' changes"]
-      [(null? (vector-ref history from)) (no-history verb)]
-      [else
-       (check-editable!)
-       (let* ([entry (car (vector-ref history from))]
-              [snapshot (cdr entry)]
-              [before (editor-snapshot (snapshot-key snapshot))])
-         (restore-snapshot! snapshot)
-         (vector-set! history from (cdr (vector-ref history from)))
-         (vector-set! history to (cons (cons (car entry) before) (vector-ref history to)))
-         (string:elide (if (car entry) (format "~a ~a" verb (car entry)) verb) cols))]))
-
-  (define (shared-history-shift! from to verb scope)
+  (define (history-shift! direction verb scope)
+    ;; undo or redo through the store, which owns the history; the report
+    ;; names the actor and the label of the action moved
     (check-editable!)
-    (let* ([b (head:window-buffer current-window)]
-           [before (editor-snapshot #f)])
-      (let-values ([(status detail)
-                    (head:store-history! b (if (zero? from) 'undo 'redo) scope)])
-        (case status
-          [(nothing) (no-history verb)]
-          [(applied)
-           (let* ([author (caddr detail)]
-                  [key (if (and (equal? author head:ui-actor) (list-ref detail 3))
-                           (list-ref detail 3)
-                           (list 'store-action author (cadr detail)))]
-                  [entry (find (lambda (entry) (equal? (snapshot-key (cdr entry)) key))
-                               (vector-ref history from))]
-                  [label (or (and entry (car entry)) (list-ref detail 4) "edit")])
-             (when entry
-               (vector-set! history from (remq entry (vector-ref history from))))
-             (vector-set! history to
-               (cons (cons label (append (list-head before 6) (list key)))
-                     (vector-ref history to)))
+    (let ([b (head:window-buffer current-window)])
+      (let-values ([(status detail) (head:store-history! b direction scope)])
+        (set! message
+          (case status
+            [(nothing) (no-history verb)]
+            [(applied)
+             (forget-latest! b)
              (set! mark-active? #f)
              (head:window-goal-set! current-window #f)
              (head:clamp-buffer-positions! b)
              (paint:invalidate-screen-cache!)
-             (string:elide (format "~a ~s: ~a" verb author label) cols))]
-          [else
-           (format "~a blocked: ~a" verb
-                   (case detail
-                     [(read-only) "the buffer is read-only"]
-                     [(basis-too-old) "history is incomplete"]
-                     [(overlap) "another edit overlaps this action"]
-                     [(property-changed) "a text property changed after this action"]
-                     [else "the store is unavailable"]))]))))
-
-  (define (history-shift! from to verb scope)
-    (set! message
-      (if (head:buffer-store-id (head:window-buffer current-window))
-          (shared-history-shift! from to verb scope)
-          (local-history-shift! from to verb scope)))
-    message)
+             (string:elide (format "~a ~s: ~a" verb (caddr detail) (or (list-ref detail 4) "edit")) cols)]
+            [else
+             (format "~a blocked: ~a" verb
+                     (case detail
+                       [(read-only) "the buffer is read-only"]
+                       [(basis-too-old) "history is incomplete"]
+                       [(overlap) "another edit overlaps this action"]
+                       [(property-changed) "a text property changed after this action"]
+                       [else "the store is unavailable"]))]))
+        message)))
 
   (edoc "Undo one action in the current buffer within the undo-scope: this head's latest under mine, any actor's under all."
         (returns string "the report shown in the echo area")
         (edits))
   (define (undo!)
-    (history-shift! 0 1 "Undo" (undo-scope)))
+    (history-shift! 'undo "Undo" (undo-scope)))
 
   (edoc "Reverse this head's latest undo."
         (returns string "the report shown in the echo area")
         (edits))
   (define (redo!)
-    (history-shift! 1 0 "Redo" 'mine))
+    (history-shift! 'redo "Redo" 'mine))
 
   (edoc "Undo an actor's latest live action in the current shared buffer."
         (who actor "the actor's identity")
         (returns string "the report shown in the echo area")
         (edits))
   (define (undo-actor! who)
-    (history-shift! 0 1 "Undo" (list 'actor who)))
+    (history-shift! 'undo "Undo" (list 'actor who)))
 
   ;;; Point, mark, and editing ----------------------------------------------
 
   (define (changed!)
-    (unless (head:buffer-store-id (head:window-buffer current-window))
-      (set! modified? #t))
     (set! message "") (set! mark-active? #f)
     (head:window-goal-set! current-window #f))
 
@@ -734,7 +663,7 @@
   (define (typing-edit! b run left before after thunk)
     ;; one key of a run: the edit joins the run's undo entry and batch when
     ;; the run continues, and the chain remembers where point now stands
-    (parameterize ([suppress-history (and run #t)])
+    (parameterize ([continuing-edit (and run #t)])
       (with-recorded-edit (typing-label left before after)
         (thunk)
         (changed!)))
@@ -780,7 +709,7 @@
 
   ;;; Kill and yank ---------------------------------------------------------
 
-  (edoc "Whether every kill and copy, and every other change to <copy>, also reaches the terminal's clipboard, through OSC 52."
+  (edoc "Whether every kill and copy, and every other change to *copy*, also reaches the terminal's clipboard, through OSC 52."
         (value boolean))
   (define forward-copy-buffer-to-system-clipboard (make-parameter
                                                     #f
@@ -828,7 +757,7 @@
         (paint:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
-  ;; Whatever changes <copy> -- a hand edit there, undo, the prompt's C-k --
+  ;; Whatever changes *copy* -- a hand edit there, undo, the prompt's C-k --
   ;; reaches the clipboard at the next frame, once per revision; the copy
   ;; commands publish at once and note their revision. A copy buffer seen
   ;; for the first time is only noted, so a fresh or resumed head never
@@ -842,7 +771,7 @@
     (set! published-copy (cons b (copy-revision b))))
 
   (define (publish-copy-changes!)
-    (let ([b (head:buffer-named "<copy>")])
+    (let ([b (head:copy-buffer #f)])
       (when b
         (let ([revision (copy-revision b)])
           (cond [(not (eq? b (car published-copy))) (set! published-copy (cons b revision))]
@@ -853,7 +782,7 @@
                    (publish-system-clipboard! (head:copy-text)))])))))
 
   (define (replace-copy-text! text label)
-    ;; <copy> takes the text as one undo entry of its own -- C-_ there
+    ;; *copy* takes the text as one entry of its log -- C-_ there
     ;; brings the previous copy back -- with point at its end in every
     ;; window showing it; then the clipboard follows at once.
     (let ([b (head:copy-buffer)])
@@ -1221,7 +1150,7 @@
       ;; A reset subscriber may already have adopted/edited a newer source.
       ;; Its history and selection belong to that work, not this reread.
       (when (and accepted (= accepted (caddr (head:edit-basis b))))
-        (head:buffer-history-set! b (vector '() '()))
+        (forget-latest! b)
         (head:buffer-marked-set! b #f))
       (parameterize ([message-source 'visit-file!])
         (set-message! (if accepted (format "Reread ~a" path)

@@ -208,8 +208,6 @@
      (define user-help (head:new-buffer! "*help*"))
      (head:buffer-lines-set! user-help (vector "my notes"))
      (head:buffer-read-only-set! user-help #t)
-     (define user-history (vector '(saved) '()))
-     (head:buffer-history-set! user-help user-history)
      (head:add-buffer! user-help)
      (define tool (head:fresh-buffer! "*help*"))
      (check 'snapshot-is-local (head:buffer-store-id tool) #f)
@@ -218,8 +216,6 @@
      (check 'snapshot-preserves-user-text (head:buffer-lines user-help) '#("my notes"))
      (check 'snapshot-preserves-user-dirty (head:buffer-modified user-help) #t)
      (check 'snapshot-preserves-user-read-only (head:buffer-read-only user-help) #t)
-     (check 'snapshot-preserves-user-history
-            (eq? (head:buffer-history user-help) user-history) #t)
      (head:buffer-name-set! tool "help renamed")
      (check 'snapshot-reuses-renamed-tool (eq? (head:fresh-buffer! "*help*") tool) #t)
 

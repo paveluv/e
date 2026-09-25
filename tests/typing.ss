@@ -17,7 +17,8 @@
              (head literal)
              (prefix (apps delta-log) delta-log:)
              (prefix (head dispatch) dispatch:)
-             (prefix (head head) head:))
+             (prefix (head head) head:)
+             (prefix (state store) store:))
 
      (define check test:check)
      (edit-init!)
@@ -30,7 +31,7 @@
      (define (press! key . times) (do ([n (if (pair? times) (car times) 1) (- n 1)]) ((= n 0)) (dispatch:key! key)))
      (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (delta-log:log) i)))))
      (define (same-batch? . is) (for-all (lambda (i) (equal? (batch-at i) (batch-at (car is)))) (cdr is)))
-     (define (label) (car (car (vector-ref (head:buffer-history b) 0))))
+     (define (label) (cadr (car (store:undo-labels (head:buffer-store-id b)))))
 
      ;; typed characters are entries of one batch under one label; moving
      ;; point starts a new run

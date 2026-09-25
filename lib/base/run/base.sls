@@ -191,6 +191,7 @@
        (arity 3)
        (call-with-values (lambda () (policy:session-resolve! session (car args) (cadr args) (caddr args))) list)]
       [(conflicts) (arity 1) (store:conflicts (car args))]
+      [(undo-labels) (arity 1) (store:undo-labels (car args))]
       [(history blame)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional count"))
        (if (eq? operation 'history) (apply store:history args)

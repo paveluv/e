@@ -424,14 +424,15 @@
                   (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("x")))])
              (head:window-prow-set! w 0)
              (head:set-full-capture! w #f)
-             (head:set-copy-text! "lost")
+             ;; the copy buffer is the base's, so the resume leaves its text as it stands
+             (head:set-copy-text! "as the base has it")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
                (check (list 'resume-from-saved-revision kind)
                  (list (head:resume!)
                        (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:copy-text)
                        (head:full-capture? (head:current-window))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
-                 (list #t expected #t "saved kill" #t #t)))))
+                 (list #t expected #t "as the base has it" #t #t)))))
          '(edit reset expired missing-provider)
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
@@ -440,13 +441,13 @@
        ;; The unchanged-frame comparison owns its data too.
        (head:set-copy-text! "Xaved kill")
        (head:checkpoint!)
-       (check 'a-changed-copy-text-reaches-the-next-checkpoint
-         (exists (lambda (entry)
-                   (let ([reference (car entry)])
-                     (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) "<copy>")
-                          (list-ref reference 4))))
-                 (list-ref (actor:checkpoint head:ui-actor) 4))
-         '("Xaved kill")))
+       (check 'the-copy-text-lives-in-the-base-not-the-checkpoint
+         (list (store:line (head:buffer-store-id (head:copy-buffer)) 0)
+               (exists (lambda (entry)
+                         (let ([reference (car entry)])
+                           (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) "<copy>"))))
+                       (list-ref (actor:checkpoint head:ui-actor) 4)))
+         '("Xaved kill" #f)))
 
      ;; One frame deadline serves both outer and nested pumps. Multiple
      ;; providers choose the earliest, the head owns its time value, and a

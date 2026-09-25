@@ -25,7 +25,7 @@
           history history-step! import! line line-count (rename (log-entries log)) log-retention
           mark marks properties property publication publish! redo! reload! rename! reset! resolve! revision
           rewrite! set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
-          snapshot-state state subscribe! trash-retention undo! undo-authors unsubscribe!
+          snapshot-state state subscribe! trash-retention undo! undo-authors undo-labels unsubscribe!
           valid-import? validate-edit-context validate-properties view visible? visit! watch!)
   (import (rnrs)
           (only (chezscheme)
@@ -1299,6 +1299,13 @@
                   (not (member (undo-group-actor (car groups)) authors)))
              (loop (cdr groups) (cons (undo-group-actor (car groups)) authors))]
             [else (loop (cdr groups) authors)])))))
+
+  (edoc "A buffer's undo groups as data, newest first, (actor label) each, an undone group's included."
+        (id integer "the buffer id")
+        (returns list))
+  (define (undo-labels id)
+    (locked (lambda () (map (lambda (group) (list (undo-group-actor group) (undo-group-label group)))
+                            (buffer-undo (buffer-of 'undo-labels id))))))
 
   (edoc "A buffer's newest applied edits as plain data, (revision actor start end new-end) each, newest first."
         (id integer "the buffer id")

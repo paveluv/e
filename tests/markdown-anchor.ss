@@ -126,19 +126,31 @@
                 [source-window (head:make-window source 0 0 0 0 0 12 80 80 'default)])
            (head:set-windows! (list w1 w2 source-window))
            (place! view "Middle" "Omega" #f)
-           (head:with-buffer source (head:goto! '(0 . 0)) (insert-text! "# Before\n\n"))
-           (head:before-frame!)
-           (check 'own-edit-follows-source (anchors view) (expected "Middle" "Omega" #f))
-           (head:with-buffer source (undo!))
-           (head:before-frame!)
-           (check 'undo-follows-source (anchors view) (expected "Middle" "Omega" #f))
-           (place! view "Middle" "Omega" #t)
-           (head:with-buffer source (redo!))
-           (head:before-frame!)
-           (check 'redo-keeps-backward-selection (anchors view) (expected "Middle" "Omega" #t))
-           (head:with-buffer source (undo!))
-           (head:before-frame!)
-           (check 'undo-keeps-backward-selection (anchors view) (expected "Middle" "Omega" #t))
+           ;; a local source changes through the head's own primitive and is put
+           ;; back the same way; a shared one is edited, undone and redone
+           (cond
+             [local?
+              (head:store-edit! source (text:make-span 0 0 0 0) '("# Before" "" ""))
+              (head:before-frame!)
+              (check 'own-edit-follows-source (anchors view) (expected "Middle" "Omega" #f))
+              (head:store-edit! source (text:make-span 0 0 2 0) '(""))
+              (head:before-frame!)
+              (check 'a-local-change-back-follows-source (anchors view) (expected "Middle" "Omega" #f))
+              (place! view "Middle" "Omega" #t)]
+             [else
+              (head:with-buffer source (head:goto! '(0 . 0)) (insert-text! "# Before\n\n"))
+              (head:before-frame!)
+              (check 'own-edit-follows-source (anchors view) (expected "Middle" "Omega" #f))
+              (head:with-buffer source (undo!))
+              (head:before-frame!)
+              (check 'undo-follows-source (anchors view) (expected "Middle" "Omega" #f))
+              (place! view "Middle" "Omega" #t)
+              (head:with-buffer source (redo!))
+              (head:before-frame!)
+              (check 'redo-keeps-backward-selection (anchors view) (expected "Middle" "Omega" #t))
+              (head:with-buffer source (undo!))
+              (head:before-frame!)
+              (check 'undo-keeps-backward-selection (anchors view) (expected "Middle" "Omega" #t))])
 
            ;; Same rendered characters, different heading face.  Rendered
            ;; column 3 is not source column 3 after changing markup.

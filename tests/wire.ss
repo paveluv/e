@@ -2079,7 +2079,7 @@
                                      (equal? history (rpc head 'history target))
                                      (head-read a '(let ([b (head:current-buffer)])
                                                      (list (head:buffer-marked b)
-                                                       (pair? (vector-ref (head:buffer-history b) 0)))))
+                                                       (pair? (store:history (head:buffer-store-id b))))))
                                      (cond [(file-directory? path) 'directory]
                                        [(file-exists? path) (call-with-input-file path get-string-all)]
                                        [else #f]))
@@ -2108,9 +2108,9 @@
                                (head-read a
                                  '(let ([b (head:current-buffer)])
                                     (list (head:buffer-lines b) (head:buffer-modified b)
-                                          (head:buffer-marked b) (head:buffer-history b)
+                                          (head:buffer-marked b)
                                           (store:history (head:buffer-store-id b)))))
-                               '(#("disk") #f #f #(() ()) ())))
+                               '(#("disk") #f #f ())))
                            (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                            (rpc head 'delete target))))
                      '((edit:visit-file! "r" text) (edit:visit-file! "r" facts)

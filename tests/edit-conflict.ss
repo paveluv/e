@@ -62,16 +62,16 @@
      (head:goto! '(0 . 2))
      (set-mark-command!)
      (copy-text! "saved kill")
-     (define old-undo (vector-ref (head:buffer-history overlap) 0))
-     (define old-redo (vector-ref (head:buffer-history overlap) 1))
+     (define (head-groups b)
+       (filter (lambda (group) (equal? (car group) head:ui-actor)) (store:undo-labels (head:buffer-store-id b))))
+     (define old-groups (head-groups overlap))
      (foreign! overlap (text:make-span 0 1 0 5) '("RIV"))
      (define foreign-revision (store:revision overlap-id))
      (check 'overlap-refuses-the-command (refused? (lambda () (insert-text! "X"))) #t)
      (check 'refusal-preserves-foreign-text (store-text overlap-id) '("aRIVf" "tail"))
      (check 'refusal-makes-no-transaction (store:revision overlap-id) foreign-revision)
      (check 'refusal-refreshes-the-cache (text-of overlap) (store-text overlap-id))
-     (check 'refusal-keeps-undo-list (eq? old-undo (vector-ref (head:buffer-history overlap) 0)) #t)
-     (check 'refusal-keeps-redo-list (eq? old-redo (vector-ref (head:buffer-history overlap) 1)) #t)
+     (check 'refusal-keeps-the-heads-undo-groups (equal? (head-groups overlap) old-groups) #t)
      (check 'refusal-keeps-selection-active (head:buffer-marked overlap) #t)
      (check 'refusal-keeps-copy-buffer (copy-text) "saved kill")
      (check 'refusal-rebases-point-only-through-the-foreign-edit (head:point) '(0 . 4))
@@ -88,28 +88,21 @@
          (check 'group-can-catch-refusal (refused? (lambda () (insert-text! "lost"))) #t)
          (head:goto! '(0 . 0))
          (insert-text! "kept")))
-     (check 'group-records-only-accepted-work
-            (map car (vector-ref (head:buffer-history grouped) 0)) '("accepted part"))
+     (check 'group-records-only-accepted-work (map cadr (head-groups grouped)) '("accepted part"))
      (undo!)
      (check 'group-undo-keeps-foreign-result (text-of grouped) '("aRf"))
 
-     ;; Undo inside an explicit group ends that entry's live membership.
-     ;; A subsequent edit must have its own snapshot and invalidate redo,
-     ;; including in local buffers where history is entirely head-owned.
-     (for-each
-       (lambda (shared?)
-         (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) "edit-after-group-undo")])
-           (head:buffer-lines-set! b '#("base"))
-           (head:show-buffer! b)
-           (call-as-one-edit! "group with undo"
-             (lambda () (insert-text! "A") (undo!) (insert-text! "B")))
-           (check 'post-undo-group-records-new-entry (length (vector-ref (head:buffer-history b) 0)) 1)
-           (check 'post-undo-group-invalidates-redo (vector-ref (head:buffer-history b) 1) '())
-           (undo!)
-           (check 'post-undo-group-retains-undo (text-of b) '("base"))
-           (redo!)
-           (check 'post-undo-group-retains-new-redo (text-of b) '("Bbase"))))
-       '(#t #f))
+     ;; Undo inside an explicit group ends that entry's live membership: a
+     ;; subsequent edit is its own action, and the undone one is no redo
+     (let ([b (head:new-buffer! "edit-after-group-undo")])
+       (head:buffer-lines-set! b '#("base"))
+       (head:show-buffer! b)
+       (call-as-one-edit! "group with undo"
+         (lambda () (insert-text! "A") (undo!) (insert-text! "B")))
+       (undo!)
+       (check 'post-undo-group-retains-undo (text-of b) '("base"))
+       (redo!)
+       (check 'post-undo-group-retains-new-redo (text-of b) '("Bbase")))
 
      ;; A missing basis (reset or truncated provenance) is not permission
      ;; to replay a cached replacement over the current buffer.
@@ -119,7 +112,7 @@
      (store:reset! bot reset-id '("remote baseline"))
      (check 'reset-refuses-old-intent (refused? (lambda () (insert-text! "X"))) #t)
      (check 'reset-refusal-keeps-baseline (store-text reset-id) '("remote baseline"))
-     (check 'reset-refusal-records-no-history (vector-ref (head:buffer-history reset) 0) '())
+     (check 'reset-refusal-records-no-head-action (head-groups reset) '())
      (do ([i 0 (+ i 1)]) ((= i 257))
        (foreign! reset (text:make-span 0 0 0 0) '("x")))
      (define truncated-revision (store:revision reset-id))
@@ -204,7 +197,7 @@
      (foreign! killed (text:make-span 0 1 0 5) '("R"))
      (check 'kill-overlap-refuses (refused? kill-line!) #t)
      (check 'refused-kill-keeps-copy-buffer (copy-text) "keep")
-     (check 'refused-kill-records-no-entry (vector-ref (head:buffer-history killed) 0) '())
+     (check 'refused-kill-records-no-head-action (head-groups killed) '())
      (head:goto! '(0 . 3))
      (head:buffer-read-only-set! killed #t)
      (check 'read-only-newline-kill-refuses
@@ -225,6 +218,6 @@
      (check 'indent-overlap-refuses (refused? indent-buffer!) #t)
      (check 'refused-indent-keeps-foreign-text (text-of indented) '("Rc"))
      (check 'refused-indent-only-follows-foreign-delta (head:point) '(0 . 1))
-     (check 'refused-indent-records-no-entry (vector-ref (head:buffer-history indented) 0) '())
+     (check 'refused-indent-records-no-head-action (head-groups indented) '())
 
      (test:finish! 'edit-conflict)))

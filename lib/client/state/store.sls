@@ -9,7 +9,7 @@
           extract find-file find-named history history-step! line line-count
           (rename (log-entries log)) marks properties property reload! rename! reset! resolve! revision rewrite!
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
-          trash-retention undo-authors unsubscribe! validate-edit-context validate-properties
+          trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           view visible? visit! watch!)
   (import (chezscheme)
           (prefix (core client) client:)
@@ -410,6 +410,12 @@
         (returns list))
   (define (history id . count)
     (apply client:request 'history id count))
+
+  (edoc "A buffer's undo groups from the base, newest first, (actor label) each."
+        (id integer "the buffer id")
+        (returns list))
+  (define (undo-labels id)
+    (client:request 'undo-labels id))
 
   (edoc "A buffer's retained log entries as data, newest first, (revision actor labels delta origin state) each, narrowed by a selector alist among count, actor, batch, since and until."
         (id integer "the buffer id")

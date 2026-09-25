@@ -172,10 +172,11 @@
                (test:check 'root-subscription-and-marks-stay-live
                  (list (eval '(map head:buffer-name (head:buffers)))
                        (store:mark expected (store:find-named "*scratch*") 'point))
+                 ;; a buffer in this head's audience alone shows in square brackets
                  (list (if (eq? kind 'named)
-                           '("*scratch*" "public before import" "private before import"
+                           '("*scratch*" "public before import" "[private before import]"
                              "during claim" "after import")
-                           '("*scratch*" "public before import" "private before import" "after import"))
+                           '("*scratch*" "public before import" "[private before import]" "after import"))
                        '(0 . 0)))))))
 
      (define (suite)

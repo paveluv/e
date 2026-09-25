@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
 ;; With clipboard forwarding on, a copy publishes its text to the terminal
-;; through OSC 52 at once, and a hand edit in <copy> publishes at the next
+;; through OSC 52 at once, and a hand edit in *copy* publishes at the next
 ;; frame. Run from the repository root.
 
 (import (chezscheme))
@@ -52,7 +52,7 @@
      (evaluate! "(edit:copy-text! \"abc\")")
      (wait-for! 'a-copy-publishes-its-text-at-once (lambda () (written? "\x1b;]52;c;YWJj\x1b;\\")) 5000)
      (evaluate! "(begin (head:show-buffer! (head:copy-buffer)) (void))")
-     (wait-for! 'the-copy-buffer-shows (lambda () (on-screen? "<copy>")) 5000)
+     (wait-for! 'the-copy-buffer-shows (lambda () (on-screen? "[copy]")) 5000)
      (send! "d")
      (wait-for! 'a-hand-edit-in-the-copy-buffer-publishes-at-the-next-frame
                 (lambda () (written? "\x1b;]52;c;YWJjZA==\x1b;\\")) 5000)

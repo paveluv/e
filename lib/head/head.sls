@@ -24,7 +24,7 @@
           app-refresh! app-refresh-error app-refresh-error-set! app-status
           app? before-frame! buffer buffer-append! buffer-base
           buffer-base-set! buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
-          buffer-file-set! buffer-history buffer-history-set! buffer-line buffer-line-count
+          buffer-file-set! buffer-line buffer-line-count
           buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
           buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
           buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified
@@ -112,7 +112,6 @@
         (name string "the label: a shared buffer's cached, a local one's own")
         (lines vector "the text, an immutable vector of lines")
         (revision integer "the seat's repaint counter")
-        (history vector "local undo, (undo-entries redo-entries)")
         (mark-row integer "the mark's row")
         (mark-col integer "the mark's column")
         (marked boolean "whether the mark is active")
@@ -125,13 +124,12 @@
         (changes any "the bounded ring of adopted deltas")
         (local-facts hashtable "a local buffer's facts")
         (rendition (or (record frame) #f) "the cached cell projection")
-        (constructor name lines revision history mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
+        (constructor name lines revision mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
   (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
             (mutable lines buffer-lines buffer-lines-raw-set!)
             (mutable revision)      ; the seat's repaint counter
-            (mutable history)       ; local undo; shared group labels/presentation
             (mutable mark-row) (mutable mark-col)
             (mutable marked buffer-marked buffer-marked-raw-set!)
             ;; where point was when the buffer was last displayed
@@ -145,13 +143,13 @@
             (mutable local-rev) (mutable changes)
             local-facts
             (mutable rendition buffer-rendition-raw buffer-rendition-set!))
-    ;; Keep the public constructor's shape: each record gets private
-    ;; facts and content history, including extension/adoption records.
+    ;; The public constructor's shape: each record gets private facts and
+    ;; a content revision, including extension/adoption records.
     (protocol
       (lambda (new)
-        (lambda (name lines revision history mark-row mark-col marked
+        (lambda (name lines revision mark-row mark-col marked
                   spot-row spot-col spot-top store-id store-rev)
-          (new name lines revision history mark-row mark-col marked
+          (new name lines revision mark-row mark-col marked
                spot-row spot-col spot-top store-id store-rev
                0 #f (make-eq-hashtable) #f)))))
 
@@ -406,42 +404,50 @@
     ;; the live window numbered n, or #f
     (find (lambda (w) (eqv? (window-index w) n)) the-windows))
 
-  ;; The seat's copy buffer, <copy>: a local buffer holding the last kill
-  ;; or copy as text. Commands and prompts read and replace it, and the
-  ;; user can show, edit and undo it like any buffer: each copy is one
-  ;; undo entry there, kept up to copy-history-limit. It is created when
-  ;; first needed; killing it asks nothing, and the next copy recreates it.
-  ;; Like every plain local buffer, it travels with the screen checkpoint.
-  (define copy-name "<copy>")
-  (define copy-history-limit 1024)
+  ;; The head's copy buffer, *copy*, shown as [copy]: a shared buffer of
+  ;; the base holding the last kill or copy as text, in this head's audience
+  ;; alone, so every head has its own. Commands and prompts read and replace it, and the user can
+  ;; show, edit and undo it like any buffer: each copy is one entry of its
+  ;; log. It is created when first needed and disposable, so killing it asks
+  ;; nothing and it does not outlive the base; the next copy recreates it.
+  (define copy-name "*copy*")
 
   (define (local-buffer-named name)
     ;; this head's local buffer with a name, or #f; shared names never wear brackets
     (find (lambda (b) (and (not (buffer-store-id b)) (string=? (buffer-name b) name))) the-buffers))
 
-  (edoc "The seat's copy buffer, the local buffer <copy> holding the last kill or copy, created when first needed."
-        (returns buffer)
+  (define (existing-copy-buffer)
+    ;; this head's copy buffer among the adopted shared buffers, or #f
+    (find (lambda (b) (and (buffer-store-id b) (buffer-fact b 'copy #f))) the-buffers))
+
+  (edoc "The head's copy buffer, the shared buffer *copy* in this head's audience, shown as [copy], holding the last kill or copy, created when first needed; asked not to create it, #f without one."
+        (create? (list-of boolean) "whether to create it, at most one; #t by default")
+        (returns (or buffer #f))
         (effects internal))
-  (define (copy-buffer)
-    (or (local-buffer-named copy-name)
-        (let ([b (new-local-buffer! copy-name)])
-          (buffer-fact-set! b 'disposable #t)
-          (buffer-fact-set! b 'history-limit copy-history-limit)
-          (add-buffer! b))))
+  (define (copy-buffer . create?)
+    (or (existing-copy-buffer)
+        (and (or (null? create?) (car create?))
+             (let ([id (store:create! ui-actor copy-name '("")
+                         (list (cons 'copy #t) (cons 'audience (list ui-actor)) (cons 'disposable #t) (cons 'trailing #f)))])
+               (or (adopt-store-buffer! id) (error 'copy-buffer "the copy buffer was created but not adopted"))))))
 
   (edoc "The copy buffer's text, the empty string while there is no copy buffer."
         (returns string))
   (define (copy-text)
-    (let ([b (local-buffer-named copy-name)])
+    (let ([b (existing-copy-buffer)])
       (if b (text:to-string (buffer-lines b) (buffer-trailing b)) "")))
 
-  (edoc "Replace the copy buffer's text as a new baseline, without an undo entry."
+  (edoc "Replace the copy buffer's text as one entry of its log, so undo there brings the previous copy back."
         (s string "the text"))
   (define (set-copy-text! s)
     (unless (string? s) (error 'set-copy-text! "expected a string" s))
-    (unless (and (string=? s "") (not (local-buffer-named copy-name)))
-      (let-values ([(lines trailing?) (text:from-string s)])
-        (store-reset! (copy-buffer) lines (list (cons 'trailing trailing?))))))
+    (unless (and (string=? s "") (not (existing-copy-buffer)))
+      (let ([b (copy-buffer)])
+        (let-values ([(lines trailing?) (text:from-string s)])
+          (unless (and (equal? lines (buffer-lines b)) (eq? trailing? (buffer-trailing b)))
+            (let-values ([(span replacement) (text:difference (buffer-lines b) lines)])
+              (store-edit! b span replacement
+                (list (list 'set-copy (buffer-store-rev b)) "set copy" (cons 'undo (list (cons 'trailing trailing?)))))))))))
 
   ;; The text of the bracketed paste just consumed: the pump's paste
   ;; handler stashes it, the PASTE key's command reads it.
@@ -1510,14 +1516,61 @@
          (string-append "<" (substring name 1 (- n 1)) ">")]
         [else (string-append "<" name ">")])))
 
-  (edoc "Rename a buffer, a shared one through the store; the name must be nonempty."
+  (define (per-head? audience)
+    ;; whether an audience fact restricts a shared buffer to some heads, one head's alone
+    (not (eq? audience 'all)))
+
+  (define (star-stem name)
+    ;; a *name*'s stem, or a name without stars itself
+    (let ([n (string-length name)])
+      (if (and (>= n 2) (char=? (string-ref name 0) #\*) (char=? (string-ref name (- n 1)) #\*))
+          (substring name 1 (- n 1))
+          name)))
+
+  (define (split-suffix name)
+    ;; a name and the suffix the store gave it against a taken name, <n>, or ""
+    (let ([n (string-length name)])
+      (if (and (>= n 3) (char=? (string-ref name (- n 1)) #\>))
+          (let scan ([i (- n 2)])
+            (cond [(and (> i 0) (char-numeric? (string-ref name i))) (scan (- i 1))]
+                  [(and (> i 0) (< i (- n 2)) (char=? (string-ref name i) #\<)) (values (substring name 0 i) (substring name i n))]
+                  [else (values name "")]))
+          (values name ""))))
+
+  (define (shown-name name audience self)
+    ;; a shared buffer's name as this head shows it: the store's, or for a
+    ;; buffer that is this head's alone, its audience restricted, the stem
+    ;; in square brackets, *copy* shown as [copy]: three shapes of one
+    ;; label, *scratch* shared by every head, [copy] shared through the
+    ;; base but one head's, <keys> local to the head. The suffix the store
+    ;; gives a name taken by another head's buffer is the store's business,
+    ;; *copy*<2> showing as [copy] too, unless this head already shows a
+    ;; buffer under that label; then the suffix stays, [copy<2>]
+    (if (per-head? audience)
+        (let-values ([(bare suffix) (split-suffix name)])
+          (let ([plain (string-append "[" (star-stem bare) "]")])
+            (if (exists (lambda (b) (and (not (eq? b self)) (string=? (buffer-name b) plain))) the-buffers)
+                (string-append "[" (star-stem bare) suffix "]")
+                plain)))
+        name))
+
+  (define (store-name name)
+    ;; the store's name behind a per-head buffer's shown one: the brackets
+    ;; come off and the stars go back on, [copy] naming *copy*
+    (let* ([n (string-length name)]
+           [stem (if (and (>= n 3) (char=? (string-ref name 0) #\[) (char=? (string-ref name (- n 1)) #\]))
+                     (substring name 1 (- n 1))
+                     name)])
+      (string-append "*" (star-stem stem) "*")))
+
+  (edoc "Rename a buffer, a shared one through the store; the name must be nonempty, and a per-head buffer's brackets are the head's, not the name's."
         (b buffer "the buffer")
         (name string "its new name"))
   (define (buffer-name-set! b name)
     (unless (and (buffer? b) (string? name) (> (string-length name) 0))
       (error 'buffer-name-set! "expected a buffer and nonempty name" b name))
     (when (buffer-store-id b) (ensure-buffer-visible! b))
-    (buffer-facts-set! b '() #f name))
+    (buffer-facts-set! b '() #f (if (and (buffer-store-id b) (per-head? (buffer-fact b 'audience 'all))) (store-name name) name)))
 
   (define (unique-local-name base self)
     ;; Local labels only compete with content visible to this head,
@@ -1992,7 +2045,7 @@
   (define (new-local-buffer! name)
     ;; Local construction has no shared lifecycle. Its caller decides when
     ;; to add/show it; opaque local facts and generated content stay here.
-    (let ([b (make-buffer (local-name name) (vector "") 0 (vector '() '())
+    (let ([b (make-buffer (local-name name) (vector "") 0
                           0 0 #f 0 0 0 #f 0)])
       (buffer-facts-set! b initial-buffer-facts)
       (buffer-name-set! b (buffer-name b))
@@ -2046,7 +2099,6 @@
     (let ([b (tool-buffer! name)])
       (buffer-read-only-set! b #f)
       (buffer-lines-set! b (vector ""))
-      (buffer-history-set! b (vector '() '()))
       (buffer-modified-set! b #f)
       (for-each (lambda (w)
                   (when (eq? (window-buffer w) b)
@@ -2120,8 +2172,8 @@
                  (and (actor:in-audience? ui-actor (if audience (cdr audience) 'all))
                       (call-with-display-update
                         (lambda ()
-                          (let ([b (make-buffer (store:buffer-name id) text 0
-                                                (vector '() '()) 0 0 #f 0 0 0
+                          (let ([b (make-buffer (shown-name (store:buffer-name id) (cond [(assq 'audience facts) => cdr] [else 'all]) #f) text 0
+                                                0 0 #f 0 0 0
                                                 id revision)])
                             (add-buffer! b)
                             (refresh-buffer-rendition! b)
@@ -2334,10 +2386,10 @@
                   (if (store:visible? ui-actor id)
                     (let ([b (or b (adopt-store-buffer! id))])
                       (when b
-                        (let ([name (store:buffer-name id)])
+                        (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
                           (unless (string=? name (buffer-name b))
                             (buffer-name-raw-set! b name)
-                            (reserve-store-name! name)))
+                            (reserve-store-name! (store:buffer-name id))))
                         (sync-store-buffer! b)
                         (when (or (not pending) (memv id changed-ids)
                                   (cond [(assv id pending) => cdr] [else #f]))

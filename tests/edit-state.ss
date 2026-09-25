@@ -91,15 +91,17 @@
      (check 'read-only-does-not-authorize-disposal (buffer-clean? adopted) #f)
      (head:buffer-fact-set! adopted 'disposable #t)
      (check 'generated-output-explicitly-allows-disposal (buffer-clean? adopted) #t)
+     ;; an app marking its local buffer's work unsaved protects it the same way
      (define local-work (fresh "local-work" #f))
-     (insert-text! "keep")
+     (head:store-edit! local-work (text:make-span 0 0 0 0) '("keep"))
+     (head:buffer-fact-set! local-work 'modified #t)
      (head:buffer-read-only-set! local-work #t)
      (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
      (check 'snapshot-tools-declare-disposal
             (head:buffer-fact (head:fresh-buffer! "state-generated") 'disposable #f) #t)
 
-     ;; One sequence covers clock ownership and no-op/save preservation for
-     ;; shared and local buffers. Actual changes must fall within UTC bounds.
+     ;; One sequence covers clock ownership and no-op/save preservation.
+     ;; Actual changes must fall within UTC bounds.
      (define (utc-nanos)
        (let ([now (current-time 'time-utc)])
          (+ (* (time-second now) 1000000000) (time-nanosecond now))))
@@ -107,10 +109,10 @@
        '((insert . #t) (same . #f) (metadata . #f) (save . #f) (newline . #t)
          (edit . #t) (undo . #t) (redo . #t) (reset . #t) (reset . #f)
          (representation . #t) (representation . #f)))
-     (check 'modification-times-follow-content-in-either-owner
+     (check 'modification-times-follow-content
        (map
          (lambda (shared?)
-           (let ([b (fresh (if shared? "timed-shared" "timed-local") shared?)])
+           (let ([b (fresh "timed-shared" shared?)])
              (reverse
                (fold-left
                  (lambda (results step)
@@ -136,8 +138,8 @@
                                    (and (integer? after) (exact? after) (<= started after (utc-nanos))
                                         (not (equal? before after)))
                                    (equal? before after))) results))))
-                 '() time-steps)))) '(#t #f))
-       (make-list 2 (map (lambda (step) (cons (car step) #t)) time-steps)))
+                 '() time-steps)))) '(#t))
+       (make-list 1 (map (lambda (step) (cons (car step) #t)) time-steps)))
 
      ;; Text and facts are one immutable snapshot.  Every property callback
      ;; observes all members of a batch, never a half-published file state.
@@ -187,9 +189,10 @@
          (let* ([b (fresh (if shared? "reset-shared" "reset-local") shared?)]
                 [id (head:buffer-store-id b)])
            (define (head-state)
-             (list (head:edit-basis b) (head:buffer-history b) (head:point)
+             (list (head:edit-basis b) (head:point)
                    (head:buffer-marked b) (head:buffer-mark-row b) (head:buffer-mark-col b)))
-           (insert-text! "keep")
+           ;; a local buffer's text changes through the head's own primitive; editing is the shared owner's
+           (if id (insert-text! "keep") (head:store-edit! b (text:make-span 0 0 0 0) '("keep")))
            (head:buffer-marked-set! b #t)
            (unless shared? (head:buffer-fact-set! b 'source (head:current-window)))
            (check 'reviewed-reset-refusal-keeps-either-owner-and-head-state
@@ -197,7 +200,7 @@
                (lambda (change)
                  (let-values ([(text revision facts) (head:buffer-state b)])
                    (case change
-                     [(text) (if id (insert! id 0 "new ") (insert-text! "new "))]
+                     [(text) (if id (insert! id 0 "new ") (head:store-edit! b (text:make-span 0 0 0 0) '("new ")))]
                      [(facts) (head:buffer-trailing-set! b #f)])
                    (let* ([before (state b)] [view (head-state)]
                           [accepted (head:store-reset! b '("lost") '((base . "lost"))
@@ -249,12 +252,11 @@
              (vector-set! input 0 "caller mutation")
              (check 'baseline-owns-its-vector (head:buffer-lines b) '#("before")))
            (head:with-buffer b (mode:choose! "invalid-line-output"))
-           (let ([before (state b)] [history (head:buffer-history b)])
+           (let ([before (state b)])
              (check 'invalid-inputs-refuse-before-changing-either-owner
                (map
                  (lambda (operation)
-                   (list (raises? operation) (equal? (state b) before)
-                         (equal? (head:buffer-history b) history)))
+                   (list (raises? operation) (equal? (state b) before)))
                  (list
                    (lambda () (head:store-reset! b '#("ok" 7)))
                    (lambda () (head:store-reset! b '("lost") '((trailing . 7))))
@@ -272,7 +274,7 @@
                    (lambda () (head:store-edit! b (text:make-span 0 0 0 0) '("embedded\nnewline")))
                    (lambda () (head:buffer-append! b "embedded\nnewline"))
                    (lambda () (store:create! bot "invalid-line-input" '("embedded\nnewline")))
-                   (lambda () (format-buffer!)))) (make-list 14 '(#t #t #t))))))
+                   (lambda () (format-buffer!)))) (make-list 14 '(#t #t))))))
        '(#t #f))
 
      ;; The buffer still exists when the store rejects the fact write.
@@ -379,7 +381,7 @@
            (lambda (scenario)
              (let ([effect (car scenario)] [adopt? (cadr scenario)] [armed? #t] [seen #f] [observed #f])
                (define (current)
-                 (list (state saved) (store:history saved-id) (head:buffer-history saved) (head:point) (head:mark)))
+                 (list (state saved) (store:history saved-id) (head:point) (head:mark)))
                (when (file-exists? path) (delete-file path))
                (unless adopt? (file:write! path '#("before") #t))
                (head:store-reset! saved '#("")
@@ -409,10 +411,12 @@
                  (dynamic-wind void
                    (lambda ()
                      (check (list scenario 'save-adoption-and-newer-callback-state)
-                       (list (save-file! path) observed (file:read path)
-                             (and seen (equal? seen (current)))
-                             (head:buffer-lines saved) (head:buffer-modified saved)
-                             (buffer-clean? saved))
+                       ;; the save before the read: argument order is the compiler's
+                       (let* ([saved? (save-file! path)] [written (file:read path)])
+                         (list saved? observed written
+                               (and seen (equal? seen (current)))
+                               (head:buffer-lines saved) (head:buffer-modified saved)
+                               (buffer-clean? saved)))
                        (let ([dirty? (and (memq effect '(text retarget)) #t)])
                          (list #t (list (file:base-name path) path "written\n"
                                         (if adopt? "save-state" "invalid-line-output") adopt?
@@ -423,8 +427,9 @@
            '((name #f) (mode #f) (name #t) (mode #t) (retarget #t) (text #t)))
          (head:with-buffer saved (mode:choose! "invalid-line-output"))
          (check 'second-save-writes-later-text-and-keeps-manual-mode
-           (list (save-file! path) (file:read path) (head:buffer-modified saved)
-                 (mode:name-of saved) (head:buffer-mode-auto saved))
+           (let* ([saved? (save-file! path)] [written (file:read path)])
+             (list saved? written (head:buffer-modified saved)
+                   (mode:name-of saved) (head:buffer-mode-auto saved)))
            '(#t "written-later\n" #f "invalid-line-output" #f))
          ;; Pre-save edits need not have reached the head's cached text.
          (parameterize ([kernel:registering-module 'state-save-hook])
@@ -465,7 +470,7 @@
                                   [(mode) (head:with-buffer b (mode:choose! "invalid-line-output"))]
                                   [(trailing) (head:buffer-trailing-set! b #f)]
                                   [(text) (if shared? (insert! (head:buffer-store-id b) 0 "later ")
-                                              (insert-text! "later "))])
+                                              (head:store-edit! b (text:make-span 0 0 0 0) '("later ")))])
                                 (set! before (state b)))
                               (lambda () (save-file! path)))])
                        (list result (string=? (file:read path) written) post-saves

@@ -13,7 +13,13 @@ The initial `*scratch*` buffer is an ordinary shared, unvisited buffer in
 Scheme mode.
 Local buffers belong to this head and have names in angle brackets:
 `<buffet>`, `<log>`, `<describe>`, `<completions>`, and merge reports.
-Shared buffers retain file names or names such as `*scratch*`. Describe's
+Shared buffers retain file names or names such as `*scratch*`. A shared
+buffer that is this head's alone, its audience restricted, shows in square
+brackets, the stars of its store name dropped: `*copy*` shows as `[copy]`,
+and a `*describe*` source page as `[describe]`. The suffix the store gives a
+name another head's buffer holds, `*copy*<2>`, is the store's business and
+drops too, so every head shows `[copy]`; only when a head already shows a
+buffer under that label does the suffix stay, as `[copy<2>]`. Describe's
 private `*describe*` source belongs to the base, while its rendered
 `<describe>` companion belongs to the head. Shared names
 are unique across the store, including buffers hidden from this head;
@@ -25,7 +31,10 @@ a buffer an app or view, and its owner may make it read-only.
 ## Buffer and window state
 
 Text, the optional file name, mode, modified state, read-only state, mark, and
-undo/redo history belong to the buffer. Point and scrolling belong to a window,
+undo/redo history belong to the buffer, and the history is the base's delta
+log: every text edited is a shared buffer's, and a local buffer, a view or a
+tool of this head's, refuses editing commands, its text changing only through
+its app. Point and scrolling belong to a window,
 so two ordinary windows showing the same buffer may be at different places.
 Returning to a buffer restores the position remembered by that window.
 
@@ -266,19 +275,22 @@ snapshot history and behave the same under `mine` and `all`.
 
 The mark belongs to the buffer, while point belongs to each window.
 
-The copy buffer is a buffer of its own, `<copy>`, local to the head and created
-by the first kill or copy. Text killed or copied in one buffer can be pasted
-with `C-y` in another. Consecutive kill commands accumulate, so repeated `C-k`
-followed by `C-y` reconstructs the complete block. Show `<copy>` in a window to
-watch copies arrive, edit it before pasting, or undo in it: every copy is one
-undo entry there, and `C-_` brings the previous one back, up to 1024 entries.
-Killing `<copy>` asks nothing; the next copy recreates it, and like every plain
-local buffer it returns on attach with its text. `edit:copy-text` returns its
-text, `head:copy-buffer` the buffer.
+The copy buffer is a buffer of its own, `*copy*`, a shared buffer of the base
+in this head's audience alone, so every head has its own and shows it as
+`[copy]`, created by the first kill or copy. Text killed or copied in one
+buffer can be pasted with `C-y` in another. Consecutive kill commands
+accumulate, so repeated `C-k` followed by `C-y` reconstructs the complete
+block. Show `[copy]` in a window
+to watch copies arrive, edit it before pasting, or undo in it: every copy is
+one entry of its delta log, and `C-_` brings the previous one back, as far as
+the log's retention reaches. It is disposable: killing it asks nothing, it
+does not outlive the base, and the next copy recreates it. A second head on
+the same base gets its own, shown as `[copy]` there as well.
+`edit:copy-text` returns its text, `head:copy-buffer` the buffer.
 
 Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
 `M-w`, `C-w`, repeated `C-k`, Scheme calls to `edit:copy-text!`, and any other
-change to `<copy>`, such as editing it by hand, can place the exact UTF-8 text
+change to `[copy]`, such as editing it by hand, can place the exact UTF-8 text
 in the desktop clipboard without selecting padded terminal cells. The host
 terminal retains final control over whether clipboard writes are permitted.
 Enable forwarding in `config.e` when desired:
@@ -700,7 +712,8 @@ and `wrap` facts default to `#t`, `#t` and `default`; explicit `#f` values
 are preserved. As with other text inputs, the line container is copied and
 its strings must be treated as immutable. Fact values are copied.
 `(head:new-local-buffer! name)` creates a buffer belonging only to this
-head, with one empty line and no store id; its caller decides when to add
+head, with one empty line and no store id, a view or a tool that editing
+commands refuse and whose text its app sets; its caller decides when to add
 it to the list. Use `head:show-buffer!` or `window:display!`
 to display the result in a window. The same text, mode, and fact accessors
 work on either kind. A local buffer's facts and generated text stay in the head and

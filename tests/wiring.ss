@@ -310,7 +310,7 @@
          ((reloaded #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
           (reloaded #t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
           (refused #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t))
-         ("reference source" "<reference view>")
+         ("[reference source]" "<reference view>")
          (() "**procedure**: `(markdown:view! [buffer])`  ") #t (#f #f #f)))
 
      ;; Local work still requires review. The base remains writable while

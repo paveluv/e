@@ -101,20 +101,6 @@
 
      ;; Dynamic edit guards are head-local callbacks; shared facts are data.
      ;; A guard changing local source after capture must not retarget intent.
-     ;; Shared callbacks and reentrant adoption are covered by the formatter
-     ;; and subscriber fixtures below, without storing procedures in the base.
-     (define guarded (fresh "position-guard" '("abcdef") #t))
-     (head:goto! '(0 . 2))
-     (head:buffer-read-only-set! guarded
-       (lambda ()
-         (head:store-edit! guarded (text:make-span 0 0 0 0) '("Q"))
-         #t))
-     (check 'guard-cannot-retarget-captured-local-intent
-            (let ([refused (refused? (lambda () (insert-text! "X")))])
-              (list refused (text-of guarded) (head:point)))
-            '(#t ("Qabcdef") (0 . 3)))
-     (head:buffer-read-only-set! guarded #f)
-
      ;; A receipt must retain a chain that was complete on acceptance,
      ;; even if this very commit trims its oldest entry out of the log.
      (define retained (fresh "position-retention-boundary" '("abcdef")))
@@ -204,7 +190,8 @@
          '("ABC")))
      (check 'format-refuses-even-after-head-adoption (refused? format-buffer!) #t)
      (check 'format-cannot-overwrite-adopted-foreign-text (text-of conflict) '("aRc"))
-     (check 'format-refusal-keeps-head-history (vector-ref (head:buffer-history conflict) 0) '())
+     (check 'format-refusal-records-no-head-action
+            (filter (lambda (group) (equal? (car group) head:ui-actor)) (store:undo-labels (head:buffer-store-id conflict))) '())
 
      (define indented (fresh "position-indent-source" '("  abc" "tail")))
      (head:with-buffer indented (mode:choose! "position-format"))
@@ -230,25 +217,6 @@
      (check 'replace-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
      (check 'replace-projects-preserved-point (head:point) '(0 . 2))
 
-     ;; Local edits and local undo use the same anchor geometry.
-     (define local (fresh "position-local" '("abc" "tail") #t))
-     (head:set-window-buffer! w2 local)
-     (head:window-prow-set! w2 1)
-     (head:window-pcol-set! w2 2)
-     (head:goto! '(0 . 1))
-     (newline!)
-     (check 'local-other-window-follows-edit (wpoint w2) '(2 . 2))
-     (undo!)
-     (check 'local-other-window-follows-undo (wpoint w2) '(1 . 2))
-     (check 'local-undo-restores-command-point (head:point) '(0 . 1))
-     (head:with-buffer local (mode:choose! "position-format"))
-     (mode:register-formatter! "position-format"
-       (lambda (b from to)
-         (head:buffer-lines-set! b '#("new local text"))
-         '("ABC" "tail")))
-     (check 'local-stale-computation-refuses (refused? format-buffer!) #t)
-     (check 'local-stale-computation-keeps-newer-text (text-of local) '("new local text"))
-
      ;; Append is an insertion for shared and local buffers.  It cannot
      ;; reset shared history or make an empty local buffer zero lines long.
      (define appended (fresh "position-append" '("abc" "tail")))
@@ -260,7 +228,7 @@
      (check 'append-is-undoable (text-of appended) '("QXabc" "tail"))
      (undo!)
      (check 'append-retains-earlier-undo (text-of appended) '("Qabc" "tail"))
-     (define empty (fresh "position-empty-append" '("") #t))
+     (define empty (fresh "position-empty-append" '("")))
      (head:buffer-append! empty)
      (check 'empty-append-retains-one-line (text-of empty) '(""))
      (check 'empty-append-retains-valid-point (head:point) '(0 . 0))

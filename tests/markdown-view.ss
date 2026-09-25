@@ -44,8 +44,6 @@
      (define source (make-source "notes.md" '("# Heading" "" "one" "two")))
      (define id (head:buffer-store-id source))
      (head:buffer-wrap-set! source #t)
-     (define history (vector '(saved-undo) '(saved-redo)))
-     (head:buffer-history-set! source history)
      (head:show-buffer! source)
      (head:goto! '(2 . 1))
      (define w1 (head:current-window))
@@ -78,7 +76,6 @@
      (check 'source-vector-is-untouched (eq? (head:buffer-lines source) original-text) #t)
      (check 'source-revision-is-untouched (store:revision id) original-revision)
      (check 'source-facts-are-untouched (store:properties id) original-facts)
-     (check 'source-history-is-untouched (eq? (head:buffer-history source) history) #t)
      (check 'source-mode-stays-markdown (mode:name-of source) "markdown")
      (check 'viewing-keeps-store-buffers (list-sort < (store:buffer-list)) original-buffers)
      (check 'viewing-emits-no-store-events events '())
@@ -105,7 +102,6 @@
             (head:buffer-lines view) '#("Heading" "" "foreign one two"))
      (markdown:edit!)
      (check 'return-keeps-foreign-edit (store:line id 2) "foreign one")
-     (check 'return-keeps-source-history (eq? (head:buffer-history source) history) #t)
 
      ;; Resize a shared presentation with independent window positions.
      (define table

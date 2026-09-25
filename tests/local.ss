@@ -54,7 +54,7 @@
 
      ;; The public record constructor still accepts its original args.
      (define bare
-       (head:make-buffer "bare" (vector "") 0 (vector '() '())
+       (head:make-buffer "bare" (vector "") 0
                          0 0 #f 0 0 0 #f 0))
      (head:buffer-fact-set! bare 'custom 'bare)
      (check 'constructed-record-has-facts
