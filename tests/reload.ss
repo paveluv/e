@@ -96,7 +96,7 @@
      (check 'the-conflicts-browsers-keys-are-its-modes
        (list (mode:key-contexts (head:current-buffer))
              (eq? (bound-to 'conflicts "LEFT") delta-log:pick-mine!) (eq? (bound-to 'conflicts "RIGHT") delta-log:pick-disk!)
-             (eq? (bound-to 'conflicts " ") delta-log:flip-row!))
+             (eq? (bound-to 'conflicts " ") delta-log:choose!))
        '((conflicts) #t #t #t))
      ;; C-x C-s in the browser saves the row's buffer: refused while its
      ;; conflicts pend, the pop-up staying current
@@ -105,9 +105,9 @@
              (guard (ex [(kernel:refusal? ex) (contains? (kernel:condition-text ex) "Resolve the conflicts first")]) (delta-log:save-row!) 'saved)
              (eq? (head:current-window) (head:popup)))
        (list #t #t #t))
-     (dispatch:key! "M-/")
+     (dispatch:key! "RET")
      (head:before-frame!)
-     (check 'm-slash-picks-mine-and-the-preview-shows-it-in-place-highlighted-as-mine
+     (check 'enter-picks-mine-and-the-preview-shows-it-in-place-highlighted-as-mine
        (let ([w (window-showing "<preview: notes.txt>")])
          (list (and w (vector->list (head:buffer-lines (head:window-buffer w))))
                (map cdr (filter (lambda (r) (and w (eq? (car r) (head:window-buffer w)))) (paint:highlight-ranges)))
@@ -122,6 +122,11 @@
      (check 'down-past-the-rows-lands-on-the-settle-row
        (list (head:point) (car (reverse (rows))) (head:buffer-status (head:current-buffer) (head:current-window)))
        '((2 . 0) "Settle all as picked: 1 mine, 0 disk" "settle all as picked"))
+     (check 'inspection-and-preview-commands-never-settle-the-review
+       (begin (delta-log:show-row!)
+              (list (guard (ex [else 'refused]) (delta-log:flip-row!))
+                    (length (head:with-buffer b (delta-log:conflicts))) (lines)))
+       '(refused 1 ("omega" "beta" "GAMMA tail")))
      (dispatch:key! "RET")
      (head:before-frame!)
      (check 'ret-on-the-settle-row-writes-the-picks-and-the-browser-says-nothing-pends

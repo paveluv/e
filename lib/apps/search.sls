@@ -361,7 +361,7 @@
   (define (count needle)
     (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
 
-  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one entry of the delta log per occurrence under one batch, one undo step, point left where it was; with occurrences replaced in a shared buffer, the delta log browser opens on the batch in the companion window below, unless review-replacements is off."
+  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one entry of the delta log per occurrence under one batch, one undo step, point left where it was."
         (from needle "the text to find, within one line")
         (to string "its replacement")
         (returns integer "how many occurrences were replaced")

@@ -143,7 +143,7 @@
      ;; the keys listing shows them
      (check 'the-browsers-keys-are-commands-in-its-context
        (list (mode:key-contexts (head:current-buffer))
-             (eq? (bound-to 'delta-log "M-n") delta-log:next!) (eq? (bound-to 'delta-log "RET") delta-log:show-row!)
+             (eq? (bound-to 'delta-log "M-n") delta-log:next!) (eq? (bound-to 'delta-log "RET") delta-log:choose!)
              (eq? (bound-to 'delta-log "M-t") delta-log:toggle-row!) (eq? (bound-to 'delta-log "M-RET") delta-log:commit!)
              (bound-to 'global "M-t"))
        '((delta-log) #t #t #t #t #f))
@@ -260,8 +260,97 @@
      (check 'the-browser-in-the-buffers-own-window-still-lists-it
        (list (eq? (head:window-buffer fw) (head:current-buffer)) (for-all (lambda (l) (contains? l "review-me")) (rows)) (> (length (rows)) 0))
        '(#t #t #t))
+     (check 'switching-browsers-keeps-the-underlying-buffer-without-recursion
+       (begin (delta-log:conflicts!) (delta-log:open!) (head:before-frame!)
+              (list (> (length (rows)) 0) (for-all (lambda (l) (contains? l "review-me")) (rows))))
+       '(#t #t))
      (dispatch:key! "ESC")
      (check 'esc-returns-the-window-to-its-buffer-and-leaves-point-on-the-rows-text
        (list (head:buffer-named "<delta-log>") (eq? (head:window-buffer fw) f) (head:buffer-point f)) '(#f #t (0 . 4)))
+
+     ;; Resolving a buffer is independent of the other visible buffers;
+     ;; committing picks is the explicit operation across the whole review.
+     (define (conflicted name)
+       (let ([id (store:create! head:ui-actor name '("base") '((base . "base") (trailing . #f)))])
+         (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 4) '("mine 界"))
+         (store:reload! bot id '("disk 始") '((base . "disk 始") (trailing . #f)))
+         (head:adopt-store-buffer! id)))
+     (define g (conflicted "review-界"))
+     (define h (conflicted "review-other"))
+     (head:show-buffer! g)
+     (window:split-right!)
+     (head:show-buffer! h)
+     (delta-log:conflicts! 0)
+     (define panel (head:current-window))
+     (define (click! row col)
+       (parameterize ([head:app-event-buffer-position (cons row col)] [head:app-event-focus fw])
+         (head:dispatch-app-event! "MOUSE-CLICK"))
+       (head:before-frame!))
+     (define (click-side! text)
+       (let ([line (vector-ref (head:window-lines panel) 1)])
+         (click! 1 (string:search line text 0 (string-length line)))))
+     (define (click-all! label)
+       (let ([line (vector-ref (head:window-lines panel) 0)])
+         (click! 0 (+ 6 (string:search line label 0 (string-length line))))))
+     (paint:window-layout)
+     (head:before-frame!)
+     (check 'headers-side-cells-and-settle-share-their-hover-and-click-ranges
+       (map (lambda (target)
+              (let* ([row (car target)] [line (vector-ref (head:window-lines panel) row)]
+                     [col (+ (caddr target) (string:search line (cadr target) 0 (string-length line)))]
+                     [position (paint:window-screen-position panel row col)])
+                (head:set-mouse-position! (cons (cdr position) (car position)))
+                (and (exists (lambda (r) (and (eq? (car r) panel) (= (cadr r) row)
+                                              (<= (caddr r) col) (< col (cadddr r)) (eq? (list-ref r 4) 'hover)))
+                             (paint:highlight-ranges)) #t)))
+         '((0 "Mine (all)" 6) (1 "disk 始" 2) (3 "Settle" 1)))
+       '(#t #t #t))
+     (head:set-mouse-position! #f)
+     (check 'header-and-shift-arrow-picks-cover-the-visible-review-without-writing
+       (let ([sides
+              (reverse
+                (fold-left
+                  (lambda (out action)
+                    (action)
+                    (cons (map (lambda (b) (map cdr (head:with-buffer b (delta-log:picks)))) (list g h)) out))
+                  '() (list (lambda () (click-all! "Mine (all)")) (lambda () (dispatch:key! "S-RIGHT"))
+                            (lambda () (dispatch:key! "S-LEFT")) (lambda () (click-all! "Disk (all)")))))])
+         (list sides (map (lambda (b) (vector->list (head:buffer-lines b))) (list g h))))
+       '((((mine) (mine)) ((disk) (disk)) ((mine) (mine)) ((disk) (disk))) (("disk 始") ("disk 始"))))
+     (check 'resolve-all-without-a-choice-only-settles-the-current-buffer
+       (list (head:with-buffer g (delta-log:resolve-all!))
+             (length (store:conflicts (head:buffer-store-id h)))) '(1 1))
+     (check 'mouse-side-picks-preview-without-writing-even-from-another-pane
+       (begin (click-side! "mine 界")
+              (let ([mine (head:with-buffer h (delta-log:picks))])
+                (click-side! "disk 始")
+                (list (map cdr mine) (map cdr (head:with-buffer h (delta-log:picks)))
+                      (vector->list (head:buffer-lines h)) (length (store:conflicts (head:buffer-store-id h))))))
+       '((mine) (disk) ("disk 始") 1))
+     (click-side! "mine 界")
+     (head:buffer-read-only-set! h #t)
+     (check 'a-refused-commit-keeps-the-picks-for-retry
+       (list (delta-log:commit-picks!) (map cdr (head:with-buffer h (delta-log:picks)))) '(0 (mine)))
+     (head:buffer-read-only-set! h #f)
+     (click! 2 1)
+     (check 'clicking-settle-commits-the-picked-side
+       (list (vector->list (head:buffer-lines h)) (store:conflicts (head:buffer-store-id h)))
+       '(("mine 界") ()))
+
+     ;; A bulk Mine choice must not concatenate alternatives for the same
+     ;; region. Validate before changing either picks or shared text.
+     (delta-log:close!)
+     (check 'bulk-mine-refuses-overlapping-regions-before-any-change
+       (map (lambda (disk)
+              (let ([overlap (store:create! bot "overlap" '("alpha beta gamma") '((base . "alpha beta gamma") (trailing . #f)))])
+                (store:edit! head:ui-actor overlap 0 (text:make-span 0 11 0 16) '("G"))
+                (store:edit! head:ui-actor overlap 1 (text:make-span 0 0 0 5) '("A"))
+                (store:reload! bot overlap (list disk) (list (cons 'base disk) '(trailing . #f)))
+                (head:show-buffer! (head:adopt-store-buffer! overlap))
+                (list (guard (ex [else 'refused]) (delta-log:pick-all! 'mine))
+                      (guard (ex [else 'refused]) (delta-log:resolve-all! 'mine))
+                      (map cdr (delta-log:picks)) (vector->list (head:buffer-lines (head:current-buffer))))))
+         '("disk" ""))
+       '((refused refused (disk disk) ("disk")) (refused refused (disk disk) (""))))
 
      (test:finish! 'delta-log)))

@@ -253,7 +253,12 @@ the red `!!` on a status line opens it too. It lists one row per pending
 conflict of every buffer a window shows, in the order of their regions in
 the text: its buffer, the entry's revision and actor, where it stands and
 both sides. Review is pick, then settle. `LEFT` picks the row's Mine side
-and `RIGHT` its Disk side, `SPC` flips the pick; nothing is settled yet,
+and `RIGHT` its Disk side; clicking either cell picks that side too.
+`S-LEFT` or the clickable `(all)` beside Mine picks Mine throughout the
+visible review; `S-RIGHT` or Disk's `(all)` picks Disk. These only change
+previews. If Mine regions overlap, the bulk choice refuses without changing
+the picks; choose those sides individually.
+`RET` and `SPC` flip the pick; nothing is settled yet,
 the picks show at once in a preview, a read-only `<preview: name>` buffer
 where the buffer was, with every mine pick's lines in place. Each region
 is coloured by the side it shows, mine one colour and disk another, and
@@ -262,8 +267,11 @@ brighter; the buffer's window follows the current row. Two mine picks
 whose regions share text cannot both be written, so the later pick sends
 the other back to disk and says so. The last row, `Settle all as picked:
 3 mine, 2 disk`, settles every conflict as picked on `RET`, `SPC` or a
-click; each settlement is one undoable edit. `RET` on a conflict row
-describes both sides in full, `C-x C-s` saves the row's buffer, and `ESC`
+click; `M-RET` commits the picks from any row. Each settlement is one
+undoable edit. Hovering a side cell or Settle makes it bold with a dotted
+underline. `(delta-log:show-row!)` describes both sides in full without
+changing text or picks, including on the Settle row.
+`C-x C-s` saves the row's buffer, and `ESC`
 closes the browser, the picks abandoned, the window showing what it showed
 before. The browser follows the windows and the store, so a conflict
 settled elsewhere leaves its rows, and with the last one settled the red
@@ -271,8 +279,12 @@ settled elsewhere leaves its rows, and with the last one settled the red
 `(delta-log:conflicts)` lists the current buffer's conflicts,
 `(delta-log:pick! (conflict n) 'mine)` picks a side and
 `(delta-log:flip! (conflict n))` flips it, `(delta-log:picks)` tells the
-sides shown, `(delta-log:resolve-all!)` settles them as picked and
-`(delta-log:resolve-all! 'disk)` all one way, `(delta-log:resolve!
+sides shown. `(delta-log:pick-all! 'mine)` picks every conflict of the current
+buffer; `(delta-log:pick-all! 'disk 'visible)` picks across the visible review.
+`(delta-log:resolve-all!)` settles the current buffer's conflicts
+as picked and `(delta-log:resolve-all! 'disk)` settles that same buffer all
+one way. `(delta-log:commit-picks!)` commits the whole visible review, as
+the Settle button does. `(delta-log:resolve!
 (conflict n) 'mine)` settles one now, replacement lines writing those. The
 `conflict` type completes from the pending ones and previews a candidate by
 showing its mine side while Tab has it.
@@ -421,8 +433,10 @@ occurrences say, and `#f` widens them again. Both browsers look like the
 finder: a heading row, a tinted current row and no cursor. They are views
 over the commands above and ask nothing themselves; their keys are commands
 bound in the `delta-log` and `conflicts` mode contexts, so `C-x TAB` lists
-them and M-x reaches them: `delta-log:show-row!`, `toggle-row!`,
-`flip-row!`, `keep-disk!`, `keep-mine!`, `next!`, `previous!`, `page-down!`,
+them and M-x reaches them: `delta-log:choose!` activates the selected row;
+`show-row!` only describes it, and `toggle-row!` and `flip-row!` only change
+previews. The other commands include `pick-disk!`, `pick-mine!`,
+`commit-picks!`, `next!`, `previous!`, `page-down!`,
 `page-up!`, `close!` and `cancel!`. `C-x C-s` in either browser saves the row's buffer, as it would in that buffer's window, refused while its conflicts pend.
 
 The `revision` and `batch` types complete from the log with the entry as

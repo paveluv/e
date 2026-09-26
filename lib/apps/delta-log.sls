@@ -7,12 +7,14 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps delta-log)
-  (export (rename (delta-log-cancel! cancel!)) (rename (delta-log-close! close!)) (rename (delta-log-commit! commit!))
+  (export (rename (delta-log-cancel! cancel!)) (rename (delta-log-choose! choose!)) (rename (delta-log-close! close!))
+          (rename (delta-log-commit! commit!)) (rename (delta-log-commit-picks! commit-picks!))
           (rename (delta-log-conflicts conflicts)) (rename (delta-log-conflicts! conflicts!))
           (rename (delta-log-disabled disabled)) (rename (delta-log-filter! filter!)) (rename (delta-log-flip! flip!))
           (rename (delta-log-flip-row! flip-row!)) init! (rename (delta-log-entries log)) (rename (delta-log-next! next!))
           (rename (delta-log-open! open!)) (rename (delta-log-page-down! page-down!)) (rename (delta-log-page-up! page-up!))
-          (rename (delta-log-pick! pick!)) (rename (delta-log-pick-disk! pick-disk!)) (rename (delta-log-pick-mine! pick-mine!))
+          (rename (delta-log-pick! pick!)) (rename (delta-log-pick-all! pick-all!))
+          (rename (delta-log-pick-disk! pick-disk!)) (rename (delta-log-pick-mine! pick-mine!))
           (rename (delta-log-picks picks)) (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
           (rename (delta-log-resolve-all! resolve-all!)) (rename (delta-log-revert! revert!))
           (rename (delta-log-save-row! save-row!)) (rename (delta-log-show! show!))
@@ -28,6 +30,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head render) render:)
           (prefix (head table) table:)
           (prefix (head window) window:)
           (prefix (state store) store:)
@@ -256,10 +259,12 @@
   (define (region-of c) (text:datum->span (cadddr c)))
 
   (define (overlapping? a b)
-    ;; whether two conflicts' regions share text, so both sides cannot be written
+    ;; Alternatives covering the same text or insertion point cannot both
+    ;; be written; empty regions arise when disk deleted the disputed text.
     (let ([sa (region-of a)] [sb (region-of b)])
-      (and (text:position<? (text:span-start sa) (text:span-end sb))
-           (text:position<? (text:span-start sb) (text:span-end sa)))))
+      (or (same-span? sa sb)
+          (and (text:position<? (text:span-start sa) (text:span-end sb))
+               (text:position<? (text:span-start sb) (text:span-end sa))))))
 
   (define (sorted-conflicts trunk)
     ;; the trunk's pending conflicts in the order of their regions in the text
@@ -267,6 +272,13 @@
       (guard (ex [else '()]) (store:conflicts (trunk-id trunk)))))
 
   (define (side-of trunk c) (if (memv (car c) (mine-picks trunk)) 'mine 'disk))
+
+  (define (require-disjoint! conflicts who)
+    (let loop ([left conflicts])
+      (when (pair? left)
+        (when (exists (lambda (other) (overlapping? (car left) other)) (cdr left))
+          (error who "Mine sides overlap; pick their sides individually"))
+        (loop (cdr left)))))
 
   (define (pick! trunk c side who)
     ;; the side a conflict shows, the preview following; picking mine sends
@@ -409,9 +421,8 @@
         (returns symbol "applied, refused or nothing"))
   (define (delta-log-resolve! conflict choice)
     (let* ([trunk (current-trunk 'delta-log:resolve!)] [revision (edoc:type-value 'conflict conflict)])
-      (hashtable-set! picks trunk (remv revision (mine-picks trunk)))
-      (render-previews!)
       (let-values ([(status detail) (head:store-resolve! trunk revision choice)])
+        (when (eq? status 'applied) (hashtable-set! picks trunk (remv revision (mine-picks trunk))))
         (parameterize ([edit:message-source 'resolve!])
           (edit:set-message!
             (case status
@@ -424,13 +435,14 @@
         (follow!)
         status)))
 
-  (edoc "Settle every pending reload conflict as picked, mine or disk each, over every buffer the browsers track, the settle row's act; with a choice, every conflict of the current buffer that one way."
-        (choice (list-of (one-of disk mine)) "disk or mine for them all, at most one")
-        (returns integer "how many were settled"))
-  (define (delta-log-resolve-all! . choice)
-    (let* ([one-way (and (pair? choice) (car choice))]
-           [trunks (if one-way (list (current-trunk 'delta-log:resolve-all!)) (filter head:buffer-conflicted (tracked-buffers)))]
-           [mine 0] [disk 0])
+  (define (resolve-conflicts! trunks one-way who)
+    ;; Validate the whole choice before any buffer is changed. Overlapping
+    ;; Mine regions cannot both be written, even by the all-mine API.
+    (for-each
+      (lambda (trunk)
+        (require-disjoint! (filter (lambda (c) (eq? (or one-way (side-of trunk c)) 'mine)) (sorted-conflicts trunk)) who))
+      trunks)
+    (let ([mine 0] [disk 0])
       (for-each
         (lambda (trunk)
           (for-each
@@ -438,12 +450,12 @@
               (let ([side (or one-way (side-of trunk c))])
                 (let-values ([(status detail) (head:store-resolve! trunk (car c) side)])
                   (when (eq? status 'applied)
+                    (hashtable-set! picks trunk (remv (car c) (mine-picks trunk)))
                     (if (eq? side 'mine) (set! mine (+ mine 1)) (set! disk (+ disk 1)))))))
-            (sorted-conflicts trunk))
-          (hashtable-delete! picks trunk))
+            (sorted-conflicts trunk)))
         trunks)
       (render-previews!)
-      (parameterize ([edit:message-source 'resolve-all!])
+      (parameterize ([edit:message-source who])
         (edit:set-message!
           (let ([n (+ mine disk)])
             (if one-way
@@ -451,6 +463,19 @@
                 (format "~a conflict~a settled: ~a mine, ~a disk" n (if (= n 1) "" "s") mine disk)))))
       (follow!)
       (+ mine disk)))
+
+  (edoc "Settle every pending reload conflict of the current buffer, or the browser's current row's buffer: as picked by default, or all mine or disk when given. The target buffer is the same with or without a choice."
+        (choice (list-of (one-of disk mine)) "disk or mine for them all, at most one")
+        (returns integer "how many were settled"))
+  (define (delta-log-resolve-all! . choice)
+    (unless (or (null? choice) (and (null? (cdr choice)) (memq (car choice) '(disk mine))))
+      (error 'delta-log:resolve-all! "expected at most one choice, mine or disk" choice))
+    (resolve-conflicts! (list (current-trunk 'delta-log:resolve-all!)) (and (pair? choice) (car choice)) 'resolve-all!))
+
+  (edoc "Commit the conflict review: settle every pending conflict of the buffers the browsers track as picked, mine or disk each. This is the conflicts browser's Settle action; unpicked conflicts keep disk."
+        (returns integer "how many were settled"))
+  (define (delta-log-commit-picks!)
+    (resolve-conflicts! (filter head:buffer-conflicted (tracked-buffers)) #f 'commit-picks!))
 
   (edoc "Pick the side a reload conflict shows, mine or disk, in the preview where the buffer is, nothing settled yet; a mine pick over text another mine pick already covers sends that one back to disk."
         (conflict conflict "the conflict")
@@ -460,6 +485,25 @@
     (let* ([trunk (current-trunk 'delta-log:pick!)] [revision (edoc:type-value 'conflict conflict)])
       (unless (memq side '(mine disk)) (error 'delta-log:pick! "expected mine or disk" side))
       (pick! trunk (conflict-at trunk revision) side 'pick!)))
+
+  (edoc "Preview the same side for every pending conflict, changing only picks: current selects the current buffer or browser row's buffer, the default; visible selects every buffer in the review, as the Mine (all) and Disk (all) headers do. Overlapping Mine regions refuse the whole choice."
+        (side (one-of mine disk) "the side to preview")
+        (scope (list-of (one-of current visible)) "current or visible, at most one")
+        (returns integer "how many conflicts were picked"))
+  (define (delta-log-pick-all! side . scope)
+    (unless (memq side '(mine disk)) (error 'delta-log:pick-all! "expected mine or disk" side))
+    (unless (or (null? scope) (and (null? (cdr scope)) (memq (car scope) '(current visible))))
+      (error 'delta-log:pick-all! "expected at most one scope, current or visible" scope))
+    (let* ([trunks (if (equal? scope '(visible)) (tracked-buffers) (list (current-trunk 'delta-log:pick-all!)))]
+           [groups (map (lambda (trunk) (cons trunk (sorted-conflicts trunk))) trunks)]
+           [n (apply + (map (lambda (group) (length (cdr group))) groups))])
+      (when (eq? side 'mine)
+        (for-each (lambda (group) (require-disjoint! (cdr group) 'delta-log:pick-all!)) groups))
+      (for-each (lambda (group) (hashtable-set! picks (car group) (if (eq? side 'mine) (map car (cdr group)) '()))) groups)
+      (follow!)
+      (parameterize ([edit:message-source 'pick-all!])
+        (edit:set-message! (format "~a conflict~a show ~a; nothing settled" n (if (= n 1) "" "s") side)))
+      n))
 
   (edoc "Flip the side a reload conflict shows, mine for disk and back, as delta-log:pick! does."
         (conflict conflict "the conflict")
@@ -610,7 +654,7 @@
 
   (define conflicts-browser
     (make-browser "<conflicts>" "conflicts"
-                  (table:make '#("Buffer" "Rev" "Actor" "At" "Mine" "Disk") '#(8 4 8 6 12 12) 1 '(2 3 0) '#(text right text text text text))
+                  (table:make '#("Buffer" "Rev" "Actor" "At" "Mine (all)" "Disk (all)") '#(8 4 8 6 12 12) 1 '(2 3 0) '#(text right text text text text))
                   (lambda (row column)
                     (let ([b (car row)] [c (cdr row)])
                       (define (side lines) (spell (string:elide (string:join lines "\n") 24)))
@@ -633,16 +677,25 @@
   (define (browser-windows br)
     (filter (lambda (w) (eq? (head:window-buffer w) (browser-buffer br))) (head:windows)))
 
+  (define (under-browser w b)
+    ;; Follow this window's saved buffers, never a browser's global row
+    ;; lookup. Opening another browser carries this return target forward.
+    (let under ([b b] [seen '()])
+      (let ([br (browser-of b)])
+        (if br
+            (and (not (memq br seen))
+                 (let ([back (assq w (browser-over br))])
+                   (and back (under (cdr back) (cons br seen)))))
+            b))))
+
   (define (tracked-buffers)
     ;; the shared buffers the windows show, a view or a flip standing for
     ;; its trunk and a browser for the buffer it replaced, each once, in
     ;; window order
     (let loop ([ws (head:windows)] [acc '()])
       (if (null? ws) (reverse acc)
-          (let* ([shown (head:window-buffer (car ws))]
-                 [br (browser-of shown)]
-                 [b (trunk-of (if br (cond [(assq (car ws) (browser-over br)) => cdr] [else shown]) shown))])
-            (loop (cdr ws) (if (and (head:buffer-store-id b) (memq b (head:buffers)) (not (memq b acc))) (cons b acc) acc))))))
+          (let* ([shown (under-browser (car ws) (head:window-buffer (car ws)))] [b (and shown (trunk-of shown))])
+            (loop (cdr ws) (if (and b (head:buffer-store-id b) (memq b (head:buffers)) (not (memq b acc))) (cons b acc) acc))))))
 
   (define (disablers-of b)
     ;; the (revision inverse kind) triples of a buffer's whole log, cached with its rows
@@ -834,21 +887,54 @@
     (make-vector (string-length line)
       (cond [(zero? row) 'header] [(string:prefix? "Settle all as picked" line) 'choice] [else 'plain])))
 
+  (define (side-range w row side)
+    ;; The table measures cells; mouse events and highlights use character
+    ;; positions. Share the rendered row's projection, including wide glyphs.
+    (let ([column (assv (if (eq? side 'mine) 4 5) conflict-columns)]
+          [frame (head:window-rendition w)])
+      (and column (list (render:character frame row (cadr column))
+                        (render:character frame row (caddr column)) side))))
+
+  (define (conflict-hit w row col)
+    ;; Click and hover share the side cells, each header's (all), and Settle.
+    (and (eq? (browser-of (head:window-buffer w)) conflicts-browser)
+         (let* ([n (length (browser-rows conflicts-browser))] [lines (head:window-lines w)])
+           (cond
+             [(and (> n 0) (= row (+ n 1)) (< row (vector-length lines)))
+              (let ([end (string-length (vector-ref lines row))])
+                (and (<= 0 col) (< col end) (list 0 end 'settle)))]
+             [(and (= row 0) (> n 0))
+              (find (lambda (range) (and range (<= (car range) col) (< col (cadr range))))
+                (map (lambda (side)
+                       (let ([range (side-range w row side)])
+                         (and range (list (+ (car range) 5) (+ (car range) 10) side)))) '(mine disk)))]
+             [(<= 1 row n)
+              (find (lambda (range) (and range (<= (car range) col) (< col (cadr range))))
+                (map (lambda (side) (side-range w row side)) '(mine disk)))]
+             [else #f]))))
+
   (define (browser-handler br)
-    ;; the pointer in a window showing the browser: a click on a row moves
-    ;; there, on the settle row settles every pick
+    ;; The app's window is current while its handler runs, even when the
+    ;; pointer came from an unfocused pane. A side click previews, the
+    ;; settle button commits, and the rest of a data row only selects it.
     (lambda (event)
       (cond
         [(string=? event "MOUSE-CLICK")
-         (let* ([at (head:app-event-buffer-position)] [w (head:app-event-focus)]
-                [row (and at (car at))] [n (length (browser-rows br))])
+         (let* ([at (head:app-event-buffer-position)] [w (head:current-window)]
+                [row (and at (car at))] [n (length (browser-rows br))]
+                [hit (and at (conflict-hit w row (cdr at)))])
            (cond
              [(not (and row w (memq w (browser-windows br)))) 'ignore-click]
-             [(and (eq? br conflicts-browser) (> n 0) (= row (+ n 1)))
-              (head:set-current! w) (delta-log-resolve-all!) 'keep-focus]
+             [(and hit (= row 0)) (delta-log-pick-all! (caddr hit) 'visible) 'keep-focus]
+             [(and hit (eq? (caddr hit) 'settle)) (delta-log-commit-picks!) 'keep-focus]
              [(and (>= row 1) (<= row n))
-              (head:set-current! w) (head:goto! (cons row 0)) (sync-browsed!) (follow-row!) 'keep-focus]
+              (head:goto! (cons row 0))
+              (when hit
+                (let ([entry (list-ref (browser-rows br) (- row 1))])
+                  (pick! (car entry) (cdr entry) (caddr hit) 'pick!)))
+              (sync-browsed!) (follow-row!) 'keep-focus]
              [else 'ignore-click]))]
+        [(member event '("MOUSE-MOVE" "MOUSE-LEAVE")) #t]
         [else #f])))
 
   (define (ensure-browser! br)
@@ -873,7 +959,7 @@
     (ensure-browser! br)
     (let ([b (browser-buffer br)])
       (unless (eq? (head:window-buffer w) b)
-        (browser-over-set! br (cons (cons w (head:window-buffer w)) (remp (lambda (e) (eq? (car e) w)) (browser-over br))))
+        (browser-over-set! br (cons (cons w (under-browser w (head:window-buffer w))) (remp (lambda (e) (eq? (car e) w)) (browser-over br))))
         (head:set-window-buffer! w b))
       (when (and (head:popup? w) (= (head:popup-rows) 0)) (head:show-popup! (head:popup-default-rows)))
       (window:focus! w)
@@ -912,7 +998,7 @@
   (define (delta-log-open! . w*)
     (show-browser! log-browser (target-window w*)))
 
-  (edoc "Open the conflicts browser, <conflicts>, in a window, the current one by default, and select it: one row per pending reload conflict of every shared buffer a window shows, in the order of their regions, its buffer, the entry's revision and actor, where it stands and both sides, the side each shows highlighted as its region is in the buffer's window, which follows; LEFT picks mine and RIGHT disk for the row, shown at once in a preview where the buffer was, SPC flips the pick, and the last row settles every conflict as picked, RET, SPC or a click on it. ESC closes it, the picks abandoned, the window showing what it showed before."
+  (edoc "Open the conflicts browser, <conflicts>, in a window, the current one by default, and select it: one row per pending reload conflict of every buffer a window shows, with its region and both sides. Click Mine or Disk, or use LEFT and RIGHT, to preview that side; the headers' (all) controls and S-LEFT/S-RIGHT pick the side throughout the review. RET and SPC flip a row's pick, and on the last row commit every pick, as clicking Settle does. M-RET commits from any row. ESC closes the browser and abandons the previews."
         (w* (list-of window) "the window to open it in, at most one; the current window by default"))
   (define (delta-log-conflicts! . w*)
     (show-browser! conflicts-browser (target-window w*)))
@@ -936,16 +1022,23 @@
   (edoc "Move the browser a page of rows up.")
   (define (delta-log-page-up!) (move-row! (- (max 1 (- (head:window-size (head:current-window)) 1)))))
 
-  (edoc "Describe the browser's current row in the echo area: the entry's actor, where it wrote, what it removed and inserted, or both sides of the conflict in full; on the conflicts browser's settle row, settle every conflict as picked.")
+  (edoc "Describe the browser's current row in the echo area: an entry's actor and edit, both sides of a conflict in full, or the Settle row's counts. Inspection changes neither the text nor the picks.")
   (define (delta-log-show-row!)
     (let ([br (current-browser 'delta-log:show-row!)])
-      (if (settle-row? br (head:current-window))
-          (delta-log-resolve-all!)
-          (let ([row (browser-row 'delta-log:show-row!)])
-            (parameterize ([edit:message-source 'show-row!])
-              (edit:set-message!
+      (parameterize ([edit:message-source 'show-row!])
+        (edit:set-message!
+          (if (settle-row? br (head:current-window))
+              (settle-line (browser-rows br))
+              (let ([row (browser-row 'delta-log:show-row!)])
                 (string-append (head:buffer-name (car row)) "  "
                                (if (eq? br conflicts-browser) (conflict-text (cdr row)) (entry-text (cdr row) (disablers-of (car row)))))))))))
+
+  (edoc "Activate the browser's selected row: describe a log entry, flip a conflict's preview side, or commit the review on the Settle row. RET in either browser, and SPC in conflicts; show-row! only describes, flip-row! only previews, and commit-picks! explicitly settles the review.")
+  (define (delta-log-choose!)
+    (let ([br (current-browser 'delta-log:choose!)])
+      (cond [(settle-row? br (head:current-window)) (delta-log-commit-picks!)]
+            [(eq? br conflicts-browser) (delta-log-flip-row!)]
+            [else (delta-log-show-row!)])))
 
   (edoc "Close the delta log or conflicts browser the current buffer is: its windows show what they showed before, the pop-up hides when it showed nothing else, the conflicts browser's picks are abandoned and its preview ends, and point stays where the last row put it.")
   (define (delta-log-close!)
@@ -973,13 +1066,10 @@
       (when (settle-row? br (head:current-window)) (error who "this row settles every conflict as picked"))
       (browser-row who)))
 
-  (edoc "Flip the side the browser's current row's conflict shows, as delta-log:flip! does with its revision; on the settle row, settle every conflict as picked.")
+  (edoc "Flip the side the browser's current conflict row previews, as delta-log:flip! does with its revision. Nothing is settled; a conflict row must be selected.")
   (define (delta-log-flip-row!)
-    (let ([br (current-browser 'delta-log:flip-row!)])
-      (if (settle-row? br (head:current-window))
-          (delta-log-resolve-all!)
-          (let ([row (conflict-row 'delta-log:flip-row!)])
-            (pick! (car row) (cdr row) (if (eq? (side-of (car row) (cdr row)) 'mine) 'disk 'mine) 'flip-row!)))))
+    (let ([row (conflict-row 'delta-log:flip-row!)])
+      (pick! (car row) (cdr row) (if (eq? (side-of (car row) (cdr row)) 'mine) 'disk 'mine) 'flip-row!)))
 
   (edoc "Pick mine for the browser's current row's conflict, the entry's side shown in the preview, nothing settled yet, as delta-log:pick! does; LEFT, the Mine column's side.")
   (define (delta-log-pick-mine!)
@@ -1014,13 +1104,16 @@
   (define browser-keys
     `((("DOWN" "C-n" "M-n") ,delta-log-next!) (("UP" "C-p" "M-p") ,delta-log-previous!)
       (("PGDN" "C-v") ,delta-log-page-down!) (("PGUP" "M-v") ,delta-log-page-up!)
-      (("RET") ,delta-log-show-row!) (("ESC") ,delta-log-close!) (("C-g") ,delta-log-cancel!)
+      (("RET") ,delta-log-choose!) (("ESC") ,delta-log-close!) (("C-g") ,delta-log-cancel!)
       (("C-x C-s") ,delta-log-save-row!)))
 
   (define log-keys `((("M-t") ,delta-log-toggle-row!) (("M-RET") ,delta-log-commit!)))
 
   (define conflicts-keys
-    `((("LEFT" "M-m") ,delta-log-pick-mine!) (("RIGHT" "M-d") ,delta-log-pick-disk!) (("SPC" "M-/") ,delta-log-flip-row!)))
+    `((("LEFT" "M-m") ,delta-log-pick-mine!) (("RIGHT" "M-d") ,delta-log-pick-disk!)
+      (("S-LEFT") ,(keymap:call delta-log-pick-all! 'mine 'visible))
+      (("S-RIGHT") ,(keymap:call delta-log-pick-all! 'disk 'visible))
+      (("SPC") ,delta-log-choose!) (("M-/") ,delta-log-flip-row!) (("M-RET") ,delta-log-commit-picks!)))
 
   (define (bind-keys! context table)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! context key (cadr entry))) (car entry))) table))
@@ -1036,6 +1129,7 @@
     (keymap:bind-default! "C-x l" (keymap:call delta-log-open! 0))
     (keymap:bind-default! "C-x !" (keymap:call delta-log-conflicts! 0))
     (paint:add-highlighter! entry-highlights)
+    (paint:add-highlighter! (lambda () (paint:hover-ranges conflict-hit)))
     (paint:add-highlighter!
       (lambda ()
         ;; the tinted current row of each window showing a browser, and in the
@@ -1061,11 +1155,11 @@
     (let loop ([rows (browser-rows conflicts-browser)] [k 1] [out '()])
       (if (or (null? rows) (>= k (vector-length lines))) (reverse out)
           (let* ([row (car rows)] [side (side-of (car row) (cdr row))]
-                 [column (assv (if (eq? side 'mine) 4 5) conflict-columns)]
+                 [range (side-range w k side)]
                  [len (string-length (vector-ref lines k))])
             (loop (cdr rows) (+ k 1)
-                  (if (and column (< (cadr column) len))
-                      (cons (list w k (cadr column) (min (caddr column) len) (side-face side (= k current))) out)
+                  (if (and range (< (car range) len))
+                      (cons (list w k (car range) (min (cadr range) len) (side-face side (= k current))) out)
                       out))))))
 
 ) ;; library (delta-log)
