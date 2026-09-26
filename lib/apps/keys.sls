@@ -243,11 +243,16 @@
          (not (and (head:popup? w) (= (head:popup-rows) 0)))))
 
   (define (subject)
-    ;; the window whose keys the listing describes: the current one unless
-    ;; it shows the listing, then the one selected before it, else none
-    (let ([w (head:current-window)] [p (head:previous-window)])
-      (cond [(describable? w) w]
-            [(describable? p) p]
+    ;; the buffer whose keys the listing describes: the current window's,
+    ;; unless it shows the listing; the pop-up's then is the buffer the
+    ;; listing took over there, an app's say, since the user is in that app;
+    ;; else the buffer of the window selected before; none otherwise
+    (let* ([w (head:current-window)] [p (head:previous-window)]
+           [taken (and (head:popup? w) (assq w over))]
+           [under (and taken (memq (cdr taken) (head:buffers)) (cdr taken))])
+      (cond [(describable? w) (head:window-buffer w)]
+            [under under]
+            [(describable? p) (head:window-buffer p)]
             [else #f])))
 
   (define (listing-width)
@@ -306,7 +311,7 @@
     (when (and view (memq view (head:buffers)))
       (if (null? (view-windows))
           (drop-view!)
-          (let* ([w (subject)] [b (and w (head:window-buffer w))])
+          (let ([b (subject)])
             (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
               (fill! b))))))
 
@@ -374,10 +379,11 @@
   (define (page-down!) (page! 1))
 
   (define (status b w)
-    ;; the bar of a window showing the listing: the buffer's name, the page
-    ;; the window is on of how many, and the paging keys
+    ;; the bar of a window showing the listing, after the buffer's name the
+    ;; painter puts first: the page the window is on of how many; the paging
+    ;; keys are in the listing itself, never in a message or a bar
     (let ([starts (page-starts w)])
-      (format "<keys>  page ~a of ~a  C-x TAB page down, C-x S-TAB page up" (+ 1 (page-index w starts)) (length starts))))
+      (format "page ~a of ~a" (+ 1 (page-index w starts)) (length starts))))
 
   (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
   (define (keys-show!)
@@ -385,12 +391,12 @@
       [(showing?)
        ;; the situation changed under the listing, a prompt opened say: it
        ;; refills; unchanged, or with nothing else to describe, it pages
-       (let* ([w (subject)] [b (and w (head:window-buffer w))])
+       (let ([b (subject)])
          (if (and b (not (eq? b view)) (not (equal? listed (situation b))))
              (fill! b)
              (page-down!)))]
       [else
-       (let ([b (head:window-buffer (or (subject) (head:current-window)))])
+       (let ([b (or (subject) (head:window-buffer (head:current-window)))])
          (ensure-view!)
          (remember-over! (head:popup))
          (head:set-window-buffer! (head:popup) view)

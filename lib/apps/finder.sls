@@ -634,7 +634,7 @@
       (head:set-app-presentation! view first-row 'auto #f)
       (head:set-app-cursor-visible! view #f)
       (head:set-app-selectable! view #f)
-      (head:set-app-status-position! view head:buffer-name)
+      (head:set-app-status-position! view (lambda (b) ""))   ; the name alone
       (head:buffer-fact-set! view 'resume-kind 'finder)
       (mode:choose! "finder" view))
     view)

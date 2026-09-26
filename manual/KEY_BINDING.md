@@ -42,7 +42,7 @@ in the current window instead, for the buffer that window shows, and
 mode's context to its own commands, `finder:choose!` for Enter in
 `<finder>` say, so they list like any others, run from M-x and are described
 by `C-h k`; an app that captures keys, the terminal, lists its toggle and a
-row saying what it takes.
+row saying what it takes. In the pop-up itself, an app's there, the conflicts browser's say, it lists that app's keys and keeps to them while the pop-up stays current.
 
 ## Global bindings
 

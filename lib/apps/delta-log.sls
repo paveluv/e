@@ -10,15 +10,16 @@
   (export (rename (delta-log-cancel! cancel!)) (rename (delta-log-close! close!)) (rename (delta-log-commit! commit!))
           (rename (delta-log-conflicts conflicts)) (rename (delta-log-conflicts! conflicts!))
           (rename (delta-log-disabled disabled)) (rename (delta-log-filter! filter!)) (rename (delta-log-flip! flip!))
-          (rename (delta-log-flip-row! flip-row!)) init! (rename (delta-log-keep-disk! keep-disk!))
-          (rename (delta-log-keep-mine! keep-mine!)) (rename (delta-log-entries log)) (rename (delta-log-next! next!))
+          (rename (delta-log-flip-row! flip-row!)) init! (rename (delta-log-entries log)) (rename (delta-log-next! next!))
           (rename (delta-log-open! open!)) (rename (delta-log-page-down! page-down!)) (rename (delta-log-page-up! page-up!))
-          (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
-          (rename (delta-log-resolve-all! resolve-all!)) (rename (delta-log-revert! revert!)) (rename (delta-log-show! show!))
+          (rename (delta-log-pick! pick!)) (rename (delta-log-pick-disk! pick-disk!)) (rename (delta-log-pick-mine! pick-mine!))
+          (rename (delta-log-picks picks)) (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
+          (rename (delta-log-resolve-all! resolve-all!)) (rename (delta-log-revert! revert!))
+          (rename (delta-log-save-row! save-row!)) (rename (delta-log-show! show!))
           (rename (delta-log-show-row! show-row!)) (rename (delta-log-toggle! toggle!)) (rename (delta-log-toggle-row! toggle-row!))
           (rename (delta-log-view view)))
   (import (rnrs)
-          (only (chezscheme) format make-weak-eq-hashtable void)
+          (only (chezscheme) hashtable-values parameterize format make-weak-eq-hashtable void)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
@@ -49,7 +50,7 @@
                                ;; a browser stands for its current row's buffer, else the first it tracks
                                (let ([row (current-row br)] [tracked (tracked-buffers)])
                                  (cond [row (car row)] [(pair? tracked) (car tracked)] [else b])))]
-          [(and flip (eq? b (car flip))) (caddr flip)]
+          [(preview-trunk-of b) => values]
           [else b]))
 
   (define (current-trunk who)
@@ -140,20 +141,46 @@
            [hit (find (lambda (entry) (= (caddr entry) revision)) (store:blame id (length (store:log id))))])
       (and hit (cons trunk (car hit)))))
 
-  (define (span-ranges marked)
-    ;; a marked span, row by row, in the match face
-    (let* ([b (car marked)] [span (cdr marked)]
+  (define (span-ranges marked . face)
+    ;; a marked span, row by row, in the match face unless another is given
+    (let* ([b (car marked)] [span (cdr marked)] [face (if (pair? face) (car face) 'match)]
            [start (text:span-start span)] [end (text:span-end span)])
       (let loop ([row (car start)] [out '()])
         (if (> row (car end)) (reverse out)
             (let* ([from (if (= row (car start)) (cdr start) 0)]
                    [to (if (= row (car end)) (cdr end) (string-length (head:buffer-line b row)))])
-              (loop (+ row 1) (cons (list b row from (max to (+ from 1)) 'match) out)))))))
+              (loop (+ row 1) (cons (list b row from (max to (+ from 1)) face) out)))))))
+
+  (define browsed-face 'match) ; the browsed span's face, #f when the conflict regions paint it
 
   (define (entry-highlights)
-    ;; the previewed entry's span, the browsed one's and a flip's region
-    (append (if previewed (span-ranges previewed) '()) (if browsed (span-ranges browsed) '())
-            (if flip (span-ranges (cons (car flip) (cadr flip))) '())))
+    ;; the previewed entry's span, the browsed one's, and every pending
+    ;; conflict's region in the face of the side it shows
+    (append (if previewed (span-ranges previewed) '())
+            (if (and browsed browsed-face) (span-ranges browsed browsed-face) '())
+            (conflict-highlights)))
+
+  (define (same-span? a b)
+    (and (equal? (text:span-start a) (text:span-start b)) (equal? (text:span-end a) (text:span-end b))))
+
+  (define (side-face side current?)
+    (case side
+      [(mine) (if current? 'conflict-mine-current 'conflict-mine)]
+      [else (if current? 'conflict-disk-current 'conflict-disk)]))
+
+  (define (conflict-highlights)
+    ;; the regions of every tracked buffer's pending conflicts, in the buffer
+    ;; standing for it on screen, each in its side's face, the browsed one
+    ;; brighter
+    (apply append
+      (map (lambda (trunk)
+             (let ([shown (shown-for trunk)])
+               (apply append
+                 (map (lambda (region)
+                        (let ([current? (and browsed (eq? (car browsed) shown) (same-span? (cdr browsed) (caddr region)))])
+                          (span-ranges (cons shown (caddr region)) (side-face (cadr region) current?))))
+                      (regions-of trunk)))))
+           (filter head:buffer-conflicted (tracked-buffers)))))
 
   (define (preview-revision! revision)
     ;; bring the entry's span, rebased into the current text, under point and
@@ -198,9 +225,17 @@
   ;;; Reload conflicts --------------------------------------------------------------
 
   ;; A pending conflict of the trunk, as the store lists them: (revision actor
-  ;; labels region mine disk). The disk's side stands in the text; a flip
-  ;; shows the entry's side in place, in a local buffer where the trunk was.
-  (define flip #f) ; (buffer region trunk window) while a flip shows
+  ;; labels region mine disk). The disk's side stands in the text. A review
+  ;; picks a side per conflict, mine or disk, disk unless picked otherwise,
+  ;; and the picks show at once in a preview: a read-only local buffer where
+  ;; the trunk was, with every mine pick's lines over its region. The picks
+  ;; settle together when asked. Two mine picks whose regions share text
+  ;; cannot both be written, so the later pick sends the other back to disk.
+  (define picks (make-weak-eq-hashtable)) ; trunk -> the revisions picked mine
+  (define-record-type preview (fields trunk buffer (mutable regions) (mutable key)))
+  (define previews (make-weak-eq-hashtable)) ; trunk -> its preview while one shows
+
+  (define (mine-picks trunk) (hashtable-ref picks trunk '()))
 
   (define (conflict-at trunk revision)
     (or (find (lambda (c) (= (car c) revision)) (store:conflicts (trunk-id trunk)))
@@ -209,7 +244,7 @@
   (define (conflict-hint c . width)
     ;; a conflict in one line, its revision apart: the actor, where the
     ;; disk's side stands, and both sides, elided to a width when one is given
-    (let* ([start (text:span-start (text:datum->span (cadddr c)))]
+    (let* ([start (text:span-start (region-of c))]
            [side (lambda (lines)
                    (let ([s (string:join lines "\n")])
                      (spell (if (pair? width) (string:elide s (car width)) s))))])
@@ -218,38 +253,142 @@
 
   (define (conflict-text c . width) (format "~a  ~a" (car c) (apply conflict-hint c width)))
 
-  (define (unflip!)
-    (when flip
-      (let ([vb (car flip)] [trunk (caddr flip)] [w (cadddr flip)])
-        (set! flip #f)
-        (when (eq? (head:window-buffer w) vb) (head:set-window-buffer! w trunk))
-        (head:forget-buffer! vb))))
+  (define (region-of c) (text:datum->span (cadddr c)))
 
-  (define (show-flip! trunk c)
-    ;; the entry's side of a conflict shown in place of the trunk, read-only
-    ;; and highlighted, in the window that showed the trunk; the thunk
-    ;; returned puts the trunk back
-    (unflip!)
-    (let-values ([(text delta) (text:apply-edit (head:buffer-lines trunk) (text:datum->span (cadddr c)) (list-ref c 4))])
-      (let* ([region (let ([s (text:span-start (text:delta-span delta))] [e (text:delta-new-end delta)])
-                       (text:make-span (car s) (cdr s) (car e) (cdr e)))]
-             [vb (head:fresh-buffer! (string-append "<flip: " (head:buffer-name trunk) ">"))]
-             [w (or (find (lambda (w) (eq? (head:window-buffer w) trunk)) (head:windows)) (head:current-window))])
-        (head:buffer-fact-set! vb 'mode (head:buffer-fact trunk 'mode #f))
-        (head:buffer-lines-set! vb text)
-        (head:buffer-read-only-set! vb #t)
-        (head:add-buffer! vb)
-        (head:set-window-buffer! w vb)
-        (head:with-buffer vb (head:goto! (text:span-start region)))
-        (set! flip (list vb region trunk w))
-        unflip!)))
+  (define (overlapping? a b)
+    ;; whether two conflicts' regions share text, so both sides cannot be written
+    (let ([sa (region-of a)] [sb (region-of b)])
+      (and (text:position<? (text:span-start sa) (text:span-end sb))
+           (text:position<? (text:span-start sb) (text:span-end sa)))))
+
+  (define (sorted-conflicts trunk)
+    ;; the trunk's pending conflicts in the order of their regions in the text
+    (list-sort (lambda (a b) (text:position<? (text:span-start (region-of a)) (text:span-start (region-of b))))
+      (guard (ex [else '()]) (store:conflicts (trunk-id trunk)))))
+
+  (define (side-of trunk c) (if (memv (car c) (mine-picks trunk)) 'mine 'disk))
+
+  (define (pick! trunk c side who)
+    ;; the side a conflict shows, the preview following; picking mine sends
+    ;; an overlapping mine pick back to disk, and says so
+    (let* ([revision (car c)] [was (mine-picks trunk)]
+           [displaced (if (eq? side 'mine)
+                          (filter (lambda (o) (and (not (= (car o) revision)) (memv (car o) was) (overlapping? o c))) (sorted-conflicts trunk))
+                          '())]
+           [kept (filter (lambda (r) (not (memv r (map car displaced)))) (remv revision was))])
+      (hashtable-set! picks trunk (if (eq? side 'mine) (cons revision kept) kept))
+      (render-previews!)
+      (parameterize ([edit:message-source who])
+        (edit:set-message!
+          (if (null? displaced)
+              (format "Conflict ~a shows ~a" revision side)
+              (format "Conflict ~a shows mine; ~a back to disk, overlapping it"
+                      revision (string:join (map (lambda (o) (number->string (car o))) displaced) ", ")))))
+      side))
+
+  (define (preview-text trunk)
+    ;; the trunk's text with every mine pick's lines over its region, and the
+    ;; regions as (revision side span) in that text, top to bottom; a mine
+    ;; pick over text an earlier one already replaced shows disk
+    (let loop ([cs (sorted-conflicts trunk)] [text (head:buffer-lines trunk)] [deltas '()] [applied '()] [regions '()])
+      (if (null? cs) (values text (reverse regions))
+          (let* ([c (car cs)]
+                 [span (fold-left (lambda (s d)
+                                    (or (text:rebase-span s d)
+                                        (let ([a (text:rebase-position (text:span-start s) d)]
+                                              [e (text:rebase-position (text:span-end s) d 'stay)])
+                                          (text:make-span (car a) (cdr a) (car e) (cdr e)))))
+                                  (region-of c) (reverse deltas))])
+            (if (and (memv (car c) (mine-picks trunk)) (not (exists (lambda (o) (overlapping? o c)) applied)))
+                (let-values ([(next delta) (text:apply-edit text span (list-ref c 4))])
+                  (let ([a (text:span-start (text:delta-span delta))] [e (text:delta-new-end delta)])
+                    (loop (cdr cs) next (cons delta deltas) (cons c applied)
+                          (cons (list (car c) 'mine (text:make-span (car a) (cdr a) (car e) (cdr e))) regions))))
+                (loop (cdr cs) text deltas applied (cons (list (car c) 'disk span) regions)))))))
+
+  (define (preview-of trunk) (hashtable-ref previews trunk #f))
+
+  (define (preview-trunk-of b)
+    ;; the trunk a preview buffer stands for, or #f for any other buffer
+    (let ([hit (find (lambda (pv) (eq? (preview-buffer pv) b)) (vector->list (hashtable-values previews)))])
+      (and hit (preview-trunk hit))))
+
+  (define (shown-for trunk)
+    ;; the buffer standing for the trunk on screen: its preview while one shows, else itself
+    (cond [(preview-of trunk) => preview-buffer] [else trunk]))
+
+  (define (regions-of trunk)
+    ;; the conflicts' regions as (revision side span) in the shown buffer's text
+    (cond [(preview-of trunk) => preview-regions]
+          [else (map (lambda (c) (list (car c) 'disk (region-of c))) (sorted-conflicts trunk))]))
+
+  (define (start-preview! trunk)
+    (let ([vb (head:fresh-buffer! (string-append "<preview: " (head:buffer-name trunk) ">"))])
+      (head:buffer-fact-set! vb 'mode (head:buffer-fact trunk 'mode #f))
+      (head:buffer-read-only-set! vb #t)
+      (head:add-buffer! vb)
+      (let ([pv (make-preview trunk vb '() #f)])
+        (hashtable-set! previews trunk pv)
+        pv)))
+
+  (define (drop-preview! pv)
+    ;; the windows showing the preview show the trunk again; the preview buffer goes
+    (let ([trunk (preview-trunk pv)] [vb (preview-buffer pv)])
+      (for-each (lambda (w)
+                  (when (eq? (head:window-buffer w) vb)
+                    (head:set-window-buffer! w (if (memq trunk (head:buffers)) trunk
+                                                   (find (lambda (o) (not (eq? o vb))) (head:buffers))))))
+                (head:windows))
+      (head:forget-buffer! vb)
+      (hashtable-delete! previews trunk)))
+
+  (define (render-previews!)
+    ;; every trunk with a mine pick shows its preview, built again when its
+    ;; text or its picks changed; one without any goes back to itself, and
+    ;; picks of conflicts settled meanwhile are forgotten
+    (let ([trunks (let dedupe ([ts (append (vector->list (hashtable-keys picks)) (vector->list (hashtable-keys previews)))] [acc '()])
+                    (cond [(null? ts) acc] [(memq (car ts) acc) (dedupe (cdr ts) acc)] [else (dedupe (cdr ts) (cons (car ts) acc))]))])
+      (for-each
+        (lambda (trunk)
+          (let* ([live? (and (memq trunk (head:buffers)) (head:buffer-store-id trunk))]
+                 [pending (if live? (map car (sorted-conflicts trunk)) '())]
+                 [mine (filter (lambda (r) (memv r pending)) (mine-picks trunk))]
+                 [pv (preview-of trunk)])
+            (cond
+              [(null? mine)
+               (hashtable-delete! picks trunk)
+               (when pv (drop-preview! pv))]
+              [else
+               (hashtable-set! picks trunk mine)
+               (let ([key (cons (head:buffer-store-rev trunk) mine)])
+                 (unless (and pv (equal? (preview-key pv) key))
+                   (let-values ([(text regions) (preview-text trunk)])
+                     (let ([pv (or pv (start-preview! trunk))])
+                       (preview-key-set! pv key)
+                       (preview-regions-set! pv regions)
+                       (head:buffer-read-only-set! (preview-buffer pv) #f)
+                       (head:buffer-lines-set! (preview-buffer pv) text)
+                       (head:buffer-read-only-set! (preview-buffer pv) #t)
+                       (for-each (lambda (w) (when (eq? (head:window-buffer w) trunk) (head:set-window-buffer! w (preview-buffer pv))))
+                                 (head:windows))))))])))
+        trunks)))
+
+  (define (clear-picks!)
+    ;; every pick abandoned, the previews ending
+    (hashtable-clear! picks)
+    (render-previews!))
 
   (define (preview-conflict! revision)
-    ;; the entry's side flipped into place while a prompt has the conflict
+    ;; the entry's side shown in place while a prompt has the conflict; the
+    ;; thunk returned puts the picks back as they were
     (let ([trunk (guard (ex [else #f]) (current-trunk 'conflict))])
       (and trunk (integer? revision)
-           (let ([c (find (lambda (c) (= (car c) revision)) (store:conflicts (trunk-id trunk)))])
-             (and c (show-flip! trunk c))))))
+           (let ([c (find (lambda (c) (= (car c) revision)) (sorted-conflicts trunk))])
+             (and c
+                  (let ([was (mine-picks trunk)])
+                    (hashtable-set! picks trunk (if (memv revision was) was (cons revision was)))
+                    (render-previews!)
+                    (lambda () (hashtable-set! picks trunk was) (render-previews!))))))))
 
   (edoc-type conflict "a pending conflict of the current buffer's last reload, by the revision of the entry the disk contradicted"
     (predicate (lambda (v) (and (integer? v) (exact? v) (>= v 1))))
@@ -270,38 +409,70 @@
         (returns symbol "applied, refused or nothing"))
   (define (delta-log-resolve! conflict choice)
     (let* ([trunk (current-trunk 'delta-log:resolve!)] [revision (edoc:type-value 'conflict conflict)])
-      (unflip!)
+      (hashtable-set! picks trunk (remv revision (mine-picks trunk)))
+      (render-previews!)
       (let-values ([(status detail) (head:store-resolve! trunk revision choice)])
-        (edit:set-message!
-          (case status
-            [(applied)
-             (let ([left (length (store:conflicts (trunk-id trunk)))])
-               (format "Conflict ~a settled, ~a; ~a pending" revision
-                       (cond [(eq? choice 'disk) "the disk's side kept"] [(eq? choice 'mine) "your side written"] [else "your lines written"])
-                       left))]
-            [else (format "Conflict ~a: ~a ~s" revision status detail)]))
+        (parameterize ([edit:message-source 'resolve!])
+          (edit:set-message!
+            (case status
+              [(applied)
+               (let ([left (length (store:conflicts (trunk-id trunk)))])
+                 (format "Conflict ~a settled, ~a; ~a pending" revision
+                         (cond [(eq? choice 'disk) "the disk's side kept"] [(eq? choice 'mine) "your side written"] [else "your lines written"])
+                         left))]
+              [else (format "Conflict ~a: ~a ~s" revision status detail)])))
         (follow!)
         status)))
 
-  (edoc "Settle every pending reload conflict of the current buffer the same way."
-        (choice (one-of disk mine) "disk or mine")
+  (edoc "Settle every pending reload conflict as picked, mine or disk each, over every buffer the browsers track, the settle row's act; with a choice, every conflict of the current buffer that one way."
+        (choice (list-of (one-of disk mine)) "disk or mine for them all, at most one")
         (returns integer "how many were settled"))
-  (define (delta-log-resolve-all! choice)
-    (let ([trunk (current-trunk 'delta-log:resolve-all!)])
-      (unflip!)
-      (let ([settled (fold-left (lambda (n c)
-                                  (let-values ([(status detail) (head:store-resolve! trunk (car c) choice)])
-                                    (if (eq? status 'applied) (+ n 1) n)))
-                                0 (store:conflicts (trunk-id trunk)))])
-        (edit:set-message! (format "~a conflict~a settled, the ~a side kept" settled (if (= settled 1) "" "s") choice))
-        (follow!)
-        settled)))
+  (define (delta-log-resolve-all! . choice)
+    (let* ([one-way (and (pair? choice) (car choice))]
+           [trunks (if one-way (list (current-trunk 'delta-log:resolve-all!)) (filter head:buffer-conflicted (tracked-buffers)))]
+           [mine 0] [disk 0])
+      (for-each
+        (lambda (trunk)
+          (for-each
+            (lambda (c)
+              (let ([side (or one-way (side-of trunk c))])
+                (let-values ([(status detail) (head:store-resolve! trunk (car c) side)])
+                  (when (eq? status 'applied)
+                    (if (eq? side 'mine) (set! mine (+ mine 1)) (set! disk (+ disk 1)))))))
+            (sorted-conflicts trunk))
+          (hashtable-delete! picks trunk))
+        trunks)
+      (render-previews!)
+      (parameterize ([edit:message-source 'resolve-all!])
+        (edit:set-message!
+          (let ([n (+ mine disk)])
+            (if one-way
+                (format "~a conflict~a settled, the ~a side kept" n (if (= n 1) "" "s") one-way)
+                (format "~a conflict~a settled: ~a mine, ~a disk" n (if (= n 1) "" "s") mine disk)))))
+      (follow!)
+      (+ mine disk)))
 
-  (edoc "Show the other side of a reload conflict in place: the entry's lines over the disk's region, in a read-only local buffer where the buffer was; shown already, the buffer returns."
-        (conflict conflict "the conflict"))
+  (edoc "Pick the side a reload conflict shows, mine or disk, in the preview where the buffer is, nothing settled yet; a mine pick over text another mine pick already covers sends that one back to disk."
+        (conflict conflict "the conflict")
+        (side (one-of mine disk) "the side to show")
+        (returns symbol "the side"))
+  (define (delta-log-pick! conflict side)
+    (let* ([trunk (current-trunk 'delta-log:pick!)] [revision (edoc:type-value 'conflict conflict)])
+      (unless (memq side '(mine disk)) (error 'delta-log:pick! "expected mine or disk" side))
+      (pick! trunk (conflict-at trunk revision) side 'pick!)))
+
+  (edoc "Flip the side a reload conflict shows, mine for disk and back, as delta-log:pick! does."
+        (conflict conflict "the conflict")
+        (returns symbol "the side shown now"))
   (define (delta-log-flip! conflict)
-    (let* ([trunk (current-trunk 'delta-log:flip!)] [revision (edoc:type-value 'conflict conflict)])
-      (if flip (unflip!) (show-flip! trunk (conflict-at trunk revision)))))
+    (let* ([trunk (current-trunk 'delta-log:flip!)] [c (conflict-at trunk (edoc:type-value 'conflict conflict))])
+      (pick! trunk c (if (eq? (side-of trunk c) 'mine) 'disk 'mine) 'flip!)))
+
+  (edoc "The sides the current buffer's pending conflicts show, (revision . side) each in the order of their regions."
+        (returns list))
+  (define (delta-log-picks)
+    (let ([trunk (current-trunk 'delta-log:picks)])
+      (map (lambda (c) (cons (car c) (side-of trunk c))) (sorted-conflicts trunk))))
 
   ;;; The view --------------------------------------------------------------------
 
@@ -387,7 +558,6 @@
 
   (edoc "Abandon the view: the window shows the trunk again, nothing rewritten.")
   (define (delta-log-revert!)
-    (unflip!)
     (when the-view
       (let ([name (head:buffer-name (view-trunk the-view))])
         (drop-view! the-view)
@@ -491,15 +661,28 @@
             rows))))
 
   (define (rows-now br)
-    ;; the rows the browser lists, (buffer . datum) each, in window order
+    ;; the rows the browser lists, (buffer . datum) each, in window order, a
+    ;; buffer's conflicts in the order of their regions
     (apply append
       (map (lambda (b)
              (if (eq? br log-browser)
                  (map (lambda (row) (cons b row)) (log-rows-of b))
                  (if (head:buffer-conflicted b)
-                     (map (lambda (c) (cons b c)) (guard (ex [else '()]) (store:conflicts (trunk-id b))))
+                     (map (lambda (c) (cons b c)) (sorted-conflicts b))
                      '())))
            (tracked-buffers))))
+
+  (define conflict-columns '()) ; (index start end) of the conflicts table's columns as last laid out
+
+  (define (settle-line rows)
+    ;; the conflicts browser's last row, the one that settles every pick
+    (let ([mine (length (filter (lambda (row) (eq? (side-of (car row) (cdr row)) 'mine)) rows))])
+      (format "Settle all as picked: ~a mine, ~a disk" mine (- (length rows) mine))))
+
+  (define (settle-row? br w)
+    ;; whether the window's point is on the conflicts browser's settle row
+    (and (eq? br conflicts-browser) (pair? (browser-rows br))
+         (= (head:window-prow w) (+ 1 (length (browser-rows br))))))
 
   (define (row-key row) (cons (car row) (car (cdr row))))
 
@@ -531,7 +714,10 @@
                (map (lambda (row name revision) (if row (line name revision (cell row 2)) "")) rows names revisions)))]
       [else
        (let-values ([(line cols) (table:layout (browser-table br) '() (filter values rows) (browser-cell br) (max 20 (browser-width br)))])
-         (cons (line #f) (map (lambda (row) (if row (line row) "")) rows)))]))
+         (set! conflict-columns cols)
+         (let ([real (filter values rows)])
+           (append (cons (line #f) (map (lambda (row) (if row (line row) "")) rows))
+                   (if (null? real) '() (list (settle-line real))))))]))
 
   (define (refresh-browser! br)
     ;; the rows from the windows and the store, rendered again when their
@@ -540,12 +726,21 @@
     (when (browser-live? br)
       (let* ([b (browser-buffer br)] [rows (rows-now br)] [old (browser-rows br)] [lines (rendered-lines br rows)])
         (unless (equal? lines (vector->list (head:buffer-lines b)))
-          (let ([keys (map (lambda (w) (cons w (let ([row (current-row-in br w)]) (and row (row-key row))))) (browser-windows br))])
+          ;; each window's place: its row's key, or the settle row it sits on
+          (let ([keys (map (lambda (w)
+                             (cons w (cond [(settle-row? br w) 'settle]
+                                           [(current-row-in br w) => row-key]
+                                           [else #f])))
+                           (browser-windows br))])
             (browser-rows-set! br rows)
             (head:view-replace! b lines)
             (for-each (lambda (entry)
-                        (let ([at (and (cdr entry) (list-index (lambda (row) (equal? (row-key row) (cdr entry))) rows))])
-                          (head:window-prow-set! (car entry) (if at (+ at 1) (min 1 (length rows))))
+                        (let ([at (and (cdr entry) (not (eq? (cdr entry) 'settle))
+                                       (list-index (lambda (row) (equal? (row-key row) (cdr entry))) rows))])
+                          (head:window-prow-set! (car entry)
+                            (cond [at (+ at 1)]
+                                  [(and (eq? (cdr entry) 'settle) (pair? rows)) (+ 1 (length rows))]
+                                  [else (min 1 (length rows))]))
                           (head:window-pcol-set! (car entry) 0)))
                       keys)))
         (browser-rows-set! br rows)
@@ -576,10 +771,12 @@
       (or (current-row br) (error who "no row under point"))))
 
   (define (browsed-span row browser)
-    ;; the span a row marks in its buffer: an entry's span rebased into the
-    ;; text, or the region a conflict's disk side occupies
+    ;; the span a row marks: an entry's span rebased into its buffer's text,
+    ;; or a conflict's region in the buffer standing for its own, the
+    ;; preview's when one shows
     (if (eq? browser conflicts-browser)
-        (cons (car row) (text:datum->span (cadddr (cdr row))))
+        (let ([region (assv (car (cdr row)) (regions-of (car row)))])
+          (and region (cons (shown-for (car row)) (caddr region))))
         (span-of (car row) (car (cdr row)))))
 
   (define browsed-key #f) ; (browser buffer revision trunk-revision) the browsed span was computed for
@@ -589,9 +786,11 @@
     ;; when the row or the buffer's revision changes; none while no browser shows
     (let* ([br (or (browser-of (head:current-buffer)) (find (lambda (br) (pair? (browser-windows br))) browsers))]
            [row (and br (browser-live? br) (current-row br))]
-           [key (and row (list br (car row) (car (cdr row)) (head:buffer-store-rev (car row))))])
+           [key (and row (list br (car row) (car (cdr row)) (head:buffer-store-rev (car row))
+                           (and (eq? br conflicts-browser) (mine-picks (car row)))))])
       (unless (equal? key browsed-key)
         (set! browsed-key key)
+        (set! browsed-face (if (eq? br conflicts-browser) #f 'match))
         (set! browsed (and row (guard (ex [else #f]) (browsed-span row br)))))))
 
   (define origins '()) ; ((buffer . point) ...) where point stood before a browser first moved it
@@ -606,33 +805,55 @@
       (head:with-buffer (car browsed) (head:goto! (text:span-start (cdr browsed))))))
 
   (define (follow!)
-    ;; before every frame: the rows follow the windows and the store
+    ;; before every frame: the previews follow the store and the picks, and
+    ;; the rows the windows and the store
+    (render-previews!)
     (for-each refresh-browser! browsers))
 
   (define (move-row! delta)
-    (let* ([br (current-browser 'delta-log:next!)] [w (head:current-window)] [n (length (browser-rows br))])
+    ;; the rows, and in the conflicts browser the settle row after them
+    (let* ([br (current-browser 'delta-log:next!)] [w (head:current-window)] [n (length (browser-rows br))]
+           [last (if (eq? br conflicts-browser) (+ n 1) n)])
       (when (> n 0)
         (let* ([at (head:window-prow w)]
-               [row (min (max 1 (+ at delta)) n)])
-          (unless (= row at)
-            (when (eq? br conflicts-browser) (unflip!))
-            (head:goto! (cons row 0)))
+               [row (min (max 1 (+ at delta)) last)])
+          (unless (= row at) (head:goto! (cons row 0)))
           (sync-browsed!)
           (follow-row!)))))
 
   (define (browser-status b)
+    ;; after the buffer's name, which the status line shows by itself: the
+    ;; row of how many, and the log's filter when one is set
     (let* ([br (browser-of b)] [n (length (browser-rows br))] [w (browser-window br)]
            [i (if w (head:window-prow w) 0)])
-      (if (eq? br conflicts-browser)
-          (format "conflicts  ~a of ~a" (min i n) n)
-          (format "delta log  ~a of ~a~a" (min i n) n (if (null? browser-filter) "" (format "  ~s" browser-filter))))))
+      (cond [(and w (settle-row? br w)) "settle all as picked"]
+            [else (format "~a of ~a~a" (min i n) n
+                          (if (or (eq? br conflicts-browser) (null? browser-filter)) "" (format "  ~s" browser-filter)))])))
 
   (define (styles b row line)
-    (make-vector (string-length line) (if (zero? row) 'header 'plain)))
+    (make-vector (string-length line)
+      (cond [(zero? row) 'header] [(string:prefix? "Settle all as picked" line) 'choice] [else 'plain])))
+
+  (define (browser-handler br)
+    ;; the pointer in a window showing the browser: a click on a row moves
+    ;; there, on the settle row settles every pick
+    (lambda (event)
+      (cond
+        [(string=? event "MOUSE-CLICK")
+         (let* ([at (head:app-event-buffer-position)] [w (head:app-event-focus)]
+                [row (and at (car at))] [n (length (browser-rows br))])
+           (cond
+             [(not (and row w (memq w (browser-windows br)))) 'ignore-click]
+             [(and (eq? br conflicts-browser) (> n 0) (= row (+ n 1)))
+              (head:set-current! w) (delta-log-resolve-all!) 'keep-focus]
+             [(and (>= row 1) (<= row n))
+              (head:set-current! w) (head:goto! (cons row 0)) (sync-browsed!) (follow-row!) 'keep-focus]
+             [else 'ignore-click]))]
+        [else #f])))
 
   (define (ensure-browser! br)
     (unless (browser-live? br)
-      (let ([b (head:register-app! (browser-name br) (lambda () (refresh-browser! br)))])
+      (let ([b (head:register-app! (browser-name br) (lambda () (refresh-browser! br)) (browser-handler br))])
         (browser-buffer-set! br b)
         (browser-rows-set! br '())
         (browser-over-set! br '())
@@ -667,7 +888,7 @@
     ;; pop-up hiding again when it showed its placeholder, and the app buffer goes
     (when (browser-live? br)
       (let ([b (browser-buffer br)])
-        (when (eq? br conflicts-browser) (unflip!))
+        (when (eq? br conflicts-browser) (clear-picks!))
         (for-each
           (lambda (w)
             (let ([back (cond [(assq w (browser-over br)) => cdr] [else #f])])
@@ -691,7 +912,7 @@
   (define (delta-log-open! . w*)
     (show-browser! log-browser (target-window w*)))
 
-  (edoc "Open the conflicts browser, <conflicts>, in a window, the current one by default, and select it: one row per pending reload conflict of every shared buffer a window shows, its buffer, the entry's revision and actor, where the disk's side stands and both sides, the current row's region highlighted in its buffer's window, which follows; LEFT keeps mine, RIGHT keeps the disk's side, SPC shows the other side in place and back. ESC closes it, the window showing what it showed before."
+  (edoc "Open the conflicts browser, <conflicts>, in a window, the current one by default, and select it: one row per pending reload conflict of every shared buffer a window shows, in the order of their regions, its buffer, the entry's revision and actor, where it stands and both sides, the side each shows highlighted as its region is in the buffer's window, which follows; LEFT picks mine and RIGHT disk for the row, shown at once in a preview where the buffer was, SPC flips the pick, and the last row settles every conflict as picked, RET, SPC or a click on it. ESC closes it, the picks abandoned, the window showing what it showed before."
         (w* (list-of window) "the window to open it in, at most one; the current window by default"))
   (define (delta-log-conflicts! . w*)
     (show-browser! conflicts-browser (target-window w*)))
@@ -715,14 +936,18 @@
   (edoc "Move the browser a page of rows up.")
   (define (delta-log-page-up!) (move-row! (- (max 1 (- (head:window-size (head:current-window)) 1)))))
 
-  (edoc "Describe the browser's current row in the echo area: the entry's actor, where it wrote, what it removed and inserted, or both sides of the conflict in full.")
+  (edoc "Describe the browser's current row in the echo area: the entry's actor, where it wrote, what it removed and inserted, or both sides of the conflict in full; on the conflicts browser's settle row, settle every conflict as picked.")
   (define (delta-log-show-row!)
-    (let* ([br (current-browser 'delta-log:show-row!)] [row (browser-row 'delta-log:show-row!)])
-      (edit:set-message!
-        (string-append (head:buffer-name (car row)) "  "
-                       (if (eq? br conflicts-browser) (conflict-text (cdr row)) (entry-text (cdr row) (disablers-of (car row))))))))
+    (let ([br (current-browser 'delta-log:show-row!)])
+      (if (settle-row? br (head:current-window))
+          (delta-log-resolve-all!)
+          (let ([row (browser-row 'delta-log:show-row!)])
+            (parameterize ([edit:message-source 'show-row!])
+              (edit:set-message!
+                (string-append (head:buffer-name (car row)) "  "
+                               (if (eq? br conflicts-browser) (conflict-text (cdr row)) (entry-text (cdr row) (disablers-of (car row)))))))))))
 
-  (edoc "Close the delta log or conflicts browser the current buffer is: its windows show what they showed before, the pop-up hides when it showed nothing else, a flip it showed ends, and point stays where the last row put it.")
+  (edoc "Close the delta log or conflicts browser the current buffer is: its windows show what they showed before, the pop-up hides when it showed nothing else, the conflicts browser's picks are abandoned and its preview ends, and point stays where the last row put it.")
   (define (delta-log-close!)
     (close-browser! (current-browser 'delta-log:close!)))
 
@@ -743,36 +968,59 @@
       (head:with-buffer (car row) (delta-log-toggle! (car (cdr row))))))
 
   (define (conflict-row who)
-    (let ([row (browser-row who)])
-      (unless (eq? (current-browser who) conflicts-browser) (error who "the rows are entries; delta-log:conflicts! lists the conflicts"))
-      row))
+    (let ([br (current-browser who)])
+      (unless (eq? br conflicts-browser) (error who "the rows are entries; delta-log:conflicts! lists the conflicts"))
+      (when (settle-row? br (head:current-window)) (error who "this row settles every conflict as picked"))
+      (browser-row who)))
 
-  (edoc "Show the other side of the browser's current row's conflict in place, or put the disk's side back, as delta-log:flip! does with its revision.")
+  (edoc "Flip the side the browser's current row's conflict shows, as delta-log:flip! does with its revision; on the settle row, settle every conflict as picked.")
   (define (delta-log-flip-row!)
-    (let ([row (conflict-row 'delta-log:flip-row!)])
-      (head:with-buffer (car row) (delta-log-flip! (car (cdr row))))))
+    (let ([br (current-browser 'delta-log:flip-row!)])
+      (if (settle-row? br (head:current-window))
+          (delta-log-resolve-all!)
+          (let ([row (conflict-row 'delta-log:flip-row!)])
+            (pick! (car row) (cdr row) (if (eq? (side-of (car row) (cdr row)) 'mine) 'disk 'mine) 'flip-row!)))))
 
-  (edoc "Settle the browser's current row's conflict writing this side over the disk's region, as delta-log:resolve! does with mine; LEFT, the Mine column's side.")
-  (define (delta-log-keep-mine!)
-    (let ([row (conflict-row 'delta-log:keep-mine!)])
-      (head:with-buffer (car row) (delta-log-resolve! (car (cdr row)) 'mine))))
+  (edoc "Pick mine for the browser's current row's conflict, the entry's side shown in the preview, nothing settled yet, as delta-log:pick! does; LEFT, the Mine column's side.")
+  (define (delta-log-pick-mine!)
+    (let ([row (conflict-row 'delta-log:pick-mine!)])
+      (pick! (car row) (cdr row) 'mine 'pick-mine!)))
 
-  (edoc "Settle the browser's current row's conflict keeping the disk's side, as delta-log:resolve! does with disk; RIGHT, the Disk column's side.")
-  (define (delta-log-keep-disk!)
-    (let ([row (conflict-row 'delta-log:keep-disk!)])
-      (head:with-buffer (car row) (delta-log-resolve! (car (cdr row)) 'disk))))
+  (edoc "Pick disk for the browser's current row's conflict, the disk's side shown, nothing settled yet, as delta-log:pick! does; RIGHT, the Disk column's side.")
+  (define (delta-log-pick-disk!)
+    (let ([row (conflict-row 'delta-log:pick-disk!)])
+      (pick! (car row) (cdr row) 'disk 'pick-disk!)))
+
+  (edoc "Save the browser's current row's buffer, or with no row, none pending say, the buffer of the window selected before the browser's, as C-x C-s does in that window: refused while its conflicts pend or it has no file.")
+  (define (delta-log-save-row!)
+    ;; the row's buffer saved in its window; a preview standing for it there
+    ;; steps aside for the save and comes back
+    (let* ([br (current-browser 'delta-log:save-row!)] [row (current-row br)]
+           [here (head:current-window)] [previous (head:previous-window)]
+           [trunk (cond [row (car row)] [(and previous (not (eq? previous here))) (trunk-of (head:window-buffer previous))] [else #f])]
+           [w (and trunk (find (lambda (w) (eq? (head:window-buffer w) (shown-for trunk))) (head:windows)))])
+      (unless w (error 'delta-log:save-row! "no row under point and no window to save from"))
+      (let ([shown (head:window-buffer w)])
+        (head:set-current! w)
+        (unless (eq? shown trunk) (head:set-window-buffer! w trunk))
+        (dynamic-wind void (lambda () (edit:save!))
+          (lambda ()
+            (when (and (not (eq? shown trunk)) (memq shown (head:buffers))) (head:set-window-buffer! w shown))
+            (head:set-current! here))))))
 
   ;; the browsers' keys: what both list in their modes' contexts, the log's
-  ;; and the conflicts' own beside
+  ;; and the conflicts' own beside; C-x C-s saves the row's buffer, since a
+  ;; save is what a review ends in
   (define browser-keys
     `((("DOWN" "C-n" "M-n") ,delta-log-next!) (("UP" "C-p" "M-p") ,delta-log-previous!)
       (("PGDN" "C-v") ,delta-log-page-down!) (("PGUP" "M-v") ,delta-log-page-up!)
-      (("RET") ,delta-log-show-row!) (("ESC") ,delta-log-close!) (("C-g") ,delta-log-cancel!)))
+      (("RET") ,delta-log-show-row!) (("ESC") ,delta-log-close!) (("C-g") ,delta-log-cancel!)
+      (("C-x C-s") ,delta-log-save-row!)))
 
   (define log-keys `((("M-t") ,delta-log-toggle-row!) (("M-RET") ,delta-log-commit!)))
 
   (define conflicts-keys
-    `((("LEFT" "M-m") ,delta-log-keep-mine!) (("RIGHT" "M-d") ,delta-log-keep-disk!) (("SPC" "M-/") ,delta-log-flip-row!)))
+    `((("LEFT" "M-m") ,delta-log-pick-mine!) (("RIGHT" "M-d") ,delta-log-pick-disk!) (("SPC" "M-/") ,delta-log-flip-row!)))
 
   (define (bind-keys! context table)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! context key (cadr entry))) (car entry))) table))
@@ -790,16 +1038,34 @@
     (paint:add-highlighter! entry-highlights)
     (paint:add-highlighter!
       (lambda ()
-        ;; the tinted current row of each window showing a browser
+        ;; the tinted current row of each window showing a browser, and in the
+        ;; conflicts browser the cell of the side each row shows, in that
+        ;; side's face as its region is in the buffer, the current row's brighter
         (apply append
           (map (lambda (br)
                  (if (browser-live? br)
-                     (map (lambda (w)
-                            (let ([row (head:window-prow w)])
-                              (list w row 0 (string-length (vector-ref (head:window-lines w) row)) 'candidate)))
-                          (filter (lambda (w) (> (head:window-prow w) 0)) (browser-windows br)))
+                     (apply append
+                       (map (lambda (w)
+                              (let ([current (head:window-prow w)] [lines (head:window-lines w)])
+                                (append
+                                  (if (> current 0) (list (list w current 0 (string-length (vector-ref lines current)) 'candidate)) '())
+                                  (if (eq? br conflicts-browser) (side-cells w current lines) '()))))
+                            (browser-windows br)))
                      '()))
                browsers))))
+    (paint:set-conflicts-action! (lambda () (delta-log-conflicts! 0)))
     (head:add-pre-redraw-hook! follow!))
+
+  (define (side-cells w current lines)
+    ;; the Mine or Disk cell of each conflict row, whichever side it shows
+    (let loop ([rows (browser-rows conflicts-browser)] [k 1] [out '()])
+      (if (or (null? rows) (>= k (vector-length lines))) (reverse out)
+          (let* ([row (car rows)] [side (side-of (car row) (cdr row))]
+                 [column (assv (if (eq? side 'mine) 4 5) conflict-columns)]
+                 [len (string-length (vector-ref lines k))])
+            (loop (cdr rows) (+ k 1)
+                  (if (and column (< (cadr column) len))
+                      (cons (list w k (cadr column) (min (caddr column) len) (side-face side (= k current))) out)
+                      out))))))
 
 ) ;; library (delta-log)

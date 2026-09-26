@@ -1630,13 +1630,16 @@
              (signal! "HUP")
              (test:check 'hup-keeps-the-base-and-current-revision
                (car (rpc agent 'snapshot 1)) '#("agent work while detached"))
-             (test:check 'wire-catchup-distinguishes-current-and-missing-history
+             ;; a basis before the reset at 14 gets a chain, the reset bridged by
+             ;; a line diff; a future basis gets none
+             (test:check 'wire-catchup-distinguishes-current-bridged-and-missing-history
                (map (lambda (basis)
                       (let ([state (rpc agent 'snapshot 1 basis)])
-                        (list (car state) (cadr state) (assq 'read-only (caddr state)) (cadddr state))))
+                        (list (car state) (cadr state) (assq 'read-only (caddr state))
+                              (let ([changes (cadddr state)]) (if (pair? changes) 'chain changes)))))
                     '(14 13 15))
                '((#("agent work while detached") 14 (read-only . #t) ())
-                 (#("agent work while detached") 14 (read-only . #t) #f)
+                 (#("agent work while detached") 14 (read-only . #t) chain)
                  (#("agent work while detached") 14 (read-only . #t) #f)))
              (let ([recorded #f])
                ;; Text commits before callbacks complete. Wait for the audit

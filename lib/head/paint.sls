@@ -28,7 +28,7 @@
           point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
           region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
           screen-live? screen-rows scroll-margin scroll-window! segment-close segment-of
-          segment-start set-buffer-viewports! set-screen-cols! set-screen-live! set-screen-rows!
+          segment-start set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
           show-message! show-prompt-message! terminal-size! update-echo-geometry!
           update-terminal-title! valid-hyperlink? view-invalidate! view-overflows? visual-bell!
           window-layout window-position window-screen-position window-wrapped? wrap-lines
@@ -497,6 +497,13 @@
               (if (and (procedure? (cdr span)) (<= end visible-cells))
                   (cons (list column end (cdr span)) out) out))))))
 
+  (define conflicts-action #f)
+
+  (edoc "Make the red !! of a conflicted buffer's status line a control running a thunk, the conflicts browser's opener say; #f takes the control away."
+        (action (or procedure #f) "the thunk, or #f"))
+  (define (set-conflicts-action! action)
+    (set! conflicts-action action))
+
   (define highlighters (kernel:make-registry))
 
   (edoc "Register a highlighter: (proc) gives the ranges to mark this frame, each (row start end [face]), or scoped by a leading buffer or window."
@@ -920,7 +927,8 @@
       ;; the left one-eighth block: single width, in every monospace
       ;; font's block range) so the gap falls after the line, not before
       (let* ([number (format "~a\x258F;" (head:window-index w))]
-             ;; the buffer's own status text, when it has a provider
+             ;; the buffer's own status text, when it has a provider: it follows
+             ;; the buffer's name, which every status line shows, an app's too
              [app-position (guard (ex [else #f]) (head:buffer-status b w))]
              [head-prefix
               (if (string? app-position) number
@@ -932,13 +940,15 @@
                           [(head:buffer-modified b) "**"]
                           [else "--"])
                         editor-name))]
-             [name (if (string? app-position) "" (head:buffer-name b))]
+             [name (head:buffer-name b)]
              [status-row (if (pair? app-position)
                              (car app-position) (head:window-prow w))]
              [status-col (if (pair? app-position)
                              (cdr app-position) (head:window-pcol w))]
-             [head (if (string? app-position) (string-append head-prefix app-position)
-                       (format "~a~a  L~a C~a" head-prefix name (+ status-row 1) (+ status-col 1)))]
+             [head (cond [(not (string? app-position))
+                          (format "~a~a  L~a C~a" head-prefix name (+ status-row 1) (+ status-col 1))]
+                         [(string=? app-position "") (string-append head-prefix name)]
+                         [else (string-append head-prefix name "  " app-position)])]
              [mode-text (if (and mode-tag (not (string? app-position))) (format "  (~a)" mode-tag) "")]
              [hint-values
               (append (app-status-values w current?) (status-hint-values b current?))]
@@ -950,8 +960,13 @@
              [status-width (max 0 (- (head:window-width w) (head:buttons-width buttons) 1))]
              [pointed (let ([at (head:mouse-position)])
                         (head:window-status-actions-set! w
-                          (status-actions (string-append head mode-text) hint-values
-                            (- status-width (if (> (glyph:cells status) status-width) 1 0))))
+                          (append
+                            ;; the !! of a conflicted buffer opens the conflicts browser
+                            (if (and conflicts-action (not (string? app-position)) (head:buffer-conflicted b))
+                                (list (list (glyph:cells number) (+ (glyph:cells number) 2) conflicts-action))
+                                '())
+                            (status-actions (string-append head mode-text) hint-values
+                              (- status-width (if (> (glyph:cells status) status-width) 1 0)))))
                         (and at (head:window-button-at (- (car at) 1) (- (cdr at) 1))))]
              [hovered (and pointed (eq? (cdr pointed) w) (car pointed))])
         (let ([stale? (and (not (string? app-position)) (head:buffer-conflicted b))])

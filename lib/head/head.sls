@@ -3164,7 +3164,7 @@
   ;; since a checkpoint saves facts as data
   (define buffer-statuses (make-weak-eq-hashtable))
 
-  (edoc "Give a buffer its own status text, in place of the generated name, coordinates and mode tag: a procedure of the buffer, or of the buffer and the window painted, giving a string, a zero-based (row . column) to project as the position, or #f for the generated details; #f takes the provider away."
+  (edoc "Give a buffer its own status text after its name, which every status line shows, in place of the generated state marker, coordinates and mode tag: a procedure of the buffer, or of the buffer and the window painted, giving a string, the empty one for the name alone, a zero-based (row . column) to project as the position, or #f for the generated details; #f takes the provider away."
         (b buffer "the buffer")
         (status (or procedure #f) "the provider, or #f"))
   (define (set-buffer-status! b status)
@@ -3182,7 +3182,7 @@
       (and status
            (if (logbit? 2 (procedure-arity-mask status)) (status b w) (status b)))))
 
-  (edoc "Say how an app buffer's status line shows its position: a procedure giving the text, or #f for the buffer coordinates; set-buffer-status! for an app buffer, which it must be."
+  (edoc "Say how an app buffer's status line reads after its name: a procedure giving the text, the empty string for the name alone, or #f for the buffer coordinates; set-buffer-status! for an app buffer, which it must be."
         (b buffer "the app buffer")
         (position (or procedure #f) "the position source"))
   (define (set-app-status-position! b position)

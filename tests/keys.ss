@@ -65,8 +65,9 @@
      (head:before-frame!)
      (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
        (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
-             (head:window-scrollbar? (head:popup)) (string:prefix? "<keys>  page 1 of " (head:buffer-status (view) popup))
-             (string:suffix? "  C-x TAB page down, C-x S-TAB page up" (head:buffer-status (view) popup))
+             (head:window-scrollbar? (head:popup)) (string:prefix? "page 1 of " (head:buffer-status (view) popup))
+             ;; the bar names no key: the listing is the reference
+             (not (string:search (head:buffer-status (view) popup) "C-x" 0 (string-length (head:buffer-status (view) popup))))
              (begin (head:checkpoint!)
                     (exists (lambda (entry) (let ([r (car entry)]) (and (pair? r) (eq? (car r) 'local) (equal? (cadr r) "<keys>"))))
                             (list-ref (actor:checkpoint head:ui-actor) 4))))
@@ -132,7 +133,7 @@
      (define size (head:popup-rows))
      (define (page-of)
        (let* ([s (head:buffer-status (view) popup)] [from (+ 5 (string:search s "page " 0 (string-length s)))])
-         (substring s from (string:search s "  C-x" 0 (string-length s)))))
+         (substring s from (string-length s))))
      (define pages (string->number (list-ref (let loop ([s (page-of)] [out '()]) (cond [(string:search s " " 0 (string-length s)) => (lambda (i) (loop (substring s (+ i 1) (string-length s)) (cons (substring s 0 i) out)))] [else (reverse (cons s out))])) 2)))
      (check 'the-bar-counts-the-pages-of-the-listing (list (> pages 1) (page-of)) (list #t (format "1 of ~a" pages)))
      ;; the painter's clamp keeps point a margin from the edges: paging must
@@ -253,4 +254,20 @@
              (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP") (keymap:sequence-text (keymap:spec "DELETE"))
              (keymap:sequence-text (keymap:spec "C-M-SPC")) (keymap:sequence-text (keymap:spec "SPC")))
        '("M-BS" "BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC" "SPC"))
+     ;; an app in the pop-up, the user in it: C-x TAB lists that app's keys,
+     ;; not the keys of the window selected before, and keeps listing them
+     ;; while the pop-up stays current
+     (let ([k (head:buffer-named "<keys>")]) (when k (kill-buffer! k)))
+     (define app (head:new-local-buffer! "popped app"))
+     (head:with-buffer app (mode:choose! "keys-test"))
+     (head:set-window-buffer! popup app)
+     (head:show-popup! 8)
+     (head:set-current! popup)
+     (keys:show!)
+     (head:before-frame!)
+     (check 'c-x-tab-in-the-pop-up-lists-the-pop-ups-apps-keys
+       (list (eq? (head:window-buffer popup) (view)) (index-of "keys-test keys") (< 0 (index-of "Global keys")) (eq? (head:current-window) popup))
+       '(#t 0 #t #t))
+     (head:set-current! w1)
+
      (test:finish! 'keys)))

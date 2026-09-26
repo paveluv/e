@@ -233,16 +233,17 @@
 
   (define (forget-latest! b) (hashtable-delete! latest-edits b))
 
+  (define reload-due #f) ; the buffer whose file changed under the edit being made, reloaded before the frame
+
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
-    ;; checks once: a file changed on disk meanwhile is reloaded through
-    ;; the store first, its changes merged with the buffer's, a collision
-    ;; pending as a conflict, the red !!; the reload refuses the edit that
-    ;; found it, a refusal the dispatcher runs the key again after, so the
-    ;; command computes against the merged text.  The mtime raises the
-    ;; suspicion cheaply; the content confirms it, so a mere touch passes
-    ;; silently.  A file the store cannot reload leaves the edit to go on
-    ;; and the save to ask.
+    ;; checks once: a file changed on disk meanwhile is noted, and once the
+    ;; edit is made, against the text as the user saw it, the buffer
+    ;; reloads through the store before the frame, the disk's changes
+    ;; merged with the buffer's, the edit just made among them, so an
+    ;; insertion where the disk inserted conflicts instead of landing
+    ;; elsewhere.  The mtime raises the suspicion cheaply; the content
+    ;; confirms it, so a mere touch passes silently.
     (let ([b (head:window-buffer current-window)])
       (when (and file-name (head:buffer-base b))
         (let-values ([(text revision facts) (head:buffer-state b)])
@@ -256,12 +257,25 @@
                       [(not disk) (void)]
                       [(string=? (car disk) base)
                        (head:buffer-facts-set! b (list (cons 'stamp (cdr disk))) (property:select facts '(file base stamp)))]
-                      [else
-                       (let-values ([(status detail) (reload-from-disk! b path disk)])
-                         (when (eq? status 'applied)
-                           (raise (condition (kernel:make-reloaded)
-                                             (make-message-condition
-                                               (format "Reloaded ~a from disk; run the command again" (file:base-name path)))))))]))))))))))
+                      [else (set! reload-due b)]))))))))))
+
+  (define (reload-if-due!)
+    ;; before the frame: the buffer an edit found changed on disk reloads,
+    ;; the disk read again now; a file the store cannot reload says so in
+    ;; the echo, as reload! does, and the edit stands
+    (let ([b reload-due])
+      (set! reload-due #f)
+      (when (and b (memq b (head:buffers)) (head:buffer-store-id b))
+        (let-values ([(text revision facts) (head:buffer-state b)])
+          (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
+                [base (cond [(assq 'base facts) => cdr] [else #f])])
+            (when (and path base)
+              (let ([disk (guard (ex [else #f]) (read-disk path))])
+                (when (and disk (not (string=? (car disk) base)))
+                  (guard (ex [(kernel:refusal? ex) (void)])
+                    (let-values ([(status detail) (reload-from-disk! b path disk)])
+                      (unless (eq? status 'applied)
+                        (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) detail)))))))))))))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and undo: #t forbids all edits,
@@ -306,8 +320,12 @@
                         (when (and group (not group-hit))
                           (set-box! group (cons (car (unbox group)) (cons (cons b entry) (cdr (unbox group))))))
                         (set! committed? #t)))])
-              (parameterize ([pending-edit (list b entry label commit! (caddr entry))])
-                (thunk)))))))
+              (let ([result (parameterize ([pending-edit (list b entry label commit! (caddr entry))])
+                              (thunk))])
+                ;; the file the edit found changed on disk reloads now, the
+                ;; edit among the entries the merge carries or conflicts
+                (reload-if-due!)
+                result))))))
 
   (define-syntax with-recorded-edit
     (syntax-rules ()
@@ -1162,8 +1180,7 @@
               (set-message!
                 (if (zero? n)
                     (format "Reloaded ~a, the buffer's edits merged" path)
-                    (format "Reloaded ~a with ~a conflict~a, the disk's side shown; C-x ! reviews them, C-x C-r rereads"
-                            path n (if (= n 1) "" "s")))))))
+                    (format "Reloaded ~a with ~a conflict~a" path n (if (= n 1) "" "s")))))))
         (values status detail))))
 
   (define (merge-failure detail)
@@ -1228,7 +1245,7 @@
     (let-values ([(b path disk revision facts) (current-file-disk 'reload!)])
       (let-values ([(status detail) (reload-from-disk! b path disk)])
         (unless (eq? status 'applied)
-          (refuse-file! (format "~a could not be reloaded (~a); C-x C-r rereads it" (file:base-name path) detail))))))
+          (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) detail))))))
 
   (define (stale-save! b path disk review write!)
     ;; The file changed on disk since the baseline: reload first, then write
@@ -1243,7 +1260,7 @@
          ;; the disk's changes cannot be merged: the disk is reread, undoably,
          ;; and the save waits; undo brings the buffer's text back to save
          (reread-through-store! b path disk (merge-failure detail))
-         (refuse-file! (format "~a changed on disk and was reread instead of saved; undo brings your text back, C-x C-s then writes it"
+         (refuse-file! (format "~a changed on disk and was reread instead of saved; undo brings your text back"
                                (file:base-name path)))])))
 
   (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
@@ -2128,6 +2145,7 @@
       (head:set-quit-command! quit!)
       (head:set-review-viewer! view-quit-buffers!)
       (head:add-pre-redraw-hook! publish-copy-changes!)
+      (head:add-pre-redraw-hook! reload-if-due!)
       (head:set-after-key! clamp-point!))
 
     (doc:register!

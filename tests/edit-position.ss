@@ -114,8 +114,9 @@
      (head:before-frame!)
      (check 'retention-boundary-events-do-not-shift-again (head:point) '(0 . 259))
 
-     ;; A reset after our commit destroys the anchor proof.  Resync and
-     ;; clamp; the command must not subsequently write its old new-end.
+     ;; A reset after our commit: the cursor crosses it on the reset's line
+     ;; diff, its line replaced whole, to the replacement's end, ab|cdef ->
+     ;; abX|cdef -> other|; the command must not write its old new-end (0 . 3).
      (define reset (fresh "position-reset-after-commit" '("abcdef")))
      (head:goto! '(0 . 2))
      (set! token
@@ -124,7 +125,7 @@
      (insert-text! "X")
      (store:unsubscribe! token)
      (check 'post-commit-reset-keeps-latest-text (text-of reset) '("other"))
-     (check 'post-commit-reset-does-not-install-old-cursor (head:point) '(0 . 2))
+     (check 'post-commit-reset-carries-the-cursor-not-the-old-new-end (head:point) '(0 . 5))
 
      (define truncated (fresh "position-truncated-after-commit" '("abcdef")))
      (head:goto! '(0 . 2))

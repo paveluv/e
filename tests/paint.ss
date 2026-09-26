@@ -225,6 +225,17 @@
                   (list (contains? frame "!!") (contains? frame "L8 C3") (contains? frame "Pick a file"))))
               '(#f (7 . 2) "Pick a file"))
          '((#t #f #f) (#t #t #f) (#f #f #t)))
+       ;; a provider's text follows the buffer's name, which every status
+       ;; line shows; the empty text leaves the name alone
+       (check 'status-text-follows-the-buffer-name
+         (map (lambda (value)
+                (head:set-app-status-position! view (lambda (b) value))
+                (let ([frame (stripped (painted paint:redraw!))])
+                  (list (contains? frame (format "▏~a  3 of 5" (head:buffer-name view)))
+                        (contains? frame (format "▏~a" (head:buffer-name view))))))
+              '("3 of 5" ""))
+         '((#t #t) (#f #t)))
+       (head:set-app-status-position! view #f)
        (head:view-replace! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
        (check 'hidden-cursor-still-follows-keyboard-selection
          (map (lambda (visible?)
@@ -238,7 +249,7 @@
        ;; Clickable status spans use cell geometry, including wide/combining
        ;; labels. Ellipsizing a control makes the entire control inert.
        (let* ([prefix "界e\x301; 🔒"] [toggle void]
-              [start (+ (glyph:cells (format "~a▏~a" (head:window-index (head:current-window)) prefix)) 1)]
+              [start (+ (glyph:cells (format "~a▏~a  ~a" (head:window-index (head:current-window)) (head:buffer-name view) prefix)) 1)]
               [edge (+ start 2 head:window-buttons-width 1)])
          (define (hits)
            (let* ([entry (car (head:layout))] [row (+ (cadr entry) (caddr entry))])

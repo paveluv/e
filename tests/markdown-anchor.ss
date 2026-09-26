@@ -186,9 +186,11 @@
            (check 'joined-then-split-anchor-follows-full-chain
                   (anchors view) (expected "Middle" "Omega" #f))
 
-           ;; A baseline plus an available suffix is still missing the
-           ;; old view's basis.  Clamp old source rows; never replay just
-           ;; that suffix or invent an edit between unrelated baselines.
+           ;; A shared source's reset is bridged by a line diff of the two
+           ;; texts: rows inside the replaced block collapse onto its
+           ;; replacement, Other, their columns kept, and the insertion after
+           ;; carries them on; nothing is invented between the baselines. A
+           ;; local source, its lines set outright, has no chain: clamp.
            (head:buffer-lines-set! source '#("# Alpha" "" "# Middle" "" "# Omega"))
            (head:before-frame!)
            (place! view "Middle" "Omega" #f)
@@ -197,8 +199,10 @@
                (store:reset! bot (head:buffer-store-id source) '("# Reset" "" "# Other")))
            ((if local? head:store-edit! foreign!) source (text:make-span 0 0 0 0) '("# New" "" ""))
            (head:before-frame!)
-           (check 'reset-clamps-source-rows-without-partial-replay
-                  (anchors view) (expected "Reset" "Other" #f))
+           (check 'reset-carries-source-rows-through-its-line-diff-or-clamps-a-local-one
+                  (anchors view)
+                  (if local? (expected "Reset" "Other" #f)
+                      '(("Other" 3 "Other" 0) ("Other" 2 "Other" 0) ("Other" 2 "Other") ("Other" 2 #t))))
 
            ;; Keep adopting edits while the view is stale, exhausting
            ;; the head's bounded provenance for either source owner.

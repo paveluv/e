@@ -229,14 +229,22 @@
         (candidate-hover (bold (background (rgb 28 40 60)) dotted-underline (underline-color 242)))
         (choice (bold (foreground 135)))
         (match ((background cyan) (foreground black)))
-        (match-point ((background yellow) (foreground black))))))
+        (match-point ((background yellow) (foreground black)))
+        (conflict-mine ((background 22)))
+        (conflict-mine-current (bold (background 28)))
+        (conflict-disk ((background 94)))
+        (conflict-disk-current (bold (background 130))))))
 
   (define light-styles
     ;; Most faces use terminal colors or attributes and need no variant.
     (list (cons 'header (style-escape '((foreground 236) (background 253))))
           (cons 'hover (style-escape '(bold dotted-underline (underline-color 248))))
           (cons 'candidate (style-escape '(bold (background (rgb 226 235 250)))))
-          (cons 'candidate-hover (style-escape '(bold (background (rgb 226 235 250)) dotted-underline (underline-color 248))))))
+          (cons 'candidate-hover (style-escape '(bold (background (rgb 226 235 250)) dotted-underline (underline-color 248))))
+          (cons 'conflict-mine (style-escape '((background (rgb 214 240 214)))))
+          (cons 'conflict-mine-current (style-escape '(bold (background (rgb 178 228 178)))))
+          (cons 'conflict-disk (style-escape '((background (rgb 250 228 200)))))
+          (cons 'conflict-disk-current (style-escape '(bold (background (rgb 248 208 160)))))))
 
   (edoc "The SGR parameter string of a face, or of layered faces such as (editor mark); a surface's raw parameters pass through."
         (style (or symbol string list) "the face")

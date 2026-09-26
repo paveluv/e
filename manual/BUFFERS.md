@@ -54,10 +54,12 @@ vertical line, `1▏`, then the state marker:
 
 The status line also shows the buffer name, one-based line and column, the
 detected mode, and the remaining merge-conflict count; it carries no key
-hints, `C-x TAB` listing the keys instead. Temporary interactions such as
-find-file use that space for page counts instead of generated-buffer
-coordinates, and a buffer may replace those details with text of its own
-through `head:set-buffer-status!`, as `<keys>` does with its page.
+hints, `C-x TAB` listing the keys instead, and neither does any echo
+message. Every buffer's name shows, an app's too. Temporary interactions
+such as find-file use the space after it for match counts and pages instead
+of generated-buffer coordinates, and a buffer may replace those details
+with text of its own after its name through `head:set-buffer-status!`, as
+`<keys>` does with its page.
 
 Window 0 is the pop-up window. It has no rows and no status line until a
 completion list needs it or a buffer is sent to it, when it appears above the
@@ -222,7 +224,10 @@ into one word conflicts instead, as does a line opened where the disk
 joined two lines, and text appended to a line or a word the disk deleted;
 typing at the end of the line above an added or deleted line stays on its
 line. A reload that merges everything leaves a line in the log and nothing
-else; the edit that found the change runs again against the merged text.
+else. The first edit after an external change applies to the text as you
+saw it, and then the buffer reloads and merges, your edit one side and the
+disk's the other, so an insertion where the disk inserted conflicts rather
+than landing elsewhere.
 Every head's point and marks cross the reload on their text: the disk's
 changes, carried over the buffer's, take them from where they were to
 where that text now stands, so a line added above the cursor moves it
@@ -243,23 +248,34 @@ its `<buffet>` row show red `!!`, the buffer stays editable, and a save
 refuses: resolve the conflicts first.
 
 `C-x !` opens the **conflicts browser**, `<conflicts>`, in the pop-up,
-window 0, and `(delta-log:conflicts! (window n))` in any window; it lists
-one row per pending conflict of every buffer a window shows, its buffer, the
-entry's revision and actor, where the disk's side stands and both sides,
-with the current row's region highlighted in its buffer's window, which
-follows. `LEFT` keeps the row's Mine side, `RIGHT` the Disk side, `SPC`
-shows the other side in place and back, `RET` describes both sides in full,
-and `ESC` closes the browser, the window showing what it showed before.
-The browser follows the windows and the store, so a conflict settled
-elsewhere leaves its rows, and with the last one settled the red `!!` goes
-and the buffer is savable again. The same at M-x: `(delta-log:conflicts)`
-lists the current buffer's conflicts, `(delta-log:resolve! (conflict n)
-'mine)` writes the entry's side over the disk's region, `'disk` keeps the
-disk's side, replacement lines write those, `(delta-log:resolve-all! 'disk)`
-settles them all, and `(delta-log:flip! (conflict n))` shows the entry's
-side in a read-only `<flip: name>` buffer. The `conflict` type completes from
-the pending ones and previews a candidate by flipping its region while Tab
-has it.
+window 0, and `(delta-log:conflicts! (window n))` in any window; clicking
+the red `!!` on a status line opens it too. It lists one row per pending
+conflict of every buffer a window shows, in the order of their regions in
+the text: its buffer, the entry's revision and actor, where it stands and
+both sides. Review is pick, then settle. `LEFT` picks the row's Mine side
+and `RIGHT` its Disk side, `SPC` flips the pick; nothing is settled yet,
+the picks show at once in a preview, a read-only `<preview: name>` buffer
+where the buffer was, with every mine pick's lines in place. Each region
+is coloured by the side it shows, mine one colour and disk another, and
+the row's cell for that side carries the same colour, the current row's
+brighter; the buffer's window follows the current row. Two mine picks
+whose regions share text cannot both be written, so the later pick sends
+the other back to disk and says so. The last row, `Settle all as picked:
+3 mine, 2 disk`, settles every conflict as picked on `RET`, `SPC` or a
+click; each settlement is one undoable edit. `RET` on a conflict row
+describes both sides in full, `C-x C-s` saves the row's buffer, and `ESC`
+closes the browser, the picks abandoned, the window showing what it showed
+before. The browser follows the windows and the store, so a conflict
+settled elsewhere leaves its rows, and with the last one settled the red
+`!!` goes and the buffer is savable again. The same at M-x:
+`(delta-log:conflicts)` lists the current buffer's conflicts,
+`(delta-log:pick! (conflict n) 'mine)` picks a side and
+`(delta-log:flip! (conflict n))` flips it, `(delta-log:picks)` tells the
+sides shown, `(delta-log:resolve-all!)` settles them as picked and
+`(delta-log:resolve-all! 'disk)` all one way, `(delta-log:resolve!
+(conflict n) 'mine)` settles one now, replacement lines writing those. The
+`conflict` type completes from the pending ones and previews a candidate by
+showing its mine side while Tab has it.
 
 `C-x C-r` **rereads** the file instead: the disk's text replaces the
 buffer's as one undoable edit, settling every pending conflict, so the red
@@ -407,7 +423,7 @@ over the commands above and ask nothing themselves; their keys are commands
 bound in the `delta-log` and `conflicts` mode contexts, so `C-x TAB` lists
 them and M-x reaches them: `delta-log:show-row!`, `toggle-row!`,
 `flip-row!`, `keep-disk!`, `keep-mine!`, `next!`, `previous!`, `page-down!`,
-`page-up!`, `close!` and `cancel!`.
+`page-up!`, `close!` and `cancel!`. `C-x C-s` in either browser saves the row's buffer, as it would in that buffer's window, refused while its conflicts pend.
 
 The `revision` and `batch` types complete from the log with the entry as
 the hint, and a revision candidate previews itself: while Tab has it

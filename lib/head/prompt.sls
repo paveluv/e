@@ -781,21 +781,16 @@
               [kind kind]
               [else (label-stem label)])))
     (define (status-text b)
-      ;; the list's status line: the buffer's name, then how many matches, of
-      ;; what, and the page when they take several -- never key hints; the
-      ;; name yields to the count in a narrow window
-      (let* ([name (head:buffer-name b)]
-             [text (cond
-                     [candidates
-                      (let* ([count (length candidates)]
-                             [head (format "~a match~a of ~a" count (if (= count 1) "" "es") (kind-text))])
-                        (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
-                     [(> pages 1) (format "page ~a of ~a" (+ page 1) pages)]
-                     [else #f])]
-             [room (max 1 (- (head:window-width target) 12))])
-        (cond [(not text) name]
-              [(<= (+ (glyph:cells name) (glyph:cells text) 2) room) (string-append name "  " text)]
-              [else text])))
+      ;; the list's status line after its name, which the painter puts first:
+      ;; how many matches, of what, and the page when they take several --
+      ;; never key hints
+      (cond
+        [candidates
+         (let* ([count (length candidates)]
+                [head (format "~a match~a of ~a" count (if (= count 1) "" "es") (kind-text))])
+           (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
+        [(> pages 1) (format "page ~a of ~a" (+ page 1) pages)]
+        [else ""]))
     (define (mouse! event)
       (cond
         [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))
