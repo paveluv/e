@@ -188,10 +188,8 @@
      (check 'settling-as-picked-keeps-both-disk-sides
        (list (head:with-buffer b (delta-log:resolve-all!)) (head:with-buffer b (delta-log:conflicts))) '(2 ()))
      (head:before-frame!)
-     ;; both entries conflicted and were kept only by their conflicts, so the
-     ;; log is empty, and the conflicts browser says nothing pends
-     (check 'the-browser-says-nothing-pends-and-the-log-is-empty
-       (list (rows) (head:with-buffer b (delta-log:log)) (head:buffer-conflicted b)) '(("No conflicts pending") () #f))
+     (check 'settled-conflicts-leave-the-browser-but-keep-their-history
+       (list (rows) (pair? (head:with-buffer b (delta-log:log))) (head:buffer-conflicted b)) '(("No conflicts pending") #t #f))
      (dispatch:key! "ESC")
      (check 'esc-closes-the-browser-and-hides-the-pop-up (list (head:buffer-named "<conflicts>") (head:popup-rows)) '(#f 0))
 
@@ -379,5 +377,47 @@
        '(("continued tail") "newdisk tail\n" (("mine"))))
 
      (delete-file path)
+     ;; Every file reload path adds one action without replacing earlier
+     ;; typing. Its inverse keeps the observed baseline, so save writes Mine
+     ;; instead of pulling the same disk changes back in.
+     (for-each
+       (lambda (how)
+         (for-each
+           (lambda (scenario)
+             (let* ([target (string-append dir "/undo.txt")]
+                    [disk (car scenario)] [merged (cadr scenario)] [pending? (caddr scenario)])
+               (file:write! target '#("alpha beta") #t)
+               (visit-file! target)
+               (let ([b (head:current-buffer)])
+                 (dynamic-wind void
+                   (lambda ()
+                     (replace-region-text! '(0 . 0) '(0 . 5) "ALPHA")
+                     (unless (eq? how 'automatic) (replace-region-text! '(0 . 0) '(0 . 5) "Mine"))
+                     (file:write! target (file:lines disk) #f)
+                     ;; Both writes can share a filesystem clock tick.
+                     (head:buffer-fact-set! b 'stamp #f)
+                     (case how
+                       [(manual) (reload!)]
+                       [(automatic) (replace-region-text! '(0 . 0) '(0 . 5) "Mine")]
+                       [(reopen) (visit-file! target)]
+                       [(save) (guard (ex [(kernel:refusal? ex) #f]) (save!))])
+                     (let* ([after (list (buffer-text b) (head:buffer-conflicted b))]
+                            [back (begin (undo!) (list (buffer-text b) (head:buffer-conflicted b)))]
+                            [again (begin (redo!) (list (buffer-text b) (head:buffer-conflicted b)))])
+                       (undo!) (save!)
+                       (let* ([written (file:read target)]
+                              [earlier (begin (undo!) (buffer-text b))]
+                              [original (begin (undo!) (buffer-text b))]
+                              [replayed (begin (redo!) (redo!) (redo!) (list (buffer-text b) (head:buffer-conflicted b)))])
+                         (check (list how disk 'reload-is-one-undoable-action-with-older-history)
+                           (list after back again written earlier original replayed)
+                           (list (list merged pending?) '("Mine beta\n" #f)
+                             (list merged pending?) "Mine beta\n" "ALPHA beta\n" "alpha beta\n" (list merged pending?))))))
+                   (lambda ()
+                     (store:delete! head:ui-actor (head:buffer-store-id b))
+                     (head:forget-buffer! b) (delete-file target))))))
+           '(("alpha BETA" "Mine BETA" #f) ("disk beta" "disk beta" #t)
+             ("alpha beta" "Mine beta" #f))))
+       '(manual automatic reopen save))
      (delete-directory dir)
      (test:finish! 'reload)))

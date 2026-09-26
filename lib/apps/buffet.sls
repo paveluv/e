@@ -38,8 +38,8 @@
       '#(10 5 9 8 7 10) 2 '(4 3 1 0 5) '#(text text text right text tail)))
   (define first-row 2)              ; sticky filter and column headings
   (define filter-label "Filter: ")
-  (define trash-heading "Trash: Enter restores")
-  (define backups-heading "Backups: Enter restores")
+  (define trash-heading "Trash")
+  (define backups-heading "Backups")
   (define-record-type choice (fields (mutable origin) (mutable selected) (mutable columns)))
   (define choices (make-weak-eq-hashtable))
   ;; A trashed buffer's row keeps its identity across refreshes, so a

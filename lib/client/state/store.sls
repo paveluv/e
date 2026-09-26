@@ -440,7 +440,7 @@
     (unless (<= (length access) 1) (error 'rewrite! "expected one write access"))
     (apply values (mutate actor id 'rewrite (list disabled))))
 
-  (edoc "Reload a buffer from its file through the base: (values status detail), applied with (revision conflicts)."
+  (edoc "Reload a buffer from its file through the base as one undoable action, preserving earlier undo history: (values status detail), applied with (revision conflicts)."
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")

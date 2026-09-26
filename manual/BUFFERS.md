@@ -207,11 +207,18 @@ still leave partial contents on disk.
 ### External changes and reloading
 
 Each file buffer remembers the last disk contents it accepted, its baseline.
-Nothing asks about a file changed on disk; e **reloads** it, and everything
-a reload does is undoable or settled by a command. A reload happens when
+Nothing asks about a file changed on disk; e **reloads** it as one undoable
+action, preserving your earlier undo history. A reload happens when
 you reopen the file, when you first edit a buffer whose file changed
 meanwhile, when you save one, and on `(reload!)`. A mere `touch` is ignored
 because the contents are compared.
+
+Undo restores the text, final newline and pending conflicts from before the
+reload; keep undoing to reach your earlier edits. Redo reapplies the reload.
+The observed disk baseline stays remembered, so you can undo the reload
+and save your restored version over it, provided the file has not changed
+again. Reload belongs to the head that requested it, including automatic
+reload, and follows the usual undo scope.
 
 A reload makes the disk's text the baseline again and reapplies the
 buffer's own entries since the old baseline on top, carried across the

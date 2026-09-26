@@ -1601,16 +1601,16 @@
      (edit! alice notes (store:revision notes) 0 0 0 5 '("ALPHA"))
      (edit! alice notes (store:revision notes) 2 5 2 5 '(" tail"))
      (define (lines-of id) (map (lambda (i) (store:line id i)) (list 0 1 2)))
-     (define (reload! id lines)
+     (define (reload! id lines . who)
        (call-with-values
-         (lambda () (store:reload! alice id lines (list (cons 'base (apply string-append (map (lambda (l) (string-append l "\n")) lines))) (cons 'trailing #t))))
+         (lambda () (store:reload! (if (pair? who) (car who) alice) id lines (list (cons 'base (apply string-append (map (lambda (l) (string-append l "\n")) lines))) (cons 'trailing #t))))
          list))
-     (check 'a-reload-rebases-the-log-onto-the-disk-and-disables-what-a-change-overlaps
+     (check 'a-reload-retains-the-log-and-disables-what-a-change-overlaps
             (list (reload! notes '("omega" "beta" "GAMMA")) (lines-of notes) (store:property notes 'base) (store:property notes 'modified)
-                  (map (lambda (row) (list (car row) (cadr row) (cadddr row))) (store:log notes)))
+                  (map (lambda (row) (list (car row) (cadr row) (cadddr row))) (list-tail (store:log notes) 3)))
             (list (list 'applied (list 5 (list (list 1 alice '() '(0 0 0 5) '("ALPHA") '("omega")))))
                   '("omega" "beta" "GAMMA tail") "omega\nbeta\nGAMMA\n" #t
-                  (list (list 5 alice '((2 5 2 5) ("") (" tail"))))))
+                  (list (list 2 alice '((2 5 2 5) ("") (" tail"))) (list 1 alice '((0 0 0 5) ("alpha") ("ALPHA"))))))
      (check 'the-conflict-pends-with-both-sides (store:conflicts notes) (list (list 1 alice '() '(0 0 0 5) '("ALPHA") '("omega"))))
      (check 'resolving-for-mine-writes-the-entrys-side-over-the-disks
             (list (call-with-values (lambda () (store:resolve! alice notes 1 'mine)) list)
@@ -1622,7 +1622,7 @@
      (edit! alice notes (store:revision notes) 1 0 1 4 '("Beta"))
      (check 'a-second-reload-finds-its-baseline-behind-the-pending-entries
             (list (reload! notes '("omega" "BETA" "GAMMA")) (lines-of notes))
-            (list (list 'applied (list 11 (list (list 7 alice '() '(1 0 1 4) '("Beta") '("BETA")))))
+            (list (list 'applied (list 9 (list (list 7 alice '() '(1 0 1 4) '("Beta") '("BETA")))))
                   '("ALPHA" "BETA" "GAMMA tail")))
      (check 'resolving-for-the-disk-drops-the-mark
             (list (car (call-with-values (lambda () (store:resolve! alice notes 7 'disk)) list)) (store:conflicts notes) (lines-of notes))
@@ -1632,10 +1632,10 @@
      (edit! alice notes (store:revision notes) 0 0 0 5 '("OMEGA"))
      (check 'dependents-cascade-into-the-conflict
             (list (reload! notes '("0mega" "BETA" "GAMMA")) (lines-of notes))
-            (list (list 'applied (list 16 (list (list 11 alice '((conflict . 1)) '(0 0 0 5) '("OMEGA") '("0mega")))))
+            (list (list 'applied (list 13 (list (list 6 alice '((conflict . 1)) '(0 0 0 5) '("OMEGA") '("0mega")))))
                   '("0mega" "BETA" "GAMMA tail")))
      (check 'resolving-with-lines-writes-them-over-the-region
-            (list (car (call-with-values (lambda () (store:resolve! alice notes 11 '("chosen"))) list)) (lines-of notes) (store:conflicts notes))
+            (list (car (call-with-values (lambda () (store:resolve! alice notes 6 '("chosen"))) list)) (lines-of notes) (store:conflicts notes))
             (list 'applied '("chosen" "BETA" "GAMMA tail") '()))
      ;; a disk matching the baseline commits its facts and leaves the log alone
      (check 'a-reload-with-no-disk-change-keeps-the-log
@@ -1750,9 +1750,9 @@
            (edit! alice id 0 0 0 0 5 '("X"))
            (reload! id '("disk tail"))
            (store:resolve! alice id (caar (store:conflicts id)) 'mine)
-           (reload! id '("disk TAIL"))
            (let ([resolution (store:revision id)])
-             (edit! bot id resolution 0 2 0 2 '("! "))
+             (reload! id '("disk TAIL") bot)
+             (edit! bot id (store:revision id) 0 2 0 2 '("! "))
              (if rewrite? (store:rewrite! alice id (list resolution)) (store:undo! alice id))
              (check 'an-inverse-revives-the-conflict-without-absorbing-foreign-text
                (list (store:line id 0) (map cadddr (store:conflicts id))) '("disk ! TAIL" ((0 0 0 4))))
@@ -1764,7 +1764,7 @@
        (reload! id '("abc disk"))
        (edit! bot id (store:revision id) 0 1 0 2 '("B" "C"))
        (store:resolve! alice id 1 'mine)
-       (reload! id '("ABC disk"))
+       (reload! id '("ABC disk") bot)
        (store:undo! alice id)
        (check 'settled-regions-follow-original-coordinates-through-history-projection
          (list (snapshot-text id) (map cadddr (store:conflicts id)))
@@ -1794,7 +1794,7 @@
        '("abc" "xyz"))
      (let ([id (typed-buffer "a b")])
        (store:edit! alice id 0 (span 0 3 0 3) '("!") '(typing "typing" (undo (trailing . #f))))
-       (reload! id '("A b"))
+       (reload! id '("A b") bot)
        (store:undo! alice id)
        (check 'reload-preserves-local-newline-undo-versions
          (list (store:line id 0) (store:property id 'trailing)) '("A b" #t)))
@@ -2003,14 +2003,37 @@
        (store:set-property! alice id 'base "A b\n")
        (store:edit! alice id 1 (span 0 2 0 3) '("B") '(action "action"))
        (reload! id '("A b!"))
-       (check 'an-incompletely-retained-action-cannot-be-partially-undone
-         (call-with-values (lambda () (store:undo! alice id)) list) '(blocked basis-too-old))
+       (store:undo! alice id)
+       (check 'reload-keeps-the-whole-earlier-action-even-across-a-saved-baseline
+         (let-values ([(status detail) (store:undo! alice id)])
+           (list status (snapshot-text id))) '(applied #("a b")))
        (check 'a-lagging-reader-crosses-the-old-log-and-reload
          (let-values ([(text revision changes) (store:snapshot-since id 0)])
            (and changes (equal? text
                           (fold-left (lambda (t change)
                                        (let-values ([(next d) (text:apply-edit t (text:delta-span (caddr change)) (text:delta-inserted (caddr change)))]) next))
                             before changes)))) #t))
+
+     (parameterize ([store:log-retention 4])
+       (for-each
+         (lambda (kind)
+           (let ([id (typed-buffer "a b")])
+             (reload! id '("A b"))
+             (do ([i 0 (+ i 1)]) ((= i 6))
+               (edit! alice id (store:revision id) 0 0 0 1
+                 (list (cond [(even? i) "X"] [(eq? kind 'too-old) "Y"] [else "A"]))))
+             (when (eq? kind 'dirty) (edit! alice id (store:revision id) 0 3 0 3 '("!")))
+             (let* ([before (call-with-values store:export list)] [result (reload! id '("Z b"))])
+               (check (list 'expired-projection-uses-retained-baseline kind)
+                 (if (eq? kind 'too-old)
+                     (list result (equal? before (call-with-values store:export list)))
+                     (let ([merged (store:line id 0)])
+                       (list (car result) merged (car (call-with-values (lambda () (store:undo! alice id)) list)) (store:line id 0))))
+                 (case kind
+                   [(clean) '(applied "Z b" applied "A b")]
+                   [(dirty) '(applied "Z b!" applied "A b!")]
+                   [else '((refused basis-too-old) #t)])))))
+         '(clean dirty too-old)))
 
      ;; closing is irreversible, but readable state remains available.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]

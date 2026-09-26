@@ -28,7 +28,18 @@
          (let* ([undone (car (call-with-values (lambda () (store:undo! bob 5)) list))]
                 [pending (length (store:conflicts 5))]
                 [redo (lambda () (car (call-with-values (lambda () (store:redo! alice 5)) list)))])
-           (list undone pending (redo) (redo) (store:line 5 0) (store:conflicts 5)))))
+           (list undone pending (redo) (redo) (store:line 5 0) (store:conflicts 5)))
+         (let* ([back (begin (undo 6) (list (store:line 6 0) (store:property 6 'trailing) (store:conflicts 6)))]
+                [again (begin (store:redo! alice 6) (list (store:line 6 0) (length (store:conflicts 6))))])
+           (undo 6) (undo 6) (undo 6)
+           (let ([original (store:line 6 0)])
+             (store:redo! alice 6) (store:redo! alice 6) (store:redo! alice 6)
+             (list back again original (store:line 6 0) (length (store:conflicts 6)))))
+         (let ([changed (car (call-with-values
+                               (lambda () (store:reload! alice 7 '("alpha GAMMA") '((base . "alpha GAMMA") (trailing . #f)))) list))])
+           (list changed (store:line 7 0)
+             (reverse (fold-left (lambda (out ignored) (undo 7) (cons (store:line 7 0) out)) '() '(1 2 3)))))
+         (list (undo 8) (store:line 8 0) (store:property 8 'trailing))))
      (when (pair? (command-line-arguments))
        (let ([data (call-with-input-file (car (command-line-arguments)) read)])
          (store:import! (car data) (cadr data))
@@ -80,11 +91,26 @@
      (store:undo! alice pending)
      (store:undo! alice pending)
      (store:edit! bob pending (store:revision pending) (text:make-span 0 0 0 14) '("custom"))
+     (for-each
+       (lambda (disk)
+         (let ([id (store:create! alice "reload history" '("alpha beta") '((base . "alpha beta\n") (trailing . #t)))])
+           (store:edit! alice id 0 (text:make-span 0 0 0 5) '("ALPHA"))
+           (when (string=? disk "disk beta")
+             (store:edit! alice id 1 (text:make-span 0 0 0 5) '("Mine")))
+           (store:reload! alice id (list disk) (list (cons 'base disk) '(trailing . #f)))))
+       '("disk beta" "alpha BETA"))
+     ;; Identical reread must preserve the reload's newline version.
+     (define unchanged (store:create! alice "unchanged reread" '("abc") '((base . "abc\n") (trailing . #t))))
+     (store:reload! alice unchanged '("xyz") '((base . "xyz") (trailing . #f)))
+     (store:reread! alice unchanged '("xyz") '((base . "xyz") (trailing . #f)))
      (define path (format "/tmp/e-journal-~a" (get-process-id)))
      (let*-values ([(next states) (store:export)] [(expected) (exercise!)])
        (check 'live-history-covers-resolutions-and-property-version-boundaries expected
          '((applied "ALPHA" 1) (applied "aA" #f blocked) blocked (applied "b" applied "a")
-           (applied 2 applied applied "A beta G" ())))
+           (applied 2 applied applied "A beta G" ())
+           (("Mine beta" #t ()) ("disk beta" 1) "alpha beta" "disk beta" 1)
+           (applied "ALPHA GAMMA" ("ALPHA BETA" "ALPHA beta" "alpha beta"))
+           (applied "abc" #t)))
        (dynamic-wind
          (lambda () (call-with-output-file path (lambda (p) (write (list next states expected) p))))
          (lambda () (check 'journal-round-trip (system (format "scheme --script tests/journal.ss ~a" path)) 0))

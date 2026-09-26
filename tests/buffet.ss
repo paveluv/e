@@ -169,9 +169,9 @@
      (buffet:open!)
      (check 'the-trash-lists-killed-shared-buffers-below-the-live-rows
        (let ([lines (rows)])
-         (list (and (member "Trash: Enter restores" lines) #t)
+         (list (and (member "Trash" lines) #t)
                (and (row-of "picker-doomed") (string:search (row-of "picker-doomed") "trash" 0 (string-length (row-of "picker-doomed"))) #t)
-               (< (length (memp (lambda (line) (string=? line "Trash: Enter restores")) lines)) (length lines))
+               (< (length (memp (lambda (line) (string=? line "Trash")) lines)) (length lines))
                (head:buffer-named "picker-doomed")))
        '(#t #t #t #f))
      (press! "END" "RET")
@@ -180,7 +180,7 @@
        '("picker-doomed" #t))
      (buffet:open!)
      (check 'a-restored-buffer-leaves-the-trash-section
-       (and (member "Trash: Enter restores" (rows)) #t) #f)
+       (and (member "Trash" (rows)) #t) #f)
      (press! "C-g")
      (type! "picker-beta") (press! "RET")
      (kill-buffer! (head:current-buffer))
@@ -200,17 +200,17 @@
      (buffet:filter! "notes.txt.bak")
      (check 'the-backups-list-under-their-own-heading-with-the-file
        (let ([lines (rows)] [line (row-of "notes.txt.bak")])
-         (list (and (member "Backups: Enter restores" lines) #t)
+         (list (and (member "Backups" lines) #t)
                (and line (string:search line "backup" 0 (string-length line)) #t)
                (and line (string:search line "/tmp/notes.txt" 0 (string-length line)) #t)
-               (and (member "Trash: Enter restores" lines) #t)))
+               (and (member "Trash" lines) #t)))
        '(#t #t #t #f))
      (press! "END" "RET")
      (check 'enter-on-a-backup-row-restores-it
        (list (head:buffer-name (head:current-buffer)) (vector->list (head:buffer-lines (head:current-buffer))))
        '("notes.txt.bak" ("old notes")))
      (buffet:open!)
-     (check 'a-restored-backup-leaves-the-backups-section (and (member "Backups: Enter restores" (rows)) #t) #f)
+     (check 'a-restored-backup-leaves-the-backups-section (and (member "Backups" (rows)) #t) #f)
      (press! "C-g")
      (kill-buffer! (buffer "notes.txt.bak"))
      ;; the app as an API: the filter set, a buffer chosen, the choice told

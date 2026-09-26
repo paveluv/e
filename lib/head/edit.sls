@@ -1167,8 +1167,8 @@
             (store:buffer-name id)))))
 
   (define (reload-from-disk! b path disk . source)
-    ;; The buffer reloaded from its file through the store: the disk's text
-    ;; the baseline again, the buffer's entries reapplied on top, an entry the
+    ;; The buffer reloaded as one undoable action through the store: the
+    ;; disk becomes the baseline, the buffer's edits merge on top, an entry the
     ;; disk contradicts pending as a conflict with the disk's side shown;
     ;; -> (values status detail), applied with (revision conflicts), and the
     ;; echo told under the command that reloaded, reload! unless the caller
@@ -1246,7 +1246,7 @@
            (parameterize ([message-source 'visit-file!]) (set-message! (format "Reread ~a" path)))]
           [else (refuse-file! (format "~a could not be reread: ~a" (file:base-name path) detail))]))))
 
-  (edoc "Reload the current buffer's file through the store: the disk's text becomes the baseline again and the buffer's edits are merged on top, a collision pending as a conflict, the red !!; where the store cannot reload, the echo says so and C-x C-r rereads. Reopening the file and editing it after a change on disk reload it the same way.")
+  (edoc "Reload the current buffer's file as one undoable action, preserving earlier undo history. The disk's text becomes the baseline and the buffer's edits merge on top, a collision pending as a conflict, the red !!. Undo restores the pre-reload buffer while remembering the observed disk version, so saving can overwrite it. Where the store cannot reload, the echo says so and C-x C-r rereads. Reopening, editing and saving after a change on disk reload the same way.")
   (define (reload!)
     (let-values ([(b path disk revision facts) (current-file-disk)])
       (let-values ([(status detail) (reload-from-disk! b path disk)])

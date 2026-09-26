@@ -1979,7 +1979,7 @@
            (flush-ui-audit! (buffer-store-id b)))
          (values status detail))]))
 
-  (edoc "Reload a shared buffer from its file through the store, the disk's changes this head's own entries, adopting the result: (values status detail), applied with (revision conflicts), refused, or nothing for a local buffer."
+  (edoc "Reload a shared buffer from its file through the store as one undoable action belonging to this head, preserving earlier undo history and adopting the result: (values status detail), applied with (revision conflicts), refused, or nothing for a local buffer."
         (b buffer "the buffer")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit: base, stamp, trailing, stale"))
