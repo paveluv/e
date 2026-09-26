@@ -156,7 +156,9 @@
          (list ((foreign-procedure "symlink" (string string) int) root (child "small/loop"))
                ((foreign-procedure "symlink" (string string) int) (child "small") (child "alias"))
                ((foreign-procedure "symlink" (string string) int) (child "absent") (child "dangling"))
-               ((foreign-procedure "mkfifo" (string unsigned) int) (child "pipe") #o600)) '(0 0 0 0))
+               ((foreign-procedure "symlink" (string string) int) "absent" (child "large/broken-link"))
+               ((foreign-procedure "symlink" (string string) int) "self-link" (child "large/self-link"))
+               ((foreign-procedure "mkfifo" (string unsigned) int) (child "pipe") #o600)) '(0 0 0 0 0 0))
        (let* ([info (sys:file-info (child "needle-root"))] [stamp (file:stamp (child "needle-root"))])
          (check 'directory-metadata-is-typed-and-full-precision
            (list (vector-ref info 0) (vector-ref info 1)
@@ -169,11 +171,17 @@
            (list (car result) (group "small" result) (group "large" result)
                  (directory:entry-link? (entry "alias" result))
                  (directory:entry-count (entry "alias" result))
+                 (directory:entry-kind (entry "dangling" result))
                  (directory:entry-kind (entry "pipe" result))
                  ;; Completion must use the same textual parent as opening,
                  ;; even when a link would traverse to a different OS parent.
                  (file:complete "small/loop/../ne" root))
-           '(0 (4 #t ()) (3 #t ()) #t #f special ("small/loop/../needle-one" "small/loop/../nested/"))))
+           '(0 (4 #t ()) (5 #t ()) #t #f link special ("small/loop/../needle-one" "small/loop/../nested/"))))
+       (check 'directory-unresolved-links-match-by-name-without-making-counts-incomplete
+         (map (lambda (query)
+                (let ([result (scan query #f 2)])
+                  (list (car result) (group "large" result)))) '("sls" "link"))
+         '((0 (0 #t ())) (0 (2 #t ("broken-link" "self-link")))))
        (let ([result (scan "needle" #f 2)])
          (check 'directory-expands-at-the-limit-and-counts-beyond-it
            (list (car result) (group "small" result) (group "large" result)

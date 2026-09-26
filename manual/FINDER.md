@@ -156,8 +156,9 @@ Dotfiles and dot directories are excluded by default. `M-.` includes them;
 are marked `@/` and can be entered explicitly. Recursive searches do not
 follow them, so links cannot create loops or duplicate entire subtrees. Files
 inside a link can be reached by entering that directory; a typed path through
-it keeps the directory available as a navigation row. Files and directories
-with control characters in their names have escaped labels;
+it keeps the directory available as a navigation row. Links with missing or
+inaccessible targets can match their own names without making counts incomplete.
+Files and directories with control characters in their names have escaped labels;
 opening still uses the exact original path. Devices and FIFOs cannot be opened
 as text files.
 

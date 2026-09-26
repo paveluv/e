@@ -67,7 +67,10 @@
   (define (inspect-entry path)
     (let* ([info (sys:file-info path)]
            [link? (and info (eq? (vector-ref info 0) 'link))]
-           [target (if link? (sys:file-info path #t) info)])
+           ;; Resolve links to recognize navigable directories, but keep the
+           ;; link's own kind if its target is absent or inaccessible. Only
+           ;; failure to inspect the entry itself makes a scan incomplete.
+           [target (if link? (or (sys:file-info path #t) info) info)])
       (make-entry path (if target (vector-ref target 0) 'unavailable) link?
         (and info (vector-ref info 1)) (and info (vector-ref info 2))
         (and info (vector-ref info 3)) (and info (vector-ref info 4)) #f #f '())))
