@@ -105,7 +105,7 @@
                         (let ([update (scan-update job)]) (scan-update-set! job #f) update))])
           (when update
             (apply (lambda (entries skipped done? failure)
-                     (set! inventory (directory:reconcile entries inventory (scan-limit job) done?))
+                     (set! inventory (directory:reconcile entries inventory location (scan-query job) (scan-limit job) done?))
                      (set! failures skipped) (set! complete? done?)
                      (when failure (edit:set-message! (string-append "File scan failed: " failure)))) update)))
         ;; Config/reload can render before publishing registration. Launch
@@ -163,7 +163,9 @@
                    [else (string c)])) (string->list path))))
   (define (label row)
     (string-append
-      (display-path (directory:relative-path (cdr row) location))
+      (make-string (length (filter (lambda (c) (char=? c #\/))
+                             (string->list (directory:relative-path (cdr row) location)))) #\space)
+      (display-path (file:base-name (car row)))
       (if (directory:entry-link? (cdr row)) "@" "")
       (if (directory:directory? (cdr row)) "/" "")))
   (define (raw row column)
@@ -217,6 +219,13 @@
         (or (string-ci<? (car a) (car b))
             (and (string-ci=? (car a) (car b)) (string<? (car a) (car b))))) a b))
   (define (listing)
+    (define (tree entries)
+      ;; Sort siblings, then emit each directory beside its descendants.
+      ;; Absolute paths remain the identity even when basenames repeat.
+      (let ([rows (map (lambda (e) (cons (directory:entry-path e) e)) entries)])
+        (fold-right (lambda (row rest) (cons row (append (tree (directory:entry-matches (cdr row))) rest)))
+          '() (append (sort entry<? (filter (lambda (row) (directory:directory? (cdr row))) rows))
+                (sort entry<? (filter (lambda (row) (not (directory:directory? (cdr row)))) rows))))))
     (let* ([filtered? (not (string=? query ""))]
            [inventory (if path-part
                           (filter (lambda (e)
@@ -239,11 +248,8 @@
                           (and (not (directory:entry-link? e))
                                (or complete? (not (directory:entry-count e)))
                                (not (directory:entry-complete? e))))) dirs)]
-           [files (append
-                    (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e location query))) inventory)
-                    (if filtered? (apply append (map directory:entry-matches dirs)) '()))])
-      (append (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) visible-dirs))
-        (sort entry<? (map (lambda (e) (cons (directory:entry-path e) e)) files)))))
+           [files (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e location query))) inventory)])
+      (tree (append visible-dirs files))))
   (define (directory-label)
     (string-append "Directory: " (display-path (file:abbreviate location)) (if (string=? location "/") "" "/")
       (if (and (not path-part) (show-hidden)) "  [hidden]" "")
@@ -595,8 +601,12 @@
     ;; what the finder context leaves to the app: focus, the wheel and the
     ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (render!) #t]
-          [(string=? event "WHEEL-UP") (move! -1) #t]
-          [(string=? event "WHEEL-DOWN") (move! 1) #t]
+          [(member event '("WHEEL-UP" "WHEEL-DOWN" "S-WHEEL-UP" "S-WHEEL-DOWN"))
+           (set! hover #f)
+           (edit:page-window! (if (member event '("WHEEL-UP" "S-WHEEL-UP")) -1 1) 8)
+           ;; Keep the app's choice at the scroller's landing point, so a
+           ;; refresh does not restore the old choice and pull the view back.
+           (select-row! (at-row (max first-row (car (head:point))))) #t]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (head:app-event-buffer-position)] [row (and at (at-row (car at)))]
                   [column (column-at (head:current-window) at)])

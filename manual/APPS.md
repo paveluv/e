@@ -48,6 +48,12 @@ from the clicked cell even though the buffer is read-only.
 Drag and release belong to the window and buffer that accepted the press.
 An ignored click arms neither, and an action that opens another buffer cannot
 move that new buffer's point when the mouse button is released.
+Wheel events scroll the window under the pointer, keeping keyboard focus
+where it was. Leave them unhandled to use normal scrolling; do not map them
+to arrow-key actions. An app that maintains a separate row choice can call
+`(page-window! direction 8)` and synchronize that choice with the resulting
+point, so its next refresh preserves the scroll. Paginated prompt lists
+scroll through pages and stop at either end.
 During clicks, drags, releases, and wheel events, `(head:app-event-buffer-position)`
 returns the unclamped zero-based `(row . character-column)` addressed by the
 pointer, using that window's presentation when it has one. It may lie beyond

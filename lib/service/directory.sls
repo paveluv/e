@@ -20,7 +20,7 @@
         (created (or number #f) "the creation time")
         (count (or integer #f) "how many descendants match, when known")
         (complete? boolean "whether the count is exact")
-        (matches (or list #f) "the matching descendants retained"))
+        (matches list "the retained child entries, including the directories leading to matches"))
   (define-record-type entry
     (fields path kind link? mode size modified created count complete? matches))
 
@@ -83,6 +83,15 @@
           (not (or (string:prefix? "." path)
                    (string:search path "/." 0 (string-length path)))))))
 
+  (define (retained-count entries match?)
+    (fold-left (lambda (n entry)
+                 (+ n (if (match? entry) 1 0) (retained-count (entry-matches entry) match?)))
+      0 entries))
+
+  (define (branch? entry match?)
+    (or (match? entry)
+        (and (entry-count entry) (positive? (entry-count entry)))))
+
   (edoc "Filter known entries by a new query without rescanning: exact when the previous group kept every match, else a bounded subset until a fresh scan."
         (entries list "the entries")
         (root directory "the root")
@@ -97,7 +106,7 @@
     ;; match. Otherwise keep the known subset, with a lower bound or an
     ;; unknown count, until a fresh scan replaces it. Empty queries count
     ;; immediate children, so their counts cannot stand in for search counts.
-    (let* ([match? (matcher root query)]
+    (let* ([match? (matcher root query)] [previous-match? (matcher root previous)]
            ;; Containment implies a subset only within one matching mode: a
            ;; name filter gaining a slash starts matching different text.
            [same-kind? (eq? (path-query? previous) (path-query? query))]
@@ -108,51 +117,56 @@
            [wider? (and same-kind? (not (string=? previous "")) (not (string=? query ""))
                         (or hidden? (not was-hidden?))
                         (string:search previous query 0 (string-length previous) #t))])
-      (map (lambda (entry)
-             (if (or (not (directory? entry)) (entry-link? entry)) entry
-                 (let* ([old (entry-count entry)]
-                        [matches (if (string=? query "") '()
-                                     (filter (lambda (e) (and (visible? e root hidden?) (match? e)))
-                                       (entry-matches entry)))]
-                        [exact? (and (entry-complete? entry)
-                                     (or same? (and narrower? old (= old (length (entry-matches entry))))))]
-                        [count (cond [same? old] [exact? (length matches)] [wider? old]
-                                     [(pair? matches) (length matches)]
-                                     [(or (string=? query "") (not old)
-                                          (> old (length (entry-matches entry)))) #f]
-                                     [else 0])])
-                   (with-count entry count exact?
-                     (if (and count (> count limit)) '() matches)))))
-        (filter (lambda (entry) (visible? entry root hidden?)) entries))))
+      (define (project entry)
+        (if (or (not (directory? entry)) (entry-link? entry)) entry
+            (let* ([old (entry-count entry)]
+                   [kept (retained-count (entry-matches entry) previous-match?)]
+                   [matches (if (string=? query "") '()
+                                (filter (lambda (e) (branch? e match?))
+                                  (map project (filter (lambda (e) (visible? e root hidden?))
+                                                 (entry-matches entry)))))]
+                   [known (retained-count matches match?)]
+                   [exact? (and (entry-complete? entry) (or same? (and narrower? old (= old kept))))]
+                   [count (cond [same? old] [exact? known] [wider? (and old (max old known))]
+                                [(positive? known) known]
+                                [(or (string=? query "") (not old) (> old kept)) #f]
+                                [else 0])])
+              (with-count entry count exact?
+                (if (and count (> count limit)) '() matches)))))
+      (map project (filter (lambda (entry) (visible? entry root hidden?)) entries))))
 
   (edoc "Merge a partial publication with the previous entries so known matches survive, preferring fresh metadata; a complete one replaces them."
         (entries list "the new entries")
         (previous list "the previous entries")
+        (root directory "the search root")
+        (query string "the filter")
         (limit integer "the expansion limit")
         (done? boolean "whether the publication is complete")
         (returns list))
-  (define (reconcile entries previous limit done?)
+  (define (reconcile entries previous root query limit done?)
     ;; A shallow/partial publication must not erase matches the new query
     ;; already knows. Prefer fresh metadata and union bounded match sets;
     ;; completed groups (and the final snapshot, including errors/removals)
     ;; always replace the preview authoritatively.
-    (if done? entries
+    (let ([match? (matcher root query)])
+      (define (merge entries previous keep-missing?)
         (let ([known (make-hashtable string-hash string=?)])
           (for-each (lambda (entry) (hashtable-set! known (entry-path entry) entry)) previous)
-          (map (lambda (entry)
-                 (let ([old (hashtable-ref known (entry-path entry) #f)] [count (entry-count entry)])
-                   (cond [(or (not old) (not (directory? entry)) (entry-link? entry) (entry-complete? entry)) entry]
-                         [(not count) (with-count entry (entry-count old) (entry-complete? old) (entry-matches old))]
-                         [else
-                          (let* ([seen (make-hashtable string-hash string=?)]
-                                 [matches
-                                  (filter (lambda (e)
-                                            (and (not (hashtable-contains? seen (entry-path e)))
-                                                 (begin (hashtable-set! seen (entry-path e) #t) #t)))
-                                    (append (entry-matches entry) (entry-matches old)))]
-                                 [total (max count (or (entry-count old) 0) (length matches))])
-                            (with-count entry total #f
-                              (if (<= total limit) matches '())))]))) entries))))
+          (let ([merged
+                 (map (lambda (entry)
+                        (let ([old (hashtable-ref known (entry-path entry) #f)] [count (entry-count entry)])
+                          (hashtable-delete! known (entry-path entry))
+                          (cond [(or (not old) (not (directory? entry)) (entry-link? entry) (entry-complete? entry)) entry]
+                            [(not count) (with-count entry (entry-count old) (entry-complete? old) (entry-matches old))]
+                            [else
+                             (let* ([matches (merge (entry-matches entry) (entry-matches old) #t)]
+                                    [total (max count (or (entry-count old) 0) (retained-count matches match?))])
+                               (with-count entry total #f
+                                 (if (<= total limit) matches '())))]))) entries)])
+            (if keep-missing?
+                (append merged (filter (lambda (e) (hashtable-contains? known (entry-path e))) previous))
+                merged))))
+      (if done? entries (merge entries previous #f))))
 
   (edoc "Scan a directory for entries matching a query, publishing (entries unreadable-directories done?) at most ten times a second until the counts are exact; each directory keeps at most limit matches."
         (path directory "the directory")
@@ -192,33 +206,38 @@
               (set! next-update (add-duration now (make-time 'time-duration 100000000 0)))
               (publish! (vector->list entries) failures done?))))
         (define (search! index root)
-          (let ([before failures] [count 0] [found '()])
-            (define (update! done?)
-              (vector-set! entries index
-                (with-count root count (and done? (= before failures))
-                  (if (<= count limit) (reverse found) '())))
+          (let ([total 0])
+            (define (weight entry)
+              (+ (if (match? entry) 1 0) (or (entry-count entry) 0)))
+            (define (update! entry)
+              (vector-set! entries index entry)
               (publish #f #f))
-            ;; The explicit work stack avoids recursive Scheme frames for
-            ;; deep paths. Each pending directory is listed only on descent.
-            (let walk ([pending (list (entry-path root))])
-              (check!)
-              (if (null? pending) (update! #t)
-                  (let ([children (names (car pending))] [next (cdr pending)])
-                    (for-each
-                      (lambda (name)
-                        (let ([entry (child (car pending) name)])
-                          (when (match? entry)
-                            (set! count (+ count 1))
-                            (set! found (if (<= count limit) (cons entry found) '())))
-                          (when (eq? (entry-kind entry) 'unavailable)
-                            (set! failures (+ failures 1)))
-                          (when (and (directory? entry) (not (entry-link? entry)))
-                            (set! next (cons (entry-path entry) next)))
-                          ;; Only build/publish a snapshot when the clock is
-                          ;; due; a huge group still reports growing counts.
-                          (when (time>=? (current-time 'time-monotonic) next-update)
-                            (update! #f)))) children)
-                    (walk next))))))
+            ;; Retain the route to each match, not a second flat list. The
+            ;; limit counts actual matches, never connecting directories.
+            ;; Once the root exceeds it, release the tree while counting on.
+            (define (walk entry notify)
+              (let ([before failures] [count 0] [found '()])
+                (define (snapshot current done?)
+                  (with-count entry (+ count (if current (weight current) 0))
+                    (and done? (= before failures))
+                    (if (> total limit) '()
+                        (reverse (if (and current (branch? current match?)) (cons current found) found)))))
+                (for-each
+                  (lambda (name)
+                    (let ([e (child (entry-path entry) name)])
+                      (when (match? e) (set! total (+ total 1)))
+                      (when (eq? (entry-kind e) 'unavailable) (set! failures (+ failures 1)))
+                      (let ([e (if (and (directory? e) (not (entry-link? e)))
+                                   (walk e (lambda (partial) (notify (snapshot partial #f)))) e)])
+                        (set! count (+ count (weight e)))
+                        (set! found (cond [(> total limit) '()] [(branch? e match?) (cons e found)] [else found]))
+                        ;; Assemble ancestor snapshots only when publication
+                        ;; is due; their unfinished counts stay lower bounds.
+                        (when (time>=? (current-time 'time-monotonic) next-update)
+                          (notify (snapshot #f #f))))))
+                  (names (entry-path entry)))
+                (snapshot #f #t)))
+            (update! (walk root update!))))
         (set! entries (list->vector (map (lambda (name) (child path name)) (names path))))
         (publish #t #f)
         (do ([i 0 (+ i 1)]) ((= i (vector-length entries)))

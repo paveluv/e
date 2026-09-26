@@ -138,10 +138,12 @@
        (define (entry name result)
          (find (lambda (e) (string=? (directory:entry-path e) (child name))) (cdr result)))
        (define (group name result)
+         (define (names entries)
+           (apply append (map (lambda (e) (cons (file:base-name (directory:entry-path e))
+                                            (names (directory:entry-matches e)))) entries)))
          (let ([e (entry name result)])
            (list (directory:entry-count e) (directory:entry-complete? e)
-                 (sort string<? (map (lambda (match) (file:base-name (directory:entry-path match)))
-                                  (directory:entry-matches e))))))
+                 (sort string<? (names (directory:entry-matches e))))))
        (mkdir root)
        (for-each (lambda (dir) (mkdir (child dir))) '("small" "small/nested" "large" ".private"))
        (for-each (lambda (name) (file:write! (child name) '#("needle in the contents") #f))
@@ -176,7 +178,7 @@
          (check 'directory-expands-at-the-limit-and-counts-beyond-it
            (list (car result) (group "small" result) (group "large" result)
                  (entry ".private" result))
-           '(0 (2 #t ("NEEDLE-two" "needle-one")) (3 #t ()) #f)))
+           '(0 (2 #t ("NEEDLE-two" "needle-one" "nested")) (3 #t ()) #f)))
        (check 'directory-hidden-and-zero-expansion
          (let ([result (scan "needle" #t 0)])
            (list (group ".private" result) (group "small" result)))
@@ -191,8 +193,8 @@
                     (list (group "small" result) (group "large" result)
                           (and (entry ".private" result) #t))))
              '(("NEEDLE-" #f 2) ("ne" #t 4) ("absent" #f 2) ("" #f 2)))
-           '(((2 #t ("NEEDLE-two" "needle-one")) (3 #t ()) #f)
-             ((3 #f (".needle-dot" "NEEDLE-two" "needle-one")) (3 #f ("needle-a" "needle-b" "needle-c")) #t)
+           '(((2 #t ("NEEDLE-two" "needle-one" "nested")) (3 #t ()) #f)
+             ((4 #f (".needle-dot" "NEEDLE-two" "needle-one" "nested")) (3 #f ("needle-a" "needle-b" "needle-c")) #t)
              ((0 #f ()) (0 #f ()) #f)
              ((#f #f ()) (#f #f ()) #f))))
        (check 'directory-publications-preserve-matches-until-authoritative-replacement
@@ -202,15 +204,27 @@
                 [after (scan "needle" #f 2
                          (lambda (entries failures done?)
                            (unless shallow
-                             (set! shallow (cons failures (directory:reconcile entries preview 2 done?))))))]
+                             (set! shallow (cons failures (directory:reconcile entries preview root "needle" 2 done?))))))]
                 [narrowed (directory:refilter (cdr after) root "needle" "needle-o" #f #f 2)])
            (list (group "small" shallow) (group "large" shallow)
                  (group "small" (cons 0 narrowed)) (group "large" (cons 0 narrowed))
-                 (group "small" (cons 0 (directory:reconcile (cdr after) preview 2 #t)))
-                 (directory:reconcile '() preview 2 #t)))
+                 (group "small" (cons 0 (directory:reconcile (cdr after) preview root "needle" 2 #t)))
+                 (directory:reconcile '() preview root "needle" 2 #t)))
          '((1 #f ("needle-one")) (0 #f ())
            (1 #t ("needle-one")) (#f #f ())
-           (2 #t ("NEEDLE-two" "needle-one")) ()))
+           (2 #t ("NEEDLE-two" "needle-one" "nested")) ()))
+       ;; Two incomplete branches arrive independently. Union real matches,
+       ;; not connecting directories; a connector may itself match a wider
+       ;; query, in which case it must count toward the expansion limit.
+       (let ([one (scan "needle-one" #f 2)] [two (scan "NEEDLE-two" #f 2)])
+         (check 'directory-partial-trees-union-without-counting-connectors-twice
+           (map (lambda (query)
+                  (let* ([a (directory:refilter (cdr one) root "needle-one" query #f #f 2)]
+                         [b (directory:refilter (cdr two) root "NEEDLE-two" query #f #f 2)]
+                         [merged (directory:reconcile b a root query 2 #f)])
+                    (group "small" (cons 0 (directory:reconcile b merged root query 2 #f)))))
+             '("needle" "ne"))
+           '((2 #f ("NEEDLE-two" "needle-one" "nested")) (3 #f ()))))
        (check 'directory-matches-full-relative-paths-and-directory-slashes
          (let ([result (scan "ALL/NESTED/" #f 2)])
            (list (group "small" result) (group "large" result)
@@ -241,8 +255,8 @@
                (when done?
                  ;; A failed group's partial zero does not erase known
                  ;; matches; the final snapshot must discard them.
-                 (set! pending (cons failures (directory:reconcile entries preview 2 #f)))
-                 (set! result (cons failures (directory:reconcile entries preview 2 #t))))))
+                 (set! pending (cons failures (directory:reconcile entries preview root "secret" 2 #f)))
+                 (set! result (cons failures (directory:reconcile entries preview root "secret" 2 #t))))))
            (list (car result) (group ".private" pending) (group ".private" result)))
          '(1 (1 #f ("needle-secret")) (0 #f ())))
        (check 'file-read-refuses-special-files-before-opening

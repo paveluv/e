@@ -792,8 +792,8 @@
         [else ""]))
     (define (mouse! event)
       (cond
-        [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN")))
-         (set! page (mod (+ page (if (string=? event "WHEEL-UP") -1 1)) pages)) #t]
+        [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN" "S-WHEEL-UP" "S-WHEEL-DOWN")))
+         (set! page (min (- pages 1) (max 0 (+ page (if (member event '("WHEEL-UP" "S-WHEEL-UP")) -1 1))))) #t]
         [(and (string=? event "MOUSE-CLICK")
               (or (not in-window?) (eq? (head:current-window) owner)))
          (let ([at (head:app-event-buffer-position)])

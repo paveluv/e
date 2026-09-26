@@ -114,9 +114,22 @@ slashes are literal: `lib/` matches that part of a path, including descendants
 whose own names do not contain `lib`. Directories include their trailing `/`
 for matching. Typing a dot component, such as `lib/.git/`, includes hidden entries.
 Each immediate subdirectory shows its descendant match count. Up to 20 matches
-in a group are listed individually with relative paths. Above that threshold,
-the directory and its count remain; enter it to search a smaller subtree with
-the same filter. Relative paths are measured from the new directory: entering
+in a group are shown as a tree, with one space of indentation per level.
+Intermediate directories show their own descendant counts and can be entered
+with Enter or a click, just like immediate directories. For example, a match
+at `A/B/C/foo.txt` appears as:
+
+```text
+A/             1
+ B/            1
+  C/           1
+   foo.txt
+```
+
+Connecting directories do not count toward the expansion threshold unless
+their own names or paths match the filter. Above the threshold, only the
+immediate directory and its count remain; enter it to search a smaller subtree
+with the same filter. Relative paths are measured from the new directory: entering
 `lib/` with `lib/foo` still in Filter may produce no matches. Edit or clear the
 filter to search for `foo` there, or use M-c to work with a literal path.
 The threshold does not limit counting or hide direct files inside the current
@@ -152,7 +165,7 @@ as text files.
 
 | Column | Value |
 |---|---|
-| Name | Filename or relative match path; `/` marks a directory and `@` a symbolic link. |
+| Name | Entry name, indented beneath its parent in recursive results; `/` marks a directory and `@` a symbolic link. |
 | Size | File size in bytes or binary units (KiB, MiB, …). Directories have no byte-size value. |
 | Modified | Last data modification time, displayed in local time with the date. |
 | Created | Birth time, when available. |
@@ -162,8 +175,9 @@ as text files.
 Click a heading or press its F-key to cycle ascending → descending → off.
 Several columns may be active. Click order determines priority; changing
 direction retains it, and disabling then reenabling a key moves it to the end.
-For example, `Size¹↓` and `Name²↑` mean largest first, then name. Directory/file
-groups stay in place.
+For example, `Size¹↓` and `Name²↑` mean largest first, then name. Sorting applies
+among siblings, with directories before files. Each directory stays together
+with its descendants.
 
 Sorting uses numeric sizes, permissions, counts and full timestamps including
 nanoseconds. It never compares formatted size or time labels. Unknown values
@@ -177,7 +191,7 @@ size and creation time unknown. Inode-change time is never labeled Created.
 
 The finder pane is driven entirely through `finder:` commands, so M-x or
 an agent can do everything a key does. Every key of the pane is bound in
-the `files` context to one of them: `finder:choose!` for Enter, `enter!`,
+the `finder` context to one of them: `finder:choose!` for Enter, `enter!`,
 `parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
 `first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
 `(toggle-sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
@@ -216,6 +230,7 @@ the view replaced and Enter returns to it. When the window has target links,
 `(window:link-target! (window 2))` say, the file opens in every target window
 instead and the finder keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
-browses rows in the pointed finder pane without opening files. Named-head
+scrolls the pointed pane by the usual fraction of its height, without opening
+files or changing keyboard focus. Named-head
 reattachment restores the directory, filter, sorts, hidden-entry setting and
 selected paths, then rescans. Other heads have independent finders.

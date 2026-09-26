@@ -164,8 +164,6 @@
   (define (handle-log-event! event)
     (cond [(member event '("UP" "C-p")) (move-row! -1) #t]
           [(member event '("DOWN" "C-n")) (move-row! 1) #t]
-          [(string=? event "WHEEL-UP") (move-row! -1) #t]
-          [(string=? event "WHEEL-DOWN") (move-row! 1) #t]
           [(member event '("r" "R")) (git-log-refresh!) #t]
           [(string=? event "RET") (show-row-diff!) #t]
           [(string=? event "MOUSE-CLICK")

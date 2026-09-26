@@ -244,7 +244,7 @@
     ;; Scroll the window under the pointer; the focused window stays focused.
     ;; Meta-wheel applies the corresponding global buffer-switch binding to
     ;; the hovered window instead. Apps get an ordinary directional tick
-    ;; first so list controls can choose their wheel step.
+    ;; first to scroll paginated content or synchronize a separate choice.
     (head:window-at (- x 1) (- y 1)
       (lambda (entry)
         (let ([old (head:current-window)] [w (car entry)])
