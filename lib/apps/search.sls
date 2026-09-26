@@ -16,6 +16,7 @@
           replace!)
   (import (chezscheme)
           (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
@@ -61,11 +62,13 @@
   ;; start end) -- painted yellow while that buffer is current.
   (define needle-now "")
   (define current-match #f)
+  (define preview-highlights #f)
 
   (define (search-highlights)
     ;; The needle's matches in the current buffer, overlaps included,
     ;; with the current match on top.
-    (if (string=? needle-now "")
+    (if preview-highlights (preview-highlights)
+      (if (string=? needle-now "")
         '()
         (let* ([b (head:current-buffer)]
                [len (string-length needle-now)]
@@ -89,7 +92,7 @@
                           (scan (+ hit 1)   ; overlapping matches too
                                 (cons (list row hit (+ hit len) 'match)
                                       acc))
-                          (loop (+ row 1) acc))))))))))
+                          (loop (+ row 1) acc)))))))))))
 
   (define (search-forward-from needle start-row start-col)
     ;; Search from the supplied position to the end of the buffer, then
@@ -134,45 +137,56 @@
   (define (make-searcher)
     ;; The needle type's live search for the prompt: the needle's matches
     ;; highlight through the search highlighter, the current one on top,
-    ;; and point moves to the current match's start, so a command reading
-    ;; from point begins there; done restores point unless
-    ;; the prompt was accepted. Matching is exact, as the replace commands'.
-    (let ([window (head:current-window)] [origin (head:point)] [needle ""] [hits '()] [at #f])
+    ;; point previews a match without changing the command's input region.
+    ;; Anchors and cached matches follow the adopted source's revision.
+    (let* ([window (head:current-window)] [b (head:current-buffer)]
+           [origin (head:point)] [basis (caddr (head:edit-basis b))]
+           [needle #f] [hits '()] [at #f])
+      (define (first-at position)
+        (let loop ([rest hits] [i 0])
+          (cond [(null? rest) (and (pair? hits) 0)]
+                [(not (text:position<? (car rest) position)) i]
+                [else (loop (cdr rest) (+ i 1))])))
+      (define (refresh! s)
+        (let-values ([(lines revision changes) (head:snapshot-since b basis)])
+          (when (or (not (equal? s needle)) (not (= revision basis)))
+            (let ([chosen (and at (list-ref hits at))]
+                  [deltas (if changes (map caddr changes) '())])
+              (set! origin (fold-left text:rebase-position origin deltas))
+              (set! hits (if (or (not s) (string=? s "")) '() (matches-of b s)))
+              (set! at (first-at (if (and chosen (equal? s needle))
+                                   (fold-left text:rebase-position chosen deltas) origin)))
+              (set! needle s)
+              (set! basis revision)))))
       (define (show!)
-        (set! needle-now (if (null? hits) "" needle))
-        (set! current-match
-          (and at (let ([hit (list-ref hits at)])
-                    (list (head:current-buffer) (car hit) (cdr hit) (+ (cdr hit) (string-length needle))))))
         (when at (goto-match! (list-ref hits at)))
         (cons (and at (+ at 1)) (length hits)))
       (define (move step)
+        (refresh! needle)
         (when (pair? hits) (set! at (mod (+ at step) (length hits))))
         (show!))
+      (set! preview-highlights
+        (lambda ()
+          (refresh! needle)
+          (if (not (eq? b (head:current-buffer))) '()
+              (let ([n (if needle (string-length needle) 0)])
+                (append (if at (let ([p (list-ref hits at)]) (list (list (car p) (cdr p) (+ (cdr p) n) 'match-point))) '())
+                        (map (lambda (p) (list (car p) (cdr p) (+ (cdr p) n) 'match)) hits))))))
       (prompt:make-searcher
         (lambda (s)
-          (set! needle s)
-          (set! hits (if (string=? s "") '() (matches-of (head:current-buffer) s)))
-          (set! at (and (pair? hits)
-                        ;; the first match at or after where the search began, else the first
-                        (let from ([i 0] [rest hits])
-                          (cond [(null? rest) 0]
-                                [(or (< (car origin) (caar rest))
-                                     (and (= (car origin) (caar rest)) (<= (cdr origin) (cdar rest))))
-                                 i]
-                                [else (from (+ i 1) (cdr rest))]))))
+          (refresh! s)
           (show!))
         (lambda () (move 1))
         (lambda () (move -1))
         (lambda (accepted?)
-          (set! needle-now "")
-          (set! current-match #f)
-          (unless accepted?
-            (when (window:focus! window) (head:goto! origin)))))))
+          (refresh! needle)
+          (set! preview-highlights #f)
+          (when (and (eq? (head:window-buffer window) b) (window:focus! window)) (head:goto! origin))))))
 
   ;; The needle type: a string argument that searches while it is typed.
   ;; At M-x the prompt highlights the needle's matches in the current
   ;; buffer as a search would and Tab visits them in turn, completing
-  ;; nothing: (search:replace! "old" leaves point where Tab put it.
+  ;; nothing. Ending the preview restores the command's original point.
   (edoc-type needle "text to find in the current buffer, within one line; typed at M-x, its matches highlight and Tab visits them in turn"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
     (search make-searcher)

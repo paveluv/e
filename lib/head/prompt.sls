@@ -354,7 +354,7 @@
   ;; A searcher stands in for the list at a typed argument: it finds the
   ;; needle's matches in the current buffer and highlights them as a search
   ;; would, Tab visits them in turn, and nothing is ever inserted.
-  (edoc "A live search standing in for a completion list: (find needle) highlights the needle's matches in the current buffer and moves to the first from point, giving (index . count) with index #f when none; (next) and (previous) move to the neighbouring match, giving the same; (done accepted?) drops the highlights, restoring point unless accepted."
+  (edoc "A live search standing in for a completion list: (find needle) refreshes the needle's matches, giving (index . count) with index #f when none; (next) and (previous) preview the neighbouring match, giving the same; (done accepted?) ends the preview and restores any temporary selection."
         (find procedure "(find needle) giving (index . count)")
         (next procedure "(next) giving (index . count)")
         (previous procedure "(previous) giving (index . count)")
@@ -763,9 +763,8 @@
         (cond
           [(not wanted) (end-search! #f)]
           [(and searcher (eq? (car wanted) searcher-maker))
-           (unless (string=? (cdr wanted) searcher-needle)
-             (set! searcher-needle (cdr wanted))
-             (set! search-hit ((searcher-find searcher) searcher-needle)))]
+           (set! searcher-needle (cdr wanted))
+           (set! search-hit ((searcher-find searcher) searcher-needle))]
           [else
            (end-search! #f)
            (set! searcher-maker (car wanted))

@@ -62,7 +62,7 @@
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reload! store-reread! store-reset! store-resolve! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
+          store-reload! store-reread! store-reset! store-resolve! store-resolve-picks! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
           typed-text
           ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
@@ -80,7 +80,7 @@
           (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
                 logbit? procedure-arity-mask
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
-                format remq cons* iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
+                format remq cons* list-head iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
                 make-time add-duration
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
@@ -120,7 +120,7 @@
         (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
         (store-rev (or integer #f) "the store revision the lines last agreed with")
         (local-rev integer "the local content revision")
-        (changes any "the bounded ring of adopted deltas")
+        (changes any "the bounded chain of adopted revision links")
         (local-facts hashtable "a local buffer's facts")
         (rendition (or (record frame) #f) "the cached cell projection")
         (constructor name lines revision mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
@@ -137,7 +137,7 @@
             ;; revision this buffer's lines last agreed with
             store-id (mutable store-rev)
             ;; Local content has its own revision, independent of repaint.
-            ;; Either owner retains adopted deltas in a bounded ring, so
+            ;; Either owner retains bounded links between adopted revisions, so
             ;; derived views can follow exactly the text this head sees.
             (mutable local-rev) (mutable changes)
             local-facts
@@ -1604,15 +1604,23 @@
   (define (adopt-text! b text revision changes)
     ;; Keep only actual deltas ending at the adopted snapshot.  A reset or
     ;; incomplete chain cuts provenance; it is never inferred from a diff.
-    ;; The lazy ring records each delta in O(1), without old text vectors.
+    ;; Links carry all steps between two revisions. A reload can jump
+    ;; revisions, and one bridge can contain several steps at the same
+    ;; destination revision; neither is a single numbered delta.
     (cond
       [(not changes) (buffer-changes-set! b #f)]
-      [(pair? changes)
-       (let ([log (or (buffer-changes b) (make-vector delta-log-limit #f))])
-         (for-each (lambda (entry)
-                     (vector-set! log (mod (car entry) delta-log-limit) entry))
-                   changes)
-         (buffer-changes-set! b log))])
+      [(> revision (content-revision b))
+       (let loop ([from (content-revision b)] [rest changes] [log (or (buffer-changes b) '())])
+         (cond
+           [(null? rest)
+            (let ([log (if (< from revision) (cons (list from revision) log) log)])
+              (buffer-changes-set! b (if (> (length log) delta-log-limit) (list-head log delta-log-limit) log)))]
+           [else
+            (let ([to (caar rest)])
+              (let take ([rest rest] [steps '()])
+                (if (and (pair? rest) (= (caar rest) to))
+                    (take (cdr rest) (cons (car rest) steps))
+                    (loop to rest (cons (cons* from to (reverse steps)) log)))))]))])
     ;; No old surface can describe newly adopted text, even if a callback
     ;; asks for rendition before the next demanded frame has been prepared.
     (buffer-rendition-set! b #f)
@@ -1634,13 +1642,13 @@
     (let* ([text (buffer-lines b)] [revision (content-revision b)]
            [log (buffer-changes b)]
            [changes
-            (and basis (<= basis revision) (<= (- revision basis) delta-log-limit)
-                 (let scan ([next (+ basis 1)] [out '()])
-                   (if (> next revision) (reverse out)
-                       (let ([entry (and log (vector-ref log (mod next delta-log-limit)))])
-                         (and entry (= (car entry) next)
-                              ;; Own the public list spines, as the store does.
-                              (scan (+ next 1) (cons (list (car entry) (cadr entry) (caddr entry)) out)))))))])
+            (and basis (<= basis revision)
+                 (let scan ([at revision] [links (or log '())] [out '()])
+                   (cond [(= at basis) (map (lambda (e) (list (car e) (cadr e) (caddr e))) out)]
+                         [(or (< at basis) (null? links)) #f]
+                         [(= (cadar links) at)
+                          (scan (caar links) (cdr links) (append (cddar links) out))]
+                         [else #f])))])
       (values text revision changes)))
 
   (edoc "Make a buffer's cache the store's current text, by reference, and refit its positions and rendition."
@@ -2008,12 +2016,22 @@
         (revision integer "the conflicted entry's revision, as the store's conflicts list it")
         (choice any "disk, mine or the replacement lines"))
   (define (store-resolve! b revision choice)
+    (resolve-through-store! b (lambda (id) (store:resolve! ui-actor id revision choice 'any))))
+
+  (edoc "Settle the displayed conflict snapshot atomically as this head and adopt the result: (values status detail)."
+        (b buffer "the buffer")
+        (expected list "the reviewed conflict records")
+        (mine (list-of integer) "the revisions picked Mine"))
+  (define (store-resolve-picks! b expected mine)
+    (resolve-through-store! b (lambda (id) (store:resolve-picks! ui-actor id expected mine 'any))))
+
+  (define (resolve-through-store! b resolve)
     (cond
       [(not (buffer-store-id b)) (values 'nothing #f)]
       [else
        (let-values ([(status detail)
                      (guard (ex [else (values 'refused 'store-unavailable)])
-                       (store:resolve! ui-actor (buffer-store-id b) revision choice 'any))])
+                       (resolve (buffer-store-id b)))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))

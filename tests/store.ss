@@ -665,10 +665,18 @@
                (if (> c (string-length (vector-ref text r)))
                    (rows (+ r 1) out)
                    (cols (+ c 1) (cons (cons r c) out)))))))
+     (let ([id (store:create! alice "insertion-order" '("seed"))])
+       (for-each (lambda (s) (store:edit! alice id (store:revision id) (span 0 0 0 0) (list s))) '("B" "A"))
+       (store:undo! alice id)
+       (store:undo! alice id)
+       (store:redo! alice id)
+       (store:redo! alice id)
+       (check 'redo-preserves-order-at-a-shared-insertion-point (store:line id 0) "ABseed"))
      (check 'generated-histories-round-trip-through-all-actors
             (let cases ([left 40])
               (or (zero? left)
-                  (let* ([id (store:create! alice "generated-history" '("abc" "def"))]
+                  (let* ([id (store:create! alice "generated-history" '("abc" "def")
+                                            '((base . "abc\ndef") (trailing . #f)))]
                          [states
                           (let edits ([left 8] [states (list (snapshot-text id))])
                             (if (zero? left) states
@@ -691,6 +699,19 @@
                           (let-values ([(status detail) (store:redo! reviewer id)])
                             (and (eq? status 'applied) (equal? expected (snapshot-text id)))))
                         (cdr (reverse states)))
+                      (begin
+                        (do ([n 0 (+ n 1)]) ((= n 6))
+                          (let ([actor (if (zero? (choose 2)) alice bot)])
+                            (case (choose 3)
+                              [(0) (store:undo! actor id)]
+                              [(1) (store:redo! actor id)]
+                              [else
+                               (let ([enabled (store:log id '((state . enabled)))])
+                                 (when (pair? enabled)
+                                   (store:rewrite! actor id (list (car (list-ref enabled (choose (length enabled))))))))])))
+                        (let ([mine (snapshot-text id)])
+                          (store:reload! alice id mine `((base . ,(text:to-string mine #f)) (trailing . #f)))
+                          (and (equal? mine (snapshot-text id)) (null? (store:conflicts id)))))
                       (begin (store:delete! alice id) (cases (- left 1)))))))
             #t)
 
@@ -752,7 +773,7 @@
      (store:edit! alice viewed 0 (span 0 0 0 0) '("X"))
      (store:edit! bot viewed 1 (span 1 3 1 3) '("Y"))
      (store:edit! alice viewed 2 (span 0 4 0 4) '("Z"))
-     (let-values ([(text mapping conflicts) (store:view viewed '(1))])
+     (let-values ([(text mapping conflicts) (store:view viewed '(1 1))])
        (check 'a-view-disables-an-entry-and-rebases-the-rest
               (list (vector->list text) (length mapping) conflicts)
               '(("abcZ" "defY") 1 ())))
@@ -763,7 +784,7 @@
               (list (vector->list text) mapping conflicts)
               '(("WabcZ" "defY") () ((1 . 4)))))
      (check 'a-rewrite-disables-for-everyone
-            (call-with-values (lambda () (store:rewrite! bot viewed '(2))) list) '(applied 5))
+            (call-with-values (lambda () (store:rewrite! bot viewed '(2 2))) list) '(applied 5))
      (check 'the-rewrite-installs-the-inverse-and-marks-the-entry
             (list (store:line viewed 1)
                   (list-ref (car (store:log viewed)) 4)
@@ -786,6 +807,27 @@
      (store:rewrite! bot grouped2 '(1))
      (store:undo! alice grouped2)
      (check 'a-disabled-entry-leaves-its-group-so-undo-takes-the-rest (store:line grouped2 0) "aaaa")
+     (store:undo! bot grouped2)
+     (check 'undoing-a-rewrite-restores-the-original-actions-membership
+       (list (store:line grouped2 0)
+             (car (call-with-values (lambda () (store:undo! alice grouped2)) list))
+             (store:line grouped2 0)) '("1aaaa" applied "aaaa"))
+     (store:redo! alice grouped2)
+     (check 'redo-after-a-partial-rewrite-does-not-repeat-undone-parts
+       (store:line grouped2 0) "1aaaa2")
+
+     (for-each
+       (lambda (restore-rewrite?)
+         (let ([id (store:create! alice "inverse-membership" '("a"))])
+           (store:edit! alice id 0 (span 0 0 0 1) '("A"))
+           (store:undo! alice id)
+           (store:rewrite! bot id '(2))
+           (when restore-rewrite? (store:undo! bot id))
+           (check 'a-rewritten-inverse-keeps-the-original-actions-membership
+             (list (car (call-with-values (lambda () (if restore-rewrite? (store:redo! alice id) (store:undo! alice id))) list))
+                   (store:line id 0))
+             (list 'applied (if restore-rewrite? "A" "a")))))
+       '(#f #t))
 
      ;; Metadata is owned at admission and at every history read. Keys copy
      ;; plain structure but retain opaque in-process leaves by identity.
@@ -1661,8 +1703,9 @@
      (check 'pending-conflicts-travel-with-the-journal
             (let-values ([(next-id states) (store:export)])
               (let ([saved (assv notes states)])
-                (list (store:valid-import? next-id states) (map car (caddr (list-ref saved 5))))))
-            (list #t (list e5)))
+                (list (store:valid-import? next-id states)
+                      (map car (filter (lambda (c) (not (list-ref c 6))) (caddr (list-ref saved 5)))))))
+            (list #t (map car (store:conflicts notes))))
      ;; a reread replaces the whole text as one undoable edit, yet readers
      ;; and marks cross it on a line diff: a line added at the top moves a
      ;; mark below it down, and the reread's undo brings it back
@@ -1697,6 +1740,277 @@
      (check 'a-reader-crosses-a-reset-with-the-cleared-log-before-it
        (list (chain-text at-reset before-reread) (store:mark alice notes 'spot) (store:log notes))
        '(#t (3 . 3) ()))
+
+     ;; Resolutions follow the same inverse semantics in undo and rewrite,
+     ;; including after rebaselining. Their restored spans exclude later
+     ;; actors' edits, even when the two alternatives have different lengths.
+     (for-each
+       (lambda (rewrite?)
+         (let ([id (typed-buffer "alpha tail")])
+           (edit! alice id 0 0 0 0 5 '("X"))
+           (reload! id '("disk tail"))
+           (store:resolve! alice id (caar (store:conflicts id)) 'mine)
+           (reload! id '("disk TAIL"))
+           (let ([resolution (store:revision id)])
+             (edit! bot id resolution 0 2 0 2 '("! "))
+             (if rewrite? (store:rewrite! alice id (list resolution)) (store:undo! alice id))
+             (check 'an-inverse-revives-the-conflict-without-absorbing-foreign-text
+               (list (store:line id 0) (map cadddr (store:conflicts id))) '("disk ! TAIL" ((0 0 0 4))))
+             (store:resolve! alice id (caar (store:conflicts id)) 'mine)
+             (check 'resolving-again-preserves-foreign-text (store:line id 0) "X ! TAIL"))))
+       '(#f #t))
+     (let ([id (typed-buffer "abc foo")])
+       (edit! alice id 0 0 4 0 7 '("mine"))
+       (reload! id '("abc disk"))
+       (edit! bot id (store:revision id) 0 1 0 2 '("B" "C"))
+       (store:resolve! alice id 1 'mine)
+       (reload! id '("ABC disk"))
+       (store:undo! alice id)
+       (check 'settled-regions-follow-original-coordinates-through-history-projection
+         (list (snapshot-text id) (map cadddr (store:conflicts id)))
+         '(#("ABC disk") ((0 0 0 3) (0 4 0 8)))))
+     (for-each
+       (lambda (saved?)
+         (let ([id (typed-buffer "a b")] [disk (if saved? "Z" " Z")])
+           (edit! alice id 0 0 0 0 3 '("c"))
+           (if saved?
+               (begin (store:set-property! alice id 'base "c\n") (store:undo! alice id))
+               (begin (edit! bot id 1 0 0 0 1 '("X")) (store:undo! bot id)
+                      (edit! bot id 3 0 0 0 1 '(" "))))
+           (let ([mine (snapshot-text id)])
+             (reload! id (list disk))
+             (let ([standing (snapshot-text id)] [pending (store:conflicts id)])
+               (for-each (lambda (c) (store:resolve! alice id (car c) 'mine)) pending)
+               (check 'reload-projects-cancelled-pairs-only-since-the-saved-baseline
+                 (list standing (length pending) (snapshot-text id)) (list (vector disk) 1 mine))))))
+       '(#f #t))
+     (for-each
+       (lambda (disk)
+         (let ([id (typed-buffer "abc")])
+           (store:reread! alice id (list disk) `((base . ,disk) (trailing . #f)))
+           (store:undo! alice id)
+           (check 'reread-undo-restores-text-and-final-newline
+             (list (store:line id 0) (store:property id 'trailing)) '("abc" #t))))
+       '("abc" "xyz"))
+     (let ([id (typed-buffer "a b")])
+       (store:edit! alice id 0 (span 0 3 0 3) '("!") '(typing "typing" (undo (trailing . #f))))
+       (reload! id '("A b"))
+       (store:undo! alice id)
+       (check 'reload-preserves-local-newline-undo-versions
+         (list (store:line id 0) (store:property id 'trailing)) '("A b" #t)))
+     (parameterize ([store:log-retention 2])
+       (let ([id (typed-buffer "abc")])
+         (edit! alice id 0 0 0 0 1 '("x"))
+         (edit! alice id 1 0 2 0 3 '("z"))
+         (check 'reload-planning-does-not-truncate-its-own-basis
+           (car (reload! id '("qbc"))) 'applied))
+       (let ([id (store:create! alice "settlements" '("alpha" "beta") '((base . "alpha\nbeta\n")))])
+         (edit! alice id 0 0 0 0 5 '("A"))
+         (edit! alice id 1 1 0 1 4 '("B"))
+         (reload! id '("diskA" "diskB"))
+         (for-each (lambda (c) (store:resolve! alice id (car c) 'mine)) (store:conflicts id))
+         (for-each
+           (lambda (operation expected)
+             (operation)
+             (check 'batch-inverses-retain-all-targets-and-their-conflict-metadata
+               (list (snapshot-text id) (map (lambda (c) (list-ref c 4)) (store:conflicts id))) expected))
+           (list (lambda () (store:rewrite! bot id (map car (store:log id))))
+                 (lambda () (store:undo! bot id)) (lambda () (store:redo! bot id)))
+           '((#("diskA" "diskB") (("B") ("A"))) (#("A" "B") ()) (#("diskA" "diskB") (("B") ("A")))))))
+     (let ([id (typed-buffer "alpha tail")])
+       (edit! alice id 0 0 0 0 5 '("mine"))
+       (reload! id '("disk tail"))
+       (reload! id '("newdisk tail"))
+       (let-values ([(text revision conflicts) (store:conflict-state id)])
+         (edit! bot id revision 0 0 0 0 '("foreign" ""))
+         (check 'conflict-snapshots-freeze-current-disk-text-and-its-coordinates
+           (list text (map cadddr conflicts) (map (lambda (c) (list-ref c 5)) conflicts)
+             (map cadddr (store:conflicts id)))
+           '(#("newdisk tail") ((0 0 0 7)) (("newdisk")) ((1 0 1 7))))))
+     ;; Pending alternatives compose across reloads, and track replacement
+     ;; regions through ordinary edits instead of collapsing to an endpoint.
+     (for-each
+       (lambda (scenario)
+         (let ([id (typed-buffer "alpha beta")])
+           (edit! alice id 0 0 0 0 5 '("mine"))
+           (reload! id '("disk beta"))
+           (case (car scenario)
+             [(manual wider) (edit! bot id (store:revision id) 0 0 0 (if (eq? (car scenario) 'wider) 9 4) '("custom" "text"))]
+             [(overlap coalesce join)
+              (edit! alice id (store:revision id) 0 5 0 9 '("local"))
+              (unless (eq? (car scenario) 'overlap) (reload! id '("disk OTHER")))
+              (if (eq? (car scenario) 'join)
+                  (edit! bot id (store:revision id) 0 0 0 10 '("custom"))
+                  (reload! id '("THIRD")))]
+             [(agree) (reload! id '("mine beta"))])
+           (let ([pending (store:conflicts id)])
+             (for-each (lambda (c) (store:resolve! alice id (car c) 'mine)) pending)
+             (check (car scenario)
+               (list (length pending) (snapshot-text id) (store:property id 'conflicts))
+               (list (cadr scenario) (vector (caddr scenario)) 0)))))
+       '((manual 1 "mine beta") (wider 1 "mine beta") (overlap 1 "mine local")
+         (coalesce 1 "mine local") (join 1 "mine local") (agree 0 "mine beta")))
+     ;; Undo restores alternatives and membership as well as visible text.
+     ;; Redo must reverse that restoration, including joined regions.
+     (for-each
+       (lambda (scenario)
+         (let ([id (typed-buffer "alpha beta gamma")])
+           (edit! alice id 0 0 11 0 16 '("G"))
+           (edit! alice id 1 0 0 0 5 '("A"))
+           (reload! id '("DISK beta DISK"))
+           (let ([before (store:conflicts id)])
+             (case scenario
+               [(reread) (store:reread! bot id '("") '())]
+               [(delete) (edit! bot id (store:revision id) 0 0 0 4 '(""))]
+               [(partial) (edit! bot id (store:revision id) 0 0 0 3 '(""))]
+               [(context)
+                (edit! bot id (store:revision id) 0 5 0 9 '("BETA"))
+                (edit! bot id (store:revision id) 0 0 0 14 '("custom"))]
+               [(join) (edit! bot id (store:revision id) 0 0 0 14 '("custom" "text"))])
+             (let ([after (list (snapshot-text id) (store:conflicts id))])
+               (store:undo! bot id)
+               (store:redo! bot id)
+               (check 'redo-restores-the-edited-conflict-state
+                 (list (snapshot-text id) (store:conflicts id)) after))
+             (store:undo! bot id)
+             (when (eq? scenario 'context) (store:undo! bot id))
+             (check 'undo-restores-complete-conflict-alternatives (store:conflicts id) before)
+             (for-each (lambda (c) (store:resolve! alice id (car c) 'mine)) before)
+             (check 'restored-mine-neither-duplicates-nor-resurrects-surroundings (store:line id 0) "A beta G"))))
+       '(reread delete partial context join))
+     ;; Selective inversion must commute the conflict images with foreign
+     ;; edits too, including a gap that only becomes part of Mine later.
+     (for-each
+       (lambda (scenario)
+         (let ([id (typed-buffer "alpha beta gamma")])
+           (edit! alice id 0 0 11 0 16 '("G"))
+           (edit! alice id 1 0 0 0 5 '("A"))
+           (reload! id '("DISK beta DISK"))
+           (case scenario
+             [(boundary wide)
+              (edit! bot id (store:revision id) 0 1 0 (if (eq? scenario 'wide) 14 4) '(""))
+              (edit! alice id (store:revision id) 0 0 0 1 '("X" "Y"))]
+             [(gap)
+              (edit! bot id (store:revision id) 0 4 0 5 '(""))
+              (edit! alice id (store:revision id) 0 4 0 13 '(""))]
+             [(dismiss)
+              (edit! bot id (store:revision id) 0 0 0 4 '(""))
+              (store:resolve! alice id 1 'disk)])
+           (let* ([after (list (snapshot-text id) (store:conflicts id))]
+                  [undone (car (call-with-values (lambda () (store:undo! bot id)) list))])
+             (store:redo! bot id)
+             (let ([round-trip? (equal? after (list (snapshot-text id) (store:conflicts id)))])
+               (store:undo! bot id)
+               (let ([cs (store:conflicts id)]) (store:resolve-picks! alice id cs (map car cs)))
+               (check 'selective-undo-preserves-complete-mine-and-explicit-disk-choices
+                 (list scenario undone round-trip? (snapshot-text id))
+                 (list scenario 'applied #t (vector (if (eq? scenario 'dismiss) "A beta DISK" "A beta G"))))))))
+       '(boundary wide gap dismiss))
+     (for-each
+       (lambda (scenario)
+         (let ([id (store:create! alice "reload membership" '("alpha beta" "middle" "gamma tail")
+                     '((base . "alpha beta\nmiddle\ngamma tail") (trailing . #f)))])
+           (edit! alice id 0 0 0 0 5 '("A"))
+           (edit! alice id 1 2 0 2 5 '("G"))
+           (reload! id '("DISK beta" "middle" "DISK tail"))
+           (store:edit! bot id (store:revision id) (text:datum->span (car scenario)) (cadr scenario))
+           (reload! id (caddr scenario))
+           (store:undo! bot id)
+           (let* ([cs (store:conflicts id)] [separate? (= (length cs) 2)])
+             (store:resolve-picks! alice id cs (map car cs))
+             (check 'reload-preserves-membership-and-deleted-separators-through-undo
+               (list separate? (snapshot-text id)) (list #t (cadddr scenario))))))
+       '(((0 0 0 5) ("") ("DISK bet SK tail") #("A beta" "middle" "G tail"))
+         ((0 2 1 6) ("" "") ("DISK beta" "middle ") #("A beta" "middle" "G "))))
+     (for-each
+       (lambda (replacement)
+         (let ([id (typed-buffer "alpha tail")])
+           (edit! alice id 0 0 0 0 5 '("mine"))
+           (reload! id '("disk tail"))
+           (edit! bot id (store:revision id) 0 0 0 4 replacement)
+           ;; A disjoint disk update is still mergeable, including its
+           ;; effect on the pending edit's saved undo coordinates.
+           (check 'further-pending-edits-allow-disjoint-reload (car (reload! id '("disk TAIL"))) 'applied)
+           (let ([before (call-with-values store:export list)])
+             (check 'third-alternative-refuses-without-changing-any-state
+               (list (reload! id '("newdisk TAIL")) (equal? before (call-with-values store:export list)))
+               '((refused pending-edits) #t)))
+           (store:undo! bot id)
+           (check 'preserved-edit-can-still-be-undone (store:line id 0) "disk TAIL")
+           (store:resolve! alice id (caar (store:conflicts id)) 'mine)
+           (check 'older-mine-alternative-is-preserved-too (store:line id 0) "mine TAIL")))
+       '(("custom") ("") ("new" "text")))
+     (let ([id (typed-buffer "alpha tail")])
+       (edit! alice id 0 0 0 0 5 '("mine"))
+       (reload! id '("disk tail"))
+       (store:resolve! alice id 1 'mine)
+       (store:undo! alice id)
+       (edit! bot id (store:revision id) 0 0 0 4 '(""))
+       (store:undo! bot id)
+       (store:redo! alice id)
+       (check 'a-foreign-edit-round-trip-preserves-resolution-redo
+         (list (store:line id 0) (store:conflicts id)) '("mine tail" ())))
+     (for-each
+       (lambda (change)
+         (let ([id (typed-buffer "alpha beta gamma")])
+           (edit! alice id 0 0 11 0 16 '("G"))
+           (edit! alice id 1 0 0 0 5 '("A"))
+           (reload! id '("DISK beta DISK"))
+           (let ([review (store:conflicts id)])
+             (case change
+               [(edit) (edit! bot id (store:revision id) 0 0 0 14 '("custom"))]
+               [(disk) (store:resolve! bot id 2 'disk)]
+               [(move) (edit! bot id (store:revision id) 0 0 0 0 '("prefix "))])
+             (let ([before (call-with-values store:export list)])
+               (check 'stale-review-refuses-the-whole-batch-even-without-a-text-revision
+                 (list (call-with-values (lambda () (store:resolve-picks! alice id review '(1))) list)
+                       (equal? before (call-with-values store:export list)))
+                 '((refused conflict-changed) #t))))))
+       '(edit disk move))
+     (let ([id (typed-buffer "alpha beta gamma")] [observed #f])
+       (edit! alice id 0 0 11 0 16 '("G"))
+       (edit! alice id 1 0 0 0 5 '("A"))
+       (reload! id '("DISK beta DISK"))
+       (store:subscribe! id (lambda (event)
+                              (when (and (not observed) (eq? (car event) 'edit))
+                                (set! observed (list (store:line id 0) (store:conflicts id)))
+                                (edit! bot id (store:revision id) 0 0 0 0 '("!")))))
+       (store:resolve-picks! alice id (store:conflicts id) '(1 2))
+       (check 'all-reviewed-choices-commit-before-another-writer-is-notified
+         (list observed (store:line id 0)) '(("A beta G" ()) "!A beta G")))
+     (parameterize ([store:log-retention 4])
+       ;; Inspect retained records only here: journal export already prunes
+       ;; them and therefore cannot detect a leak in the live store.
+       (define (field record name)
+         (let* ([rtd (record-rtd record)] [names (record-type-field-names rtd)])
+           (let find ([i 0])
+             (if (eq? name (vector-ref names i)) ((record-accessor rtd i) record) (find (+ i 1))))))
+       (let ([id (typed-buffer "base")])
+         (do ([i 0 (+ i 1)]) ((= i 8))
+           (let ([mine (format "mine~a" i)] [disk (format "disk~a" i)])
+             (edit! alice id (store:revision id) 0 0 0 (string-length (store:line id 0)) (list mine))
+             (reload! id (list disk))
+             (store:resolve! alice id (caar (store:conflicts id)) 'mine)
+             (store:set-property! alice id 'base (string-append mine "\n"))))
+         (let* ([state (unbox (kernel:persistent-cell 'store (lambda () #f)))]
+                [retained (field (hashtable-ref (field state 'buffers) id #f) 'conflicts)])
+           (store:undo! alice id)
+           (check 'only-undoable-settlements-remain-in-memory
+             (list (length retained) (map (lambda (c) (list-ref c 5)) (store:conflicts id)))
+             '(1 (("disk7")))))))
+     (let* ([id (typed-buffer "a b")] [before '#("a b")])
+       (store:edit! alice id 0 (span 0 0 0 1) '("A") '(action "action"))
+       (store:set-property! alice id 'base "A b\n")
+       (store:edit! alice id 1 (span 0 2 0 3) '("B") '(action "action"))
+       (reload! id '("A b!"))
+       (check 'an-incompletely-retained-action-cannot-be-partially-undone
+         (call-with-values (lambda () (store:undo! alice id)) list) '(blocked basis-too-old))
+       (check 'a-lagging-reader-crosses-the-old-log-and-reload
+         (let-values ([(text revision changes) (store:snapshot-since id 0)])
+           (and changes (equal? text
+                          (fold-left (lambda (t change)
+                                       (let-values ([(next d) (text:apply-edit t (text:delta-span (caddr change)) (text:delta-inserted (caddr change)))]) next))
+                            before changes)))) #t))
 
      ;; closing is irreversible, but readable state remains available.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]

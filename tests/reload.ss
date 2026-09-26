@@ -19,6 +19,7 @@
              (rename (only (head edit) init!) (init! edit-init!))
              (head literal)
              (prefix (apps delta-log) delta-log:)
+             (prefix (apps search) search:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation string) string:)
              (prefix (core kernel) kernel:)
@@ -28,6 +29,9 @@
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
              (prefix (service file) file:)
+             (prefix (service log) log:)
+             (prefix (state store) store:)
+             (prefix (foundation text) text:)
              (only (chezscheme) format get-process-id mkdir delete-file delete-directory))
 
      (define check test:check)
@@ -232,10 +236,14 @@
      (insert-text! "new text")
      (define (backups-of path) (filter (lambda (entry) (string=? (cadr entry) path)) (backups)))
      (check 'a-save-as-over-a-file-backs-up-what-it-held
-       (let* ([saved (save-file! path3)] [on-disk (file:read path3)] [entry (car (backups-of path3))])
+       (let* ([logged (length (log:entries 'save-file!))]
+              [saved (save-file! path3)] [on-disk (file:read path3)] [entry (car (backups-of path3))]
+              [messages (log:entries 'save-file!)])
          (list saved on-disk (head:buffer-file scratch) (car entry) (list-ref entry 4) (and (list-ref entry 3) #t)
-               (and (find (lambda (t) (string=? (car t) "other.txt.bak")) (trash)) #t)))
-       (list #t "new text\n" path3 "other.txt.bak" (file:checksum "keep me\n") #t #f))
+               (and (find (lambda (t) (string=? (car t) "other.txt.bak")) (trash)) #t)
+               (- (length messages) logged) (log:format-entry (car messages))))
+       (list #t "new text\n" path3 "other.txt.bak" (file:checksum "keep me\n") #t #f
+             1 (format "Wrote ~a; what it held is kept as other.txt.bak" path3)))
      (insert-text! " again")
      (check 'a-save-backs-up-the-version-it-writes-over
        (let* ([saved (save-file! path3)] [names (map car (backups-of path3))])
@@ -317,9 +325,58 @@
        '(("A2BCD") #t (((0 0 0 5) ("A3BCD") ("A2BCD")))))
      (check 'picking-mine-writes-the-typed-side
        (begin (delta-log:resolve-all! 'mine) (vector->list (head:buffer-lines ab))) '("A3BCD"))
+     (parameterize ([kernel:registering-module 'reload-save-hook])
+       (file:add-pre-save-hook! (lambda (target) (undo!) (end-of-buffer!) (insert-text! "!"))))
+     (dynamic-wind void
+       (lambda ()
+         (check 'save-rechecks-conflicts-created-by-a-hook
+           (list (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path5)) (file:read path5))
+           '(refused "A2BCD\n")))
+       (lambda () (kernel:retract-module! 'reload-save-hook)))
      (kill-buffer! ab)
      (head:show-buffer! b)
-     (delete-file path4)
+     (delete-file path5)
+
+     (write-disk! "old old\ntail\n")
+     (reread!)
+     (write-disk! "old old\ntail!\n")
+     (head:buffer-facts-set! b '((stamp . #f)))
+     (check 'replacement-finishes-before-automatic-reload
+       (list (search:replace! "old" "new") (lines)) '(2 ("new new" "tail!")))
+
+     ;; The authority can move a conflict before this head consumes its
+     ;; notice. Preview from one authoritative text/region snapshot.
+     (let* ([id (store:create! head:ui-actor "lagging conflict" '("alpha tail")
+                               '((base . "alpha tail") (trailing . #f)))]
+            [trunk #f])
+       (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 5) '("mine"))
+       (store:reload! head:ui-actor id '("disk tail") '((base . "disk tail") (trailing . #f)))
+       (set! trunk (head:adopt-store-buffer! id))
+       (head:show-buffer! trunk)
+       (store:edit! '(head "other") id (store:revision id) (text:make-span 0 0 0 0) '("foreign" ""))
+       (delta-log:pick! (caar (store:conflicts id)) 'mine)
+       (check 'preview-uses-current-text-even-when-the-head-lags
+         (head:buffer-lines (shown)) '#("foreign" "mine tail"))
+       (delta-log:resolve-all! 'disk)
+       (kill-buffer! trunk)
+       (head:show-buffer! b))
+
+     (write-disk! "alpha tail\n")
+     (reread!)
+     (replace-region-text! '(0 . 0) '(0 . 5) "mine")
+     (write-disk! "disk tail\n")
+     (reload!)
+     (replace-region-text! '(0 . 0) '(0 . 4) "custom")
+     (write-disk! "newdisk tail\n")
+     (visit-file! path)
+     (check 'reopening-preserves-manual-edits-and-older-conflict-alternatives
+       (list (lines) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts)))
+       '(("custom tail") (("mine"))))
+     (replace-region-text! '(0 . 0) '(0 . 6) "continued")
+     (head:before-frame!)
+     (check 'automatic-reload-preserves-continued-typing-in-a-conflict
+       (list (lines) (file:read path) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts)))
+       '(("continued tail") "newdisk tail\n" (("mine"))))
 
      (delete-file path)
      (delete-directory dir)

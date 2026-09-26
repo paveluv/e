@@ -193,7 +193,17 @@
       [(resolve)
        (arity 3)
        (call-with-values (lambda () (policy:session-resolve! session (car args) (cadr args) (caddr args))) list)]
+      [(resolve-picks)
+       (arity 3)
+       (call-with-values (lambda () (policy:session-resolve-picks! session (car args) (cadr args) (caddr args))) list)]
       [(conflicts) (arity 1) (store:conflicts (car args))]
+      [(conflict-state)
+       (unless (and (<= 1 (length args) 2)
+                    (or (null? (cdr args)) (not (cadr args))
+                        (and (integer? (cadr args)) (exact? (cadr args)) (>= (cadr args) 0))))
+         (error 'wire "expected buffer and optional cached revision"))
+       (let-values ([(text revision conflicts) (store:conflict-state (car args))])
+         (list (if (and (pair? (cdr args)) (eqv? (cadr args) revision)) #f text) revision conflicts))]
       [(undo-labels) (arity 1) (store:undo-labels (car args))]
       [(history blame)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional count"))

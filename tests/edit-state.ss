@@ -368,6 +368,39 @@
            ("" "" #("") #f #f none)))
        (make-list 8 '(#t #t #t #t #t #t)))
 
+     ;; Saving observes live app ownership, including registration by a
+     ;; pre-save hook. Detached views and exited shared apps can be saved.
+     (check 'save-refuses-live-apps-and-allows-their-stopped-output
+       (map
+         (lambda (kind)
+           (let ([b (fresh "app-output" (eq? kind 'shared))] [before #f])
+             (define (own!)
+               (if (eq? kind 'shared)
+                   (head:buffer-facts-set! b '((app . (app save-test)) (alive . #t) (read-only . #t)))
+                   (head:register-view! b void))
+               (set! before (state b)))
+             (head:store-edit! b (text:make-span 0 0 0 0) '("output"))
+             (dynamic-wind
+               (lambda ()
+                 (if (eq? kind 'hook)
+                     (parameterize ([kernel:registering-module 'state-app-save-hook])
+                       (file:add-pre-save-hook! (lambda (target) (own!))))
+                     (own!)))
+               (lambda ()
+                 (let* ([result (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))]
+                        [unchanged? (and (equal? before (state b)) (not (file-exists? path)))])
+                   (kernel:retract-module! 'state-app-save-hook)
+                   (if (eq? kind 'shared) (head:buffer-fact-set! b 'alive #f) (head:detach-app! b))
+                   (let ([saved? (save-file! path)])
+                     (list result unchanged? saved? (file:read path)))))
+               (lambda ()
+                 (kernel:retract-module! 'state-app-save-hook)
+                 (when (head:buffer-store-id b) (store:delete! head:ui-actor (head:buffer-store-id b)))
+                 (head:forget-buffer! b)
+                 (when (file-exists? path) (delete-file path))))))
+         '(local shared hook))
+       (make-list 3 '(refused #t #t "output\n")))
+
      ;; Saving publishes the file, label and detected mode before callbacks.
      ;; A subscriber can then edit or choose newer metadata, and pump a frame;
      ;; neither first save nor re-save may overwrite that newer state on return.

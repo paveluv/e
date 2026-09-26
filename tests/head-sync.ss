@@ -172,6 +172,27 @@
                       (length (caddr (since source (+ basis 1)))) 256)))))
        '(#f #t))
 
+     ;; A single adopted revision can contain several anchor steps, and a
+     ;; rebaseline can jump revisions. Readers must receive every step.
+     (for-each
+       (lambda (read!)
+         (let* ([id (store:create! bot "bridge-history" '("alpha" "middle" "omega")
+                      '((base . "alpha\nmiddle\nomega") (trailing . #f)))]
+                [source (head:adopt-store-buffer! id)])
+           (head:add-buffer! source)
+           (head:store-edit! source (text:make-span 1 6 1 6) '("!"))
+           (let ([basis (head:edit-basis source)])
+             (read! bot id '("ALPHA" "middle" "OMEGA") '((base . "ALPHA\nmiddle\nOMEGA") (trailing . #f)))
+             (head:before-frame!)
+             (let-values ([(text revision changes) (head:snapshot-since source (caddr basis))])
+               (check 'source-history-keeps-multiple-steps-and-revision-jumps
+                 (and changes (> (length changes) 1)
+                      (equal? text (fold-left
+                                     (lambda (lines entry)
+                                       (let-values ([(next delta) (text:apply-edit lines (text:delta-span (caddr entry)) (text:delta-inserted (caddr entry)))]) next))
+                                     (car basis) changes))) #t)))))
+       (list store:reload! store:reread!))
+
      ;; Shared names come from the store, including hidden reservations.
      ;; Rename commits before changing the head; local tools yield to the
      ;; accepted shared label, and failures leave the cached name intact.

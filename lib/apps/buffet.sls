@@ -117,9 +117,9 @@
       styles))
 
   (define (buffer-data b)
-    (vector (cond [(head:buffer-conflicted b) "!!"] [(head:buffer-modified b) (head:buffer-modified-at b)] [else #f])
+    (vector (and (head:buffer-modified b) (head:buffer-modified-at b))
             (and (head:buffer-read-only b) #t) (head:buffer-name b) (head:buffer-line-count b)
-            (or (mode:name-of b) "") (or (head:buffer-file b) "")))
+            (or (mode:name-of b) "") (or (head:buffer-file b) "") (head:buffer-conflicted b)))
 
   (define (age-text seconds)
     ;; how long, in the coarsest unit that is not zero
@@ -158,7 +158,8 @@
   (define (cell data column)
     (let ([value (vector-ref data column)])
       (cond [(= column 0)
-             (cond [(string? value) value]
+             (cond [(and (> (vector-length data) 6) (vector-ref data 6)) "!!"]
+                   [(string? value) value]
                    [value
                     (let ([date (time-utc->date
                                   (make-time 'time-utc (mod value 1000000000) (div value 1000000000)))])

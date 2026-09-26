@@ -1741,6 +1741,29 @@
                    (map (lambda (name)
                           (list (list 'head name) (list 'head name) "<log>" 4096
                                 (string-append sources "/client/state/store.sls") #f #t #t)) '("screen A" "screen B")))
+                 (let ([conflicted (rpc head 'create "coherent conflict" '("alpha tail")
+                                        '((base . "alpha tail") (trailing . #f)))])
+                   (define (review)
+                     (head-read a
+                       `(let-values ([(text revision conflicts) (store:conflict-state ,conflicted)])
+                          (list text (map (lambda (c) (list-ref c 5)) conflicts)))))
+                   (rpc head 'edit conflicted 0 '(0 0 0 5) '("mine"))
+                   (rpc head 'reload conflicted '("disk tail") '((base . "disk tail") (trailing . #f)))
+                   (head-read a `(begin (store:snapshot ,conflicted) #t))
+                   (let ([cached (review)] [picked (rpc head 'conflicts conflicted)]
+                         [omitted (car (rpc head 'conflict-state conflicted (cadr (rpc head 'snapshot conflicted))))])
+                     (rpc head 'reload conflicted '("newdisk tail") '((base . "newdisk tail") (trailing . #f)))
+                     (test:check 'client-conflict-snapshots-work-with-cached-and-newer-text
+                       (list cached omitted (review))
+                       '((#("disk tail") (("disk"))) #f (#("newdisk tail") (("newdisk")))))
+                     (test:check 'attached-settlement-checks-the-reviewed-state-at-the-base
+                       (head-read a
+                         `(let ([stale (call-with-values (lambda () (store:resolve-picks! head:ui-actor ,conflicted ',picked '(1))) list)]
+                                [fresh (store:conflicts ,conflicted)])
+                            (let-values ([(status detail) (store:resolve-picks! head:ui-actor ,conflicted fresh '(1))])
+                              (list stale status (store:line ,conflicted 0)))))
+                       '((refused conflict-changed) applied "mine tail")))
+                   (rpc head 'delete conflicted))
                  ;; Exercise the installed save hook, including first load,
                  ;; reload, inactive roots and pinned code.
                  (let* ([probe (string-append sources "/apps/layout-probe.sls")]

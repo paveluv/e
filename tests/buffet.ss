@@ -15,7 +15,7 @@
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:) (prefix (head dispatch) dispatch:)
              (prefix (apps buffet) buffet:)
-             (prefix (foundation string) string:) (prefix (state store) store:) (prefix (test) test:))
+             (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (state store) store:) (prefix (test) test:))
 
      (define check test:check)
      ;; the app's keys are bound in its mode's context by its install
@@ -220,4 +220,14 @@
      (check 'the-api-filters-selects-and-tells-the-choice
        (list (eq? (buffet:chosen) (buffer "<picker-beta>")) (test:raises? (lambda () (buffet:select! (buffer "<picker-gamma>")))))
        '(#t #t))
+     (let ([id (store:create! head:ui-actor "conflicted-sort" '("abc") '((base . "abc") (trailing . #f)))])
+       (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 3) '("mine"))
+       (store:reload! head:ui-actor id '("disk") '((base . "disk") (trailing . #f)))
+       (head:before-frame!)
+       (buffet:filter! "")
+       (check 'modified-sorting-keeps-conflict-display-separate-from-time
+         (begin
+           (do ([i 0 (+ i 1)]) ((= i 3)) (buffet:toggle-sort-column! 1))
+           (let ([row (row-of "conflicted-sort")])
+             (and row (string:search row "!!" 0 (string-length row)) #t))) #t))
      (test:finish! 'buffet)))

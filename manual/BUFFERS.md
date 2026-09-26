@@ -151,8 +151,8 @@ local drafts, other heads and live work that will end. Shared unsaved text
 needs no confirmation. With `(main:shutdown-on-exit #t)`, quitting the last
 head uses this shutdown; cancelling keeps the head open.
 `e --restart` uses the same save path and also starts a replacement base. IDs,
-revisions and modification times survive, while undo history and local draft
-text do not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
+revisions, modification times, retained undo history and reload conflicts
+survive. Local draft text does not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
 ## File buffers
 
@@ -173,11 +173,14 @@ to existing buffers. Each path appears once. That history comes from the
 daemon's retained journal and remains available to the same named head when
 it reattaches.
 
-An unnamed buffer asks for a path when first saved. Saving as makes the buffer
+An unnamed buffer needs an explicit destination, supplied with `C-x C-w` or
+`(edit:save-file! path)`. Saving as makes the buffer
 visit the chosen file and updates its mode from the new name. File facts,
 the buffer label and its detected mode publish together. A callback's later
 rename, mode choice or file retarget survives the save returning. An ordinary
 re-save preserves a manually chosen mode.
+Active app buffers, such as Finder, refuse saving: their text and mode belong
+to the app. Copy any text you want to save into an ordinary buffer first.
 
 Visited paths are canonicalized. Relative paths, `.` and `..`, and symbolic-link
 aliases of one existing file resolve to the same buffer. Visiting an already
@@ -247,13 +250,21 @@ sides agree settles itself. While conflicts pend the buffer's status line and
 its `<buffet>` row show red `!!`, the buffer stays editable, and a save
 refuses: resolve the conflicts first.
 
+You can keep editing while conflicts are pending. Disk then means the text
+currently in that region, including your further edits. Undo restores the
+conflict alternatives as well as the text. If another disk change would
+overwrite further edits to an unresolved region, reload leaves the buffer
+and its history intact and asks you to resolve the pending conflicts first.
+
 `C-x !` opens the **conflicts browser**, `<conflicts>`, in the pop-up,
 window 0, and `(delta-log:conflicts! (window n))` in any window; clicking
 the red `!!` on a status line opens it too. It lists one row per pending
 conflict of every buffer a window shows, in the order of their regions in
 the text: its buffer, the entry's revision and actor, where it stands and
-both sides. Review is pick, then settle. `LEFT` picks the row's Mine side
-and `RIGHT` its Disk side; clicking either cell picks that side too.
+both sides. It initially selects the invoking buffer's first conflict,
+or the first available row if that buffer has none. Review is pick, then
+settle. `LEFT` picks the row's Mine side and `RIGHT` its Disk side; clicking
+either cell picks that side too.
 `S-LEFT` or the clickable `(all)` beside Mine picks Mine throughout the
 visible review; `S-RIGHT` or Disk's `(all)` picks Disk. These only change
 previews. If Mine regions overlap, the bulk choice refuses without changing
@@ -267,8 +278,11 @@ brighter; the buffer's window follows the current row. Two mine picks
 whose regions share text cannot both be written, so the later pick sends
 the other back to disk and says so. The last row, `Settle all as picked:
 3 mine, 2 disk`, settles every conflict as picked on `RET`, `SPC` or a
-click; `M-RET` commits the picks from any row. Each settlement is one
-undoable edit. Hovering a side cell or Settle makes it bold with a dotted
+click; `M-RET` commits the picks from any row. Each written alternative is
+one undoable edit. A buffer's choices commit together; if its alternatives
+changed since the displayed review, Settle leaves them pending and refreshes
+the review. Changed alternatives lose their old Mine picks.
+Hovering a side cell or Settle makes it bold with a dotted
 underline. `(delta-log:show-row!)` describes both sides in full without
 changing text or picks, including on the Settle row.
 `C-x C-s` saves the row's buffer, and `ESC`
@@ -333,8 +347,8 @@ author and the requesting head in history. An overlapping edit, a changed
 text property, or unavailable history refuses the whole action. Formatting
 and disk merges include their final-newline setting in the same transaction;
 undo never restores shared text or facts from a head's old snapshot.
-Read-only protection applies to every scope. Local buffers keep their own
-snapshot history and behave the same under `mine` and `all`.
+Read-only protection applies to every scope. Local tool buffers are read-only
+projections; undo belongs to their shared source buffers.
 
 The mark belongs to the buffer, while point belongs to each window.
 
@@ -419,7 +433,8 @@ shows, newest first within a buffer, under a heading: the buffer, the
 revision, the actor, the place, the removed and inserted text and the
 batch, an inverse naming the entry it undoes, redoes or reverts and a
 disabled entry the inverse it was undone, redone or reverted by, an entry
-disabled in the view marked with `-`. The current row's text is highlighted
+disabled in the view marked with `-`. It starts on the invoking buffer's
+newest entry when available. The current row's text is highlighted
 in its buffer's window and point sits on it, so the window follows the rows
 as a search's follows its matches, and the rows follow the windows and the
 store before every frame. `DOWN` and `UP` move, `PGDN` and `PGUP` page,
@@ -896,11 +911,10 @@ the current name after subscribers return, preserving their newer choices.
 For detection without mutation, `(mode:detect path first-line)` returns a
 registered mode record or `#f`. Its `mode:name` can join a larger fact batch;
 save uses this to detect outside the store's mutation lock.
-`base` is a string or `#f`; `trailing` and `disposable` are booleans;
-`history-limit`, how many undo entries a local buffer keeps, is an integer.
+`base` is a string or `#f`; `trailing` and `disposable` are booleans.
 Shared `modified` is derived and cannot be set or dropped. Generated output
 can set `disposable` to `#t`; registered apps and tool buffers do so already.
-The local modified flag remains available for private command history.
+Local tool buffers may set a modified flag for presentation; they have no undo history.
 Shared fact admission and reads copy finite data: pairs, vectors, strings,
 bytevectors, and scalar Scheme data. Mutating a supplied value or a read
 result cannot change store state; use a fact transaction. Cycles and runtime
@@ -936,6 +950,14 @@ facts, and that same change chain, all from one read. Use this form when a
 client needs to adopt both metadata and positions. Omitting the basis (or
 passing `#f` in process) keeps the original three-value form.
 
+`(store:conflict-state id)` returns `(values text revision conflicts)`
+from one read. Use it to build conflict previews: the regions and Disk
+alternatives describe exactly the returned text, which can be newer than
+the head's cached buffer. Each conflict is
+`(revision actor labels region mine disk)`; Disk always shows the current
+text that choosing Disk keeps, including changes since the first reload.
+Settled conflict records remain only while their resolution can be undone.
+
 In the base, `(store:state id basis)` returns `#f` for an absent buffer, or
 `(name text revision facts [changes])` from one read. Pass `#f` for no chain,
 or a revision to include it. Names and facts are owned copies; text remains
@@ -946,7 +968,8 @@ For derived views, `(head:snapshot-since b basis)` returns the same three
 values from this head's adopted text, for either a local or shared buffer.
 It does not pull a newer store snapshot. Pass the previous content revision,
 or `#f` when there is no previous basis. The head retains up to 256 adopted
-deltas; reset or expired history returns `#f` for the chain. Local content
+revision links. A link may contain several deltas or jump revisions after a
+reload; an unavailable basis returns `#f` for the chain. Local content
 revisions in this API, `head:edit-basis`, and `head:buffer-state` are distinct
 from `head:buffer-revision`, which counts repaint changes. Run head reads and
 mutations on the main pump; workers schedule work with `head:run-on-main!`.
@@ -1047,8 +1070,10 @@ one that undid somebody else's work.  Both return `(values 'applied revision)`,
 `(values 'blocked reason)`, or `(values 'nothing #f)`.  Reasons include
 `overlap`, `property-changed`, and `basis-too-old`.  A group commits entirely or refuses entirely;
 undo and redo preserve the revision log.  The retained delta chain and each
-group's parts are bounded at 256; unavailable history never permits a
-partial group undo.  A new edit invalidates that requester's redo.
+group's parts are bounded by `(store:log-retention)`, 4096 by default;
+unavailable history never permits a partial group undo. A selective rewrite
+temporarily disables members of their original actions; undoing it makes
+those members eligible again. A new edit invalidates that requester's redo.
 
 `(store:history-step! requester id direction scope)` uses the same transaction
 but returns an applied receipt `(revision action-id original-author group-key

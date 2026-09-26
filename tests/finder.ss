@@ -90,6 +90,19 @@
              (eq? (keymap:binding "C-x C-f") (top-level-value 'finder:open!)))
        (list '("empty/" "large/" "small/" "a 日本語 long (name).txt") (string-append "Directory: " root "/")
              #t #f #f #f #f #t))
+     ;; Save As cannot turn the app's projection into a visiting buffer or
+     ;; overwrite a file with its table. The next keys must still filter.
+     (check 'finder-refuses-save-as-without-changing-the-app-or-disk
+       (let* ([before (lines)]
+              [results (map (lambda (name)
+                              (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! (path name))))
+                         '("apple.txt" "new.txt"))])
+         (list results
+           (equal? before (lines))
+           (list (head:buffer-name (view)) (head:buffer-file (view))
+                 (head:buffer-fact (view) 'mode #f) (head:buffer-read-only (view)))
+           (call-with-input-file (path "apple.txt") get-string-all) (file-exists? (path "new.txt"))))
+       '((refused refused) #t ("<finder>" #f "finder" #t) "one\ntwo\n" #f))
      (press! "DOWN" "DOWN") (type! "ONly") ; begin on small/, whose descendant will match
      (check 'finder-single-recursive-match-is-the-default
        (list (visible? "small/nested/needle-") (chosen-is? "small/nested/needle-only.txt")) '(#t #t))

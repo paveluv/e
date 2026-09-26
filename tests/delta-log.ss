@@ -280,8 +280,12 @@
      (head:show-buffer! g)
      (window:split-right!)
      (head:show-buffer! h)
+     (window:focus! (window-showing "review-界"))
      (delta-log:conflicts! 0)
      (define panel (head:current-window))
+     (check 'conflicts-opens-on-the-invoking-buffer-not-the-first-visible-one
+       (list (head:point) (contains? (head:buffer-line (head:current-buffer) (car (head:point))) "review-界"))
+       '((2 . 0) #t))
      (define (click! row col)
        (parameterize ([head:app-event-buffer-position (cons row col)] [head:app-event-focus fw])
          (head:dispatch-app-event! "MOUSE-CLICK"))
@@ -337,20 +341,78 @@
        (list (vector->list (head:buffer-lines h)) (store:conflicts (head:buffer-store-id h)))
        '(("mine 界") ()))
 
-     ;; A bulk Mine choice must not concatenate alternatives for the same
-     ;; region. Validate before changing either picks or shared text.
+     ;; A foreign edit joining pending regions keeps one coherent Mine
+     ;; image, which the bulk controls can preview and settle directly.
      (delta-log:close!)
-     (check 'bulk-mine-refuses-overlapping-regions-before-any-change
-       (map (lambda (disk)
-              (let ([overlap (store:create! bot "overlap" '("alpha beta gamma") '((base . "alpha beta gamma") (trailing . #f)))])
-                (store:edit! head:ui-actor overlap 0 (text:make-span 0 11 0 16) '("G"))
-                (store:edit! head:ui-actor overlap 1 (text:make-span 0 0 0 5) '("A"))
-                (store:reload! bot overlap (list disk) (list (cons 'base disk) '(trailing . #f)))
-                (head:show-buffer! (head:adopt-store-buffer! overlap))
-                (list (guard (ex [else 'refused]) (delta-log:pick-all! 'mine))
-                      (guard (ex [else 'refused]) (delta-log:resolve-all! 'mine))
-                      (map cdr (delta-log:picks)) (vector->list (head:buffer-lines (head:current-buffer))))))
-         '("disk" ""))
-       '((refused refused (disk disk) ("disk")) (refused refused (disk disk) (""))))
+     (check 'bulk-mine-keeps-the-complete-image-of-joined-regions
+       (let ([overlap (store:create! bot "overlap" '("alpha beta gamma") '((base . "alpha beta gamma") (trailing . #f)))])
+         (store:edit! head:ui-actor overlap 0 (text:make-span 0 11 0 16) '("G"))
+         (store:edit! head:ui-actor overlap 1 (text:make-span 0 0 0 5) '("A"))
+         (store:reload! bot overlap '("DISK beta DISK") '((base . "DISK beta DISK") (trailing . #f)))
+         (head:show-buffer! (head:adopt-store-buffer! overlap))
+         (delta-log:pick! 1 'mine)
+         (delta-log:pick! 2 'disk)
+         (store:edit! bot overlap (store:revision overlap) (text:make-span 0 0 0 14) '(""))
+         ;; No frame between the edit and Settle: a reused revision cannot
+         ;; expand an old Mine choice into the other region picked Disk.
+         (check 'settlement-rechecks-the-reviewed-alternatives-before-writing
+           (list (delta-log:resolve-all!) (store:line overlap 0) (map cdr (delta-log:picks)))
+           '(0 "" (disk)))
+         (head:show-buffer! (head:adopt-store-buffer! overlap))
+         (list (delta-log:pick-all! 'mine) (delta-log:resolve-all! 'mine)
+               (map cdr (delta-log:picks)) (vector->list (head:buffer-lines (head:current-buffer)))))
+       '(1 1 () ("A beta G")))
+
+     ;; The displayed record may change under the same ID, or disappear
+     ;; into another group, between painting a row and activating its cell.
+     (for-each
+       (lambda (mouse?)
+         (let ([id (store:create! bot "stale row" '("alpha beta gamma") '((base . "alpha beta gamma") (trailing . #f)))])
+           (store:edit! head:ui-actor id 0 (text:make-span 0 11 0 16) '("G"))
+           (store:edit! head:ui-actor id 1 (text:make-span 0 0 0 5) '("A"))
+           (store:reload! bot id '("DISK beta DISK") '((base . "DISK beta DISK") (trailing . #f)))
+           (head:show-buffer! (head:adopt-store-buffer! id))
+           (delta-log:conflicts!)
+           (head:before-frame!)
+           (let* ([row (if mouse? 2 1)] [line (vector-ref (head:window-lines (head:current-window)) row)]
+                  [col (string:search line (if mouse? "\"G\"" "\"A\"") 0 (string-length line))])
+             (head:goto! (cons row 0))
+             (store:edit! bot id (store:revision id) (text:make-span 0 0 0 14) '("custom"))
+             (if mouse?
+                 (parameterize ([head:app-event-buffer-position (cons row col)]) (head:dispatch-app-event! "MOUSE-CLICK"))
+                 (delta-log:pick-mine!))
+             (let* ([sides (map cdr (delta-log:picks))]
+                    [shown? (contains? (vector-ref (head:buffer-lines (head:current-buffer)) 1) "A beta G")]
+                    [settled (delta-log:commit-picks!)])
+               (check 'stale-row-activation-refreshes-without-selecting-an-unseen-mine
+                 (list sides shown? settled (store:line id 0)) '((disk) #t 1 "custom"))))
+           (delta-log:close!)))
+       '(#f #t))
+
+     (let ([source (head:new-buffer! "live view")])
+       (head:show-buffer! source)
+       (head:buffer-lines-set! source '#("ac"))
+       (head:goto! '(0 . 1))
+       (insert-text! "b")
+       (let ([id (head:buffer-store-id source)])
+         (delta-log:toggle! (store:revision id))
+         (store:edit! bot id (store:revision id) (text:make-span 0 3 0 3) '("x"))
+         (head:before-frame!)
+         (check 'a-live-view-shows-foreign-edits-before-commit
+           (let* ([preview (head:buffer-lines (head:current-buffer))] [status (delta-log:commit!)])
+             (list preview status (head:buffer-lines source))) '(#("acx") applied #("acx")))))
+     (let ([id (store:create! bot "live picks" '("alpha" "beta") '((base . "alpha\nbeta") (trailing . #f)))])
+       (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 5) '("X"))
+       (store:edit! head:ui-actor id 1 (text:make-span 1 0 1 4) '("Y"))
+       (store:reload! bot id '("ALPHA" "BETA") '((base . "ALPHA\nBETA") (trailing . #f)))
+       (head:show-buffer! (head:adopt-store-buffer! id))
+       (let* ([cs (store:conflicts id)] [revision (store:revision id)])
+         (delta-log:pick! (caadr cs) 'mine)
+         (store:resolve! bot id (caar cs) 'disk)
+         (head:before-frame!)
+         (check 'preview-regions-follow-settlement-without-a-text-revision
+           (list (= revision (store:revision id))
+                 (map cdr (filter (lambda (r) (eq? (car r) (head:current-buffer))) (paint:highlight-ranges))))
+           '(#t ((0 0 1 conflict-mine))))))
 
      (test:finish! 'delta-log)))

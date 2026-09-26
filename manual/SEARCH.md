@@ -48,8 +48,10 @@ view committed, or the whole step undone.
 The text to find is a `needle`: while you type it at M-x, its matches
 highlight in the current buffer as a search would, the prompt notes `[1 of
 3]`, and Tab visits the next occurrence, Shift-Tab the previous, inserting
-nothing. Point follows to the occurrence's start; cancelling the prompt
-restores point. `search:count` takes a needle too. Matching is exact.
+nothing. Point previews the occurrence's start; leaving the argument or
+accepting or cancelling the prompt restores the original point and selection,
+carried across any intervening edits. Matches refresh when the buffer changes.
+`search:count` takes a needle too. Matching and highlighting are exact.
 
 `search:replace!` is scoped by the selection or the scope forms:
 
@@ -67,4 +69,3 @@ Each call is one undo step in its buffer and retains its point, through
 occurrences were found against and replaces each in its own edit, carrying
 the ones still to come across the changes the store reports meanwhile, other
 actors' included. `search:count` counts the same way.
-

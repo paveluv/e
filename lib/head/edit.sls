@@ -221,10 +221,8 @@
   ;; command's edits across buffers share it; one per fresh entry
   ;; otherwise, chained typing sharing its entry's.
   (define edit-batch (make-parameter #f))
-  (define batch-counter 0)
   (define (mint-batch!)
-    (set! batch-counter (+ batch-counter 1))
-    (list head:ui-actor batch-counter))
+    (list head:ui-actor (gensym->unique-string (gensym "batch"))))
 
   ;; The entry a buffer's latest recorded edit joined, for the next key of
   ;; a typing run to continue; an undo, a redo or a reread forgets it, so a
@@ -233,7 +231,7 @@
 
   (define (forget-latest! b) (hashtable-delete! latest-edits b))
 
-  (define reload-due #f) ; the buffer whose file changed under the edit being made, reloaded before the frame
+  (define reload-due '()) ; files noticed while a command is editing
 
   (define (check-disk-before-edit!)
     ;; The start of an edit session -- one undo entry; chained typing
@@ -257,25 +255,26 @@
                       [(not disk) (void)]
                       [(string=? (car disk) base)
                        (head:buffer-facts-set! b (list (cons 'stamp (cdr disk))) (property:select facts '(file base stamp)))]
-                      [else (set! reload-due b)]))))))))))
+                      [else (unless (memq b reload-due) (set! reload-due (cons b reload-due)))]))))))))))
 
   (define (reload-if-due!)
     ;; before the frame: the buffer an edit found changed on disk reloads,
     ;; the disk read again now; a file the store cannot reload says so in
     ;; the echo, as reload! does, and the edit stands
-    (let ([b reload-due])
-      (set! reload-due #f)
-      (when (and b (memq b (head:buffers)) (head:buffer-store-id b))
-        (let-values ([(text revision facts) (head:buffer-state b)])
-          (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
-                [base (cond [(assq 'base facts) => cdr] [else #f])])
-            (when (and path base)
-              (let ([disk (guard (ex [else #f]) (read-disk path))])
-                (when (and disk (not (string=? (car disk) base)))
-                  (guard (ex [(kernel:refusal? ex) (void)])
-                    (let-values ([(status detail) (reload-from-disk! b path disk)])
-                      (unless (eq? status 'applied)
-                        (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) detail)))))))))))))
+    (let ([pending reload-due])
+      (set! reload-due '())
+      (for-each (lambda (b)
+                  (when (and b (memq b (head:buffers)) (head:buffer-store-id b))
+                    (let-values ([(text revision facts) (head:buffer-state b)])
+                      (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
+                            [base (cond [(assq 'base facts) => cdr] [else #f])])
+                        (when (and path base)
+                          (let ([disk (guard (ex [else #f]) (read-disk path))])
+                            (when (and disk (not (string=? (car disk) base)))
+                              (guard (ex [(kernel:refusal? ex) (void)])
+                                (let-values ([(status detail) (reload-from-disk! b path disk)])
+                                  (unless (eq? status 'applied)
+                                    (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) (merge-failure detail))))))))))))) pending)))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and undo: #t forbids all edits,
@@ -324,7 +323,7 @@
                               (thunk))])
                 ;; the file the edit found changed on disk reloads now, the
                 ;; edit among the entries the merge carries or conflicts
-                (reload-if-due!)
+                (unless group (reload-if-due!))
                 result))))))
 
   (define-syntax with-recorded-edit
@@ -332,7 +331,7 @@
       [(_ label body ...)
        (call-with-recorded-edit! label (lambda () body ...))]))
 
-  (edoc "The batch label of the edits in the current one-edit group, the (actor counter) pair they share in the delta log, or #f outside a group."
+  (edoc "The batch label of the edits in the current one-edit group, the (actor token) pair they share in the delta log, unique across head reattachments, or #f outside a group."
         (returns (or list #f)))
   (define (current-batch) (edit-batch))
 
@@ -346,7 +345,9 @@
     ;; Nested groups defer to the outermost.
     (if (edit-group)
         (thunk)
-        (parameterize ([edit-group (box (cons label '()))] [edit-batch (mint-batch!)]) (thunk))))
+        (dynamic-wind void
+          (lambda () (parameterize ([edit-group (box (cons label '()))] [edit-batch (mint-batch!)]) (thunk)))
+          reload-if-due!)))
 
   (define (check-undo-scope scope)
     (unless (memq scope '(mine all))
@@ -1060,7 +1061,7 @@
     (unless (property:matches? review facts)
       (refuse-file! "Buffer's file or baseline changed; operation cancelled. Review the file again.")))
 
-  (edoc "Save the current buffer to a file, guarded by content: when the disk no longer matches the buffer's base, reload it first and write when no conflict pends, else stop for their resolution; where the store cannot reload, reread the disk instead, undoably, and refuse. Saving onto an existing file first reads what it holds into a backup, a trashed buffer named after the file with .bak that backups lists and restore! brings back; nothing asks."
+  (edoc "Save the current buffer to a file; active app buffers refuse because their app owns the text and mode. Guarded by content: when the disk no longer matches the buffer's base, reload it first and write when no conflict pends, else stop for their resolution; where the store cannot reload, reread the disk instead, undoably, and refuse. Saving onto an existing file first reads what it holds into a backup, a trashed buffer named after the file with .bak that backups lists and restore! brings back; nothing asks."
         (target file "where to write: the buffer's own file, or a new destination it visits from then on")
         (returns boolean "whether the file was written"))
   (define (save-file! target)
@@ -1073,6 +1074,9 @@
     (define adopted? #f)
     (define disk #f)
     (define kept #f)
+    (define (check-source!)
+      (when (head:app-buffer? b)
+        (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (head:buffer-name b)))))
     (define (write! review)
       (define written? #f)
       (guard (ex [else (parameterize ([message-source 'save-file!])
@@ -1086,6 +1090,8 @@
         ;; edits before these facts return.  Its dirty state stays derived.
         (let-values ([(text revision facts) (head:buffer-state b)])
           (check-file-review! facts review)
+          (when (> (cond [(assq 'conflicts facts) => cdr] [else 0]) 0)
+            (refuse-file! "Resolve the conflicts first"))
           (review-disk! path disk)
           (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
                  [written (file:text text trailing)]
@@ -1110,12 +1116,19 @@
               (refuse-file! "Buffer's file state changed; saved baseline was not updated."))))
         ;; File facts, label and adopted mode commit together. No follow-up
         ;; write may overwrite a subscriber's newer choice. Re-save keeps mode.
-        (log:add! 'save-file! (cons "Wrote" path))
         (file:run-post-save-hooks! path)
+        (if (and adopted? kept)
+            (parameterize ([message-source 'save-file!])
+              (set-message! (format "Wrote ~a; what it held is kept as ~a" path kept)))
+            (log:add! 'save-file! (cons "Wrote" path)))
         #t))
+    (check-source!)
     (when (head:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
     (file:run-pre-save-hooks! path)
+    (check-source!)
     (let-values ([(text revision facts) (head:buffer-state b)])
+      (when (> (cond [(assq 'conflicts facts) => cdr] [else 0]) 0)
+        (refuse-file! "Resolve the conflicts first"))
       (let* ([review (file-review facts)] [base (cond [(assq 'base facts) => cdr] [else #f])]
              [modified (cond [(assq 'modified facts) => cdr] [else #f])])
         (set! adopted? (not (equal? path (cond [(assq 'file facts) => cdr] [else #f]))))
@@ -1129,15 +1142,6 @@
           [(and disk (not adopted?)
              (not (and base (string=? (car disk) base))))
            (stale-save! b path disk review write!)]
-          [(and disk adopted?)
-           ;; saving under a new name onto an existing file: what the file
-           ;; held is backed up first, and the echo says where it went
-           (and (write! review)
-                (begin
-                  (when kept
-                    (parameterize ([message-source 'save-file!])
-                      (set-message! (format "Wrote ~a; what it held is kept as ~a" path kept))))
-                  #t))]
           [else (write! review)]))))
 
   (define (back-up! path disk)
@@ -1188,6 +1192,7 @@
     (case detail
       [(no-base) "without a saved baseline to merge from"]
       [(basis-too-old) "past the log's reach to merge"]
+      [(pending-edits) "resolve the pending conflicts first; further edits have been preserved"]
       [else (format "not merged (~a)" detail)]))
 
   (define (reread-through-store! b path disk why)
@@ -1211,10 +1216,11 @@
     ;; where the store cannot, a baseline the log no longer reaches say,
     ;; reread it instead, undoably
     (let-values ([(status detail) (reload-from-disk! b path disk 'visit-file!)])
-      (or (eq? status 'applied)
-          (reread-through-store! b path disk (merge-failure detail)))))
+      (cond [(eq? status 'applied) #t]
+            [(eq? detail 'pending-edits) (set-message! (merge-failure detail)) #f]
+            [else (reread-through-store! b path disk (merge-failure detail))])))
 
-  (define (current-file-disk who)
+  (define (current-file-disk)
     ;; the current buffer, its file's path and the disk's state, for the
     ;; commands that take the disk; refused without a file or unreadable
     (let ([b (head:current-buffer)])
@@ -1229,7 +1235,7 @@
         (edits))
   (define (reread!)
     (check-editable!)
-    (let-values ([(b path disk revision facts) (current-file-disk 'reread!)])
+    (let-values ([(b path disk revision facts) (current-file-disk)])
       (let-values ([(status detail)
                     (head:store-reread! b (file:lines (car disk))
                       (list (cons 'trailing (file:ends-in-newline? (car disk)))
@@ -1242,10 +1248,10 @@
 
   (edoc "Reload the current buffer's file through the store: the disk's text becomes the baseline again and the buffer's edits are merged on top, a collision pending as a conflict, the red !!; where the store cannot reload, the echo says so and C-x C-r rereads. Reopening the file and editing it after a change on disk reload it the same way.")
   (define (reload!)
-    (let-values ([(b path disk revision facts) (current-file-disk 'reload!)])
+    (let-values ([(b path disk revision facts) (current-file-disk)])
       (let-values ([(status detail) (reload-from-disk! b path disk)])
         (unless (eq? status 'applied)
-          (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) detail))))))
+          (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) (merge-failure detail)))))))
 
   (define (stale-save! b path disk review write!)
     ;; The file changed on disk since the baseline: reload first, then write
@@ -1256,6 +1262,7 @@
         [(and (eq? status 'applied) (null? (cadr detail)))
          (write! (list (car review) (cons 'base (car disk))))]
         [(eq? status 'applied) (refuse-file! "Resolve the conflicts first")]
+        [(eq? detail 'pending-edits) (refuse-file! (merge-failure detail))]
         [else
          ;; the disk's changes cannot be merged: the disk is reread, undoably,
          ;; and the save waits; undo brings the buffer's text back to save

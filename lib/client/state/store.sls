@@ -5,9 +5,9 @@
 ;; delta on the wire, never the buffer's text.
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export blame buffer-list buffer-name conflicts create! delete! discard! edit! edit-with-snapshot! exists?
+  (export blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks properties property reload! rename! reread! reset! resolve! revision rewrite!
+          (rename (log-entries log)) marks properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite!
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           view visible? visit! watch!)
@@ -470,11 +470,31 @@
     (unless (<= (length access) 1) (error 'resolve! "expected one write access"))
     (apply values (mutate actor id 'resolve (list revision choice))))
 
-  (edoc "A buffer's pending reload conflicts from the base, (entry disk inverse) revisions each."
+  (edoc "Settle exactly the reviewed conflict snapshot in one base transaction: (values status detail)."
+        (actor actor "the actor identity")
+        (id integer "the buffer id")
+        (expected list "the reviewed conflict records")
+        (mine (list-of integer) "the revisions picked Mine")
+        (access (list-of any) "write access, at most one"))
+  (define (resolve-picks! actor id expected mine . access)
+    (unless (<= (length access) 1) (error 'resolve-picks! "expected one write access"))
+    (apply values (mutate actor id 'resolve-picks (list expected mine))))
+
+  (edoc "A buffer's pending reload conflicts from the base, (revision actor labels region mine disk) each; Disk contains the current lines that settlement keeps."
         (id integer "the buffer id")
         (returns list))
   (define (conflicts id)
     (client:request 'conflicts id))
+
+  (edoc "Read text, revision and pending conflicts together from the base: (values text revision conflicts), with all conflict regions in this text's coordinates."
+        (id integer "the buffer id")
+        (returns any "(values text revision conflicts)"))
+  (define (conflict-state id)
+    (let* ([old (entry id)]
+           [state (client:request 'conflict-state id (and old (caddr old)))])
+      ;; Rendering a preview repeatedly must not resend unchanged text.
+      ;; The base omits it only when this captured cache revision matches.
+      (values (or (car state) (cadr old)) (cadr state) (caddr state))))
 
   (edoc "A buffer's newest edits with their spans in the current text: (span actor revision) each."
         (id integer "the buffer id")

@@ -290,4 +290,76 @@
        (undo! id)
        (check 'undoing-the-latest-edit-leaves-the-earlier-one-to-combine (reload! id '("baz bar")) (clean '("baz BAR"))))
 
+     ;; Compare final changes, even when typed in separate actions. The
+     ;; same replacement must not replay a later insertion a second time;
+     ;; shared and independent changes may coexist on each side.
+     (for-each
+       (lambda (case)
+         (let ([id (visit (car case))])
+           (for-each (lambda (e) (edit! id e)) (cadr case))
+           (check 'shared-multi-step-changes-are-applied-once
+             (reload! id (caddr case)) (clean (cadddr case)))))
+       '((("gg hh ii") (((0 . 3) (0 . 5) ("X")) ((0 . 4) (0 . 5) (" a")))
+          ("gg X aii") ("gg X aii"))
+         (("abc" "unchanged" "local") (((0 . 0) (0 . 3) ("X")) ((0 . 1) (0 . 1) ("!")) ((2 . 0) (2 . 5) ("LOCAL")))
+          ("X!" "DISK" "local") ("X!" "DISK" "LOCAL"))
+         (("aa bb cc" "dd ee ff" "gg hh ii")
+          (((0 . 6) (1 . 0) (" a")) ((0 . 16) (1 . 3) (" a")) ((0 . 3) (0 . 21) ("")) ((0 . 0) (0 . 3) ("")))
+          ("ii") ("ii"))))
+     (let ([id (visit '("alpha beta gamma"))])
+       (edit! id '((0 . 11) (0 . 16) ("G")))
+       (edit! id '((0 . 0) (0 . 5) ("A")))
+       (check 'overlapping-conflicts-form-one-complete-alternative
+         (list (reload! id '("disk")) (keep! id 'mine))
+         '((("disk") (((0 0 0 4) ("A beta G") ("disk")))) ("A beta G"))))
+     ;; Shared boundary text must not escape to the end of disk's new
+     ;; line, including blanks that the net diff aligns with old blanks.
+     (for-each
+       (lambda (scenario)
+         (let ([id (visit (car scenario))])
+           (for-each (lambda (e) (edit! id e)) (cadr scenario))
+           (check 'shared-boundaries-are-not-replayed-after-new-disk-lines
+             (list (car (reload! id (caddr scenario))) (keep! id 'disk))
+             (list (caddr scenario) (caddr scenario)))))
+       '((("alpha" "beta") (((0 . 0) (1 . 0) ("mine")) ((0 . 8) (0 . 8) ("!")))
+          ("minebeta!" "FOREIGN"))
+         (("alpha beta") (((0 . 0) (0 . 6) ("mine")) ((0 . 8) (0 . 8) (" ")))
+          ("minebeta " "FOREIGN"))
+         (("alpha beta") (((0 . 0) (0 . 6) ("new" "line")) ((0 . 0) (0 . 0) (" ")))
+          (" new" "linebeta" "FOREIGN"))))
+     (let ([id (visit '("a b"))])
+       (edit! id '((0 . 0) (0 . 3) ("X Y")))
+       (check 'a-partly-shared-replacement-preserves-its-unshared-mine-side
+         (list (reload! id '("X b")) (keep! id 'mine))
+         '((("X b") (((0 0 0 3) ("X Y") ("X b")))) ("X Y"))))
+     (let ([id (visit '("alpha" "beta" "gamma"))])
+       (for-each (lambda (e) (edit! id e))
+         '(((0 . 0) (2 . 5) ("mine")) ((0 . 0) (0 . 0) ("aa"))
+           ((0 . 2) (0 . 6) ("aa")) ((0 . 1) (0 . 3) ("")) ((0 . 0) (0 . 1) (""))))
+       (check 'overlapping-typing-keeps-its-complete-mine-alternative
+         (list (car (reload! id '("disk"))) (keep! id 'mine)) '(("disk") ("a"))))
+
+     ;; Reduced histories with cancelled and rewritten entries: identical
+     ;; final sides coalesce regardless of the route taken to reach them.
+     (for-each
+       (lambda (scenario)
+         (let ([id (visit (car scenario))])
+           (for-each
+             (lambda (op)
+               (let ([actor (if (eq? (cadr op) 'a) alice '(human bob))])
+                 (case (car op)
+                   [(edit) (store:edit! actor id (store:revision id) (text:datum->span (caddr op)) (cadddr op))]
+                   [(undo) (store:undo! actor id)]
+                   [(rewrite) (store:rewrite! actor id (caddr op))])))
+             (cadr scenario))
+           (let ([mine (text-of id)])
+             (check 'inverse-histories-reload-identical-text-without-conflicts (reload! id mine) (clean mine)))))
+       '((("abc") ((edit a (0 0 0 3) ("X")) (edit b (0 0 0 0) ("" ""))
+                   (undo a) (edit a (0 0 1 3) ("Y"))))
+         (("abcd") ((edit a (0 1 0 3) ("")) (edit b (0 0 0 1) ("")) (undo a)))
+         (("alpha beta" "gamma delta" "epsilon zeta")
+          ((edit a (1 10 2 11) (" ")) (rewrite a (1)) (edit a (0 1 0 6) (""))
+           (edit a (1 4 1 11) ("" "")) (edit b (1 1 1 4) ("aa"))
+           (edit b (0 2 0 2) ("")) (edit a (0 5 2 0) ("X")) (rewrite a (6))))))
+
      (test:finish! 'two-actors)))

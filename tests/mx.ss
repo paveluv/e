@@ -17,7 +17,7 @@
              (prefix (head window) window:) (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
-             (prefix (foundation edoc) edoc:))
+             (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
 
      (define check test:check)
      (define (settled text) (eval:settle-completion text (string-length text)))
@@ -310,7 +310,7 @@
 
      ;; A needle argument searches instead of completing: its type makes a
      ;; searcher that highlights the matches from point on, visits them in
-     ;; turn without inserting, and restores point unless accepted
+     ;; turn without inserting, and restores the command's original point
      (define needles (head:new-buffer! "needles"))
      (head:buffer-lines-set! needles (list->vector '("alpha beta" "gamma alpha" "alpha")))
      (head:show-buffer! needles)
@@ -329,7 +329,30 @@
      (let ([s (make)])
        ((prompt:searcher-find s) "gamma")
        ((prompt:searcher-done s) #t))
-     (check 'ending-a-search-accepted-keeps-the-match (head:point) '(1 . 0))
+     (check 'ending-an-accepted-preview-restores-point (head:point) '(0 . 3))
+     (search:init!)
+     (head:buffer-lines-set! needles '#("old OLD old"))
+     (head:goto! '(0 . 0))
+     (set-mark-command!)
+     (head:goto! '(0 . 11))
+     (let ([s (make)])
+       ((prompt:searcher-find s) "old")
+       (check 'needle-highlights-use-the-commands-exact-matching
+         (map (lambda (r) (list (cadr r) (caddr r)))
+           (filter (lambda (r) (eq? (cadddr r) 'match)) (paint:highlight-ranges))) '((0 3) (8 11)))
+       ((prompt:searcher-done s) #t)
+       (check 'accepting-a-needle-preserves-the-selected-command-region (search:count "old") 2))
+     (head:buffer-marked-set! needles #f)
+     (head:goto! '(0 . 0))
+     (let ([s (make)])
+       ((prompt:searcher-find s) "old")
+       (store:edit! '(head "other") (head:buffer-store-id needles) (head:buffer-store-rev needles)
+         (text:make-span 0 0 0 0) '("prefix "))
+       (head:before-frame!)
+       (check 'needle-navigation-follows-foreign-edits
+         (list ((prompt:searcher-next s)) (head:point)) '((2 . 2) (0 . 15)))
+       ((prompt:searcher-done s) #f)
+       (check 'cancelling-a-preview-restores-the-rebased-origin (head:point) '(0 . 7)))
      ;; a searching string is never settled shut
      (check 'a-needle-string-is-not-settled
        (settled "(search:replace! \"alpha")

@@ -26,7 +26,7 @@
           (rename (policy-grants grants)) live (rename (make-policy make)) mint! policy?
           (rename (reader-policy reader)) revoke! revoke-actor! revoked? session-actor
           session-answer! session-ask! session-cancel! session-edit! session-eval!
-          session-history-step! session-owner session-redo! session-reload! session-reread! session-resolve! session-rewrite! session-send!
+          session-history-step! session-owner session-redo! session-reload! session-reread! session-resolve! session-resolve-picks! session-rewrite! session-send!
           session-undo! session? sessions)
   (import (except (rnrs) current-output-port)
           (only (chezscheme)
@@ -411,6 +411,17 @@
       (lambda ()
         (session-mutate! s 'resolve id
           (lambda (actor access) (store:resolve! actor id revision (datum:copy choice) access))))))
+
+  (edoc "Settle exactly a reviewed conflict snapshot as a session: (values status detail)."
+        (s (record session) "the session")
+        (id integer "the buffer")
+        (expected list "the reviewed conflict records")
+        (mine (list-of integer) "the revisions picked Mine"))
+  (define (session-resolve-picks! s id expected mine)
+    (call-as-session s
+      (lambda ()
+        (session-mutate! s 'resolve-picks id
+          (lambda (actor access) (store:resolve-picks! actor id expected mine access))))))
 
   (edoc "Send a message to another actor as the session, in an envelope naming the session as its sender."
         (s (record session) "the session")
