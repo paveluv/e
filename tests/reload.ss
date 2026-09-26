@@ -233,6 +233,17 @@
      (head:show-buffer! b)
      (delete-file path3)
 
+     ;; the cursor crosses a reread on its line, and its undo back: the disk
+     ;; adds a line at the top, the cursor moves down a line and returns
+     (head:goto! '(1 . 2))
+     (define first-line (car (lines)))
+     (write-disk! (string-append "NEW\n" (string:join (lines) "\n") "\n"))
+     (check 'the-cursor-crosses-a-reread-and-its-undo-on-its-line
+       (let* ([after (begin (reread!) (list (car (lines)) (head:point)))]
+              [back (begin (undo!) (list (car (lines)) (head:point)))])
+         (list after back))
+       (list '("NEW" (2 . 2)) (list first-line '(1 . 2))))
+
      ;; reread adopts the disk as one undoable edit: undo brings the buffer back
      (define before-reread (lines))
      (write-disk! "fresh\n")
@@ -240,6 +251,25 @@
      (check 'reread-adopts-the-disk (list (lines) (head:buffer-modified b)) '(("fresh") #f))
      (undo!)
      (check 'undo-brings-the-text-back-after-a-reread (lines) before-reread)
+     ;; a head's positions cross a reload on their text: the disk inserts a
+     ;; line above the cursor, and the cursor follows its line down
+     (define path4 (string-append dir "/positions.txt"))
+     (file:write! path4 (file:lines "one\ntwo\nthree\n") #t)
+     (visit-file! path4)
+     (define pb (head:current-buffer))
+     (file:write! path4 (file:lines "zero\none\ntwo\nthree\n") #t)
+     ;; the write may share the visit's clock tick: the mtime hint is dropped
+     ;; so the edit's disk check reads the content
+     (head:buffer-facts-set! pb '((stamp . #f)))
+     (head:goto! '(1 . 2))
+     (check 'the-cursor-crosses-a-reload-on-its-line
+       (list (guard (ex [(kernel:reloaded? ex) 'reloaded]) (insert-text! "!"))
+             (vector->list (head:buffer-lines pb)) (head:point))
+       '(reloaded ("zero" "one" "two" "three") (2 . 2)))
+     (kill-buffer! pb)
+     (head:show-buffer! b)
+     (delete-file path4)
+
      (delete-file path)
      (delete-directory dir)
      (test:finish! 'reload)))

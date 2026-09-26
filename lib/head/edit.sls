@@ -1144,12 +1144,13 @@
                              (list 'backup path (cdr disk) sum)))])
             (store:buffer-name id)))))
 
-  (define (reload-from-disk! b path disk)
+  (define (reload-from-disk! b path disk . source)
     ;; The buffer reloaded from its file through the store: the disk's text
     ;; the baseline again, the buffer's entries reapplied on top, an entry the
     ;; disk contradicts pending as a conflict with the disk's side shown;
     ;; -> (values status detail), applied with (revision conflicts), and the
-    ;; echo told. Nothing is written.
+    ;; echo told under the command that reloaded, reload! unless the caller
+    ;; names its own. Nothing is written.
     (let ([disk (review-disk! path disk)])
       (let-values ([(status detail)
                     (head:store-reload! b (file:lines (car disk))
@@ -1157,7 +1158,7 @@
                             (cons 'base (car disk)) (cons 'stamp (cdr disk))))])
         (when (eq? status 'applied)
           (let ([n (length (cadr detail))])
-            (parameterize ([message-source 'visit-file!])
+            (parameterize ([message-source (if (pair? source) (car source) 'reload!)])
               (set-message!
                 (if (zero? n)
                     (format "Reloaded ~a, the buffer's edits merged" path)
@@ -1192,7 +1193,7 @@
     ;; The file changed on disk since the buffer's baseline: reload it, and
     ;; where the store cannot, a baseline the log no longer reaches say,
     ;; reread it instead, undoably
-    (let-values ([(status detail) (reload-from-disk! b path disk)])
+    (let-values ([(status detail) (reload-from-disk! b path disk 'visit-file!)])
       (or (eq? status 'applied)
           (reread-through-store! b path disk (merge-failure detail)))))
 

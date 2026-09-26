@@ -51,8 +51,11 @@
                    (= revision (head:buffer-store-rev b))))
             #t)
 
-     ;; A reset cuts history.  Do not apply the queued pre-reset edit or
-     ;; a partial post-reset suffix to positions from the old baseline.
+     ;; A reset clears the log, but a reader crosses it whole: the queued
+     ;; pre-reset edit survives as a bridge, the reset is bridged by a line
+     ;; diff of the two texts, and the post-reset edit follows, so the point
+     ;; is carried, not clamped; its line replaced whole, it collapses to the
+     ;; replacement's end, ab|cdef -> Xab|cdef -> text| -> YZtext|.
      (head:buffer-lines-set! b '#("abcdef"))
      (head:window-prow-set! w 0)
      (head:window-pcol-set! w 2)
@@ -62,17 +65,17 @@
      (store:reset! bot id '("text"))
      (edit! (text:make-span 0 0 0 0) '("YZ"))
      (head:before-frame!)
-     (check 'reset-gap-adopts-current-text (head:buffer-lines b) '#("YZtext"))
-     (check 'reset-gap-does-not-replay-partial-history (head:point) '(0 . 2))
-     (check 'reset-gap-publishes-clamped-point
-            (store:mark head:ui-actor id 'point) '(0 . 2))
+     (check 'reset-adopts-current-text (head:buffer-lines b) '#("YZtext"))
+     (check 'reset-carries-the-point-across-its-line-diff (head:point) '(0 . 6))
+     (check 'reset-publishes-the-carried-point
+            (store:mark head:ui-actor id 'point) '(0 . 6))
 
      ;; Even a long queued stream is not evidence of a complete chain:
      ;; once the retained history is too short, resync explicitly.
      (do ([i 0 (+ i 1)]) ((= i 257))
        (edit! (text:make-span 0 0 0 0) '("x")))
      (head:before-frame!)
-     (check 'truncated-history-does-not-replay-partial-history (head:point) '(0 . 2))
+     (check 'truncated-history-does-not-replay-partial-history (head:point) '(0 . 6))
      (check 'truncated-history-adopts-current-revision
             (head:buffer-store-rev b) (store:revision id))
      (check 'truncated-history-adopts-all-text
@@ -148,12 +151,13 @@
                  (head:before-frame!)
                  (check 'adoption-extends-source-chain (length (caddr (since source basis))) 3)
                  ;; Store history can disappear while the head's source
-                 ;; and its already-adopted provenance remain coherent.
+                 ;; and its already-adopted provenance remain coherent; a
+                 ;; reset's line diff extends the chain by one step.
                  (store:reset! bot id '("reset"))
                  (check 'unadopted-reset-keeps-cached-source-chain
                         (length (caddr (since source basis))) 3)
                  (head:before-frame!)
-                 (check 'adopted-reset-cuts-source-chain (caddr (since source basis)) #f)))
+                 (check 'adopted-reset-extends-source-chain-across-its-line-diff (length (caddr (since source basis))) 4)))
              (head:buffer-lines-set! source '#("new baseline"))
              (head:store-edit! source (text:make-span 0 0 0 0) '("suffix" ""))
              (check 'reset-with-new-edits-never-returns-a-partial-chain

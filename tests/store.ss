@@ -407,12 +407,14 @@
                                      (text:span-end s))))
             #t)
 
-     ;; a reset clamps both endpoints into the new text
+     ;; a reset rebases marks as the edit it amounts to would, through a
+     ;; line diff of the two texts: a region inside the replaced lines
+     ;; degrades to the replacement, as it does under an overlapping edit
      (store:set-mark! alice r 'region (span 0 2 1 4))
      (store:reset! bot r '("ab"))
-     (check 'span-mark-clamps-on-reset
+     (check 'span-mark-crosses-a-reset-as-an-overlapping-edit
             (span-ends (store:mark alice r 'region))
-            '((0 . 2) (0 . 2)))
+            '((0 . 0) (0 . 2)))
 
      ;; -- blame: attribution with geometry -----------------------------------
 
@@ -938,10 +940,19 @@
        (check 'incremental-snapshot-already-current changes '()))
      (let-values ([(text revision changes) (store:snapshot-since nested 3)])
        (check 'incremental-snapshot-future-basis changes #f))
+     ;; a reset clears the log, yet a reader crosses it on a line diff of the
+     ;; two texts, the chain taking its text to the fresh one
      (store:reset! bot nested '("fresh"))
      (let-values ([(text revision changes) (store:snapshot-since nested 2)])
-       (check 'incremental-snapshot-reset-gap (list text revision changes)
-              '(#("fresh") 3 #f)))
+       (check 'incremental-snapshot-crosses-a-reset
+              (list text revision
+                    (and changes
+                         (fold-left (lambda (t change)
+                                      (let-values ([(next delta) (text:apply-edit t (text:delta-span (caddr change))
+                                                                   (text:delta-inserted (caddr change)))])
+                                        next))
+                                    '#("yxabc") changes)))
+              '(#("fresh") 3 #("fresh"))))
      (do ([i 0 (+ i 1)]) ((= i 257))
        (store:edit! bot nested (+ 3 i) (span 0 0 0 0) '("x")))
      (let-values ([(text revision changes) (store:snapshot-since nested 3)])
@@ -1630,12 +1641,62 @@
      ;; the pending conflicts travel with the journal
      (edit! alice notes (store:revision notes) 2 0 2 5 '("gamma"))
      (define e5 (store:revision notes))
+     (define before-text (let-values ([(text revision changes) (store:snapshot-since notes e5)]) text))
      (reload! notes '("0mega" "BETA" "Gamma"))
+     ;; a reader at the revision before the reload gets a continuous chain
+     ;; across it, the disk's changes carried over the text as it stood,
+     ;; taking that text to the reloaded one
+     (check 'a-reader-crosses-a-reload-on-its-bridge
+       (let-values ([(text revision changes) (store:snapshot-since notes e5)])
+         (list (and changes (pair? changes))
+               (for-all (lambda (change) (> (car change) e5)) changes)
+               (equal? (fold-left (lambda (t change)
+                                    (let-values ([(next delta) (text:apply-edit t (text:delta-span (caddr change))
+                                                                 (text:delta-inserted (caddr change)))])
+                                      next))
+                                  before-text changes)
+                       text)
+               (let-values ([(text2 revision2 changes2) (store:snapshot-since notes revision)]) changes2)))
+       '(#t #t #t ()))
      (check 'pending-conflicts-travel-with-the-journal
             (let-values ([(next-id states) (store:export)])
               (let ([saved (assv notes states)])
                 (list (store:valid-import? next-id states) (map car (caddr (list-ref saved 5))))))
             (list #t (list e5)))
+     ;; a reread replaces the whole text as one undoable edit, yet readers
+     ;; and marks cross it on a line diff: a line added at the top moves a
+     ;; mark below it down, and the reread's undo brings it back
+     (define (chain-text from to-text)
+       (let-values ([(text revision changes) (store:snapshot-since notes from)])
+         (and changes (equal? (fold-left (lambda (t change)
+                                           (let-values ([(next delta) (text:apply-edit t (text:delta-span (caddr change))
+                                                                        (text:delta-inserted (caddr change)))])
+                                             next))
+                                         to-text changes)
+                              text))))
+     (define (whole-change? change) (= (length (text:delta-removed (caddr change))) (vector-length before-reread)))
+     (store:set-mark! alice notes 'spot '(2 . 3))
+     (define before-reread (let-values ([(text revision changes) (store:snapshot-since notes (store:revision notes))]) text))
+     (define at-reread (store:revision notes))
+     (store:reread! alice notes (cons "top" (vector->list before-reread)) '())
+     (check 'a-reader-crosses-a-reread-on-a-line-diff
+       (let-values ([(text revision changes) (store:snapshot-since notes at-reread)])
+         (list (chain-text at-reread before-reread) (exists whole-change? changes) (store:mark alice notes 'spot)))
+       '(#t #f (3 . 3)))
+     (define after-reread (store:revision notes))
+     (store:undo! alice notes)
+     (check 'the-rereads-undo-crosses-back-the-same-way
+       (let-values ([(text revision changes) (store:snapshot-since notes after-reread)])
+         (list (and changes (not (exists whole-change? changes))) (store:mark alice notes 'spot) (equal? text before-reread)))
+       '(#t (2 . 3) #t))
+     ;; a reset clears the log and the undo history, but a reader crosses it
+     ;; on a line diff too, an edit it had not yet seen included
+     (define at-reset (store:revision notes))
+     (edit! alice notes at-reset 0 0 0 0 '("Z"))
+     (store:reset! alice notes (cons "top" (vector->list before-reread)) '((base . "top\n")))
+     (check 'a-reader-crosses-a-reset-with-the-cleared-log-before-it
+       (list (chain-text at-reset before-reread) (store:mark alice notes 'spot) (store:log notes))
+       '(#t (3 . 3) ()))
 
      ;; closing is irreversible, but readable state remains available.
      (let* ([id (store:create! alice "quit-hidden" '("keep") '((audience) (note . "before")))]

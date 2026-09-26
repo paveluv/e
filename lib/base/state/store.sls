@@ -30,7 +30,7 @@
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
-                current-time time-second time-nanosecond list-head make-parameter)
+                current-time time-second time-nanosecond list-head make-parameter make-weak-eq-hashtable)
           (prefix (core kernel) kernel:)
           (prefix (core property) property:)
           (prefix (foundation datum) datum:)
@@ -353,8 +353,15 @@
                (reset-buffer! actor id text updates))))))
 
   (define (reset-buffer! actor id text updates)
+    ;; The log and the undo history clear, but readers keep their way
+    ;; across: the cleared entries survive as one-step bridges, and the
+    ;; reset itself is bridged by a line diff of the two texts, which also
+    ;; carries the marks; a fresh buffer's lone empty line has nothing to carry
     (let* ([b (buffer-of 'reset! id)]
            [old (buffer-text b)] [trailing? (property-value b 'trailing #t)]
+           [from (buffer-revision b)] [cleared (buffer-deltas b)]
+           [steps (if (and (= (vector-length old) 1) (string=? (vector-ref old 0) "")) '()
+                      (edit-deltas old (edits-between old text)))]
            [clamp (lambda (position)
                     (let* ([line (min (car position) (- (vector-length text) 1))]
                            [column (min (cdr position) (string-length (vector-ref text line)))])
@@ -366,10 +373,13 @@
       (buffer-revision-set! b (+ (buffer-revision b) 1))
       (buffer-deltas-set! b '())
       (buffer-undo-set! b '())
+      (for-each (lambda (entry) (remember-bridge! b (- (entry-revision entry) 1) (entry-revision entry) (entry-actor entry) (list (entry-delta entry))))
+                (reverse cleared))
+      (remember-bridge! b from (buffer-revision b) actor steps)
       (let ([pending? (pair? (unsettled-conflicts b))])
         (buffer-conflicts-set! b '())
         (buffer-marks-set!
-          b (map (lambda (entry) (cons (car entry) (clamp-mark-value (cdr entry) clamp)))
+          b (map (lambda (entry) (cons (car entry) (clamp-mark-value (fold-left rebase-mark-value (cdr entry) steps) clamp)))
                  (buffer-marks b)))
         (enqueue-event! `(reset ,id ,(buffer-revision b) ,actor))
         (when pending? (note-conflicts! id actor)))
@@ -659,7 +669,9 @@
                                   (list-ref g 5) (list-ref g 6)
                                   (and (list-ref g 7) (= (length parts) (length (list-ref g 4)))))))
              (cadr journal))))
-    (when (= (length journal) 3) (buffer-conflicts-set! b (caddr journal))))
+    ;; the pending conflicts come back as records; the settled ones were
+    ;; not saved, so a restart forgets what their entries' undo would revive
+    (when (= (length journal) 3) (buffer-conflicts-set! b (map data->conflict (caddr journal)))))
 
   (edoc "The store's saved representation, (values next-id states), each snapshot converted outside the lock when a converter is given."
         (convert procedure "(convert snapshot)"))
@@ -935,7 +947,55 @@
 
   (define (entries-since b basis)
     ;; The complete chain after basis, oldest first, or #f.  Edits and
-    ;; incremental snapshot readers share the same retention boundary.
+    ;; incremental snapshot readers share the same retention boundary. A
+    ;; reload's bridge carries a reader across its reset, the log going on
+    ;; from the revision the bridge leads to.
+    (let ([current (buffer-revision b)] [bridges (hashtable-ref bridges b '())])
+      (let follow ([basis basis] [acc '()])
+        (cond [(= basis current) acc]
+              [(assv basis bridges)
+               => (lambda (bridge) (follow (cadr bridge) (append acc (cddr bridge))))]
+              [else
+               ;; the log from here, cut where the next bridge starts: its
+               ;; steps stand in for the log's entry there
+               (let ([chain (chain-since (buffer-deltas b) current basis)]
+                     [next (fold-left (lambda (best bridge)
+                                        (let ([from (car bridge)])
+                                          (if (and (> from basis) (or (not best) (< from best))) from best)))
+                                      #f bridges)])
+                 (and chain
+                      (if next
+                          (follow next (append acc (filter (lambda (entry) (<= (entry-revision entry) next)) chain)))
+                          (append acc chain))))]))))
+
+  ;; A bridge takes a reader from one revision to a later one where the log
+  ;; cannot: across a reload, which replaces the log, the disk's changes
+  ;; carried over the text as it stood, as the reload itself checks; across
+  ;; a reset, which clears the log, a line diff of the two texts, the
+  ;; cleared entries surviving as one-step bridges before it; and over a
+  ;; whole-text edit, a reread or its undo, the same line diff in place of
+  ;; the one delta that would collapse every position. Per buffer, (from to
+  ;; . entries) newest first, the entries pseudo ones at the revision the
+  ;; bridge leads to; a bridge older than the log's retention goes.
+  (define bridges (make-weak-eq-hashtable))
+
+  (define (remember-bridge! b from to actor deltas)
+    ;; Caller holds the store lock.
+    (let ([oldest (- (buffer-revision b) (log-retention))])
+      (hashtable-set! bridges b
+        (cons (cons* from to (map (lambda (d) (make-entry to actor d #f '() '())) deltas))
+              (filter (lambda (bridge) (>= (cadr bridge) oldest)) (hashtable-ref bridges b '()))))))
+
+  (define (whole-delta? text delta)
+    ;; whether a delta replaces the whole of a text with something in it
+    (let* ([span (text:delta-span delta)] [last (- (vector-length text) 1)])
+      (and (equal? (text:span-start span) '(0 . 0))
+           (equal? (text:span-end span) (cons last (string-length (vector-ref text last))))
+           (not (and (= last 0) (string=? (vector-ref text 0) ""))))))
+
+  (define (log-since b basis)
+    ;; the log's own chain after basis, oldest first, or #f: what the
+    ;; reload walks from the baseline, bridges aside
     (chain-since (buffer-deltas b) (buffer-revision b) basis))
 
   (define (chain-since deltas current basis)
@@ -964,9 +1024,15 @@
     ;; All committed edits, including history operations, pass here.
     ;; The attribution log always retains the actual deltas; cancelling
     ;; pairs is only a temporary proof used when planning another undo.
-    (let* ([new-revision (+ (buffer-revision b) 1)]
+    (let* ([old-text (buffer-text b)]
+           [new-revision (+ (buffer-revision b) 1)]
            [trailing? (property-value b 'trailing #t)]
-           [entry (make-entry new-revision actor delta origin facts labels)])
+           [entry (make-entry new-revision actor delta origin facts labels)]
+           ;; a whole-text replacement, a reread or its undo say, carries
+           ;; positions on a line diff of the two texts, the steps a bridge
+           ;; hands readers, rather than collapsing them to the text's end
+           [steps (and (whole-delta? old-text delta) (edit-deltas old-text (edits-between old-text new-text)))]
+           [carry (lambda (value) (if steps (fold-left rebase-mark-value value steps) (rebase-mark-value value delta)))])
       (buffer-text-set! b new-text)
       (buffer-revision-set! b new-revision)
       (buffer-deltas-set!
@@ -977,10 +1043,9 @@
         (or (not (equal? (text:delta-removed delta) (text:delta-inserted delta)))
             (not (eq? trailing? (property-value b 'trailing #t)))))
       (buffer-marks-set!
-        b (map (lambda (entry)
-                 (cons (car entry) (rebase-mark-value (cdr entry) delta)))
-               (buffer-marks b)))
-      (for-each (lambda (c) (conflict-span-set! c (rebase-mark-value (conflict-span c) delta))) (unsettled-conflicts b))
+        b (map (lambda (entry) (cons (car entry) (carry (cdr entry)))) (buffer-marks b)))
+      (for-each (lambda (c) (conflict-span-set! c (carry (conflict-span c)))) (unsettled-conflicts b))
+      (when steps (remember-bridge! b (- new-revision 1) new-revision actor steps))
       (enqueue-event!
         (append (list 'edit id new-revision actor delta)
                 (if origin (list origin) '())))
@@ -1851,7 +1916,7 @@
     ;; newest first, the index that of the disk delta the blocker met and
     ;; the revisions those of the inverses installed for it
     (let settle ([disabled '()])
-      (let* ([since (or (entries-since b basis) (error 'reload! "the log no longer reaches the baseline" basis))]
+      (let* ([since (or (log-since b basis) (error 'reload! "the log no longer reaches the baseline" basis))]
              [chain (or (effective-chain since) (error 'reload! "the log since the baseline cannot be carried" basis))])
         (let-values ([(carried outcome) (carry-chain (map entry-delta chain) ds joins)])
           (if carried
@@ -1931,14 +1996,17 @@
               [end (text:rebase-position (text:span-end region) d)])
           (span-union (list (text:make-span (car start) (cdr start) (car end) (cdr end)) (result-span d))))))
 
-  (define (rebaseline! b id actor disk chain carried ds* pending)
+  (define (rebaseline! b id actor disk chain carried ds* pending start)
     ;; the disk's text as the baseline and the carried entries as the log,
     ;; renumbered above a fresh baseline revision; undo groups follow their
     ;; entries, marks and older conflicts cross the disk's changes, and each
     ;; pending conflict takes its region as the disk left it: the fresh
     ;; conflict records, newest first
     (let* ([base-revision (+ (buffer-revision b) 1)]
-           [mapping (make-eq-hashtable)])
+           [mapping (make-eq-hashtable)]
+           ;; what settle-overlaps! applied since the reload began, the
+           ;; disabled entries' inverses, oldest first: the bridge's first steps
+           [settled (reverse (filter (lambda (entry) (> (entry-revision entry) start)) (buffer-deltas b)))])
       (let-values ([(text entries)
                     (let apply-all ([chain chain] [carried carried] [text disk] [revision base-revision] [entries '()])
                       (if (null? chain) (values text entries)
@@ -1956,6 +2024,9 @@
         (buffer-text-set! b text)
         (buffer-revision-set! b (+ base-revision (length entries)))
         (buffer-deltas-set! b entries)
+        ;; heads at the revision the reload began from cross it on this
+        ;; bridge, their positions carried instead of clamped
+        (remember-bridge! b start (buffer-revision b) actor (append (map entry-delta settled) ds*))
         (buffer-undo-set! b
           (filter values
             (map (lambda (group)
@@ -2014,11 +2085,12 @@
                                          (< (cdr end) (string-length (vector-ref base-lines (car end))))))
                                      ds)]
                          [before (buffer-text b)]
+                         [start (buffer-revision b)]
                          [disabled (if (null? ds) '() (settle-overlaps! b id actor basis ds joins))]
                          [fresh (if (null? ds) '()
-                                    (let ([chain (effective-chain (entries-since b basis))])
+                                    (let ([chain (effective-chain (log-since b basis))])
                                       (let-values ([(carried ds*) (carry-chain (map entry-delta chain) ds joins)])
-                                        (rebaseline! b id actor disk chain carried ds* (pending-conflicts b before disabled ds*)))))])
+                                        (rebaseline! b id actor disk chain carried ds* (pending-conflicts b before disabled ds*) start))))])
                     (install-properties! b updates)
                     (refresh-edit-facts! b (pair? ds))
                     (for-each (lambda (entry) (enqueue-event! `(property ,id ,(car entry) ,actor))) updates)

@@ -223,6 +223,13 @@ joined two lines, and text appended to a line or a word the disk deleted;
 typing at the end of the line above an added or deleted line stays on its
 line. A reload that merges everything leaves a line in the log and nothing
 else; the edit that found the change runs again against the merged text.
+Every head's point and marks cross the reload on their text: the disk's
+changes, carried over the buffer's, take them from where they were to
+where that text now stands, so a line added above the cursor moves it
+down rather than leaving it on the wrong line. A reread, its undo and a
+reset carry them the same way, on a line diff of the two texts; only a
+position inside a line that changed whole moves to the end of its
+replacement.
 
 An entry the disk's change overlaps is disabled and pends as a
 **conflict**: the disk's side stands in the text, which stays consistent at
