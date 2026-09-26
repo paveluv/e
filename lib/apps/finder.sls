@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps finder)
   (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
-          expansion-limit extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
+          extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
           open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
           show-hidden (rename (sort-order sorts)) toggle-hidden! toggle-sort-column!)
   (import (chezscheme)
@@ -21,14 +21,8 @@
           (prefix (service doc) doc:)
           (prefix (service file) file:)
           (prefix (sys glyph) glyph:)
+          (prefix (sys sys) sys:)
           (prefix (sys tty) tty:))
-
-  (edoc "How many matching entries the finder expands a directory into while filtering."
-        (value integer))
-  (define expansion-limit (make-parameter 20
-                            (lambda (n)
-                              (unless (and (integer? n) (exact? n) (>= n 0))
-                                (error 'expansion-limit "expected a nonnegative integer" n)) n)))
 
   (edoc "Whether the finder lists hidden entries, the dot files."
         (value boolean))
@@ -53,8 +47,10 @@
   ;; One worker per module instance, replacing its pending request. Stale
   ;; results cannot mutate a new query, a killed app or a reloaded module.
   (define-record-type scan
-    (fields buffer registration path query hidden? limit (mutable update) (mutable started?)))
+    (fields buffer registration path query hidden? generation (mutable update) (mutable started?)))
   (define scan-lock (make-mutex))
+  (define scan-ready (make-condition))
+  (define generation 0)
   (define request #f)
   (define running? #f)
   (define (live-request? job)
@@ -70,33 +66,51 @@
   (define (start-scan!)
     (set! complete? #f)
     (set! failures 0)
-    (let ([needle (if path-part "" query)] [hidden? (include-hidden?)] [limit (expansion-limit)])
+    (let ([needle (if path-part "" query)] [hidden? (include-hidden?)])
       (with-mutex scan-lock
         (set! inventory
           (if (and request (string=? (scan-path request) location))
-              (directory:refilter inventory location (scan-query request) needle (scan-hidden? request) hidden? limit)
+              (directory:refilter inventory location (scan-query request) needle (scan-hidden? request) hidden?)
               '()))
-        (set! request (make-scan view (head:app-of view) location needle hidden? limit #f #f))))
+        (set! request (make-scan view (head:app-of view) location needle hidden? generation #f #f))
+        (condition-signal scan-ready)))
     (render!))
 
   (define (scan-work!)
-    (let work ()
-      (let ([job (with-mutex scan-lock request)])
-        (define (publish entries skipped done? . failure)
-          ;; Refresh consumes the latest snapshot, even while a modal prompt
-          ;; owns input. Wakes carry no callbacks or old inventories.
-          (when (with-mutex scan-lock
-                  (and (eq? request job)
-                       (begin (scan-update-set! job
-                                (list entries skipped done? (and (pair? failure) (car failure)))) #t)))
-            (head:wake-main!)))
-        (when (and job (live-request? job))
-          (with-mutex scan-lock (scan-started?-set! job #t))
-          (guard (ex [else (publish '() 1 #t (kernel:condition-text ex))])
-            (directory:scan (scan-path job) (scan-query job)
-              (scan-hidden? job) (scan-limit job) (lambda () (not (live-request? job))) publish)))
-        (when (with-mutex scan-lock
-                (if (eq? request job) (begin (set! running? #f) #f) #t)) (work)))))
+    (let ([cache (directory:make-cache #t)] [seen-generation generation])
+      (dynamic-wind
+        void
+        (lambda ()
+          (let work ([previous #f])
+            (let ([job (with-mutex scan-lock request)])
+              (define (publish entries skipped done? . failure)
+                ;; Wakes carry no callbacks or old inventories. Only the
+                ;; current request may publish, including from OS events.
+                (when (with-mutex scan-lock
+                        (and (eq? request job)
+                             (begin (scan-update-set! job
+                                      (list entries skipped done? (and (pair? failure) (car failure)))) #t)))
+                  (head:wake-main!)))
+              (cond
+                [(and job (live-request? job))
+                 (unless (= seen-generation (scan-generation job))
+                   (directory:clear! cache) (set! seen-generation (scan-generation job)))
+                 (let ([changed? (directory:poll! cache)])
+                   (when (or changed? (not (eq? previous job)))
+                     (with-mutex scan-lock (scan-started?-set! job #t))
+                     (guard (ex [else (publish '() 1 #t (kernel:condition-text ex))])
+                       (directory:scan! cache (scan-path job) (scan-query job) (scan-hidden? job)
+                         (lambda () (not (live-request? job))) publish))))
+                 ;; Check the nonblocking event queue while idle, without
+                 ;; filesystem walks. New input wakes this wait immediately.
+                 (with-mutex scan-lock
+                   (when (eq? request job) (condition-wait scan-ready scan-lock (sys:duration 0.1))))
+                 (work job)]
+                [(with-mutex scan-lock (not (eq? request job))) (work previous)]))))
+        (lambda ()
+          (directory:close! cache)
+          (with-mutex scan-lock (set! running? #f))
+          (head:wake-main!)))))
 
   (define (collect-scan!)
     (let ([job (with-mutex scan-lock request)])
@@ -105,7 +119,7 @@
                         (let ([update (scan-update job)]) (scan-update-set! job #f) update))])
           (when update
             (apply (lambda (entries skipped done? failure)
-                     (set! inventory (directory:reconcile entries inventory location (scan-query job) (scan-limit job) done?))
+                     (set! inventory entries)
                      (set! failures skipped) (set! complete? done?)
                      (when failure (edit:set-message! (string-append "File scan failed: " failure)))) update)))
         ;; Config/reload can render before publishing registration. Launch
@@ -413,11 +427,6 @@
     (start-scan!))
   (define (cycle! column)
     (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
-  (define (path-event! event)
-    ;; Tab's filesystem lookup must see fresh entries; the mode's own keys,
-    ;; C-r and the sorting F1 to F6, are bound in the finder-create context
-    (when (string=? event "TAB") (refresh!))
-    #f)
   (define (follow-path! input base)
     (let* ([full (file:expand (file:absolute (if (string=? input "~") "~/" input) base))]
            [directory (file:canonical (file:directory-part full))])
@@ -473,14 +482,15 @@
         (lambda ()
           (parameterize ([prompt:content (prompt:make-content (+ first-row 1)
                                            (lambda (input w height page) (path-lines input w height page base))
-                                           path-event! 'finder-create)])
+                                           #f 'finder-create)])
             (edit:prompt-file! (lambda (path) (set! entered? #t) (navigate! path #f #f)) initial)))
         (lambda ()
           (set! path-part #f) (unless entered? (set! query saved)) (set! hover #f)
           (when (and view (memq view (head:buffers)) (head:app-buffer? view)) (start-scan!))))))
 
-  (edoc "Rescan the directory the finder shows.")
+  (edoc "Clear the finder's filesystem cache and rescan the current directory.")
   (define (refresh!)
+    (set! generation (+ generation 1))
     (when view (start-scan!)) (void))
 
   (define (page) (max 1 (- (head:window-size (head:current-window)) first-row)))
@@ -665,7 +675,7 @@
       (unless (eq? was view)
         (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
       (head:show-buffer! view)
-      (if (and (eq? was view) (not explicit?)) (refresh!)
+      (if (and (eq? was view) (not explicit?)) (start-scan!)
           (navigate! dir #f selected))) (void))
 
   (edoc "Install the finder: its mode with its keys bound in the finder context, the C-x C-f binding and its buffer-kill hook; C-x TAB lists the keys.")
@@ -682,10 +692,10 @@
                            (when (eq? b (choice-origin choice)) (choice-origin-set! choice #f)))
           (hashtable-values choices))
         (when (eq? b view)
-          (with-mutex scan-lock (set! request #f))
+          (with-mutex scan-lock (set! request #f) (condition-signal scan-ready))
           (set! view #f) (set! hover #f) (set! inventory '()) (set! rows '())
           (hashtable-clear! choices) (set! resumed-choices '()))))
-    (head:add-shutdown-hook! (lambda () (with-mutex scan-lock (set! request #f))))
+    (head:add-shutdown-hook! (lambda () (with-mutex scan-lock (set! request #f) (condition-signal scan-ready))))
     (paint:add-highlighter!
       (lambda ()
         (append (paint:hover-ranges breadcrumb-hit)
@@ -727,14 +737,11 @@
     (doc:register!
       '(((finder:open!) (("procedure" . "(finder:open!)")) "void"
          ("(apps finder)") finder "Finder" #f
-         "Open `<finder>` in this window at the current file's directory; `(finder:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. M-c sets the filter aside and opens `<create-file>` with its literal path below a live table of immediate prefix matches. Directory follows input, sorting remains available, and repeated Tab pages the table. Enter creates an empty file on disk or just a directory for a trailing slash, creating missing parents and logging each new path in order. Existing targets are refused. Esc returns to browsing the shown directory with the previous filter. Click ancestor path components to navigate. Browsing preserves the filter exactly: Left selects the directory just left when visible, and Right recalls its selection for the same filter. C-u clears, M-. toggles hidden entries and C-r refreshes. Click headings or use F1–F6 for ordered ascending/descending/off sorting. Small recursive match groups expand; larger groups show counts.")
-        ((finder:expansion-limit) (("parameter" . "(finder:expansion-limit [count])")) "integer"
-         ("(apps finder)") finder "Finder" #f
-         "Maximum descendant matches shown individually for each immediate subdirectory; default 20. Counting continues past this display threshold. Zero collapses all nonempty groups. Refresh after changing this option.")
+         "Open `<finder>` in this window at the current file's directory; `(finder:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. All matches expand as a tree, with counts on intermediate directories. Cached listings and metadata are reused across filters and navigation; Linux filesystem events invalidate changed paths. M-c opens `<create-file>` with immediate prefix matches. Enter creates the path, and Esc returns to browsing. Click ancestor path components to navigate. Left selects the directory just left when visible; Right recalls its selection. C-u clears the filter, M-. toggles hidden entries, and C-r clears the filesystem cache and rescans. Click headings or use F1–F6 for ordered ascending/descending/off sorting among siblings.")
         ((finder:show-hidden) (("parameter" . "(finder:show-hidden [boolean])")) "boolean"
          ("(apps finder)") finder "Finder" #f
          "Whether the finder's scan includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")
         ((finder:refresh!) (("procedure" . "(finder:refresh!)")) "void"
          ("(apps finder)") finder "Finder" #f
-         "Rescan the finder's current directory with its current filter and options, preserving candidate identities where possible."))))
+         "Clear all cached directory listings and metadata, then rescan the current directory with its current filter and options, preserving candidate identities where possible."))))
 )

@@ -1,10 +1,10 @@
-;; directory.sls -- filesystem inventory and bounded recursive match groups.
+;; directory.sls -- cached filesystem inventory and recursive match trees.
 ;; No head state or threads: the caller owns cancellation and publication.
 (import (only (foundation edoc) elibrary))
 (elibrary (service directory)
-  (export directory? entry-complete? entry-count entry-created entry-kind entry-link?
-          entry-matches entry-mode entry-modified entry-path entry-size matches?
-          (rename (parent-path parent)) reconcile refilter relative-path scan)
+  (export clear! close! directory? entry-complete? entry-count entry-created entry-kind entry-link?
+          entry-matches entry-mode entry-modified entry-path entry-size make-cache matches?
+          (rename (parent-path parent)) poll! refilter relative-path scan!)
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (service file) file:)
@@ -95,16 +95,15 @@
     (or (match? entry)
         (and (entry-count entry) (positive? (entry-count entry)))))
 
-  (edoc "Filter known entries by a new query without rescanning: exact when the previous group kept every match, else a bounded subset until a fresh scan."
+  (edoc "Filter the previous result immediately while a new query projects the cached inventory."
         (entries list "the entries")
         (root directory "the root")
         (previous string "the previous query")
         (query string "the new query")
         (was-hidden? boolean "whether hidden entries were included")
         (hidden? boolean "whether they are now")
-        (limit integer "the expansion limit")
         (returns list))
-  (define (refilter entries root previous query was-hidden? hidden? limit)
+  (define (refilter entries root previous query was-hidden? hidden?)
     ;; A narrower query is exact when the previous group retained every
     ;; match. Otherwise keep the known subset, with a lower bound or an
     ;; unknown count, until a fresh scan replaces it. Empty queries count
@@ -134,123 +133,141 @@
                                 [(positive? known) known]
                                 [(or (string=? query "") (not old) (> old kept)) #f]
                                 [else 0])])
-              (with-count entry count exact?
-                (if (and count (> count limit)) '() matches)))))
+              (with-count entry count exact? matches))))
       (map project (filter (lambda (entry) (visible? entry root hidden?)) entries))))
 
-  (edoc "Merge a partial publication with the previous entries so known matches survive, preferring fresh metadata; a complete one replaces them."
-        (entries list "the new entries")
-        (previous list "the previous entries")
-        (root directory "the search root")
-        (query string "the filter")
-        (limit integer "the expansion limit")
-        (done? boolean "whether the publication is complete")
-        (returns list))
-  (define (reconcile entries previous root query limit done?)
-    ;; A shallow/partial publication must not erase matches the new query
-    ;; already knows. Prefer fresh metadata and union bounded match sets;
-    ;; completed groups (and the final snapshot, including errors/removals)
-    ;; always replace the preview authoritatively.
-    (let ([match? (matcher root query)])
-      (define (merge entries previous keep-missing?)
-        (let ([known (make-hashtable string-hash string=?)])
-          (for-each (lambda (entry) (hashtable-set! known (entry-path entry) entry)) previous)
-          (let ([merged
-                 (map (lambda (entry)
-                        (let ([old (hashtable-ref known (entry-path entry) #f)] [count (entry-count entry)])
-                          (hashtable-delete! known (entry-path entry))
-                          (cond [(or (not old) (not (directory? entry)) (entry-link? entry) (entry-complete? entry)) entry]
-                            [(not count) (with-count entry (entry-count old) (entry-complete? old) (entry-matches old))]
-                            [else
-                             (let* ([matches (merge (entry-matches entry) (entry-matches old) #t)]
-                                    [total (max count (or (entry-count old) 0) (retained-count matches match?))])
-                               (with-count entry total #f
-                                 (if (<= total limit) matches '())))]))) entries)])
-            (if keep-missing?
-                (append merged (filter (lambda (e) (hashtable-contains? known (entry-path e))) previous))
-                merged))))
-      (if done? entries (merge entries previous #f))))
+  ;; One worker owns a cache, including its event stream. Neither filters
+  ;; nor navigation invalidate it. Listings include hidden names, but their
+  ;; metadata and subtrees are loaded only when a query needs them.
+  (define-record-type (cache %make-cache cache?)
+    (fields entries directories watch? (mutable watcher)))
 
-  (edoc "Scan a directory for entries matching a query, publishing (entries unreadable-directories done?) at most ten times a second until the counts are exact; each directory keeps at most limit matches."
+  (edoc "Create a filesystem inventory cache, optionally subscribing to directory changes."
+        (watch? boolean "whether to use OS notifications when available") (returns any))
+  (define (make-cache watch?)
+    (%make-cache (make-hashtable string-hash string=?) (make-hashtable string-hash string=?)
+      watch? (and watch? (sys:open-directory-watch))))
+
+  (edoc "Release the cache's filesystem subscriptions."
+        (cache any "the inventory cache"))
+  (define (close! cache)
+    (sys:close-directory-watch! (cache-watcher cache))
+    (cache-watcher-set! cache #f))
+
+  (edoc "Forget the entire inventory and renew its filesystem subscriptions."
+        (cache any "the inventory cache"))
+  (define (clear! cache)
+    (close! cache)
+    (hashtable-clear! (cache-entries cache))
+    (hashtable-clear! (cache-directories cache))
+    (cache-watcher-set! cache (and (cache-watch? cache) (sys:open-directory-watch))))
+
+  (define (invalidate! cache path replaced?)
+    (let ([changed? #f])
+      (define (drop! table key)
+        (when (hashtable-contains? table key)
+          (set! changed? #t) (hashtable-delete! table key)))
+      (define (dirty! path)
+        ;; Keep the directory identity until its subtree is discarded. An
+        ;; earlier chmod/child event must not hide it from a later rename
+        ;; in the same batch, leaving old descendants under a reused path.
+        (when (hashtable-contains? (cache-directories cache) path)
+          (set! changed? #t) (hashtable-set! (cache-directories cache) path 'stale)))
+      (if replaced?
+          (let ([prefix (if (string=? path "/") "/" (string-append path "/"))]
+                [entry (hashtable-ref (cache-entries cache) path #f)])
+            (if (or (hashtable-contains? (cache-directories cache) path) (and entry (directory? entry)))
+              (begin (for-each
+                       (lambda (table)
+                         (vector-for-each
+                           (lambda (p) (when (or (string=? path p) (string:prefix? prefix p)) (drop! table p)))
+                           (hashtable-keys table)))
+                       (list (cache-entries cache) (cache-directories cache)))
+                (sys:unwatch-directory! (cache-watcher cache) path))
+              (drop! (cache-entries cache) path))
+            (let ([parent (parent-path path)])
+              (dirty! parent)
+              (drop! (cache-entries cache) parent)))
+          (begin (drop! (cache-entries cache) path)
+                 ;; A directory's own permission change may make a formerly
+                 ;; failed listing readable, or a known listing inaccessible.
+                 (dirty! path)))
+      changed?))
+
+  (edoc "Invalidate only inventory affected by pending filesystem events; return whether anything changed."
+        (cache any "the inventory cache") (returns boolean))
+  (define (poll! cache)
+    (let ([events (sys:directory-changes! (cache-watcher cache))])
+      (if (eq? events #t) (begin (clear! cache) #t)
+          (fold-left (lambda (changed? event)
+                       (or (invalidate! cache (car event) (eq? (cdr event) 'replaced)) changed?)) #f events))))
+
+  ;; Loading and projecting use one traversal. A read-only projection of a
+  ;; partially filled cache keeps everything already known; no separate
+  ;; union of old and new query results is necessary.
+  (define (inventory cache path query hidden? load? check! tick!)
+    (let ([failures 0] [pending 0] [match? (matcher path query)])
+      (define (names path)
+        (check!)
+        (when (eq? (hashtable-ref (cache-directories cache) path 'stale) 'stale)
+          (when load?
+            ;; Subscribe before listing, so mutations during discovery are
+            ;; queued and invalidate the just-read inventory on the next pass.
+            (sys:watch-directory! (cache-watcher cache) path)
+            (hashtable-set! (cache-directories cache) path
+              (guard (ex [else #f]) (directory-list path)))
+            (tick!)))
+        (cond [(eq? (hashtable-ref (cache-directories cache) path 'stale) 'stale)
+               (set! pending (+ pending 1)) #f]
+              [(hashtable-ref (cache-directories cache) path #f) =>
+               (lambda (names) (filter (lambda (name) (or hidden? (not (string:prefix? "." name)))) names))]
+              [else (set! failures (+ failures 1)) '()]))
+      (define (child path name)
+        (check!)
+        (let ([path (string-append path (if (string=? path "/") "" "/") name)])
+          (unless (hashtable-contains? (cache-entries cache) path)
+            (when load? (hashtable-set! (cache-entries cache) path (inspect-entry path)) (tick!)))
+          (let ([entry (hashtable-ref (cache-entries cache) path #f)])
+            (cond [(not entry) (set! pending (+ pending 1))]
+                  [(eq? (entry-kind entry) 'unavailable) (set! failures (+ failures 1))])
+            entry)))
+      (define (children path)
+        (fold-right (lambda (name out)
+                      (let ([entry (child path name)])
+                        (if entry (cons (visit entry) out) out))) '() (or (names path) '())))
+      (define (visit entry)
+        (if (or (not (directory? entry)) (entry-link? entry)) entry
+            (let* ([before failures] [waiting pending]
+                   [children (if (string=? query "") (names (entry-path entry)) (children (entry-path entry)))]
+                   [count (if (string=? query "") (and children (length children))
+                              (fold-left (lambda (n e) (+ n (if (match? e) 1 0) (or (entry-count e) 0))) 0 children))])
+              (with-count entry count (and (= before failures) (= waiting pending))
+                (if (string=? query "") '() (filter (lambda (e) (branch? e match?)) children))))))
+      (let ([entries (children path)])
+        (values entries failures (zero? pending)))))
+
+  (edoc "Project all recursive matches from the cache, loading missing inventory and publishing (entries failures done?) at most ten times a second."
+        (cache any "the inventory cache")
         (path directory "the directory")
         (query string "the filter")
         (hidden? boolean "whether to include dot names")
-        (limit integer "the expansion limit")
         (cancelled? thunk "whether to stop")
         (publish! procedure "(publish! entries unreadable done?)"))
-  (define (scan path query hidden? limit cancelled? publish!)
-    ;; Publish (entries unreadable-directories done?), initially the shallow
-    ;; inventory, then at most ten times/second, and finally exact counts.
-    ;; Each directory retains at most limit descendant matches. Crossing the
-    ;; threshold drops those rows, but counting continues without a result cap.
-    ;; Entries/counts include dot names only when requested. Symbolic directory
-    ;; links are listed and may be entered explicitly, never walked recursively.
-    (unless (and (integer? limit) (exact? limit) (>= limit 0))
-      (error 'scan "expected a nonnegative expansion limit" limit))
+  (define (scan! cache path query hidden? cancelled? publish!)
     (call/cc
       (lambda (cancel)
-        (define failures 0)
-        (define match? (matcher path query))
-        (define next-update (current-time 'time-monotonic))
-        (define entries '#())
+        (define next-update (add-duration (current-time 'time-monotonic) (make-time 'time-duration 100000000 0)))
         (define (check!) (when (cancelled?) (cancel (void))))
-        (define (names path)
-          (check!)
-          (guard (ex [else (set! failures (+ failures 1)) '()])
-            (filter (lambda (name) (or hidden? (not (string:prefix? "." name))))
-              (directory-list path))))
-        (define (child path name)
-          (check!)
-          (inspect-entry (string-append path (if (string=? path "/") "" "/") name)))
-        (define (publish force? done?)
-          (check!)
-          (let ([now (current-time 'time-monotonic)])
-            (when (or force? (time>=? now next-update))
-              (set! next-update (add-duration now (make-time 'time-duration 100000000 0)))
-              (publish! (vector->list entries) failures done?))))
-        (define (search! index root)
-          (let ([total 0])
-            (define (weight entry)
-              (+ (if (match? entry) 1 0) (or (entry-count entry) 0)))
-            (define (update! entry)
-              (vector-set! entries index entry)
-              (publish #f #f))
-            ;; Retain the route to each match, not a second flat list. The
-            ;; limit counts actual matches, never connecting directories.
-            ;; Once the root exceeds it, release the tree while counting on.
-            (define (walk entry notify)
-              (let ([before failures] [count 0] [found '()])
-                (define (snapshot current done?)
-                  (with-count entry (+ count (if current (weight current) 0))
-                    (and done? (= before failures))
-                    (if (> total limit) '()
-                        (reverse (if (and current (branch? current match?)) (cons current found) found)))))
-                (for-each
-                  (lambda (name)
-                    (let ([e (child (entry-path entry) name)])
-                      (when (match? e) (set! total (+ total 1)))
-                      (when (eq? (entry-kind e) 'unavailable) (set! failures (+ failures 1)))
-                      (let ([e (if (and (directory? e) (not (entry-link? e)))
-                                   (walk e (lambda (partial) (notify (snapshot partial #f)))) e)])
-                        (set! count (+ count (weight e)))
-                        (set! found (cond [(> total limit) '()] [(branch? e match?) (cons e found)] [else found]))
-                        ;; Assemble ancestor snapshots only when publication
-                        ;; is due; their unfinished counts stay lower bounds.
-                        (when (time>=? (current-time 'time-monotonic) next-update)
-                          (notify (snapshot #f #f))))))
-                  (names (entry-path entry)))
-                (snapshot #f #t)))
-            (update! (walk root update!))))
-        (set! entries (list->vector (map (lambda (name) (child path name)) (names path))))
-        (publish #t #f)
-        (do ([i 0 (+ i 1)]) ((= i (vector-length entries)))
-          (check!)
-          (let ([entry (vector-ref entries i)])
-            (when (and (directory? entry) (not (entry-link? entry)))
-              (if (string=? query "")
-                  (let* ([before failures] [count (length (names (entry-path entry)))])
-                    (vector-set! entries i (with-count entry count (= before failures) '()))
-                    (publish #f #f))
-                  (search! i entry)))))
-        (publish #t #t))))
+        (define (publish entries failures done?)
+          (check!) (publish! entries failures done?) done?)
+        (define (tick!)
+          (when (time>=? (current-time 'time-monotonic) next-update)
+            (call-with-values (lambda () (inventory cache path query hidden? #f check! void)) publish)
+            (set! next-update (add-duration (current-time 'time-monotonic) (make-time 'time-duration 100000000 0)))))
+        (check!)
+        ;; Watching the parent also detects replacement/recreation of the
+        ;; browsing root after its own watch disappears.
+        (sys:watch-directory! (cache-watcher cache) (parent-path path))
+        (unless (call-with-values (lambda () (inventory cache path query hidden? #f check! void)) publish)
+          (call-with-values (lambda () (inventory cache path query hidden? #t check! tick!)) publish)))))
 )

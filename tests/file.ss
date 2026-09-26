@@ -119,8 +119,8 @@
                     (file:visit-path (string-append "/./" name)))
               (list #f (string-append "/" name))))
 
-     ;; Directory browsing uses metadata without opening files, counts past
-     ;; the display threshold, and can be abandoned between filesystem calls.
+     ;; Directory browsing caches metadata without opening files and can be
+     ;; abandoned between filesystem calls without losing completed reads.
      ;; One tree covers boundaries, deep/hidden matches, links and races.
      (let ([root (path "browse")])
        (define (child name) (string-append root "/" name))
@@ -129,9 +129,10 @@
              (begin (for-each (lambda (name) (remove-tree (string-append path "/" name))) (directory-list path))
                     (delete-directory path))
              (delete-file path)))
-       (define (scan needle hidden? limit . observe)
+       (define cache (directory:make-cache #f))
+       (define (scan needle hidden? . observe)
          (let ([result #f])
-           (directory:scan root needle hidden? limit (lambda () #f)
+           (directory:scan! cache root needle hidden? (lambda () #f)
              (lambda (entries failures done?)
                (when (pair? observe) ((car observe) entries failures done?))
                (when done? (set! result (cons failures entries))))) result))
@@ -166,7 +167,7 @@
                  (= (vector-ref info 3) (+ (* (car stamp) 1000000000) (cdr stamp)))
                  (or (not (vector-ref info 4)) (integer? (vector-ref info 4))))
            '(file 416 #t #t #t)))
-       (let ([result (scan "" #f 2)])
+       (let ([result (scan "" #f)])
          (check 'directory-shallow-counts-and-symlink-boundary
            (list (car result) (group "small" result) (group "large" result)
                  (directory:entry-link? (entry "alias" result))
@@ -179,62 +180,20 @@
            '(0 (4 #t ()) (5 #t ()) #t #f link special ("small/loop/../needle-one" "small/loop/../nested/"))))
        (check 'directory-unresolved-links-match-by-name-without-making-counts-incomplete
          (map (lambda (query)
-                (let ([result (scan query #f 2)])
+                (let ([result (scan query #f)])
                   (list (car result) (group "large" result)))) '("sls" "link"))
          '((0 (0 #t ())) (0 (2 #t ("broken-link" "self-link")))))
-       (let ([result (scan "needle" #f 2)])
-         (check 'directory-expands-at-the-limit-and-counts-beyond-it
+       (let ([result (scan "needle" #f)])
+         (check 'directory-expands-all-matches-with-their-ancestors
            (list (car result) (group "small" result) (group "large" result)
                  (entry ".private" result))
-           '(0 (2 #t ("NEEDLE-two" "needle-one" "nested")) (3 #t ()) #f)))
-       (check 'directory-hidden-and-zero-expansion
-         (let ([result (scan "needle" #t 0)])
+           '(0 (2 #t ("NEEDLE-two" "needle-one" "nested")) (3 #t ("needle-a" "needle-b" "needle-c")) #f)))
+       (check 'directory-hidden-matches-expand-too
+         (let ([result (scan "needle" #t)])
            (list (group ".private" result) (group "small" result)))
-         '((1 #t ()) (3 #t ())))
-       ;; Reuse the same tree and real shallow publications: narrowing must
-       ;; keep valid rows, widening keeps a lower bound, and hidden ancestors
-       ;; and leaves must disappear immediately. A completed snapshot wins.
-       (let ([before (scan "needle" #t 4)])
-         (check 'directory-refilter-keeps-only-valid-evidence
-           (map (lambda (step)
-                  (let ([result (cons 0 (directory:refilter (cdr before) root "needle" (car step) #t (cadr step) (caddr step)))])
-                    (list (group "small" result) (group "large" result)
-                          (and (entry ".private" result) #t))))
-             '(("NEEDLE-" #f 2) ("ne" #t 4) ("absent" #f 2) ("" #f 2)))
-           '(((2 #t ("NEEDLE-two" "needle-one" "nested")) (3 #t ()) #f)
-             ((4 #f (".needle-dot" "NEEDLE-two" "needle-one" "nested")) (3 #f ("needle-a" "needle-b" "needle-c")) #t)
-             ((0 #f ()) (0 #f ()) #f)
-             ((#f #f ()) (#f #f ()) #f))))
-       (check 'directory-publications-preserve-matches-until-authoritative-replacement
-         (let* ([before (scan "needle-one" #f 2)]
-                [preview (directory:refilter (cdr before) root "needle-one" "needle" #f #f 2)]
-                [shallow #f]
-                [after (scan "needle" #f 2
-                         (lambda (entries failures done?)
-                           (unless shallow
-                             (set! shallow (cons failures (directory:reconcile entries preview root "needle" 2 done?))))))]
-                [narrowed (directory:refilter (cdr after) root "needle" "needle-o" #f #f 2)])
-           (list (group "small" shallow) (group "large" shallow)
-                 (group "small" (cons 0 narrowed)) (group "large" (cons 0 narrowed))
-                 (group "small" (cons 0 (directory:reconcile (cdr after) preview root "needle" 2 #t)))
-                 (directory:reconcile '() preview root "needle" 2 #t)))
-         '((1 #f ("needle-one")) (0 #f ())
-           (1 #t ("needle-one")) (#f #f ())
-           (2 #t ("NEEDLE-two" "needle-one" "nested")) ()))
-       ;; Two incomplete branches arrive independently. Union real matches,
-       ;; not connecting directories; a connector may itself match a wider
-       ;; query, in which case it must count toward the expansion limit.
-       (let ([one (scan "needle-one" #f 2)] [two (scan "NEEDLE-two" #f 2)])
-         (check 'directory-partial-trees-union-without-counting-connectors-twice
-           (map (lambda (query)
-                  (let* ([a (directory:refilter (cdr one) root "needle-one" query #f #f 2)]
-                         [b (directory:refilter (cdr two) root "NEEDLE-two" query #f #f 2)]
-                         [merged (directory:reconcile b a root query 2 #f)])
-                    (group "small" (cons 0 (directory:reconcile b merged root query 2 #f)))))
-             '("needle" "ne"))
-           '((2 #f ("NEEDLE-two" "needle-one" "nested")) (3 #f ()))))
+         '((1 #t ("needle-secret")) (3 #t (".needle-dot" "NEEDLE-two" "needle-one" "nested"))))
        (check 'directory-matches-full-relative-paths-and-directory-slashes
-         (let ([result (scan "ALL/NESTED/" #f 2)])
+         (let ([result (scan "ALL/NESTED/" #f)])
            (list (group "small" result) (group "large" result)
                  (map (lambda (s) (directory:matches? (entry "small" result) root s))
                    '("small/" "ALL/" "small/nope"))))
@@ -244,29 +203,74 @@
        ;; switches to path matching, and a preview must not carry the
        ;; name-mode count across as exact evidence.
        (check 'directory-name-filters-ignore-matching-ancestors
-         (let ([result (scan "small" #f 2)])
+         (let ([result (scan "small" #f)])
            (list (group "small" result) (group "large" result) (car result)
                  (map (lambda (s) (directory:matches? (entry "small" result) root s)) '("MALL" "small/" "all/"))
-                 (group "small" (cons 0 (directory:refilter (cdr result) root "small" "small/" #f #f 2)))
-                 (group "small" (scan "small/" #f 2))))
-         '((0 #t ()) (0 #t ()) 0 (#t #t #t) (0 #f ()) (5 #t ())))
+                 (group "small" (cons 0 (directory:refilter (cdr result) root "small" "small/" #f #f)))
+                 (group "small" (scan "small/" #f))))
+         '((0 #t ()) (0 #t ()) 0 (#t #t #t) (0 #f ())
+           (5 #t ("NEEDLE-two" "loop" "needle-one" "nested" "unrelated"))))
        (check 'directory-cancel-has-no-late-publication
          (let ([cancel? #f] [publications '()])
-           (directory:scan root "needle" #f 2 (lambda () cancel?)
+           (directory:scan! (directory:make-cache #f) root "needle" #f (lambda () cancel?)
              (lambda (entries failures done?) (set! publications (cons done? publications)) (set! cancel? #t)))
            publications) '(#f))
-       (check 'directory-vanishing-subtree-stays-explicitly-incomplete
-         (let ([changed? #f] [result #f] [pending #f] [preview (cdr (scan "secret" #t 2))])
-           (directory:scan root "secret" #t 2 (lambda () #f)
-             (lambda (entries failures done?)
-               (unless changed? (set! changed? #t) (remove-tree (child ".private")))
-               (when done?
-                 ;; A failed group's partial zero does not erase known
-                 ;; matches; the final snapshot must discard them.
-                 (set! pending (cons failures (directory:reconcile entries preview root "secret" 2 #f)))
-                 (set! result (cons failures (directory:reconcile entries preview root "secret" 2 #t))))))
-           (list (car result) (group ".private" pending) (group ".private" result)))
-         '(1 (1 #f ("needle-secret")) (0 #f ())))
+       ;; With notifications disabled the exact same inventory must serve
+       ;; another filter and another root even when disk is unavailable.
+       (let ([before (scan "needle" #t)] [away (string-append root "-away")] [inside #f])
+         (rename-file root away)
+         (dynamic-wind void
+           (lambda ()
+             (directory:scan! cache (child "small/nested") "two" #f (lambda () #f)
+               (lambda (entries failures done?)
+                 (when done? (set! inside (list failures (map directory:entry-path entries))))))
+             (check 'directory-cache-reuses-listings-metadata-and-navigation-without-disk
+               (list (group "small" (scan "two" #f)) inside
+                     (eq? (entry "needle-root" before) (entry "needle-root" (scan "needle" #t))))
+               (list '(1 #t ("NEEDLE-two" "nested")) (list 0 (list (child "small/nested/NEEDLE-two"))) #t))
+             (directory:clear! cache)
+             (check 'directory-refresh-discards-stale-inventory-and-reports-unreadable-root
+               (scan "needle" #t) '(1)))
+           (lambda () (rename-file away root))))
+       ;; One live event stream covers edits, populated directory moves,
+       ;; replacement at the same path and resource cleanup. Other entries
+       ;; keep their metadata object, proving they were not inspected again.
+       (let ([probe (sys:open-directory-watch)])
+         (when probe
+           (sys:close-directory-watch! probe)
+           (let ([before-fds (test:fd-count)] [seen #f])
+             (set! cache (directory:make-cache #t))
+             (dynamic-wind void
+               (lambda ()
+                 (let ([stable (entry "needle-root" (scan "needle" #f))])
+                   (file:write! (child "small/needle-one") '#("longer updated text") #f)
+                   (test:await 'file-event (lambda () (directory:poll! cache)))
+                   (let* ([result (scan "needle" #f)]
+                          [changed (find (lambda (e) (string=? (directory:entry-path e) (child "small/needle-one")))
+                                     (directory:entry-matches (entry "small" result)))])
+                     (set! seen (list (= (directory:entry-size changed) 19) (eq? stable (entry "needle-root" result)))))
+                   (chmod (child "small/nested") #o700)
+                   (rename-file (child "small/nested") (child "small/moved"))
+                   (mkdir (child "small/nested"))
+                   (call-with-output-file (child "small/nested/NEEDLE-two") (lambda (p) (display "new inode" p)))
+                   (test:await 'directory-move (lambda () (directory:poll! cache)))
+                   (let* ([result (scan "needle" #f)]
+                          [nested (find (lambda (e) (string=? (directory:entry-path e) (child "small/nested")))
+                                    (directory:entry-matches (entry "small" result)))])
+                     (set! seen (append seen (list (group "small" result)
+                                               (directory:entry-size (car (directory:entry-matches nested)))))))
+                   (remove-tree (child "small/moved")) (mkdir (child "small/moved"))
+                   (do ([i 0 (+ i 1)]) ((= i 25))
+                     (call-with-output-file (child (format "small/moved/needle-~a" i)) (lambda (p) (display i p))))
+                   (test:await 'directory-replacement (lambda () (directory:poll! cache)))
+                   (let ([result (scan "needle" #f)])
+                     (set! seen (append seen (list (directory:entry-count (entry "small" result))
+                                               (length (caddr (group "small" result)))
+                                               (eq? stable (entry "needle-root" result))))))))
+               (lambda () (directory:close! cache)))
+             (check 'directory-events-invalidate-only-changes-and-expand-past-the-old-cap
+               (append seen (list (equal? before-fds (test:fd-count))))
+               '(#t #t (3 #t ("NEEDLE-two" "NEEDLE-two" "moved" "needle-one" "nested")) 9 27 29 #t #t)))))
        (check 'file-read-refuses-special-files-before-opening
          (map (lambda (name) (test:raises? (lambda () (file:read (child name))))) '("pipe" "small"))
          '(#t #t))

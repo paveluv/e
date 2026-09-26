@@ -1,7 +1,7 @@
 #!/usr/bin/env scheme-script
 
 ;; The <finder> app as a table over a real directory tree: recursive name
-;; filters and literal path filters, collapsed and expanded match groups,
+;; filters and literal path filters, fully expanded match trees,
 ;; navigation that preserves each directory's choice, hidden and linked
 ;; entries, sorting, opening, and identity through kill and reload. Headless:
 ;; the scan worker publishes to the view, which is refreshed while waiting.
@@ -15,7 +15,8 @@
 (eval
   '(begin
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
-             (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:) (prefix (test) test:))
+             (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:)
+             (prefix (sys sys) sys:) (prefix (test) test:))
 
      (define check test:check)
      ;; Load through the kernel so the reload below replaces the real module.
@@ -64,7 +65,6 @@
      (define (type! text) (for-each (lambda (c) (dispatch:key! (string c))) (string->list text)) (settle!))
      (define (filter! text) (press! "C-u") (type! text))
      (define (files-open! . directory)
-       ((top-level-value 'finder:expansion-limit) 2)
        (apply open! directory)
        (settle!))
      (define (labels)
@@ -121,11 +121,11 @@
      ;; A filter names entries unless it contains a slash: a directory whose
      ;; name matches does not claim its contents, while its path does.
      (files-open! root) (filter! "small")
-     (define named (list (visible? "small/") (visible? "small/needle-one.txt") (group-count "small/")))
+     (define named (list (visible? "small/") (visible? " needle-one.txt") (group-count "small/")))
      (filter! "small/")
      (check 'finder-name-filters-match-entries-and-slash-filters-match-paths
-       (list named (visible? "small/needle-one.txt") (group-count "small/"))
-       '((#t #f "  0") #f "  3"))
+       (list named (visible? " needle-one.txt") (group-count "small/"))
+       '((#t #f "  0") #t "  3"))
      (files-open! root) (filter! "needle")
      (check 'finder-groups-remain-stable-through-filter-changes
        (list (labels) (group-count "large/") (group-count "small/") (group-count " nested/")
@@ -140,7 +140,7 @@
                    (list (for-all has? '("large/" "small/" " needle-one.txt" " nested/" "  needle-only.txt"))
                          (has? "empty/") (equal? header (list-ref lines 2)))))
                (let ([narrow (sample "-")]) (list narrow (sample "BACKSPACE")))))
-       '(("large/" "small/" " nested/" "  needle-only.txt" " needle-one.txt") "  3" "  2" "  1"
+       '(("large/" " needle-a.txt" " needle-b.txt" " needle-c.txt" "small/" " nested/" "  needle-only.txt" " needle-one.txt") "  3" "  2" "  1"
          ((#t #f #t) (#t #f #t))))
      (settle!)
      ;; Right enters the chosen directory with the filter; Left returns with
@@ -283,14 +283,13 @@
        "(finder:extend-filter! (head:typed-text))")
 
      ;; Repeated basenames still identify distinct files, and each branch
-     ;; stays together when sorting. Extra ancestors cost no match budget.
+     ;; stays together when sorting, regardless of depth.
      (let ([dirs '("tree" "tree/A" "tree/A/B" "tree/A/B/C" "tree/A/D" "tree/Z")]
            [files '("tree/A/B/C/foo.txt" "tree/A/D/foo.txt" "tree/A/foo.txt" "tree/Z/foo.txt" "tree/foo-root.txt")]
            [tree-paths #f])
        (for-each (lambda (name) (mkdir (path name))) dirs)
        (for-each (lambda (name) (call-with-output-file (path name) (lambda (p) (display name p)))) files)
        (files-open! (path "tree"))
-       ((api 'finder:expansion-limit) 3)
        (filter! "foo")
        (set! tree-paths (map cadr ((api 'finder:entries))))
        (check 'finder-tree-keeps-ancestors-counts-and-path-identities
@@ -305,6 +304,25 @@
        (check 'finder-sorts-siblings-without-detaching-their-descendants
          (labels) '("Z/" " foo.txt" "A/" " D/" "  foo.txt" " B/" "  C/" "   foo.txt" " foo.txt" "foo-root.txt"))
        (press! "F1")
+
+       ;; No input starts a new search here: filesystem events alone must
+       ;; refresh the current query, preserving the selected file's identity.
+       (let ([probe (sys:open-directory-watch)])
+         (when probe
+           (sys:close-directory-watch! probe)
+           (let ([selected ((api 'finder:chosen))] [added (path "tree/A/B/C/foo-added.txt")]
+                 [renamed (path "tree/A/B/C/other.txt")])
+             (call-with-output-file added (lambda (p) (display "new" p)))
+             (test:await 'finder-idle-create
+               (lambda () (head:refresh-visible-views!) (visible? "foo-added.txt")))
+             (check 'finder-watches-update-counts-and-keep-the-choice-without-input
+               (list (group-count "A/") (group-count " B/") (equal? selected ((api 'finder:chosen))))
+               '("  4" "  2" #t))
+             (rename-file added renamed)
+             (test:await 'finder-idle-rename
+               (lambda () (head:refresh-visible-views!)
+                 (and (not (visible? "foo-added.txt")) (equal? (group-count "A/") "  3"))))
+             (delete-file renamed))))
 
        (let* ([layout (head:root)] [panel (head:current-window)] [document (head:buffer-named "zeta.txt")]
               [other (head:make-window document 0 0 0 0 0 12 41 40 'default)])
@@ -332,7 +350,7 @@
        (check 'finder-enters-intermediate-directories-and-opens-the-picked-duplicate-basename
          (sequence
            (lambda (name)
-             (files-open! (path "tree")) ((api 'finder:expansion-limit) 3) (filter! "foo")
+             (files-open! (path "tree")) (filter! "foo")
              ((api 'finder:select!) (path name)) (press! "RET")
              (if (eq? (head:current-buffer) (view)) (car (location)) (head:buffer-file (head:current-buffer))))
            '("tree/A/B" "tree/A/B/C" "tree/A/D/foo.txt"))

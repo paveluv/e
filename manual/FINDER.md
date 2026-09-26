@@ -113,8 +113,8 @@ contents. A filter containing `/` matches full relative paths instead, and
 slashes are literal: `lib/` matches that part of a path, including descendants
 whose own names do not contain `lib`. Directories include their trailing `/`
 for matching. Typing a dot component, such as `lib/.git/`, includes hidden entries.
-Each immediate subdirectory shows its descendant match count. Up to 20 matches
-in a group are shown as a tree, with one space of indentation per level.
+Every matching path is expanded as a tree, with one space of indentation per
+level and no limit on the number of matches or the depth of expansion.
 Intermediate directories show their own descendant counts and can be entered
 with Enter or a click, just like immediate directories. For example, a match
 at `A/B/C/foo.txt` appears as:
@@ -126,19 +126,13 @@ A/             1
    foo.txt
 ```
 
-Connecting directories do not count toward the expansion threshold unless
-their own names or paths match the filter. Above the threshold, only the
-immediate directory and its count remain; enter it to search a smaller subtree
-with the same filter. Relative paths are measured from the new directory: entering
+A count includes matching directories as well as files. Connecting directories
+count only when their own names or paths match. A directory's own match is
+independent of the descendant count shown beside it.
+
+Relative paths are measured from the new directory: entering
 `lib/` with `lib/foo` still in Filter may produce no matches. Edit or clear the
 filter to search for `foo` there, or use M-c to work with a literal path.
-The threshold does not limit counting or hide direct files inside the current
-directory.
-
-`(finder:expansion-limit 10)` changes the per-directory expansion threshold;
-zero keeps all nonempty groups collapsed. Use `C-r` after changing it through
-M-x. A count includes matching directories as well as files. A directory's own
-name may match independently of its descendant count.
 
 Scanning runs in the background. Typing or navigating replaces the pending
 search; results from an older search cannot replace the new view. Known paths
@@ -147,9 +141,19 @@ you erase part of the filter. Newly excluded paths disappear immediately.
 `Searching…`
 marks work in progress, `+` marks a lower bound, and `?` means unknown. An
 unreadable or vanished subtree is reported and leaves its count incomplete.
-This is a live filesystem inventory, not an atomic filesystem snapshot; use
-`C-r` to pick up later external changes. Cancellation takes effect between
-filesystem operations.
+Listings and metadata are cached for the lifetime of the Finder app. Editing
+the filter, toggling hidden entries and navigating back and forth reuse the
+inventory; only previously unexplored paths need filesystem reads. Cancelled
+searches retain what they already learned. `C-r` clears the whole cache and
+rescans the current directory.
+
+On Linux, directory notifications automatically invalidate changed entries
+and refresh the view, including creates, writes, renames and deletes. Other
+cached paths stay intact. Lost notifications trigger a full rebuild. On other
+platforms, or where watches cannot be installed, use `C-r` to see external
+changes. Network filesystems and changes outside the watched paths may also
+require `C-r`. The inventory is not an atomic filesystem snapshot. Cancellation
+takes effect between filesystem operations.
 
 Dotfiles and dot directories are excluded by default. `M-.` includes them;
 `(finder:show-hidden #t)` enables them in configuration. Directory symlinks

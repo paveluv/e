@@ -12,11 +12,11 @@
 (elibrary (sys sys)
   (export accept-local acquire-file-lock after archive-session! call-with-connection-deadline
           call-with-private-input-file call-with-private-output-file call-with-streamed-output
-          call-with-verified-base canonical-file-path close-connection! close-local-listener!
+          call-with-verified-base canonical-file-path close-connection! close-directory-watch! close-local-listener!
           close-process! close-terminal-process! connect-local connection-alive?
-          connection-input connection-output duplicate-output-port duplicate-standard-input-port
+          connection-input connection-output directory-changes! duplicate-output-port duplicate-standard-input-port
           duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
-          ensure-private-directory! file-info host-name listen-local open-process
+          ensure-private-directory! file-info host-name listen-local open-directory-watch open-process
           process-exited? process-identity process-input
           (rename (command-process-pid process-pid)) process-result
           (rename (poll-process! process-status)) reap-terminal-process! redirect-daemon-ports!
@@ -24,8 +24,8 @@
           signal-process! spawn-terminal-process terminal-character-width terminal-isig!
           terminal-name terminal-output-port terminal-process-input terminal-process-output
           terminal-process-pid terminal-process? terminal-raw! terminal-restore! terminal-size
-          time-scale try-connect-local unresponsive? watch-daemon-signals!
-          watch-terminal-resize! write-process! write-session!)
+          time-scale try-connect-local unresponsive? unwatch-directory! watch-daemon-signals!
+          watch-directory! watch-terminal-resize! write-process! write-session!)
   (import (chezscheme) (prefix (sys activity) activity:))
 
   ;; Waits the editor imposes on itself -- connection deadlines, quiescence
@@ -116,6 +116,15 @@
     (and libc-loaded? (eq? os 'linux)
          (guard (ex [else #f])
            (foreign-procedure __collect_safe "statx" (int u8* int unsigned u8*) int))))
+  (define c-inotify-init
+    (and libc-loaded? (eq? os 'linux)
+         (guard (ex [else #f]) (foreign-procedure "inotify_init1" (int) int))))
+  (define c-inotify-add
+    (and c-inotify-init (foreign-procedure "inotify_add_watch" (int string unsigned) int)))
+  (define c-inotify-remove
+    (and c-inotify-init (foreign-procedure "inotify_rm_watch" (int int) int)))
+  (define c-read
+    (and libc-loaded? (foreign-procedure "read" (int u8* uptr) iptr)))
   (define c-gethostname
     (and libc-loaded?
          (guard (ex [else #f])
@@ -1468,6 +1477,98 @@
                      ;; Older kernels can have libc's entry but no syscall.
                      (and (= (foreign-ref 'int (c-errno) 0) 38) (portable))))
                (lambda () (unlock-object out) (unlock-object name)))))]))
+
+  ;; Directory watches are owned and drained by one worker. The system seam
+  ;; translates kernel events to paths; callers decide what to invalidate.
+  (define-record-type directory-watch (fields (mutable fd) paths descriptors))
+
+  (edoc "Open a nonblocking directory event stream, or #f when unavailable."
+        (returns any))
+  (define (open-directory-watch)
+    (and c-inotify-init
+         (let ([fd (c-inotify-init #o2004000)]) ; CLOEXEC | NONBLOCK
+           (and (>= fd 0) (make-directory-watch fd (make-hashtable string-hash string=?) (make-eqv-hashtable))))))
+
+  (edoc "Close a directory event stream and release all its watches."
+        (watch any "the stream, or #f"))
+  (define (close-directory-watch! watch)
+    (when (and watch (directory-watch-fd watch))
+      (c-close (directory-watch-fd watch))
+      (directory-watch-fd-set! watch #f)
+      (hashtable-clear! (directory-watch-paths watch))
+      (hashtable-clear! (directory-watch-descriptors watch))))
+
+  (edoc "Subscribe to a directory before reading it; return whether events are available."
+        (watch any "the stream, or #f") (path string "the directory")
+        (returns boolean))
+  (define (watch-directory! watch path)
+    (and watch (directory-watch-fd watch)
+         (or (hashtable-contains? (directory-watch-paths watch) path)
+             (let ([wd (c-inotify-add (directory-watch-fd watch) path #x01000fce)])
+               ;; ONLYDIR, MODIFY, ATTRIB, CLOSE_WRITE, MOVE, CREATE, DELETE
+               ;; and self removal/move. Reads must not invalidate the cache.
+               (and (>= wd 0)
+                    (begin
+                      (hashtable-set! (directory-watch-paths watch) path wd)
+                      ;; Aliases of one inode share a watch descriptor.
+                      (hashtable-set! (directory-watch-descriptors watch) wd
+                        (cons path (hashtable-ref (directory-watch-descriptors watch) wd '()))) #t))))))
+
+  (edoc "Stop watching a path and its descendants, preserving other aliases."
+        (watch any "the stream, or #f") (path string "the subtree"))
+  (define (unwatch-directory! watch path)
+    (when (and watch (directory-watch-fd watch))
+      (let ([prefix (if (string=? path "/") "/" (string-append path "/"))])
+        (vector-for-each
+          (lambda (p)
+            (when (or (string=? path p)
+                      (and (>= (string-length p) (string-length prefix))
+                           (string=? prefix (substring p 0 (string-length prefix)))))
+              (let* ([wd (hashtable-ref (directory-watch-paths watch) p #f)]
+                     [others (remove p (hashtable-ref (directory-watch-descriptors watch) wd '()))])
+                (hashtable-delete! (directory-watch-paths watch) p)
+                (if (pair? others) (hashtable-set! (directory-watch-descriptors watch) wd others)
+                    (begin (hashtable-delete! (directory-watch-descriptors watch) wd)
+                           (c-inotify-remove (directory-watch-fd watch) wd))))))
+          (hashtable-keys (directory-watch-paths watch))))))
+
+  (edoc "Drain pending (path . changed/replaced) events; #t means the cache must be rebuilt after lost events."
+        (watch any "the stream, or #f") (returns any))
+  (define (directory-changes! watch)
+    (if (not (and watch (directory-watch-fd watch))) '()
+        (guard (ex [else #t])
+          (let ([bytes (make-bytevector 65536)])
+            (let drain ([out '()])
+              (let ([n (c-read (directory-watch-fd watch) bytes (bytevector-length bytes))])
+                (cond [(< n 0)
+                       (case (foreign-ref 'int (c-errno) 0)
+                         [(4) (drain out)] [(11) (reverse out)] [else #t])]
+                      [(zero? n) #t]
+                      [else
+                       (let parse ([at 0] [out out])
+                         ;; One read bounds work even under continuous writes.
+                         ;; Remaining kernel events are consumed on the next poll.
+                         (if (= at n) (reverse out)
+                             (let* ([wd (bytevector-s32-native-ref bytes at)]
+                                    [mask (bytevector-u32-native-ref bytes (+ at 4))]
+                                    [len (bytevector-u32-native-ref bytes (+ at 12))]
+                                    [name (and (positive? len)
+                                               (let end ([i (+ at 16)])
+                                                 (if (zero? (bytevector-u8-ref bytes i))
+                                                     (let ([s (make-bytevector (- i at 16))])
+                                                       (bytevector-copy! bytes (+ at 16) s 0 (bytevector-length s))
+                                                       (utf8->string s)) (end (+ i 1)))))]
+                                    [paths (hashtable-ref (directory-watch-descriptors watch) wd '())])
+                               (if (not (zero? (logand mask #x4000))) #t ; queue overflow
+                                   (begin
+                                     (unless (zero? (logand mask #x8000)) ; ignored by kernel
+                                       (for-each (lambda (p) (hashtable-delete! (directory-watch-paths watch) p)) paths)
+                                       (hashtable-delete! (directory-watch-descriptors watch) wd))
+                                     (parse (+ at 16 len)
+                                       (append (map (lambda (p)
+                                                      (cons (if name (string-append p (if (string=? p "/") "" "/") name) p)
+                                                        (if (zero? (logand mask #xafc0)) 'changed 'replaced))) paths)
+                                         out)))))))])))))))
 
   ;; The destination for terminal-control output. Normally this is stdout;
   ;; clients that temporarily redirect process stdout can preserve a separate
