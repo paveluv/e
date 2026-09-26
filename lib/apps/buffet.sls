@@ -9,12 +9,11 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffet)
-  (export choose! (rename (chosen-entry chosen)) clear-filter! erase! extend-filter! filter! first-row! init! last-row! next! next-row!
+  (export choose! (rename (chosen-entry chosen)) clear-filter! delete! erase! extend-filter! filter! first-row! flags init! kill! last-row! next! next-row!
           open! page-down! page-up! paste-filter! previous! previous-row! return! (rename (select-buffer! select!)) toggle-sort-column!)
   (import (chezscheme)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
-          (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -34,8 +33,8 @@
   (define buffer-filter "")
   (define buffer-sorts '())         ; (column . descending?) in priority order
   (define columns
-    (table:make '#("Modified" "RO" "Buffer" "Lines" "Mode" "File")
-      '#(10 5 9 8 7 10) 2 '(4 3 1 0 5) '#(text text text right text tail)))
+    (table:make '#("Modified" "Flags" "Buffer" "Lines" "Mode" "File")
+      '#(10 7 9 8 7 10) 2 '(4 3 1 0 5) '#(text text text right text tail)))
   (define first-row 2)              ; sticky filter and column headings
   (define filter-label "Filter: ")
   (define trash-heading "Trash")
@@ -110,16 +109,14 @@
                      [else 'plain])))])
       (when (zero? row)
         (style:fill-range! styles 0 (min (string-length filter-label) (vector-length styles)) 'chrome))
-      ;; a conflicted buffer's !! in red, as on its status line
-      (let ([entry (entry-at-row row)])
-        (when (and (>= row first-row) (head:buffer? entry) (head:buffer-conflicted entry))
-          (style:fill-range! styles 0 (min 2 (vector-length styles)) 'error)))
       styles))
 
   (define (buffer-data b)
     (vector (and (head:buffer-modified b) (head:buffer-modified-at b))
-            (and (head:buffer-read-only b) #t) (head:buffer-name b) (head:buffer-line-count b)
-            (or (mode:name-of b) "") (or (head:buffer-file b) "") (head:buffer-conflicted b)))
+            (string:join (map (lambda (flag) (case flag [(conflicted) "!!"] [(read-only) "%"]))
+                           (head:buffer-flags b)) " ")
+            (head:buffer-name b) (head:buffer-line-count b)
+            (or (mode:name-of b) "") (or (head:buffer-file b) "")))
 
   (define (age-text seconds)
     ;; how long, in the coarsest unit that is not zero
@@ -158,14 +155,12 @@
   (define (cell data column)
     (let ([value (vector-ref data column)])
       (cond [(= column 0)
-             (cond [(and (> (vector-length data) 6) (vector-ref data 6)) "!!"]
-                   [(string? value) value]
+             (cond [(string? value) value]
                    [value
                     (let ([date (time-utc->date
                                   (make-time 'time-utc (mod value 1000000000) (div value 1000000000)))])
                       (format "~2,'0d:~2,'0d:~2,'0d" (date-hour date) (date-minute date) (date-second date)))]
                    [else ""])]
-            [(boolean? value) (if value "%" "")]
             [(number? value) (number->string value)]
             [(= column 5) (file:abbreviate value)]
             [else value])))
@@ -277,12 +272,11 @@
         (choice-selected-set! (choice-for (head:current-window)) e)
         (head:goto! (cons row 0)))))
 
-  (define (move-row! delta)
-    (let* ([last (+ first-row (length rows) -1)]
-           [from (or (row-of (candidate (head:current-window))) first-row)])
+  (define (select-near-row! row delta)
+    (let ([last (+ first-row (length rows) -1)])
       (set! hover #f)
       (when (pair? rows)
-        (let step ([row (min (max first-row (+ from delta)) last)])
+        (let step ([row (min (max first-row row) last)])
           (let ([e (entry-at-row row)])
             (cond [(selectable? e) (select-row! e)]
                   ;; a heading is passed over in the direction of travel
@@ -290,6 +284,9 @@
                   [(> row first-row) (step (- row 1))]
                   [(< row last) (step (+ row 1))]
                   [else (void)]))))))
+
+  (define (move-row! delta)
+    (select-near-row! (+ (or (row-of (candidate (head:current-window))) first-row) delta) delta))
 
   (define (activate-row!)
     ;; Panel clicks change the focused window; keyboard use replaces the
@@ -332,6 +329,38 @@
   (edoc "Switch this window to the chosen buffer, or restore a chosen trashed one or backup.")
   (define (choose!) (activate-row!))
 
+  (edoc "The chosen live buffer's active flags, using the same buffer-flag enumeration as head:buffer-flags; #f on a backup, trash row or empty choice."
+        (returns (or (list-of buffer-flag) #f)))
+  (define (flags)
+    (let ([e (chosen-entry)]) (and (head:buffer? e) (head:buffer-flags e))))
+
+  (define (remove-chosen! remove!)
+    ;; Keep the next selectable row in place, or the previous one at the
+    ;; end. Removing the Buffet itself follows ordinary app retirement.
+    (let* ([w (head:current-window)] [e (candidate w)]
+           [index (and e (- (row-of e) first-row))])
+      (when e
+        (remove! e)
+        (set! hover #f)
+        (when (and view (eq? (head:window-buffer w) view))
+          (refresh!)
+          (choice-selected-set! (choice-for w) #f)
+          (move-row! index)))))
+
+  (edoc "Kill the chosen live buffer as kill-buffer! does: shared documents go to Trash, disposable output is deleted and local apps close; every window showing it switches to a remaining buffer.")
+  (define (kill!)
+    (remove-chosen!
+      (lambda (e)
+        (when (trashed? e) (error 'kill! "choose a live buffer" (trashed-name e)))
+        (edit:kill-buffer! e))))
+
+  (edoc "Permanently delete the chosen Trash or Backups entry and its history; a live buffer is refused.")
+  (define (delete!)
+    (remove-chosen!
+      (lambda (e)
+        (unless (trashed? e) (error 'delete! "choose a Trash or Backups entry" (head:buffer-name e)))
+        (edit:delete-trashed! (trashed-name e)))))
+
   (edoc "Move the choice to the next buffer.")
   (define (next-row!) (move-row! 1))
 
@@ -363,7 +392,7 @@
         (text string "the text to add"))
   (define (extend-filter! text) (filter! (string-append buffer-filter text)))
 
-  (edoc "Sort the buffers by a column, the same column again reversing the order: 1 modified, 2 read-only, 3 buffer, 4 lines, 5 mode, 6 file; F1 to F6 sort by the column of their number."
+  (edoc "Sort the buffers by a column, cycling ascending, descending and off: 1 modified, 2 flags (lexicographic marker text), 3 buffer, 4 lines, 5 mode, 6 file; F1 to F6 sort by the column of their number."
         (column integer "the column, 1 to 6"))
   (define (toggle-sort-column! column)
     (unless (and (integer? column) (exact? column) (<= 1 column 6))
@@ -390,6 +419,7 @@
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!)
+      (("C-k") ,kill!) (("C-x D") ,delete!)
       (("ESC" "C-g") ,return!) (("PASTE") ,paste-filter!)
       (("SELF-INSERT") ,(keymap:call extend-filter! head:typed-text))
       ;; the function keys sort by the column of their number
@@ -399,13 +429,13 @@
     ;; what the buffet context leaves to the app: focus, the wheel and the
     ;; pointer; typing grows the filter through the context's SELF-INSERT
     (cond [(string=? event "FOCUS") (refresh!) #t]
-          [(member event '("WHEEL-UP" "WHEEL-DOWN"))
-           (let ([target (head:app-event-focus)] [up? (string=? event "WHEEL-UP")])
-             (if (and target (not (eq? target (head:current-window))) (memq target (head:windows)))
-                 (begin
-                   (head:set-current! target)
-                   (dispatch:global-key! (if up? "M-S-UP" "M-S-DOWN")))
-                 (move-row! (if up? -1 1)))) #t]
+          [(member event '("WHEEL-UP" "WHEEL-DOWN" "S-WHEEL-UP" "S-WHEEL-DOWN"))
+           ;; Use the ordinary viewport scroller. Keep our candidate at its
+           ;; landing point so the next refresh does not scroll back to the
+           ;; old choice. Section headings are passed over, as with arrows.
+           (let ([direction (if (member event '("WHEEL-UP" "S-WHEEL-UP")) -1 1)])
+             (edit:page-window! direction 8)
+             (select-near-row! (car (head:point)) direction)) #t]
           [(string=? event "MOUSE-MOVE")
            (let* ([at (head:app-event-buffer-position)]
                   [target (or (let ([e (and at (entry-at-row (car at)))]) (and (selectable? e) e))
@@ -427,11 +457,10 @@
           [else #f]))
 
   (define (switch-by-row! delta)
-    ;; Global alphabetical traversal is independent of the table's filter/sort.
+    ;; Use the table's comparator over every live buffer, independently of
+    ;; the filter. Backups and trash are not live switching destinations.
     (let* ([current (head:current-buffer)]
-           [listed (sort (lambda (a b)
-                           (string-ci<? (head:buffer-name a) (head:buffer-name b)))
-                         (head:buffers))]
+           [listed (map car (sort entry<? (map (lambda (b) (cons b (buffer-data b))) (head:buffers))))]
            [tail (memq current listed)])
       (when (and tail (pair? (cdr listed)))
         (let ([next
@@ -445,10 +474,10 @@
                             (loop (cdr left))))])])
           (if (eq? next view) (open!) (head:show-buffer! next))))))
 
-  (edoc "Switch the current window to the previous buffer in alphabetical order, wrapping at the beginning; the buffet's own turn opens the app.")
+  (edoc "Switch the current window to the previous live buffer in Buffet's sort order, independently of its filter, wrapping at the beginning; Buffet's own turn opens the app.")
   (define (previous!) (switch-by-row! -1))
 
-  (edoc "Switch the current window to the next buffer in alphabetical order, wrapping at the end; the buffet's own turn opens the app.")
+  (edoc "Switch the current window to the next live buffer in Buffet's sort order, independently of its filter, wrapping at the end; Buffet's own turn opens the app.")
   (define (next!) (switch-by-row! 1))
 
   (define (ensure!)
@@ -521,8 +550,23 @@
                 (map (lambda (w)
                        (let* ([over (and (head:mouse-position) (hover-of w))]
                               [column (assv over (choice-columns (choice-for w)))]
-                              [row (row-of (candidate w))])
+                              [row (row-of (candidate w))]
+                              [face (and row (or (eq? w (head:current-window)) (memq over rows))
+                                         (if (memq over rows) 'candidate-hover 'candidate))]
+                              [flags (assv 1 (choice-columns (choice-for w)))])
                          (append
+                           ;; The conflict marker follows the window's
+                           ;; Flags column, including when narrow layouts
+                           ;; omit it; buffer names containing !! are plain.
+                           (if flags
+                               (let loop ([entries rows] [at first-row])
+                                 (if (null? entries) '()
+                                     (append
+                                       (if (and (head:buffer? (car entries)) (head:buffer-conflicted (car entries)))
+                                           (list (list w at (cadr flags) (+ (cadr flags) 2)
+                                                   (if (and face (= at row)) (list face 'error) 'error))) '())
+                                       (loop (cdr entries) (+ at 1)))))
+                               '())
                            (if (and active-row (not (eq? w (head:current-window))))
                                (list (row-range w active-row 'active)) '())
                            (if column
@@ -531,8 +575,14 @@
                                             (+ (cadr column) (string-length (heading (car column)))))
                                        'hover))
                                '())
-                           (if (and row (or (eq? w (head:current-window)) (memq over rows)))
-                               (list (row-range w row (if (memq over rows) 'candidate-hover 'candidate))) '()))))
+                           (cond [(not face) '()]
+                                 [(and flags (head:buffer? (entry-at-row row)) (head:buffer-conflicted (entry-at-row row)))
+                                  ;; Keep the marker red inside the candidate
+                                  ;; tint and hover, without overlapping faces.
+                                  (list (list w row 0 (cadr flags) face)
+                                        (list w row (+ (cadr flags) 2)
+                                          (string-length (vector-ref (head:window-lines w) row)) face))]
+                                 [else (list (row-range w row face))]))))
                      (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))
             '())))
     (keymap:bind-default! "C-x b" open!)

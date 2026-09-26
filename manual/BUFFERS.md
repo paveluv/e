@@ -99,8 +99,11 @@ completes the trashed names, newest first with how long ago each was killed,
 and brings one back into the current window, renamed again with a suffix
 while another buffer holds its name, since several buffers may visit one
 file. `(edit:trash)` lists them as `(name killed-at actor)`, and
-`(edit:empty-trash!)` deletes them for good, the backups below kept. The
-trash survives a base restart and empties itself by age, thirty days by
+`(edit:empty-trash!)` deletes them for good, the backups below kept.
+`(edit:delete-trashed! name)` permanently deletes one named Trash or Backups
+entry and its history, leaving the file on disk untouched. It refuses live
+buffers and entries changed during deletion. The trash survives a base
+restart and empties itself by age, thirty days by
 default through `(store:trash-retention days)` in `base-config.e`.
 Disposable output, generated tools, views and terminals, is deleted
 outright, and a local buffer is simply forgotten. Killing a buffer removes
@@ -505,6 +508,12 @@ killed shared buffers, with how long ago each was killed and how long it
 stays before the base deletes it; the filter applies to their names. Enter
 on a row of either restores it, as `(edit:restore! name)` does.
 
+`C-k` kills the chosen live buffer using the ordinary buffer-kill behavior:
+shared documents move to Trash, disposable output is deleted, and local apps
+close. Windows showing it switch to another buffer. The next row becomes the
+candidate, or the preceding row at the end. `C-x D` (Control-X, then Shift-D)
+permanently deletes the chosen Trash or Backups entry; it refuses live rows.
+
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
 text also filters. The first line shows `Filter: ` followed by the query;
@@ -526,7 +535,7 @@ The live, read-only table has these columns:
 | Column | Sort key | Meaning |
 |---|---|---|
 | `Modified` | F1 | Time of the latest content change, in local `HH:MM:SS`, when the buffer has unsaved changes; blank otherwise. |
-| `RO` | F2 | Read-only: `%` when ordinary text editing is disabled; blank otherwise. |
+| `Flags` | F2 | `!!` for unsettled reload conflicts, `%` when ordinary text editing is guarded; both can appear together. |
 | `Buffer` | F3 | Buffer name. |
 | `Lines` | F4 | Current line count. |
 | `Mode` | F5 | Detected or assigned mode. |
@@ -546,9 +555,9 @@ Names, modes and full paths sort alphabetically without case distinctions;
 line counts sort numerically. Modified sorts by the full timestamp, including
 date and nanoseconds, even when the displayed times are identical. Ascending
 puts clean buffers first; descending puts unsaved buffers first, newest change
-first. RO sorts blank first in ascending order, flagged first in descending
-order. Names break remaining ties and provide the default order when every
-key is off. The sort keys survive reopening;
+first. Flags sorts lexicographically by the complete marker text: blank,
+`!!`, `!! %`, then `%` in ascending order. Names break remaining ties and
+provide the default order when every key is off. The sort keys survive reopening;
 C-u clears the filter without changing them. Selection follows buffer identity
 across sorting, renaming and live updates.
 
@@ -597,7 +606,7 @@ changes appear on redraw.
 
 ### Keyboard and mouse controls
 
-Every key of the app runs a `buffet:` command bound in the `buffers`
+Every key of the app runs a `buffet:` command bound in the `buffet`
 context: `buffet:choose!` for Enter, `next-row!`, `previous-row!`,
 `page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
 `clear-filter!`, `(toggle-sort-column! n)` for `F1` to `F6`, `return!` and
@@ -607,6 +616,12 @@ all and `C-h k` describes them, and M-x or an agent drives the app the same
 way: `(filter! text)` sets the filter,
 `(select! (buffer "notes.md"))` makes a listed buffer the choice, and
 `(chosen)` is the choice, a buffer or a trashed or backup buffer's name.
+`(buffet:flags)` returns the chosen live buffer's flags, or `#f` for an
+archived entry or no choice. It uses the same `buffer-flag` enumeration as
+`(head:buffer-flags b)`: a list containing `conflicted`, `read-only`, both
+in that order, or neither. Modification time is separate from these flags.
+`buffet:kill!` and `buffet:delete!` perform the selected-row actions;
+`(edit:delete-trashed! name)` deletes an individual archived entry directly.
 
 - Up / `C-p` / Shift-Tab, Down / `C-n` / Tab: move the candidate row.
 - Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.
@@ -614,21 +629,22 @@ way: `(filter! text)` sets the filter,
 - Enter: show the candidate row's buffer in this window, completing the
   switch in place; on a backup or trash row, restore that buffer.
 - Esc / C-g: return to the invoking document; C-u: clear the filter.
-- F1–F6: cycle sorting for Modified, RO, Buffer, Lines, Mode and File.
+- C-k: kill the chosen live buffer.
+- C-x D: permanently delete the chosen Trash or Backups entry.
+- F1–F6: cycle sorting for Modified, Flags, Buffer, Lines, Mode and File.
 - Move the pointer over a row: emphasize that candidate without taking focus.
 - Click a row: show its buffer in the selected window; focus stays there.
 - Click a heading: cycle its sort key ascending, descending, then off.
-- Wheel over the focused app: browse rows until Enter or a click opens a buffer.
-- Wheel over an unfocused app: run `M-Shift-Up` / `M-Shift-Down` in the focused
-  window. By default this switches buffers alphabetically with wraparound,
-  independently of the panel's filter, sorting and hovered row. Focus stays put.
+- Wheel over the app: scroll that window normally, including Backups and Trash.
+  The focused window stays focused and no buffer is opened.
 - Click the app's status line: focus `<buffet>`.
 
-Kept in another window, the same app is a control panel: a click or wheel tick
+Kept in another window, the same app is a control panel: a click
 switches the focused window without taking focus. Click the panel's status
 line to focus it and type a filter. Global `M-Shift-Up` / `M-Shift-Down` and
-Meta-wheel keep their alphabetical traversal independently of the table's
-filter and sort.
+Meta-wheel traverse live buffers in the table's current sort order, with
+wraparound, independently of its filter. With no sort columns enabled they
+use buffer names. Backups and Trash are not switching destinations.
 The public app API is documented in [App buffers](APPS.md).
 
 ## Scrollbars
@@ -768,7 +784,7 @@ M-x, so a tag is a literal there, `(window-link-tag 'target)`.
 The public Scheme API exposes read-only inspection through `head:current-buffer`,
 `head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `edit:buffer-text`,
 `edit:buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
-`head:buffer-read-only`, `mode:name-of`,
+`head:buffer-read-only`, `head:buffer-flags`, `mode:name-of`,
 `head:buffer-line`, `head:buffer-line-count`, and `mode:line-styles`.
 
 `(head:buffer-modified-at b)` returns the last content-change time as an exact

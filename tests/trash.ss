@@ -50,5 +50,16 @@
              (equal? (head:buffer-file older) (head:buffer-file newest)) (trash) (eq? (head:current-buffer) older))
        (list #t '("second on disk") name #t '("unsaved on disk") (string-append name "<2>") #t '() #t))
 
+     (check 'permanent-deletion-refuses-live-or-missing-names
+       (map (lambda (name) (test:raises? (lambda () (delete-trashed! name))))
+         (list (head:buffer-name older) "not-in-trash")) '(#t #t))
+     (kill-buffer! older)
+     (delete-trashed! (head:buffer-name older))
+     (check 'permanent-deletion-removes-history-but-keeps-the-file-and-live-namesake
+       (list (store:exists? first-id) (trash) (text newest)
+             (call-with-input-file path get-string-all)
+             (test:raises? (lambda () (restore! (head:buffer-name older)))))
+       '(#f () ("second on disk") "on disk\n" #t))
+
      (delete-file path)
      (test:finish! 'trash)))

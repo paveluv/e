@@ -24,7 +24,7 @@
           app-refresh! app-refresh-error app-refresh-error-set! app-status
           app? before-frame! buffer buffer-append! buffer-base
           buffer-base-set! buffer-conflicted buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
-          buffer-file-set! buffer-line buffer-line-count
+          buffer-file-set! buffer-flags buffer-line buffer-line-count
           buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
           buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
           buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified
@@ -1494,6 +1494,19 @@
         (returns boolean))
   (define (buffer-conflicted b)
     (> (buffer-fact b 'conflicts 0) 0))
+
+  (edoc-type buffer-flag "a buffer flag: conflicted (unsettled reload conflicts) or read-only (ordinary editing is guarded)"
+    (predicate (lambda (v) (and (memq v '(conflicted read-only)) #t)))
+    (complete (lambda (partial)
+                '((conflicted . "unsettled reload conflicts") (read-only . "ordinary editing is guarded"))))
+    (within symbol))
+
+  (edoc "A buffer's active flags, in canonical order: conflicted, then read-only; a conditional edit guard counts as read-only. Modification time is separate."
+        (b buffer "the buffer")
+        (returns (list-of buffer-flag)))
+  (define (buffer-flags b)
+    (append (if (buffer-conflicted b) '(conflicted) '())
+            (if (buffer-read-only b) '(read-only) '())))
 
   (define (local-name name)
     ;; Locality is visible in every label, including user renames.

@@ -30,7 +30,7 @@
   (export answer! backspace! backups backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
           beginning-of-line! buffer-clean? buffer-text
           call-as-one-edit! copy-region! copy-text copy-text! current-batch current-region
-          delete-forward! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
+          delete-forward! delete-trashed! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
           format-region!
           forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-expression! indent-line!
           indent-region!
@@ -1479,6 +1479,18 @@
           (parameterize ([message-source 'restore!])
             (set-message! (format "Restored ~a" (head:buffer-name b))))
           b))))
+
+  (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
+        (name trashed "the buffer's name in Trash or Backups"))
+  (define (delete-trashed! name)
+    (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
+      (unless entry (error 'delete-trashed! "no such buffer in the trash" name))
+      (let-values ([(text revision facts) (store:snapshot-state (car entry))])
+        (unless (and (cond [(assq 'trashed facts) => cdr] [else #f])
+                  (store:discard! head:ui-actor (car entry) revision facts))
+          (error 'delete-trashed! "the entry changed; choose it again" name)))
+      (parameterize ([message-source 'delete-trashed!])
+        (set-message! (format "Permanently deleted ~a" name)))))
 
   (edoc "Delete every trashed buffer for good, the backups kept; how many went."
         (returns integer))

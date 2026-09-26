@@ -14,7 +14,7 @@
 (eval
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (head head) head:) (prefix (head mode) mode:) (prefix (core kernel) kernel:) (prefix (head dispatch) dispatch:)
-             (prefix (apps buffet) buffet:)
+             (prefix (apps buffet) buffet:) (prefix (head paint) paint:) (prefix (head keymap) keymap:) (prefix (foundation edoc) edoc:)
              (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (state store) store:) (prefix (test) test:))
 
      (define check test:check)
@@ -89,7 +89,7 @@
                (names) (selected))))
      (define sort-cases
        '((1 "Modified" (beta gamma alpha) (alpha gamma beta))
-         (2 "RO" (alpha beta gamma) (beta gamma alpha))
+         (2 "Flags" (alpha beta gamma) (beta gamma alpha))
          (3 "Buffer" (alpha beta gamma) (gamma beta alpha))
          (4 "Lines" (beta alpha gamma) (gamma alpha beta))
          (5 "Mode" (gamma beta alpha) (alpha beta gamma))
@@ -113,14 +113,14 @@
      (head:buffer-fact-set! (buffer "<picker-gamma>") 'modified-at (head:buffer-modified-at (buffer "<picker-alpha>")))
      (define compound-cases
        '((1 ("Modified¹↑") (beta alpha gamma))
-         (2 ("Modified¹↑" "RO²↑") (beta alpha gamma))
-         (4 ("Modified¹↑" "RO²↑" "Lines³↑") (beta alpha gamma))
-         (4 ("Modified¹↑" "RO²↑" "Lines³↓") (beta gamma alpha))
-         (1 ("Modified¹↓" "RO²↑" "Lines³↓") (gamma alpha beta))
-         (1 ("RO¹↑" "Lines²↓") (gamma alpha beta))
-         (1 ("RO¹↑" "Lines²↓" "Modified³↑") (gamma alpha beta))
-         (4 ("RO¹↑" "Modified²↑") (beta alpha gamma))
-         (2 ("RO¹↓" "Modified²↑") (beta alpha gamma))
+         (2 ("Modified¹↑" "Flags²↑") (beta alpha gamma))
+         (4 ("Modified¹↑" "Flags²↑" "Lines³↑") (beta alpha gamma))
+         (4 ("Modified¹↑" "Flags²↑" "Lines³↓") (beta gamma alpha))
+         (1 ("Modified¹↓" "Flags²↑" "Lines³↓") (gamma alpha beta))
+         (1 ("Flags¹↑" "Lines²↓") (gamma alpha beta))
+         (1 ("Flags¹↑" "Lines²↓" "Modified³↑") (gamma alpha beta))
+         (4 ("Flags¹↑" "Modified²↑") (beta alpha gamma))
+         (2 ("Flags¹↓" "Modified²↑") (beta alpha gamma))
          (2 ("Modified¹↑") (beta alpha gamma))
          (1 ("Modified¹↓") (alpha gamma beta))
          (1 () (alpha beta gamma))))
@@ -141,6 +141,26 @@
      (check 'modified-times-sort-unsaved-rows-first-and-clear-on-save
        (list clocks modified-rows saved-rows clean-rows (names))
        (list '(#t #f #t) (order '(alpha gamma beta)) (order '(gamma alpha beta)) (list picker-all #t) picker-all))
+
+     ;; Global switching shares the table comparator, including compound
+     ;; sorts, but does not get trapped by a panel filter. Reverse steps
+     ;; retrace exactly; archived entries are never destinations.
+     (check 'global-switching-follows-numeric-compound-order-in-both-directions
+       (sequence
+         (lambda (keys)
+           (for-each buffet:toggle-sort-column! keys)
+           (buffet:filter! "picker-gamma")
+           (head:show-buffer! (buffer "<picker-beta>"))
+           (let ([seen (sequence (lambda (step) (step) (head:buffer-name (head:current-buffer)))
+                         (list buffet:next! buffet:next! buffet:previous! buffet:previous!))])
+             (buffet:open!)
+             (for-each (lambda (column)
+                         (buffet:toggle-sort-column! column) (buffet:toggle-sort-column! column)) keys)
+             seen))
+         '((4) (4 2)))
+       (make-list 2 (order '(alpha gamma alpha beta))))
+     (buffet:filter! "picker-")
+     (buffet:select! (buffer "<picker-alpha>"))
 
      ;; Identity: a rename keeps the selection, a kill leaves a live candidate.
      (head:buffer-name-set! (buffer "<picker-alpha>") "picker-delta") (head:refresh-visible-views!)
@@ -165,8 +185,18 @@
      ;; The trash: a killed shared buffer sits below the live rows under its
      ;; own heading, dimmed, and Enter on it restores.
      (define doomed (head:new-buffer! "picker-doomed"))
-     (kill-buffer! doomed)
-     (buffet:open!)
+     (let* ([root (head:root)] [w (head:current-window)]
+            [left (head:make-window doomed 0 0 0 0 0 8 0 30 'default)]
+            [right (head:make-window doomed 0 0 0 0 0 8 31 30 'default)])
+       (head:set-layout-root! (head:make-layout-split 'below w (head:make-layout-split 'right left right 1 1) 1 1))
+       (buffet:open!) (buffet:select! doomed) (press! "C-k")
+       (check 'c-k-trashes-the-candidate-and-retires-it-from-every-window
+         (list (and (assoc "picker-doomed" (trash)) #t)
+               (eq? (head:current-window) w) (head:app-buffer? (head:current-buffer))
+               (exists (lambda (window) (eq? (head:window-buffer window) doomed)) (head:windows))
+               (and (buffet:chosen) #t))
+         '(#t #t #t #f #t))
+       (head:set-layout-root! root))
      (check 'the-trash-lists-killed-shared-buffers-below-the-live-rows
        (let ([lines (rows)])
          (list (and (member "Trash" lines) #t)
@@ -220,14 +250,102 @@
      (check 'the-api-filters-selects-and-tells-the-choice
        (list (eq? (buffet:chosen) (buffer "<picker-beta>")) (test:raises? (lambda () (buffet:select! (buffer "<picker-gamma>")))))
        '(#t #t))
-     (let ([id (store:create! head:ui-actor "conflicted-sort" '("abc") '((base . "abc") (trailing . #f)))])
-       (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 3) '("mine"))
-       (store:reload! head:ui-actor id '("disk") '((base . "disk") (trailing . #f)))
-       (head:before-frame!)
-       (buffet:filter! "")
-       (check 'modified-sorting-keeps-conflict-display-separate-from-time
-         (begin
-           (do ([i 0 (+ i 1)]) ((= i 3)) (buffet:toggle-sort-column! 1))
-           (let ([row (row-of "conflicted-sort")])
-             (and row (string:search row "!!" 0 (string-length row)) #t))) #t))
+     ;; Flags have one typed vocabulary in the buffer and app APIs. Their
+     ;; rendered strings sort lexicographically, without masking clocks.
+     (define flag-cases
+       '(("flag-none" () "") ("flag-conflict" (conflicted) "!!")
+         ("flag-both" (conflicted read-only) "!! %") ("flag-read" (read-only) "%")))
+     (for-each
+       (lambda (entry)
+         (let ([id (store:create! head:ui-actor (car entry) '("abc") '((base . "abc") (trailing . #f)))])
+           (when (memq 'conflicted (cadr entry))
+             (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 3) '("mine"))
+             (store:reload! head:ui-actor id '("disk") '((base . "disk") (trailing . #f))))
+           (when (memq 'read-only (cadr entry)) (store:set-property! head:ui-actor id 'read-only #t)))) flag-cases)
+     (head:before-frame!) (buffet:filter! "flag-")
+     (check 'flags-enumerate-canonically-and-keep-the-modification-clock
+       (sequence (lambda (entry)
+                   (let ([b (head:buffer-named (car entry))])
+                     (buffet:select! b)
+                     (let ([cells (string-append (if (head:buffer-modified b)
+                                                   (substring (row-of (car entry)) 0 8) "")
+                                                 "  " (caddr entry) "  " (car entry))])
+                       (list (head:buffer-flags b) (buffet:flags)
+                             (string:prefix? cells (row-of (car entry)))
+                             (edoc:type-accepts? '(list-of buffer-flag) (buffet:flags)))))) flag-cases)
+       (map (lambda (entry) (list (cadr entry) (cadr entry) #t #t)) flag-cases))
+     (check 'flags-sort-by-complete-marker-text
+       (sequence (lambda (i)
+                   (buffet:toggle-sort-column! 2)
+                   (map (lambda (line) (car (find (lambda (entry) (string:search line (car entry) 0 (string-length line))) flag-cases))) (rows)))
+         '(0 1 2))
+       (list (map car flag-cases) (reverse (map car flag-cases)) '("flag-both" "flag-conflict" "flag-none" "flag-read")))
+
+     (buffet:select! (head:buffer-named "flag-both"))
+     (let* ([w (head:current-window)] [row (car (head:point))] [width (head:window-width w)])
+       (define (marker)
+         (find (lambda (range)
+                 (and (eq? (car range) w) (= (cadr range) row)
+                      (let ([face (list-ref range 4)]) (and (list? face) (memq 'error face)))))
+           (paint:highlight-ranges)))
+       (head:window-width-set! w 100) (head:refresh-visible-views!)
+       (check 'conflict-marker-keeps-its-color-in-selection-and-hover-and-hides-with-flags
+         (let ([selected (marker)])
+           (parameterize ([head:app-event-buffer-position (cons row 0)]) (head:dispatch-app-event! "MOUSE-MOVE"))
+           (head:set-mouse-position! '(1 . 1))
+           (let ([hovered (marker)])
+             (head:window-width-set! w 12) (head:refresh-visible-views!)
+             (list (and selected (list-ref selected 4)) (and hovered (list-ref hovered 4))
+                   (and selected hovered (= (caddr selected) (caddr hovered)) (> (caddr selected) 8))
+                   (marker))))
+         '((candidate error) (candidate-hover error) #t #f))
+       (head:set-mouse-position! #f) (head:dispatch-app-event! "MOUSE-LEAVE")
+       (head:window-width-set! w width) (head:refresh-visible-views!))
+
+     ;; Wheel ticks scroll the viewport, even through section headings. The
+     ;; focused document stays put when the panel receives an inactive tick;
+     ;; a subsequent refresh must not pull the viewport to its old candidate.
+     (let* ([root (head:root)] [panel (head:current-window)]
+            [other (head:make-window origin 0 0 0 0 0 12 41 40 'default)])
+       (do ([i 0 (+ i 1)]) ((= i 24))
+         (store:create! head:ui-actor (format "scroll-trash-~2,'0d" i) '("")
+           `((trashed ,(time-second (current-time 'time-utc)) ,head:ui-actor))))
+       (head:set-layout-root! (head:make-layout-split 'right panel other 1 1))
+       (buffet:filter! "scroll-trash-")
+       (paint:set-screen-rows! 16) (paint:window-layout) (head:refresh-visible-views!)
+       (check 'wheel-scrolls-active-and-inactive-panels-through-trash
+         (sequence
+           (lambda (focus)
+             (head:set-current! focus)
+             (let ([before (head:window-top panel)])
+               (head:with-window panel
+                 (parameterize ([head:app-event-focus focus])
+                   (head:dispatch-app-event! "WHEEL-DOWN") (head:dispatch-app-event! "WHEEL-DOWN")))
+               (head:refresh-visible-views!)
+               (paint:scroll-window! panel (head:window-size panel))
+               (list (> (head:window-top panel) before) (eq? (head:current-window) focus)
+                     (eq? (head:window-buffer other) origin)
+                     (head:with-window panel (string? (buffet:chosen))))))
+           (list panel other))
+         '((#t #t #t #t) (#t #t #t #t)))
+       (head:set-current! panel) (head:set-layout-root! root) (paint:set-screen-rows! 24))
+
+     ;; Permanent deletion is deliberately unavailable on live rows. The
+     ;; same command removes either archived kind and keeps a valid choice.
+     (store:create! head:ui-actor "delete-backup" '("old notes")
+       `((trashed ,(time-second (current-time 'time-utc)) ,head:ui-actor) (backup "/tmp/notes.txt" #f "sha256:0")))
+     (check 'permanent-delete-is-a-distinct-shifted-key
+       (keymap:spec "C-x D") '("C-x" "D"))
+     (check 'permanent-delete-removes-only-archived-candidates
+       (sequence
+         (lambda (name)
+           (buffet:filter! name) (press! "END")
+           (let ([id (store:find-named name)])
+             ((keymap:binding 'buffet "C-x D")) (head:refresh-visible-views!)
+             (list (store:exists? id) (buffet:chosen) (rows))))
+         '("delete-backup" "scroll-trash-00"))
+       '((#f #f ("No matching buffers")) (#f #f ("No matching buffers"))))
+     (buffet:filter! "flag-none")
+     (check 'permanent-delete-refuses-a-live-buffer
+       (list (test:raises? buffet:delete!) (and (head:buffer-named "flag-none") #t)) '(#t #t))
      (test:finish! 'buffet)))
