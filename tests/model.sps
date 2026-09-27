@@ -140,6 +140,40 @@
     (test:check 'model-definition-invalidation-does-not-change-record-revision
       (list (cadar (cadr (seen))) (get (model:snapshot id) 'revision)) '(#f 1))
     (model:unsubscribe! token))
+  (let* ([id (model:create! author 'sample 1 'session 'transient '() '())]
+         [view (view:create! author id 'value 1 '(selected . 0))]
+         [another (view:create! author id 'value 1 '(selected . 10))]
+         [claim (call-with-values (lambda () (view:claim! author view)) list)]
+         [generation (cadddr (cadr claim))]
+         [entered (test:gate)] [release (test:gate)] [sent (test:recorder)]
+         [writer (publication:make!
+                   (lambda (state previous)
+                     (entered #t) (test:await 'view-publication-release release)
+                     (sent state) (view:publish! author (list state))) void values)])
+    (define (publish generation sequence) (list view generation sequence 0 (cons 'selected sequence)))
+    (define (result thunk) (car (call-with-values thunk list)))
+    (test:check 'view-ownership-independent-descriptors-and-owner-routing
+      (list (car claim) (result (lambda () (view:claim! author view)))
+            (result (lambda () (view:set-state! bot view 0 '(selected . 9))))
+            (list-ref (view:snapshot another) 7)) '(applied owned owned (selected . 10)))
+    (publication:submit! writer (publish generation 1))
+    (test:await 'view-publication-entered entered)
+    (do ([n 2 (+ n 1)]) ((= n 101)) (publication:submit! writer (publish generation n)))
+    (test:check 'view-held-ack-leaves-saved-state-unchanged (list-ref (view:snapshot view) 7) '(selected . 0))
+    (release #t) (publication:flush! writer)
+    (test:check 'view-bounded-publication-and-delayed-ack
+      (list (map caddr (sent)) (list-ref (view:snapshot view) 7)) '((1 100) (selected . 100)))
+    (view:release-owner! author)
+    (view:claim! author view)
+    (test:check 'view-old-generation-and-out-of-order-batches-cannot-overwrite
+      (list (result (lambda () (view:publish! author (list (publish generation 101)))))
+            (result (lambda () (view:release! author view generation)))
+            (result (lambda () (view:publish! author (list (publish (+ generation 1) 1)
+                                                       (list another 0 1 0 '(selected . 99))))))
+            (list-ref (view:snapshot view) 7)) '(stale stale stale (selected . 100)))
+    (view:reset-owners!)
+    (test:check 'view-restart-clears-owner-and-keeps-acknowledged-state
+      (list (list-ref (view:snapshot view) 4) (list-ref (view:snapshot view) 7)) '(#f (selected . 100))))
   (model:register-kind! 'unknown 1 (lambda (value) #f))
   (test:check 'model-unavailable-data-still-exports-intact
     (list (model:available? '(model 3)) (model:snapshot '(model 3))

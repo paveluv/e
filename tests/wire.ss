@@ -1799,6 +1799,24 @@
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
+                   (let ([view (rpc head 'view-create model 'value 1 0)])
+                     (for-each (lambda (ui) (head-read ui '(begin (kernel:load-module! "interaction") #t))) (list a b))
+                     (test:check 'view-single-mount-owner
+                       (map (lambda (ui) (head-read ui `(car (call-with-values (lambda () (interaction:claim! head:ui-actor ',view)) list))))
+                         (list a b)) '(applied owned))
+                     (test:check 'view-provisional-interaction-is-immediate
+                       (head-read a `(begin
+                                       (do ([n 1 (+ n 1)]) ((= n 101)) (interaction:set-state! head:ui-actor ',view 0 n))
+                                       (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
+                     (test:check 'view-unpublished-state-stays-head-local
+                       (list-ref (cdr (assq 'value (caddar (cadr (rpc head 'model-read (list view)))))) 7) 0)
+                     (test:check 'view-publication-ack-does-not-roll-back-owner
+                       (head-read a `(begin (interaction:flush!) (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
+                     (head-read a `(begin (interaction:release! head:ui-actor ',view 1) #t))
+                     (test:check 'view-new-owner-restores-saved-state
+                       (head-read b `(begin (interaction:claim! head:ui-actor ',view) (interaction:publish!)
+                                            (list-tail (interaction:snapshot ',view) 5))) '(0 0 100))
+                     (head-read b `(begin (interaction:release! head:ui-actor ',view 2) #t)))
                    (for-each (lambda (ui)
                                (head-read ui
                                  `(begin (define model-events '())

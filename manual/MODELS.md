@@ -114,6 +114,48 @@ Client mutations use the authenticated connection's actor, regardless of
 the supplied actor argument. Currently they require an all-buffer head
 connection; model-specific agent grants are deferred.
 
+## Views and provisional interaction
+
+`view:create!` creates a persistent `widget-view` model referencing an existing
+model ID. Its descriptor is:
+
+`(model-id renderer schema generation owner sequence basis state)`
+
+The renderer symbol/schema identifies head code. Geometry is never saved in
+the descriptor. State is portable interaction data; basis identifies the model
+revision against which a selection or anchor was made. Creating another view
+over the same model creates independent interaction state.
+
+`view:claim!` takes an actor and view ID and returns status plus descriptor.
+An already owned view returns `owned`, even to the same head. A successful
+claim increments the owner generation and resets sequence to zero.
+`view:publish!` takes an actor and a batch of
+`(view-id generation sequence basis state)` updates. All owners/generations
+must match and each sequence must advance; otherwise nothing changes.
+`view:release!` checks the generation and retains the last acknowledged state.
+Disconnect releases the head's views; restart clears recovered mount owners.
+
+`view:set-state!` changes saved state only while unmounted. Commands for an
+active view must be sent to its owning head. Low-level `model:` mutations are
+trusted infrastructure; use `view:` for view state so these contracts apply.
+
+The head's `interaction:` module claims views and holds their provisional
+descriptors. `interaction:set-state!` updates them immediately without a
+request. `interaction:snapshot` reads that local state. Activation must pass
+the actual selected target and its model basis to the domain operation; it
+must not reread a potentially older base selection.
+
+Call `interaction:publish!` after presentation or dispatch. The shared
+publisher sends only changed views, keeping one batch in flight and one
+latest pending replacement. Replies never replace provisional state.
+`interaction:flush!` fences delivery, and `interaction:release!` fences before
+releasing an owner. Mount adapters must fence before detach. The head's
+interaction owner and its one worker live for the process, not per mount.
+
+Canonical `view:snapshot` in a head is an explicit remote inspection operation;
+it is unsuitable for rendering. `interaction:snapshot` is the rendering read.
+Both expose owned copies.
+
 ## Recovery
 
 Persistent models share the atomic session file with buffers and head

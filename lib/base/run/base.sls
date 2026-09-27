@@ -26,13 +26,14 @@
           (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (sys activity) activity:)
           (prefix (sys https) https:)
           (prefix (sys sys) sys:))
 
   (define modules
     '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy"
-      "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
+      "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -70,6 +71,7 @@
         (lambda ()
           (set! source-fingerprint (kernel:fingerprint))
           (session:restore!)
+          (view:reset-owners!)
           ;; One producer for every head and for work while all heads are
           ;; absent. Log small operation facts, never retained text/deltas.
           (set! audit (store:subscribe! #f audit-store-event!))
@@ -112,6 +114,12 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (case operation
+      [(view-create) (control!) (arity 4) (apply view:create! actor args)]
+      [(view-read) (arity 1) (view:snapshot (car args))]
+      [(view-claim) (control!) (arity 1) (call-with-values (lambda () (apply view:claim! actor args)) list)]
+      [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
+      [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]
+      [(view-release) (control!) (arity 2) (call-with-values (lambda () (apply view:release! actor args)) list)]
       [(model-ids) (arity 0) (model:ids)]
       [(model-read) (arity 1) (model:snapshots (car args))]
       [(model-create) (control!) (arity 6) (apply model:create! actor args)]
@@ -528,7 +536,7 @@
            [owner (list 'connection connection)] [out (kernel:make-mailbox)]
            [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
            [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f]
-           [model-token #f] [model-ids (make-eqv-hashtable)] [model-pending '()])
+           [model-token #f] [model-ids (make-eqv-hashtable)] [model-pending '()] [registered? #f])
       (define (close!)
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
@@ -668,7 +676,8 @@
                         ;; this connection's session without touching the old owner.
                         (post! (list 'hello wire:version actor capabilities))
                         (parameterize ([kernel:registering-module owner])
-                          (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities))))
+                          (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities))
+                        (set! registered? #t)))
                     (lambda ()
                       ;; Reservation and review ownership linearize here. The
                       ;; handshake finishes outside the mutex as admitted work.
@@ -753,7 +762,9 @@
           (close!)
           (activity:call-with-retirement
             (lambda ()
-              (when session (policy:revoke! session))
+              (when session
+                (when registered? (view:release-owner! (policy:session-actor session)))
+                (policy:revoke! session))
               (kernel:retract-module! owner)))
           (when writer (thread-join writer))))))
 

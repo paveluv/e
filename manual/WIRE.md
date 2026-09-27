@@ -61,6 +61,12 @@ edit with an unknown outcome.
 | `(request id model-create kind schema scope persistence references value)` | Create non-authored model state; return its tagged ID. Requires an all-buffer head. |
 | `(request id model-commit changes)` | Atomic `(id revision references value)` changes; return `(applied-or-stale-or-unavailable envelopes)`. Requires an all-buffer head. |
 | `(request id model-retire id revision)` | Retire non-authored state; return `(status envelope-or-#f)`. Requires an all-buffer head. |
+| `(request id view-create model renderer schema state)` | Create a persistent view descriptor over a model. All view mutations require an all-buffer head. |
+| `(request id view-read view-id)` | Inspect the canonical descriptor, or `#f`. |
+| `(request id view-claim view-id)` | Claim a new ownership generation; return `(status descriptor)`. |
+| `(request id view-publish updates)` | Atomically publish `(view-id generation sequence basis state)` updates, with matching owners and increasing sequences. Return `(applied-or-stale #f)`. |
+| `(request id view-set view-id basis state)` | Set saved interaction while unmounted; return `(status descriptor)`. |
+| `(request id view-release view-id generation)` | Release the matching owner; return `(status descriptor)`. Disconnect releases this connection's admitted head ownership. |
 | `(request id state buffer-id basis [delta?])` | Return `#f` if absent, otherwise `(name text revision facts [changes])`; `basis` is `#f` or a revision, with changes returned only for a revision. Existence, name, text, revision, facts and changes come from one `store:state` read, including across rename/deletion. Name/liveness changes also invalidate the cache. `delta?` is `#f`, `#t` or `facts`. `#t` says the client holds text at the basis: the text slot is then `#f` whenever the complete chain since the basis is included, and the client advances its own copy through that chain. `facts` says it also holds the stored facts: such a delta reply carries only the owner-maintained `modified` and `modified-at` facts, since stored facts change through the events the client already receives. |
 | `(request id find-file canonical-path)` | Return the id whose current `file` fact matches, or `#f`. File commands query shared identity before disk I/O or creation; cached head lists do not decide shared file identity. |
 | `(request id actors)` | Return the existing actor directory records. |

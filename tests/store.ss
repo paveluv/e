@@ -13,6 +13,8 @@
   '(begin
      (import (prefix (state store) store:)
              (prefix (state model) model:)
+             (prefix (state view) view:)
+             (prefix (core publication) publication:)
              (prefix (core property) property:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation text) text:)

@@ -86,6 +86,7 @@
                 call-with-string-output-port)
           (prefix (core kernel) kernel:)
           (prefix (core property) property:)
+          (prefix (core publication) publication:)
           (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:)
@@ -2736,7 +2737,7 @@
        ;; was already queued when the head performs its final checkpoint.
        (dynamic-wind void
          (lambda () (publish-checkpoint! #f))
-         (lambda () (checkpoint:flush! checkpoint-writer)))]
+         (lambda () (publication:flush! checkpoint-writer)))]
       [(mode)
        (unless (memq mode '(async idle)) (error 'checkpoint! "expected async or idle" mode))
        (publish-checkpoint! (eq? mode 'idle))]))
@@ -2755,11 +2756,11 @@
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
            [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
-      (when (checkpoint:changed? checkpoint-writer state)
+      (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
           (if (or (not idle?) (not due) (time<=? due now))
-              (when (checkpoint:submit! checkpoint-writer state)
+              (when (publication:submit! checkpoint-writer state)
                 (set! checkpoint-queued-at now))
               (request-frame-at! due))))))
 
@@ -2915,7 +2916,7 @@
 
   (edoc "Restore this head's windows and positions from its last publication, by names rather than stale coordinates.")
   (define (resume!)
-    (checkpoint:flush! checkpoint-writer)
+    (publication:flush! checkpoint-writer)
     ;; Recover the old publication's *names*, not its stale coordinates.
     ;; The ordinary exact-revision diff removes abandoned windows/regions,
     ;; including buffers no longer displayed, without touching custom marks.
