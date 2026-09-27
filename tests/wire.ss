@@ -1807,9 +1807,8 @@
                      (test:check 'view-provisional-interaction-is-immediate
                        (head-read a `(begin
                                        (do ([n 1 (+ n 1)]) ((= n 101)) (interaction:set-state! head:ui-actor ',view 0 n))
-                                       (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
-                     (test:check 'view-unpublished-state-stays-head-local
-                       (list-ref (cdr (assq 'value (caddar (cadr (rpc head 'model-read (list view)))))) 7) 0)
+                                       (list (list-tail (interaction:snapshot ',view) 5)
+                                             (list-ref (view:snapshot ',view) 7)))) '((100 0 100) 0))
                      (test:check 'view-publication-ack-does-not-roll-back-owner
                        (head-read a `(begin (interaction:flush!) (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
                      (head-read a `(begin (interaction:release! head:ui-actor ',view 1) #t))
@@ -1848,6 +1847,42 @@
                                (test:check 'model-last-subscriber-releases-mirror
                                  (head-read ui `(begin (model:unsubscribe! model-reader)
                                                        (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
+                 (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
+                        [first (rpc head 'view-create data 'text 1 '(0 0))]
+                        [second (rpc head 'view-create data 'text 1 '(0 0))]
+                        [missing (rpc head 'view-create data 'not-installed 1 '(0 0))])
+                   (head-read a `(begin (head:show-buffer! (widget:mount! ',first))
+                                        (head:set-window-buffer! (window:split-right!) (widget:mount! ',missing)) #t))
+                   (head-read b `(begin (head:show-buffer! (widget:mount! ',second)) #t))
+                   (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
+                   (head-send! a "\x1b;[B")
+                   (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
+                   (test:check 'widget-selections-are-independent-across-heads
+                     (list (head-read a `(list-ref (interaction:snapshot ',first) 7))
+                           (head-read b `(list-ref (interaction:snapshot ',second) 7))) '((1 0) (0 0)))
+                   (rpc head 'model-commit (list (list data 0 '() "alpha\nREMOTE beta\ngamma")))
+                   (for-each (lambda (ui) (head-wait 'widget-remote-update ui (lambda () (head-sees? ui "REMOTE beta")))) (list a b))
+                   (test:check 'widget-activation-carries-current-target-and-basis
+                     (head-read a `(widget:act! ',first 'choose)) (list data 1 1 "REMOTE beta"))
+                   (test:check 'widget-wheel-scrolls-without-selection-and-click-uses-visible-row
+                     (head-read b
+                       `(begin
+                          (head:dispatch-app-event! "WHEEL-DOWN")
+                          (let ([scrolled (list-ref (interaction:snapshot ',second) 7)])
+                            (parameterize ([head:app-event-buffer-position '(0 . 0)])
+                              (head:dispatch-app-event! "MOUSE-CLICK"))
+                            (list scrolled (list-ref (interaction:snapshot ',second) 7))))) '((0 2) (2 2)))
+                   (head-send! a "\x18;\x03;")
+                   (head-wait 'widget-head-detached a (lambda () (pump-head! a)))
+                   (test:await 'widget-owner-released (lambda () (not (list-ref (rpc head 'view-read first) 4))))
+                   (set! a (start-head "screen A"))
+                   (head-wait 'widget-resumed a
+                     (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
+                   (test:check 'widget-resume-preserves-state-and-missing-renderer
+                     (head-read a `(list (list-ref (interaction:snapshot ',first) 7) (widget:actions ',missing))) '((1 0) ()))
+                   (head-read a `(begin (widget:unmount! ',first) (widget:unmount! ',missing)
+                                        (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (head-read b `(begin (widget:unmount! ',second) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client

@@ -16,7 +16,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook!
+  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook! add-publication-hook!
           add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer?
           app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
           app-event-buffer-position app-event-button app-event-focus app-event-position
@@ -1034,7 +1034,8 @@
   (edoc "Record successful terminal publication; the prepared geometry is now displayed.")
   (define (frame-presented!)
     (set! frame-pending? #f)
-    (pacing:presented! presentation-clock))
+    (pacing:presented! presentation-clock)
+    (for-each (lambda (hook) (hook #f)) (kernel:registry-items publication-hooks)))
 
   (edoc "Whether terminal input reaches the pump: the input reader has started, so a prompt can be answered."
         (returns boolean))
@@ -2666,6 +2667,13 @@
   ;; Keep only the current captured text per local buffer, not another copy
   ;; of every historical vector that undo or an extension might retain.
   (define checkpoint-texts (make-weak-eq-hashtable))
+  (define publication-hooks (kernel:make-registry))
+
+  (edoc "Register head state publication after presentation and before checkpoints. The hook must queue without waiting unless fence? is true before a lifecycle checkpoint."
+        (hook procedure "(hook fence?)"))
+  (define (add-publication-hook! hook)
+    (unless (procedure? hook) (error 'add-publication-hook! "expected a procedure"))
+    (kernel:registry-add! publication-hooks hook))
 
   (define (without-copy-slot state)
     ;; screen checkpoints before version 4 carried the copy text third; it is not restored
@@ -2736,10 +2744,13 @@
        ;; Even a failing capture provider must not abandon a snapshot that
        ;; was already queued when the head performs its final checkpoint.
        (dynamic-wind void
-         (lambda () (publish-checkpoint! #f))
+         (lambda ()
+           (for-each (lambda (hook) (hook #t)) (kernel:registry-items publication-hooks))
+           (publish-checkpoint! #f))
          (lambda () (publication:flush! checkpoint-writer)))]
       [(mode)
        (unless (memq mode '(async idle)) (error 'checkpoint! "expected async or idle" mode))
+       (for-each (lambda (hook) (hook #f)) (kernel:registry-items publication-hooks))
        (publish-checkpoint! (eq? mode 'idle))]))
   (define (publish-checkpoint! idle?)
     ;; No store reads here: every coordinate describes exactly the adopted

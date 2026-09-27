@@ -14,6 +14,11 @@
      (import (except (head edit) init!)
              (prefix (head head) head:)
              (prefix (state store) store:)
+             (prefix (state model) model:)
+             (prefix (state view) view:)
+             (prefix (head interaction) interaction:)
+             (prefix (head widget) widget:)
+             (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
              (prefix (test) test:)
@@ -553,5 +558,57 @@
        (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
          '((0 24 "https://example.com/path")))
        (kill-buffer! b))
+
+     ;; Two view identities share data, while geometry, selection and renderer
+     ;; lifetime remain independent. Reuse the app fixture and its windows.
+     (interaction:init!) (widget:init!)
+     (model:register-kind! 'widget-test 1 string?)
+     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
+            [owner (string-copy "widget-test-renderer")] [calls 0]
+            [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
+            [first (view:create! head:ui-actor data 'probe 1 0)]
+            [second (view:create! head:ui-actor data 'probe 1 0)]
+            [a (widget:mount! first)] [b (widget:mount! second)]
+            [other (head:make-window b 0 0 0 0 0 2 7 24 'default)])
+       (define (install!)
+         (parameterize ([kernel:registering-module owner])
+           (widget:register! 'probe 1
+             (lambda (model state width height)
+               (set! calls (+ calls 1))
+               (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq 'value model)) state)))
+             (list (cons 'choose (lambda (id model descriptor)
+                                   (values (cdr (assq 'revision model)) (list-ref descriptor 7))))))))
+       (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
+       (install!)
+       (head:show-buffer! a)
+       (head:set-layout-root! (head:make-layout-split 'right w other 1 2))
+       (head:window-width-set! w 12) (head:window-size-set! w 4)
+       (head:window-width-set! other 24) (head:window-size-set! other 2)
+       (refresh!) (refresh!)
+       (check 'widget-host-bounds-and-cached-rendering
+         (list calls (map (lambda (window) (map glyph:cells (vector->list (head:window-lines window)))) (list w other)))
+         '(2 ((12 12 12 12) (24 24))))
+       (interaction:set-state! head:ui-actor first 0 9)
+       (check 'widget-action-uses-provisional-target-before-ack
+         (list (call-with-values (lambda () (widget:act! first 'choose)) list)
+               (list-ref (view:snapshot first) 7) (list-ref (interaction:snapshot second) 7)) '((0 9) 0 0))
+       (head:checkpoint!)
+       (check 'widget-lifecycle-checkpoint-fences-state (list-ref (view:snapshot first) 7) 9)
+       (model:commit! '(base test) (list (list data 0 '() "new")))
+       (refresh!)
+       (let ([before calls])
+         (head:window-width-set! other 8) (refresh!)
+         (check 'widget-resize-only-rerenders-affected-view (- calls before) 1))
+       (kernel:retract-module! owner) (refresh!)
+       (check 'widget-unavailable-renderer-keeps-mount-without-actions
+         (list (widget:actions first) (head:app-refresh-error (head:app-of a))) '(() #f))
+       (install!) (refresh!)
+       (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
+       (widget:unmount! first) (head:forget-buffer! b)
+       (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
+         (list (map (lambda (id) (list-ref (view:snapshot id) 4)) (list first second))
+               (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
+       (head:set-layout-root! root) (head:show-buffer! was)
+       (kernel:retract-module! owner))
 
      (test:finish! 'app)))
