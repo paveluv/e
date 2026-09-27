@@ -27,10 +27,12 @@ A new head must match the base's startup fingerprint; see
 appear in its import graph even when configuration makes their first call.
 `--restart` performs the maintenance review before importing head libraries.
 The daemon entry point lives in `lib/base/run/base.sls`, outside client roots.
-In the base, `session` restores store IDs, revisions and opaque named
-checkpoints before module initialization and `base-config.e`; the listener
-binds last. Session serialization uses the store and VT representation
-boundaries and does not import a head.
+In the base, `session` restores store IDs, revisions, persistent models and
+opaque named checkpoints before module initialization and `base-config.e`;
+the listener binds last. Session serialization uses the store, model and VT
+representation boundaries and does not import a head. The base's
+[model API](MODELS.md) supplies revision-checked non-text state without
+encoding it in hidden buffers.
 
 A library is named by its kind directory and its file: `lib/core/kernel.sls`
 declares `(core kernel)`, `lib/head/edit.sls` declares `(head edit)`, and

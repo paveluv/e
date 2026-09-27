@@ -12,7 +12,9 @@
 (eval
   '(begin
      (import (prefix (state store) store:)
+             (prefix (state model) model:)
              (prefix (core property) property:)
+             (prefix (foundation edoc) edoc:)
              (prefix (foundation text) text:)
              (prefix (core kernel) kernel:)
              (prefix (sys activity) activity:)
@@ -25,6 +27,9 @@
 
      (define alice '(human alice))
      (define bot '(agent claude 1))
+
+     ;; Canonical model state shares this base API fixture and process.
+     (include "tests/model.sps")
 
      (define (span sl sc el ec) (text:make-span sl sc el ec))
      (define (edit! actor id basis sl sc el ec replacement)

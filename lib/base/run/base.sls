@@ -23,6 +23,7 @@
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
           (prefix (state journal) journal:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
           (prefix (sys activity) activity:)
@@ -30,7 +31,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
+    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.

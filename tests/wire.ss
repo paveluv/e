@@ -623,11 +623,27 @@
              [temporary (string-append base-directory "/session.tmp")]
              [disk (string-append root "/persistent-file")]
              [initialized (string-append root "/restored-before-config")]
+             [model-state (string-append root "/restored-models")]
+             [expected-models #f]
              [saved #f] [note #f] [file #f] [term #f] [ended #f] [omitted #f] [gap #f]
              [checkpoint #f] [expected #f] [expected-history '()])
          (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
          (base-config!
            `((vt:shell "/bin/sh")
+             ;; First startup defines both schemas. Later startups retain
+             ;; one unknown schema and a known definition that cannot adopt
+             ;; its payload; neither may block maintenance or the next save.
+             (if (null? (model:ids))
+                 (begin
+                   (model:register-kind! 'session-model-fixture 1 string?)
+                   (model:register-kind! 'session-model-fixture 2 string?)
+                   (model:create! '(base fixture) 'session-model-fixture 1 '(head "kept desk") 'persistent '((buffer 999)) "kept")
+                   (model:create! '(base fixture) 'session-model-fixture 2 'session 'persistent '((model 1)) "future")
+                   (model:create! '(base fixture) 'session-model-fixture 2 'session 'transient '() "ephemeral"))
+                 (model:register-kind! 'session-model-fixture 1 (lambda (payload) #f)))
+             (call-with-output-file ,model-state
+               (lambda (port)
+                 (write (list (call-with-values model:export list) (map model:available? (model:ids))) port)) 'replace)
              (define default-policy (base:connection-policy))
              (base:connection-policy
                (lambda (who) (if (equal? who '(head "restricted")) (policy:reader) (default-policy who))))
@@ -756,8 +772,12 @@
                    (exchange control (list 'request 7 'restart (cadr review))) '(closing restart)))
                (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
                (set! saved (call-with-input-file path read))
+               (set! expected-models (call-with-input-file model-state (lambda (port) (car (read port)))))
                (test:check 'snapshot-has-private-mode-and-no-temporary-file
-                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 1))))))
+                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 2)))
+               (test:check 'session-saves-persistent-models-and-transient-allocation-gaps
+                 (list (list-ref saved 6) (car expected-models) (length (cadr expected-models)))
+                 (list (cons* 'models (car expected-models) (cadr expected-models)) 4 2)))))
          (write-text disk "changed while stopped\n")
          (let ([base (fixture:start! root base-directory)])
            (dynamic-wind void
@@ -766,6 +786,8 @@
                (let* ([head (connect)] [states (cdr (list-ref saved 4))]
                       [before (call-with-input-file initialized read)])
                  (hello head '(head "kept desk"))
+                 (test:check 'session-restores-opaque-models-before-config-and-disables-unsupported-actions
+                   (call-with-input-file model-state read) (list expected-models '(#f #f)))
                  (test:check 'restore-precedes-configuration-and-preserves-allocator-gaps
                    (list (list-sort < (car before)) (cadr before)
                      (assv omitted states) (assv gap states) (rpc head 'checkpoint))
@@ -840,8 +862,12 @@
                    (test:check (list 'repeated-stops-replace-session mode cycle)
                      (list (list-ref (assv note (cdr (list-ref saved 4))) 3)
                            (cadr (assoc "kept desk" (cdr (list-ref saved 5))))
+                           (list-ref saved 6)
+                           (call-with-input-file model-state read)
                            (get-mode path) (file-exists? temporary))
-                     (list (car expected) checkpoint #o600 #f))))))
+                     (list (car expected) checkpoint
+                           (cons* 'models (car expected-models) (cadr expected-models))
+                           (list expected-models '(#f #f)) #o600 #f))))))
            '(shutdown 15 shutdown 2 shutdown 15) (iota 6))))
 
      (define (recovery-scenarios!)
@@ -850,6 +876,7 @@
               [initialized (string-append root "/recovery-initialized")]
               [bad '("" "(" "#0=(a . #0#)" "(session 99 0 1 (buffers) (checkpoints))"
                      "(session 1 0 1 (buffers) (checkpoints)) extra"
+                     "(session 2 0 2 (buffers (1 0 \"valid prefix\" #(\"text\") ())) (checkpoints) (models 0))"
                      "(session 1 0 3 (buffers (1 7 \"valid first\" #(\"text\") ()) (1 0 \"duplicate id\" #(\"\") ())) (checkpoints))"
                      "(session 1 0 1 (buffers) (checkpoints (\"desk\" opaque) (\"desk\" another)))")]
               [retained '()])
