@@ -131,8 +131,8 @@
              #t]
             [(eq? result 'absent) #f]
             [else
-             (log:add! 'config (format "Error in config.e: ~a"
-                                       (kernel:condition-text result)))
+             (log:add! 'main:load-config! (format "Error in config.e: ~a"
+                                            (kernel:condition-text result)))
              #f])))
 
   (define reload-tail-hooked
@@ -183,15 +183,15 @@
     (let ([name (and (modules-reload-on-save) (module-name-of-path path))])
       (cond
         [name
-         (guard (ex [else (log:add! 'reload-module!
+         (guard (ex [else (log:add! 'main:reload-on-save!
                             (format "Reload of ~a failed: ~a"
                                     name (kernel:condition-text ex)))])
            (kernel:reload-module! name)
-           (log:add! 'reload-module! (format "Reloaded ~a" name)))]
+           (log:add! 'main:reload-on-save! (format "Reloaded ~a" name)))]
         [(and (config-reload-on-save)
               (string=? (file:canonical path) (file:canonical (kernel:config-file))))
          (when (load-config!)
-           (log:add! 'config "Applied config.e"))])))
+           (log:add! 'main:reload-on-save! "Applied config.e"))])))
 
   ;; the reload is a post-save hook like any module's
   (define reload-hooked (file:add-post-save-hook! reload-on-save!))
@@ -317,7 +317,7 @@
                         (echo:set-text! "Buffer is read-only")]
                        [(kernel:refusal? ex)
                         (echo:set-text! (condition-message ex))]
-                       [else (log:add! 'error (kernel:condition-text ex))])
+                       [else (log:add! 'main:run-head (kernel:condition-text ex))])
               (dispatch:key! (parameterize ([head:in-main-pump #t])
                                (head:read-key-event))))
             (head:after-key!)

@@ -259,17 +259,17 @@ place.
 
 Evaluation results are printed with Scheme's write representation. Multiple
 values are separated by `, `. A result is shown in the echo area and stored
-as an `eval` log record:
+as an `eval:report!` log record:
 
 ```text
-eval: (+ 20 22) => 42
+eval:report! (+ 20 22) => 42
 ```
 
 By default, a non-void result is also copied, ready to
 insert with `C-y`. The echo result gains a grey, italic ghost tail:
 
 ```text
-eval: (+ 20 22) => 42 [copied]
+eval:report! (+ 20 22) => 42 [copied]
 ```
 
 The ghost is presentation only and is not part of the result or log record.
@@ -297,7 +297,8 @@ child programs. Complete lines are emitted as they arrive:
 ```
 
 `starting` appears immediately, `finished` about one second later, and the
-child's line after it. Output is separated into structured log components:
+child's line after it. Records from `eval:call-with-evaluation!` carry a channel
+in their data, displayed as `[stdout]`, `[stderr]`, or `[compile]`:
 
 - the current output port and process stdout become `stdout` records;
 - the current error port and process stderr become `stderr` records.
@@ -337,18 +338,18 @@ fails; it controls editor undo history only.
 
 ## Logging and history
 
-Every completed evaluation creates an `eval` record whose datum is the query
+Every completed evaluation creates an `eval:report!` record whose datum is the query
 and formatted result. M-x history is derived from these records. Captured
-output creates independent `stdout` and `stderr` records and does not enter
+output creates `eval:call-with-evaluation!` records with `(stdout . text)`,
+`(stderr . text)`, or `(compile . source-path)` data and does not enter
 the M-x expression history.
 
 Open the live log view through the buffer list or with:
 
 ```scheme
 (log-view:show!)
-(log-view:buffer! 'eval)
-(log-view:buffer! 'stdout)
-(log-view:buffer! 'stderr)
+(log-view:buffer! 'eval:report!)
+(log-view:buffer! 'eval:call-with-evaluation!)
 ```
 
 The result is posted after both output streams close, so it remains the final
@@ -396,10 +397,10 @@ The thunk returns ordinary Scheme values. `eval:status` is `ok`, `error` or
 `interrupted`; `eval:values` returns the list of values and `eval:condition`
 the original condition on failure. Execution alone neither copies nor
 reports the result. `eval:report!` applies `eval:copy-result` and preserves a
-message spoken by a void command. Its second argument says where the record
-goes: an extension passes its own log component, `'worksheet`, and the
-result appears under it in `<log>`; M-x passes the actual input as a string,
-which records an `eval` exchange with its history.
+message spoken by a void command. All reports come from `eval:report!`.
+The second argument labels the data: an extension passes a symbol such as
+`'worksheet`, producing `(worksheet . result)` without adding M-x history.
+M-x passes its actual input as a string, producing `(input . result)` with history.
 
 Run on the head's main thread. Nested calls share the outer capture and
 interruption scope and one undo group. A continuation escape cleans up and

@@ -11,6 +11,9 @@
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
      (define (run thunk) (eval:call-with-evaluation! "test evaluation" thunk))
+     (define (output channel)
+       (map cdr (filter (lambda (d) (eq? (car d) channel))
+                  (map log:datum (log:entries 'eval:call-with-evaluation!)))))
      (test:check 'values-are-retained-without-implicit-reporting
        (map (lambda (vals)
               (let ([result (run (lambda () (apply values vals)))])
@@ -38,8 +41,8 @@
                                   42))])
                 (car (eval:values inner))))))
      (test:check 'nested-evaluation-streams-each-line-once
-       (list (eval:values nested) (map log:datum (log:entries 'stdout))
-             (map log:datum (log:entries 'stderr)) (edit:buffer-text b))
+       (list (eval:values nested) (output 'stdout)
+             (output 'stderr) (edit:buffer-text b))
        '((42) ("inner" "outer") ("warning") "outerinner\n"))
      (edit:undo!)
      (test:check 'nested-edits-share-one-undo (edit:buffer-text b) "\n")
@@ -53,12 +56,14 @@
              (eval:values (run (lambda () 7)))) '(#t #t (7)))
 
      (eval:report! nested 'probe)
-     (test:check 'extension-report-records-under-its-component-without-mx-history
-       (list (log:history 'eval car) (head:copy-text) (map log:datum (log:entries 'probe))) '(() "42" ("42")))
+     (test:check 'extension-label-is-data-without-mx-history
+       (list (log:history 'eval:report! car) (head:copy-text) (map log:datum (log:entries 'eval:report!)))
+       '(() "42" ((probe . "42"))))
      (test:check 'a-report-needs-a-destination (test:raises? (lambda () (eval:report! nested))) #t)
      (eval:report! (run (lambda () #f)) "#f")
      (test:check 'explicit-input-records-the-exchange
-       (map log:datum (log:entries 'eval)) '(("#f" . "#f")))
+       (list (log:history 'eval:report! car) (log:datum (car (log:entries 'eval:report!))))
+       '(("#f") ("#f" . "#f")))
      (echo:set-text! "before")
      (define spoken (run (lambda () (echo:set-text! "command message") (void))))
      (eval:report! spoken 'probe)
@@ -74,20 +79,21 @@
      (define shown '())
      (define printed '())
      (log:subscribe! (lambda (e presentation)
-                       (case (log:component e)
-                         [(compile) (set! shown (cons presentation shown))]
-                         [(stdout) (set! printed (cons (cons (log:datum e) presentation) printed))])))
+                       (when (eq? (log:component e) 'eval:call-with-evaluation!)
+                         (case (car (log:datum e))
+                           [(compile) (set! shown (cons presentation shown))]
+                           [(stdout) (set! printed (cons (cons (cdr (log:datum e)) presentation) printed))]))))
      (run (lambda () (display "haha")))
      (test:check 'ordinary-output-still-reaches-the-echo-area printed '(("haha" . append)))
-     (define stdout-before (length (log:entries 'stdout)))
+     (define stdout-before (length (output 'stdout)))
      (define-values (compiled failed)
        (parameterize ([library-directories (cons (cons root root) (library-directories))]
                       [compile-imported-libraries #t])
          (values (run (lambda () (eval '(begin (import (probe fresh)) fresh) (interaction-environment))))
                  (run (lambda () (eval '(import (probe broken)) (interaction-environment)))))))
      (test:check 'a-library-compiled-on-import-is-a-compile-record-shown-nowhere
-       (list (eval:values compiled) (map log:datum (log:entries 'compile)) shown
-             (- (length (log:entries 'stdout)) stdout-before))
+       (list (eval:values compiled) (output 'compile) shown
+             (- (length (output 'stdout)) stdout-before))
        (list '(compiled) (list (string-append root "/probe/fresh.sls") (string-append root "/probe/broken.sls")) '(#f #f) 0))
      (test:check 'a-failed-compilation-is-the-evaluation-error-naming-the-source
        (list (eval:status failed)
@@ -101,9 +107,14 @@
      ;; a failed evaluation's message styles as plain error text, not Scheme;
      ;; the styler is registered by the app's install
      (eval:init!)
+     (test:check 'evaluation-formatters-retain-labels-and-channels
+       (map log:format-entry
+         '((0 #f eval:report! (probe . "42"))
+           (0 #f eval:call-with-evaluation! (stderr . "warning"))))
+       '("probe => 42" "[stderr] warning"))
      (test:check 'a-failed-evaluations-message-is-error-text-not-scheme
        (let* ([text "(help) => error: Exception: variable help is not bound"]
-              [styles ((log:styler 'eval) text)]
+              [styles ((log:styler 'eval:report!) text)]
               [at (string:search text "not" 0 (string-length text))])
          (list (vector-ref styles at) (vector-ref styles (- (string-length text) 1)) (not (eq? (vector-ref styles 1) 'error))))
        '(error error #t))

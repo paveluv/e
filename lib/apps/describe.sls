@@ -34,7 +34,7 @@
     ;; records, and every later one replaces the line in place
     (reference:fetch!)
     (parameterize ([edit:message-progress #t])
-      (log:add! 'describe "Fetching the reference corpus..." #t))
+      (log:add! 'describe:fetch-data! "Fetching the reference corpus..." #t))
     (void))
 
   ;;; Display -------------------------------------------------------------------

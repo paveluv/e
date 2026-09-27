@@ -10,11 +10,14 @@
 ;; (chezscheme). In an elibrary body a blank line precedes an edoc form
 ;; (comments may sit between; consecutive edocs are one block), and the
 ;; definition an annotating edoc documents begins on the very next line.
+;; Log sources name their enclosing definition, prefixed and export-renamed.
 ;; Then the bang check runs over the tree, tools/edoc-coverage.sps
 ;; --effects. A finding prints as path:line: message; the exit status is
 ;; the number of findings, capped at 100, so the suite and the pre-commit
 ;; hook can run this.
 (import (chezscheme))
+
+(include "tools/log-sources.ss")
 
 (define (sls-files directory)
   ;; every .sls below directory, sorted by path
@@ -202,6 +205,10 @@
               (check-exports! path text (caddr subforms) report!)
               (check-imports! path text (cadddr subforms) report!)
               (check-bindings! path text report!)
+              (check-log-sources! form
+                (lambda (at expected message)
+                  (report! path (line-of text (start at))
+                    (format "~a~a" message (if expected (format "; expected '~a" expected) "")))))
               (when (eq? (stripped (car subforms)) 'elibrary)
                 (check-edocs! path text (cdddr subforms) report!)))))
         forms)))

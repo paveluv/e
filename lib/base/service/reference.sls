@@ -537,20 +537,20 @@
                        (set! done (+ done 1))
                        ;; shown: progress in place under progress mode, which the
                        ;; wire's fetch runs in
-                       (log:add! 'describe (format "Fetching ~a (~a/~a)" what done total) #t))])
+                       (log:add! 'reference:run-fetch! (format "Fetching ~a (~a/~a)" what done total) #t))])
       (ensure-directory! ref)
       (ensure-directory! (string-append ref "/tspl4"))
       (ensure-directory! (string-append ref "/csug"))
       (fetch-book! ref "tspl4" tspl-base tspl-pages progress)
       (fetch-book! ref "csug" csug-base csug-pages progress)
-      (log:add! 'describe "Extracting the reference corpus..." #t)
+      (log:add! 'reference:run-fetch! "Extracting the reference corpus..." #t)
       (let* ([data (append (parse-book ref "tspl4" 'tspl tspl-pages)
                            (parse-book ref "csug" 'csug csug-pages))]
              [next (index-data data)])
         (with-mutex corpus-lock
           (write-data! data)
           (set! corpus next))
-        (log:add! 'describe
+        (log:add! 'reference:run-fetch!
           (format "Describe database ready: ~a entries covering ~a names"
                   (length (car next))
                   (hashtable-size (cdr next)))))
@@ -575,7 +575,7 @@
                   (parameterize ([https:backend backend] [https:connector connector] [log:progress #t])
                     (guard (ex [else
                                 (guard (ignored [else (void)])
-                                  (log:add! 'describe (format "Fetch failed: ~a" (kernel:condition-text ex)) #t))])
+                                  (log:add! 'reference:begin-fetch! (format "Fetch failed: ~a" (kernel:condition-text ex)) #t))])
                       (activity:call-with run-fetch!))))))
             release-fetch!)))
       (void)))

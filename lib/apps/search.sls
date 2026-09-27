@@ -205,7 +205,7 @@
     ;; label grey comes through the message's own styler rather than
     ;; the prompt machinery.
     (if (string=? s "")
-        (parameterize ([edit:message-source #f]) (edit:set-message! s))
+        (paint:show-message! s #f)
         (paint:show-message! s
           (cons s (lambda (text)
                     (let* ([n (string-length text)]

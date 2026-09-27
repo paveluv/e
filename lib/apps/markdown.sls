@@ -35,6 +35,7 @@
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
           (prefix (service file) file:)
+          (prefix (service log) log:)
           (prefix (only (sys sys) terminal-character-width) sys:))
 
   ;;; Faces -------------------------------------------------------------
@@ -1027,32 +1028,31 @@
     (or (string:suffix? ".md" path) (string:suffix? ".markdown" path)))
 
   (define (open-link! url)
-    ;; Followed links log under the markdown source; web links go to
+    ;; Followed links log under this function; web links go to
     ;; the configured browser command.
-    (parameterize ([edit:message-source 'markdown])
-      (cond
-        [(or (string:prefix? "http://" url)
-             (string:prefix? "https://" url))
-         (system (format "~a ~a >/dev/null 2>&1 &"
-                         (markdown-browser) (shell-quoted url)))
-         (edit:set-message! (format "Opened ~a" url))]
-        [(string:prefix? "#" url)
-         (edit:set-message! "Anchor links are not followed yet")]
-        [else
-         (let* ([b (head:current-buffer)]
-                [input (render-input b)]
-                [base (head:buffer-file (if (head:buffer? input) input b))]
-                [dir (if base (or (file:directory-part base) "") "")]
-                [path (file:expand url)]
-                [target (if (string:prefix? "/" path) path
-                            (string-append dir path))])
-           (edit:visit-file! target)
-           ;; a linked markdown document arrives already formatted
-           (when (and (markdown-file? url)
-                      (equal? (mode:name-of (head:current-buffer))
-                              "markdown"))
-             (guard (ex [else (void)]) (markdown-view!)))
-           (edit:set-message! (format "Followed ~a" url)))])))
+    (cond
+      [(or (string:prefix? "http://" url)
+           (string:prefix? "https://" url))
+       (system (format "~a ~a >/dev/null 2>&1 &"
+                       (markdown-browser) (shell-quoted url)))
+       (log:add! 'markdown:open-link! (format "Opened ~a" url))]
+      [(string:prefix? "#" url)
+       (log:add! 'markdown:open-link! "Anchor links are not followed yet")]
+      [else
+       (let* ([b (head:current-buffer)]
+              [input (render-input b)]
+              [base (head:buffer-file (if (head:buffer? input) input b))]
+              [dir (if base (or (file:directory-part base) "") "")]
+              [path (file:expand url)]
+              [target (if (string:prefix? "/" path) path
+                          (string-append dir path))])
+         (edit:visit-file! target)
+         ;; a linked markdown document arrives already formatted
+         (when (and (markdown-file? url)
+                    (equal? (mode:name-of (head:current-buffer))
+                            "markdown"))
+           (guard (ex [else (void)]) (markdown-view!)))
+         (log:add! 'markdown:open-link! (format "Followed ~a" url)))]))
 
   (define (follow-md-link!)
     (let ([link (link-at-point)])

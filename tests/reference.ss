@@ -275,7 +275,7 @@
                ("https://www.scheme.com/tspl4/binding.html#./s9-reference"
                 "https://cisco.github.io/ChezScheme/csug10.0/binding.html#./s9-reference" #f)))
            (test:check 'fetch-progress-is-in-the-log
-             (let ([messages (reverse (map log:datum (log:entries 'describe)))])
+             (let ([messages (reverse (map log:datum (log:entries 'reference:run-fetch!)))])
                (list (length messages) (car messages) (list-ref messages 22) (list-ref messages 23)
                      (presented)))
              ;; every record is shown, progress in place under the head's progress
@@ -313,7 +313,7 @@
              (release #t)
              (test:await 'background-fetch-completes (lambda () (>= (length (presented)) (+ shown 24))))
              (test:check 'the-background-fetchs-records-are-the-requesters-progress
-               (let ([records (list-head (log:entries 'describe) 24)])
+               (let ([records (list-head (log:entries 'reference:run-fetch!) 24)])
                  (list (for-all (lambda (e) (equal? (log:actor e) '(head "fetcher"))) records)
                        (car (map log:datum (reverse records)))
                        (for-all (lambda (p) (eq? (car p) 'progress)) (list-tail (presented) shown))))

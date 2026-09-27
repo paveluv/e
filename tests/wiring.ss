@@ -112,7 +112,7 @@
        (read-editor
          '(map (lambda (entry) (list (log:actor entry) (car (log:datum entry))))
             (filter (lambda (entry) (equal? (log:actor entry) '(agent tester)))
-              (log:entries 'store))))
+              (log:entries 'base:audit-store-event!))))
        '(((agent tester) edit)))
 
      ;; bracketed paste rides the reader thread into the buffer
@@ -137,7 +137,7 @@
      (check 'ui-burst-coalesced-on-the-audit-stream
        (read-editor
          '(and (exists (lambda (entry) (string:prefix? "ui: 3 edits i" (log:format-entry entry)))
-                 (log:entries 'store)) #t))
+                 (log:entries 'head:flush-ui-audit!)) #t))
        #t)
 
      ;; the interaction protocol: an agent asks, the head answers through

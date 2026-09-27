@@ -2,9 +2,10 @@
 
 ## Echo area
 
-The echo area shows this head's messages from the shared editor log. Each new entry is a
-separate row prefixed with its component, so one command can report several
-events without overwriting earlier output. The area grows by shrinking windows
+The echo area shows this head's messages from the shared editor log. Each new
+entry is a separate row prefixed with the logging function's qualified name,
+so one command can report several events without overwriting earlier output.
+The area grows by shrinking windows
 to their configured minimum height. When it fills, older visible entries give
 way, but remain in the log until its retention limit expires them. Other
 actors' records are available in `<log>` without interrupting this head's
@@ -13,7 +14,7 @@ echo area.
 The next keyboard event, mouse click, or wheel event settles the echo area back
 to its live line.
 
-Messages whose `edit:message-source` is `#f` are temporary indicators. They appear
+Messages displayed with `paint:show-message!` are temporary indicators. They appear
 in the echo area but are not recorded. Prompts and modes use indicators for
 state that is useful now but not historical.
 
@@ -22,8 +23,9 @@ state that is useful now but not historical.
 Code may mark a message as progress:
 
 ```scheme
-(parameterize ([edit:message-progress #t])
-  (log:add! 'download "Receiving page 4"))
+(define (download:receive!)
+  (parameterize ([log:progress #t])
+    (log:add! 'download:receive! "Receiving page 4")))
 ```
 
 A progress entry supersedes the newest visible entry from the same component
@@ -68,10 +70,10 @@ change it through M-x; put it in `base-config.e` to keep it across restarts.
 Filtered log views are created dynamically:
 
 ```scheme
-(log-view:buffer! 'eval)
+(log-view:buffer! 'eval:report!)
 ```
 
-This creates a buffer such as `<log eval>` containing only that component.
+This creates `<log eval:report!>` containing only that function's records.
 
 Each row shows a timestamp, actor identity, component, and value. The base
 keeps one history; each head's `<log>` and filtered views are local renderings.
@@ -96,36 +98,42 @@ earlier record.
 ## History
 
 `log:history` derives command histories from structured component records.
-File prompts use it to recall visited and saved paths; `M-x` uses eval records
+`M-x` uses `eval:report!` records
 for expression history. History is therefore presentation-independent and
 does not scrape rendered text. Each history read considers the newest 200
 retained records of that component and, when supplied, actor. It selects
 strings and collapses consecutive repeats. Other components and excluded
 actors do not consume that read allowance, but share the base's overall
-retention limit. Find-file uses this head's visits and removes older repeats
-so each path appears once; successful revisits become recent again.
+retention limit. Evaluation labels supplied as symbols by extensions stay
+in the data and do not enter M-x's expression history.
 
 Policy activity uses the same structured log, with no separate audit history:
 
 ```scheme
-(map log:datum (log:entries 'policy))
+(map log:datum (log:entries 'policy:audit!))
 ```
 
-These events are recorded quietly and remain visible in `<log policy>`.
+These events are recorded quietly and remain visible in `<log policy:audit!>`.
 
 The base records shared store operations once, including while all heads are
-absent. `<log store>` shows the operation's actor and compact data:
+absent. `<log base:audit-store-event!>` shows the operation's actor and compact data:
 `(create id name)`, `(rename id name)`, `(delete id)`, `(property id key)`,
 `(reset id revision)`, or `(edit id revision span [history-origin])`.
 Edit records omit text payloads; undo/redo keep their existing origin data.
-These records are quiet. Heads also contribute `ui: …` summaries with the
+These records are quiet. `head:flush-ui-audit!` contributes `ui: …` summaries with the
 revision range of a typing burst, and local resync diagnostics. Their time
 of presentation is separate from the base's operation order.
 
 ## API
 
-- `(log:add! component datum [show?])` adds a record; the component is a
-  symbol, and `show?` defaults to true. Passing `#f` logs quietly.
+- `(log:add! component datum [show?])` adds a record; the component is the
+  qualified function name, and `show?` defaults to true. Passing `#f` logs quietly.
+  In library code, elinter requires a literal matching the enclosing library-level
+  definition, using its exported spelling and module prefix. Local helpers and
+  callbacks keep that enclosing name. Private functions use the same prefix
+  without becoming public API. Dynamic categories belong in the datum instead.
+  Logging macros delegate to a named function so its source can be checked.
+  Transport forwards the original source unchanged.
 - `(log:retention [count])` reads or changes the shared retention limit.
   Attached setters require an all-buffer human head; readers may query it.
 - `(log:entries [component [count]])` returns owned records, newest first.
@@ -155,7 +163,8 @@ of presentation is separate from the base's operation order.
 - `log:register-formatter!` installs component presentation.
 - `edit:present-log-entry!` and `edit:present-log-entries!` expose the shared echo
   presentation path.
-- `edit:set-message!` records or displays according to `edit:message-source`.
+- `edit:set-message!` records under `edit:set-message!`; an empty string clears
+  the indicator without logging. The former `edit:message-source` override is removed.
 - `paint:show-message!` displays an explicit transient message and styles.
 
 `(log:subscribe! procedure)` returns a token for `log:unsubscribe!`. The

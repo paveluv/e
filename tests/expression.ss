@@ -108,7 +108,7 @@
 
      ;; evaluation of the expression before point and of the top-level form around it
      (fresh "evaluations" '("(define ex-forty 40)" "(list 1 (+ 2 3) 4)" "(+ ex-forty 2)" ""))
-     (define (last-eval) (log:datum (car (log:entries 'eval))))
+     (define (last-eval) (log:datum (car (log:entries 'eval:report!))))
      (head:goto! '(0 . 20))
      (eval:last-expression!)
      (head:goto! '(1 . 15))

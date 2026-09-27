@@ -234,9 +234,9 @@
      (insert-text! "new text")
      (define (backups-of path) (filter (lambda (entry) (string=? (cadr entry) path)) (backups)))
      (check 'a-save-as-over-a-file-backs-up-what-it-held
-       (let* ([logged (length (log:entries 'save-file!))]
+       (let* ([logged (length (log:entries 'edit:save-file!))]
               [saved (save-file! path3)] [on-disk (file:read path3)] [entry (car (backups-of path3))]
-              [messages (log:entries 'save-file!)])
+              [messages (log:entries 'edit:save-file!)])
          (list saved on-disk (head:buffer-file scratch) (car entry) (list-ref entry 4) (and (list-ref entry 3) #t)
                (and (find (lambda (t) (string=? (car t) "other.txt.bak")) (trash)) #t)
                (- (length messages) logged) (log:format-entry (car messages))))

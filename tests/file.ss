@@ -285,7 +285,7 @@
                           (file:create! (child name)) #f))
                    '("needle-root" "alias" "dangling" "pipe" "created/parents/empty" "created/parents/"))
                  (file:read (child "needle-root")) (file-exists? (child "absent"))
-                 (map log:datum (reverse (log:entries 'file)))))
+                 (map log:datum (reverse (log:entries 'file:create!)))))
          (list #t "" '(#t #t) '(#t #t #t #t #t #t) "abc" #f
                (list (string-append "Created directory " (child "created/"))
                      (string-append "Created directory " (child "created/parents/"))

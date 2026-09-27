@@ -47,7 +47,7 @@
      (define audit-subscription
        (log:subscribe!
          (lambda (record presentation)
-           (when (eq? (log:component record) 'policy)
+           (when (eq? (log:component record) 'policy:audit!)
              (observed (list (log:datum record) presentation))))))
 
      (define actor-input (list 'agent (string-copy "helper") 1))
@@ -67,7 +67,7 @@
 
      (check 'minted-metadata-and-permissions-own-inputs-and-queries
        (list (policy:session? s) (policy:sessions) (policy:buffers permissions)
-             (map log:datum (log:entries 'policy)))
+             (map log:datum (log:entries 'policy:audit!)))
        (list #t (list (list agent owner)) '("notes") (list (list 'mint agent owner))))
 
      ;; -- fueled evaluation in the granted environment -----------------
@@ -308,20 +308,20 @@
                       [result (policy:session-eval! quiet "(+ 1 1)")])
                  (policy:revoke! quiet)
                  (list (policy:session-owner quiet) result (actor:current)
-                       (log:actor (car (log:entries 'policy)))))))
+                       (log:actor (car (log:entries 'policy:audit!)))))))
            (list context '(ok . "=> 2") context (or context '(base e)))))
        '(#f (head "writing desk") (agent requester)))
-     (let* ([records (log:entries 'policy)]
+     (let* ([records (log:entries 'policy:audit!)]
             [events (reverse (observed))])
        (set-car! (log:datum (car records)) 'rewritten)
        (check 'one-quiet-owned-audit-stream
-         (list (map (lambda (record) (list (log:datum record) #f)) (log:entries 'policy))
+         (list (map (lambda (record) (list (log:datum record) #f)) (log:entries 'policy:audit!))
                (map (lambda (kind) (and (assq kind (map car events)) #t))
                  '(mint eval edit undo redo ask revoke revoke-error))
                (for-all (lambda (record)
                           (let ([event (log:datum record)])
                             (if (memq (car event) '(mint revoke revoke-error)) #t
-                                (equal? (log:actor record) (cadr event))))) (log:entries 'policy)))
+                                (equal? (log:actor record) (cadr event))))) (log:entries 'policy:audit!)))
          (list events '(#t #t #t #t #t #t #t #t) #t)))
      (log:unsubscribe! audit-subscription)
      (policy:revoke! winded)
@@ -341,11 +341,11 @@
            (list (= (length rows) 12)
                  (for-all (lambda (s) (and (member (list (policy:session-actor s) owner) rows) #t)) replacement)
                  (for-all policy:revoked? created))) '(#t #t #t))
-       (let ([before (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy)))])
+       (let ([before (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy:audit!)))])
          (test:parallel 24 (lambda (i) (policy:revoke! (list-ref replacement (mod i 12)))))
          (check 'repeated-revocation-removes-and-audits-once
            (list (policy:sessions)
-                 (- (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy))) before))
+                 (- (length (filter (lambda (r) (eq? (car (log:datum r)) 'revoke)) (log:entries 'policy:audit!))) before))
            '(() 12)))
        (log:unsubscribe! reading))
      (store:delete! owner notes)

@@ -774,7 +774,7 @@
 
   (define (run-posted! thunk)
     ;; a posted thunk's error is news, not a crash
-    (guard (ex [else (log:add! 'run-on-main! (kernel:condition-text ex))])
+    (guard (ex [else (log:add! 'head:run-posted! (kernel:condition-text ex))])
       (thunk)))
 
   (edoc "Run the thunks a nested pump set aside, oldest first.")
@@ -1903,7 +1903,7 @@
                                 [else "the edit's revision is no longer available"])])
                   (guard (ex [else (void)]) (sync-store-buffer! b))
                   (guard (ex [else (void)])
-                    (log:add! 'store
+                    (log:add! 'head:store-edit!
                       (format "edit refused in ~s: ~a" (buffer-name b) reason)))
                   (raise (condition (kernel:make-refusal)
                                     (make-message-condition
@@ -2340,7 +2340,7 @@
           (lambda (entry)
             (guard (ex [else (void)])
               (let ([v (cdr entry)])
-                (log:add! 'store
+                (log:add! 'head:flush-ui-audit!
                   (format "ui: ~a edit~a in ~s (revisions ~a-~a)"
                           (vector-ref v 3)
                           (if (= (vector-ref v 3) 1) "" "s")
@@ -2410,7 +2410,7 @@
                 (when advance?
                   (unless complete?
                     (invalidate-buffer-marks! (buffer-store-id b))
-                    (log:add! 'store
+                    (log:add! 'head:adopt-snapshot!
                       (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
                               (buffer-name b) old revision))
                     (request-repaint!)))))))))
@@ -2899,7 +2899,7 @@
     (let ([state (actor:checkpoint ui-actor)])
       (set! last-checkpoint (with-kept-texts (datum:copy (without-copy-slot state))))
       (and state
-           (guard (ex [else (log:add! 'head (format "Screen checkpoint ignored: ~a" (kernel:condition-text ex))) #f])
+           (guard (ex [else (log:add! 'head:resume! (format "Screen checkpoint ignored: ~a" (kernel:condition-text ex))) #f])
              (call-with-display-update (lambda () (restore-screen! (without-copy-slot state))))))))
 
 
@@ -3463,7 +3463,7 @@
                                              (kernel:condition-text ex))])
                                 (unless (equal? text (app-refresh-error a))
                                   (app-refresh-error-set! a text)
-                                  (log:add! 'app text)))])
+                                  (log:add! 'head:refresh-visible-views! text)))])
                     ((app-refresh! a))
                     (app-refresh-error-set! a #f))))
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
@@ -3709,7 +3709,7 @@
           (for-each
             (lambda (hook)
               (guard (ex [else
-                          (log:add! 'kill-buffer!
+                          (log:add! 'head:forget-buffer!
                             (format "Buffer cleanup failed for ~a: ~a"
                                     (buffer-name b) (kernel:condition-text ex)))])
                 (hook b)))

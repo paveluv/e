@@ -36,7 +36,7 @@
           indent-region!
           indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-expression! kill-line! kill-region!
           mark-expression! mark-form!
-          message-progress message-source move-horizontal! move-left! move-right! move-vertical!
+          message-progress move-horizontal! move-left! move-right! move-vertical!
           new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
           page-window-fraction! (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
@@ -993,42 +993,39 @@
                              (list (cons 'trailing (file:ends-in-newline? (car disk)))
                                    (cons 'base (car disk)) (cons 'stamp (cdr disk))))))]))
 
-  (define (visit-buffer! path)
-    ;; Admit the complete disk baseline before showing the buffer. Shared
-    ;; identity wins over creation, preserving unsaved and recovered work.
-    (let ([path (file:visit-path path)])
-      (let-values ([(b created?)
-                    (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
-                                                  (equal? (head:buffer-file b) path))) buffers)
-                           => (lambda (b) (values b #f))]
-                      [else (file-buffer path)])])
-        (head:show-buffer! b)
-        (log:add! 'visit-file!
-          (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
-          created?)
-        (unless created?
-          (let-values ([(text revision facts) (head:buffer-state b)])
-            (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
-              (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
-                ;; Reopening compares content even if a stamp is unchanged.
-                (let ([disk (guard (ex [else #f]) (read-disk path))])
-                  (cond
-                    [(and disk (string=? (car disk) base))
-                     (head:buffer-facts-set! b
-                       (list (cons 'stamp (cdr disk)))
-                       (property:select facts '(file base stamp)))]
-                    [disk (reopen-changed-file! b path disk)]
-                    [else
-                     (parameterize ([message-source 'visit-file!])
-                       (set-message! (format "Cannot reread ~a" path)))])))))))))
-
   (edoc "Visit a file, creating missing parents and an empty file on disk before opening its buffer. A trailing slash creates directories only; existing directories open in Finder. Existing files and shared buffers are reused, never overwritten. Each new path is logged."
         (path file "the path to visit; a trailing slash requests a directory")
         (returns boolean "whether the path was opened"))
   (define (visit-file! path)
+    (define (visit-buffer! path)
+      ;; Admit the complete disk baseline before showing the buffer. Shared
+      ;; identity wins over creation, preserving unsaved and recovered work.
+      (let ([path (file:visit-path path)])
+        (let-values ([(b created?)
+                      (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
+                                                 (equal? (head:buffer-file b) path))) buffers)
+                             => (lambda (b) (values b #f))]
+                        [else (file-buffer path)])])
+          (head:show-buffer! b)
+          (log:add! 'edit:visit-file!
+            (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
+            created?)
+          (unless created?
+            (let-values ([(text revision facts) (head:buffer-state b)])
+              (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
+                (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
+                  ;; Reopening compares content even if a stamp is unchanged.
+                  (let ([disk (guard (ex [else #f]) (read-disk path))])
+                    (cond
+                      [(and disk (string=? (car disk) base))
+                       (head:buffer-facts-set! b
+                         (list (cons 'stamp (cdr disk)))
+                         (property:select facts '(file base stamp)))]
+                      [disk (reopen-changed-file! b path disk)]
+                      [else
+                       (log:add! 'edit:visit-file! (format "Cannot reread ~a" path))])))))))))
     (guard (ex [else
-                (parameterize ([message-source 'visit-file!])
-                  (set-message! (format "Cannot open ~a: ~a" path (kernel:condition-text ex)))) #f])
+                (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
       (let ([full (file:canonical (file:expand path))])
         (if (or (string:suffix? "/" path) (file-directory? full))
             (begin (file:make-directories! full) (head:open-directory! full))
@@ -1080,11 +1077,10 @@
         (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (head:buffer-name b)))))
     (define (write! review)
       (define written? #f)
-      (guard (ex [else (parameterize ([message-source 'save-file!])
-                         (set-message!
-                           (if written?
-                               (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex))
-                               (format "Save failed: ~a" (kernel:condition-text ex)))))
+      (guard (ex [else (log:add! 'edit:save-file!
+                         (if written?
+                             (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex))
+                             (format "Save failed: ~a" (kernel:condition-text ex))))
                        #f])
         ;; Capture one coherent state after pre-save hooks.  The recorded
         ;; baseline is exactly what was written, even if a store subscriber
@@ -1119,9 +1115,8 @@
         ;; write may overwrite a subscriber's newer choice. Re-save keeps mode.
         (file:run-post-save-hooks! path)
         (if (and adopted? kept)
-            (parameterize ([message-source 'save-file!])
-              (set-message! (format "Wrote ~a; what it held is kept as ~a" path kept)))
-            (log:add! 'save-file! (cons "Wrote" path)))
+            (log:add! 'edit:save-file! (format "Wrote ~a; what it held is kept as ~a" path kept))
+            (log:add! 'edit:save-file! (cons "Wrote" path)))
         #t))
     (check-source!)
     (when (head:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
@@ -1167,13 +1162,12 @@
                              (list 'backup path (cdr disk) sum)))])
             (store:buffer-name id)))))
 
-  (define (reload-from-disk! b path disk . source)
+  (define (reload-from-disk! b path disk)
     ;; The buffer reloaded as one undoable action through the store: the
     ;; disk becomes the baseline, the buffer's edits merge on top, an entry the
     ;; disk contradicts pending as a conflict with the disk's side shown;
     ;; -> (values status detail), applied with (revision conflicts), and the
-    ;; echo told under the command that reloaded, reload! unless the caller
-    ;; names its own. Nothing is written.
+    ;; echo told by this helper. Nothing is written.
     (let ([disk (review-disk! path disk)])
       (let-values ([(status detail)
                     (head:store-reload! b (file:lines (car disk))
@@ -1181,11 +1175,10 @@
                             (cons 'base (car disk)) (cons 'stamp (cdr disk))))])
         (when (eq? status 'applied)
           (let ([n (length (cadr detail))])
-            (parameterize ([message-source (if (pair? source) (car source) 'reload!)])
-              (set-message!
-                (if (zero? n)
-                    (format "Reloaded ~a, the buffer's edits merged" path)
-                    (format "Reloaded ~a with ~a conflict~a" path n (if (= n 1) "" "s")))))))
+            (log:add! 'edit:reload-from-disk!
+              (if (zero? n)
+                  (format "Reloaded ~a, the buffer's edits merged" path)
+                  (format "Reloaded ~a with ~a conflict~a" path n (if (= n 1) "" "s"))))))
         (values status detail))))
 
   (define (merge-failure detail)
@@ -1205,18 +1198,17 @@
                     (list (cons 'trailing (file:ends-in-newline? (car disk)))
                           (cons 'base (car disk)) (cons 'stamp (cdr disk))))])
       (when (eq? status 'applied) (head:clamp-buffer-positions! b))
-      (parameterize ([message-source 'visit-file!])
-        (set-message!
-          (if (eq? status 'applied)
-              (format "Reread ~a, its changes on disk ~a; undo brings the buffer's text back" path why)
-              (format "~a changed on disk, ~a, and could not be reread: ~a" path why detail))))
+      (log:add! 'edit:reread-through-store!
+        (if (eq? status 'applied)
+            (format "Reread ~a, its changes on disk ~a; undo brings the buffer's text back" path why)
+            (format "~a changed on disk, ~a, and could not be reread: ~a" path why detail)))
       (eq? status 'applied)))
 
   (define (reopen-changed-file! b path disk)
     ;; The file changed on disk since the buffer's baseline: reload it, and
     ;; where the store cannot, a baseline the log no longer reaches say,
     ;; reread it instead, undoably
-    (let-values ([(status detail) (reload-from-disk! b path disk 'visit-file!)])
+    (let-values ([(status detail) (reload-from-disk! b path disk)])
       (cond [(eq? status 'applied) #t]
             [(eq? detail 'pending-edits) (set-message! (merge-failure detail)) #f]
             [else (reread-through-store! b path disk (merge-failure detail))])))
@@ -1244,7 +1236,7 @@
         (case status
           [(applied)
            (head:clamp-buffer-positions! b)
-           (parameterize ([message-source 'visit-file!]) (set-message! (format "Reread ~a" path)))]
+           (log:add! 'edit:reread! (format "Reread ~a" path))]
           [else (refuse-file! (format "~a could not be reread: ~a" (file:base-name path) detail))]))))
 
   (edoc "Reload the current buffer's file as one undoable action, preserving earlier undo history. The disk's text becomes the baseline and the buffer's edits merge on top, a collision pending as a conflict, the red !!. Undo restores the pre-reload buffer while remembering the observed disk version, so saving can overwrite it. Where the store cannot reload, the echo says so and C-x C-r rereads. Reopening, editing and saving after a change on disk reload the same way.")
@@ -1294,19 +1286,12 @@
 
   ;; Read-only views of the editor's state, for M-x and modules; mutation
   ;; goes through the command API.
-  (edoc "Show a message in the echo area; with a message-source it is logged too, with #f it is a plain indicator."
+  (edoc "Log and show a message under edit:set-message!; an empty string clears the echo indicator without logging. Use log:add! in a function to name its own source, or paint:show-message! for an unlogged indicator."
         (s string "the message"))
   (define (set-message! s)
-    ;; A stamped message is a log entry -- recorded and shown; with
-    ;; (message-source #f) it is an indicator, shown and forgotten,
-    ;; like a CapsLock light, and an empty message merely clears the
-    ;; indicator.  Either way it presents the moment it is set,
-    ;; mid-command included, and never before the screen is the
-    ;; editor's.
-    (let ([src (message-source)])
-      (if (and src (> (string-length s) 0))
-          (log:add! src s)
-          (paint:show-message! s #f))))
+    (if (> (string-length s) 0)
+        (log:add! 'edit:set-message! s)
+        (paint:show-message! s #f)))
 
   (edoc "The selected region while the mark is active, else the whole current buffer as a region."
         (returns region))
@@ -1350,10 +1335,6 @@
   ;; the formatter registry are state, not UI.  How a logged message is
   ;; shown is the head's side, here: set-message! and the echo-area
   ;; presenter that init! installs on the log.
-
-  (edoc "Who a message came from, for the log's attribution: components parameterize it around their messages; #f makes a message a plain indicator, shown and never logged."
-        (value (or symbol #f)))
-  (define message-source (make-parameter 'e))
 
   (define message-progress
     ;; When true, a logged message supersedes its component's newest
@@ -1433,11 +1414,10 @@
                 [disposable? (store:delete! head:ui-actor id)]
                 [else (store:set-properties! head:ui-actor id (list (list 'trashed (now-seconds) head:ui-actor)))])
           (head:forget-buffer! b)
-          (parameterize ([message-source 'kill-buffer!])
-            (set-message!
-              (cond [(or (not id) disposable?) (format "Killed ~a" name)]
-                    [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
-                    [else (format "Killed ~a; it is in the trash" name)])))))))
+          (log:add! 'edit:kill-buffer!
+            (cond [(or (not id) disposable?) (format "Killed ~a" name)]
+                  [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
+                  [else (format "Killed ~a; it is in the trash" name)]))))))
 
   (edoc "The trashed buffers, the backups aside, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
         (returns (list-of list)))
@@ -1477,8 +1457,7 @@
         (let ([b (head:adopt-store-buffer! id)])
           (unless b (error 'restore! "the buffer did not come back" name))
           (head:show-buffer! b)
-          (parameterize ([message-source 'restore!])
-            (set-message! (format "Restored ~a" (head:buffer-name b))))
+          (log:add! 'edit:restore! (format "Restored ~a" (head:buffer-name b)))
           b))))
 
   (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
@@ -1490,16 +1469,14 @@
         (unless (and (cond [(assq 'trashed facts) => cdr] [else #f])
                   (store:discard! head:ui-actor (car entry) revision facts))
           (error 'delete-trashed! "the entry changed; choose it again" name)))
-      (parameterize ([message-source 'delete-trashed!])
-        (set-message! (format "Permanently deleted ~a" name)))))
+      (log:add! 'edit:delete-trashed! (format "Permanently deleted ~a" name))))
 
   (edoc "Delete every trashed buffer for good, the backups kept; how many went."
         (returns integer))
   (define (empty-trash!)
     (let ([ids (trashed-ids)])
       (for-each (lambda (id) (store:delete! head:ui-actor id)) ids)
-      (parameterize ([message-source 'empty-trash!])
-        (set-message! (format "Emptied the trash: ~a buffer~a" (length ids) (if (= (length ids) 1) "" "s"))))
+      (log:add! 'edit:empty-trash! (format "Emptied the trash: ~a buffer~a" (length ids) (if (= (length ids) 1) "" "s")))
       (length ids)))
 
   ;;; Indentation and formatting ------------------------------------------------
@@ -2015,8 +1992,8 @@
                  (if (pair? d)
                      (format "~a ~a" (car d) (cdr d))
                      (format "~a" d)))])
-      (log:register-formatter! 'visit-file! fmt)
-      (log:register-formatter! 'save-file! fmt))
+      (log:register-formatter! 'edit:visit-file! fmt)
+      (log:register-formatter! 'edit:save-file! fmt))
     (style:set-changed-hook!
       (lambda () (paint:invalidate-screen-cache!)))
     (style:color-scheme! (head:host-color-scheme))

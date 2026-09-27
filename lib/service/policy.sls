@@ -124,9 +124,9 @@
     (datum:copy (session-owner-raw s)))
 
   (define (audit! entry)
-    ;; One history and delivery mechanism: read log:entries 'policy or
+    ;; One history and delivery mechanism: read log:entries 'policy:audit! or
     ;; subscribe through log. Policy events do not interrupt the head's echo.
-    (log:add! 'policy entry #f))
+    (log:add! 'policy:audit! entry #f))
 
   (define (call-as-session s thunk)
     ;; Work and its audit share the session actor, for direct callers as well

@@ -539,7 +539,7 @@
      (check 'finder-creates-and-opens-the-file-with-parent-first-logging
        (list (head:buffer-file (head:current-buffer))
          (eof-object? (call-with-input-file (path "new/inner 日本語/note.txt") get-string-all))
-         (map log:datum (reverse (list-head (log:entries 'file) 3))))
+         (map log:datum (reverse (list-head (log:entries 'file:create!) 3))))
        (list (path "new/inner 日本語/note.txt") #t
          (list (string-append "Created directory " (path "new/"))
                (string-append "Created directory " (path "new/inner 日本語/"))
@@ -561,16 +561,16 @@
        (list (at (path "only/direct") "") #t))
 
      (filter! (path "race"))
-     (define creation-logs (length (log:entries 'file)))
+     (define creation-logs (length (log:entries 'file:create!)))
      (call-with-output-file (path "race") (lambda (p) (display "another process" p)))
      (press! "RET")
      (check 'finder-creation-race-opens-the-existing-file-without-replacing-it
-       (list (buffer-text (head:current-buffer)) (length (log:entries 'file)))
+       (list (buffer-text (head:current-buffer)) (length (log:entries 'file:create!)))
        (list "another process" creation-logs))
      (files-open! root) (filter! (path "race/child")) (press! "RET")
      (check 'finder-refuses-a-file-in-the-parent-path-without-leaving-the-app
        (list (eq? (head:current-buffer) (view))
-         (call-with-input-file (path "race") get-string-all) (length (log:entries 'file)))
+         (call-with-input-file (path "race") get-string-all) (length (log:entries 'file:create!)))
        (list #t "another process" creation-logs))
      (delete-file (path "race")) (delete-file (path "new/inner 日本語/note.txt"))
      (for-each (lambda (name) (delete-directory (path name))) '("new/inner 日本語" "new" "only/inner" "only/direct" "only"))

@@ -513,7 +513,7 @@
                                           (equal? (vector-ref (car (state b)) 0) "later ordinary line")
                                           (not (head:buffer-trailing b))))
                                  (and (equal? before (state b)) (equal? name (head:buffer-name b))
-                                      (let ([message (log:datum (car (log:entries 'save-file! 1)))])
+                                      (let ([message (log:datum (car (log:entries 'edit:save-file! 1)))])
                                         (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
                                              (string:suffix? "saved baseline was not updated." message))))))))
                    (lambda ()

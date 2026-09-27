@@ -251,7 +251,7 @@
           (dynamic-wind disable-interrupts
             (lambda () (close-port (open-file-output-port path)))
             enable-interrupts))
-      (log:add! 'file
+      (log:add! 'file:create!
         (string-append (if directory? "Created directory " "Created file ")
                        (if directory? (absolute "" path) path))))
     (void))
@@ -382,7 +382,7 @@
 
   (define (run-hooks! hooks path)
     (for-each (lambda (p)
-                (guard (ex [else (log:add! 'save-file!
+                (guard (ex [else (log:add! 'file:run-hooks!
                                    (format "Save hook failed: ~a"
                                            (kernel:condition-text ex)))])
                   (p path)))

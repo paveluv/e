@@ -43,8 +43,9 @@
       (lambda ()
         (client:subscribe! 'logged
           (lambda (entry presentation)
-            ;; a describe record: a fetch under way or done, the corpus changing
-            (when (eq? (caddr entry) 'describe) (set! signature-cache #f)))))))
+            ;; A fetch under way or done: the corpus may have changed.
+            (when (memq (caddr entry) '(reference:run-fetch! reference:begin-fetch!))
+              (set! signature-cache #f)))))))
 
   (edoc "Ask the base to start downloading the reference corpus; it returns at once, and the fetch's progress arrives as this head's log records, redrawn in place in the echo area.")
   (define (fetch!)

@@ -14,7 +14,7 @@
 set -eu
 
 cd "$(git rev-parse --show-toplevel)"
-if git diff --cached --quiet -- lib tools/elinter.sps tools/edoc-coverage.sps; then
+if git diff --cached --quiet -- lib tools/elinter.sps tools/log-sources.ss tools/edoc-coverage.sps; then
   exit 0
 fi
 
@@ -25,7 +25,7 @@ fi
 
 tree=$(mktemp -d "${TMPDIR:-/tmp}/e-pre-commit.XXXXXX")
 trap 'rm -rf "$tree"' EXIT
-git ls-files -z -- lib tools/elinter.sps tools/edoc-coverage.sps | git checkout-index -z --stdin --prefix="$tree/"
+git ls-files -z -- lib tools/elinter.sps tools/log-sources.ss tools/edoc-coverage.sps | git checkout-index -z --stdin --prefix="$tree/"
 
 if ! (cd "$tree" && { ulimit -v 2000000 2>/dev/null || true; } && scheme --script tools/elinter.sps); then
   echo "pre-commit: the linter found problems in the commit; fix them, or skip the check once with git commit --no-verify" >&2

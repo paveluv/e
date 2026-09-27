@@ -35,7 +35,7 @@
   (define (actor e)
     (cadr e))
 
-  (edoc "The component a log record belongs to."
+  (edoc "The qualified function name that emitted a log record."
         (e list "the record")
         (returns symbol))
   (define (component e)
@@ -47,8 +47,8 @@
   (define (datum e)
     (cadddr e))
 
-  (edoc "Add a record to the log under a component, with an owned copy of its datum; show says how heads present it."
-        (component symbol "the component")
+  (edoc "Add a record under the enclosing function's qualified name, with an owned copy of its datum; show says how heads present it. Elinter checks literal sources in library code against export renames."
+        (component symbol "the function's prefixed name, such as file:create!")
         (datum any "the record's data")
         (show (list-of any) "the presentation, at most one: #f, #t or progress"))
   (define (add! component datum . show)

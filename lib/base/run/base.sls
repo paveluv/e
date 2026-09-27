@@ -18,6 +18,7 @@
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
+          (prefix (state journal) journal:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
           (prefix (sys activity) activity:)
@@ -92,7 +93,7 @@
                  (list-tail event 5))]
               [(delete) (list 'delete id)]
               [else (list kind id (caddr event))])])
-      (actor:call-as actor (lambda () (log:add! 'store detail #f)))))
+      (actor:call-as actor (lambda () (log:add! 'base:audit-store-event! detail #f)))))
 
   (define (request session control? operation args reply!)
     (define (arity n)
@@ -265,7 +266,9 @@
       [(log-add)
        (arity 3)
        (parameterize ([log:progress (eq? (caddr args) 'progress)])
-         (log:add! (car args) (cadr args) (and (caddr args) #t)))]
+         ;; Transport an already attributed record. Sources are assigned at
+         ;; the originating log:add! call, never by the relay.
+         (journal:add! (car args) (cadr args) (and (caddr args) #t)))]
       [(vt-open vt-send vt-close vt-color vt-option)
        (control!)
        (case operation
@@ -482,7 +485,7 @@
     (let ([message (kernel:condition-text ex)])
       ;; A full or failed disk can break diagnostics as well as saving.
       ;; Reporting failure must not undo the return to a running base.
-      (guard (ignored [else (void)]) (log:add! 'base message #t))
+      (guard (ignored [else (void)]) (log:add! 'base:report-stop-error! message #t))
       (guard (ignored [else (void)])
         (format (current-error-port) "e: ~a\n" message)
         (flush-output-port (current-error-port)))))

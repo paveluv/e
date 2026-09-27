@@ -239,7 +239,7 @@
         (width integer "the echo width")
         (returns string))
   (define (log-prefix e width)
-    (let ([p (format "~a: " (car e))])
+    (let ([p (format "~a " (car e))])
       (if (> (string-length p) width) (substring p 0 width) p)))
 
   (edoc "The content index ranges of a transient-log entry's rows: the first after the prefix, continuations indented to it."

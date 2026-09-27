@@ -208,7 +208,7 @@
          (define app-presentations '())
          (log:subscribe!
            (lambda (record presentation)
-             (when (eq? (log:component record) 'store)
+             (when (eq? (log:component record) 'base:audit-store-event!)
                (let* ([event (log:datum record)] [app? (eq? (car (log:actor record)) 'app)]
                       [operation? (and (pair? event) (memq (car event) '(edit reset)) (= (cadr event) notes))])
                  (when app? (set! app-presentations (cons presentation app-presentations)))
@@ -216,7 +216,7 @@
                  (when (or app? operation?)
                    (call-with-output-file ,audit-file
                      (lambda (out) (write (list (reverse operation-audits) app-presentations) out)) 'replace))))
-             (when (eq? (log:component record) 'policy)
+             (when (eq? (log:component record) 'policy:audit!)
                (let ([event (log:datum record)])
                  (when (and (eq? (car event) 'edit) (equal? (cadr event) '(agent "first")) (not held-edit?))
                    (set! held-edit? #t)
@@ -2120,8 +2120,13 @@
                         [target (rpc head 'create "missing-save.txt" '("") (list (cons 'file path) '(trailing . #t)))])
                    (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine") #t))
                    (write-text path "disk\n")
-                   (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
-                   (head-wait 'no-ancestor-rereads a (lambda () (head-sees? a "was reread")))
+                   ;; Inspect the refusal itself: its echo may wrap anywhere
+                   ;; as paths and qualified source names vary in length.
+                   (test:check 'no-ancestor-rereads
+                     (head-read a `(guard (ex [else
+                                               (and (string:search (kernel:condition-text ex) "was reread" 0
+                                                      (string-length (kernel:condition-text ex))) #t)])
+                                     (edit:save-file! ,path) #f)) #t)
                    (test:check 'a-save-without-a-baseline-rereads-and-undo-restores-the-text-to-save
                      (list (head-read a '(head:buffer-lines (head:current-buffer)))
                            (call-with-input-file path get-string-all)

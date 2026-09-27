@@ -29,6 +29,15 @@ name; a command that was the bare stem gets a verb (`terminal:open!!`,
 without a bang, or with a single bang "!" are supposed to finish without
 the user's intervention.
 
+Log sources are the qualified name of the enclosing library-level function,
+using its exported spelling when renamed: `(log:add! 'file:create! datum)`.
+Local helpers and callbacks belong to their containing function. Private
+functions use the module prefix too, without adding exports. Use a literal
+source at a direct `log:add!` call; `tools/elinter.sps` checks it statically.
+Logging macros must delegate to a named function.
+Keep categories and extension labels in the datum, not in the source. The
+journal transport preserves the source already assigned by the producer.
+
 ## Contents and commit messages
 
 This repository contains the editor's code, user documentation and tests.

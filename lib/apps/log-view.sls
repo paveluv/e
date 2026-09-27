@@ -25,7 +25,7 @@
     ;; rendering shows seconds.
     (let* ([stamp (log:time e)]
            [d (time-utc->date (make-time 'time-utc (mod stamp 1000000000) (div stamp 1000000000)))])
-      (format "~2,'0d:~2,'0d:~2,'0d ~s\t~a: "
+      (format "~2,'0d:~2,'0d:~2,'0d ~s\t~a "
               (date-hour d) (date-minute d) (date-second d) (log:actor e) (log:component e))))
 
   (define (style-log-line s)
@@ -34,11 +34,11 @@
     (let* ([n (string-length s)]
            [styles (make-vector n 'comment)]
            [start (and (> n 9) (string:search s "\t" 9 n))]
-           [sep (and start (string:search s ": " (+ start 1) n))])
+           [sep (and start (string:search s " " (+ start 1) n))])
       (when sep
         (let* ([component (string->symbol (substring s (+ start 1) sep))]
                [styler (log:styler component)]
-               [from (+ sep 2)]
+               [from (+ sep 1)]
                [inner (and styler
                            (guard (ex [else #f])
                              (styler (string:tail s from))))])
@@ -105,7 +105,7 @@
         (returns buffer))
   (define log-view!
     ;; The *log* view -- or a dynamic filtered one, *log eval* for
-    ;; (log-view:buffer! 'eval) -- created (or recreated after a kill) on
+    ;; (log-view:buffer! 'eval:report!) -- created (or recreated after a kill) on
     ;; demand.
     (case-lambda
       [() (log-view-named! "*log*" '())]

@@ -110,12 +110,12 @@
                          (equal? (cadr clipboard) head:ui-actor)
                          (terminal-forward-clipboard-to-copy-buffer))
                 (edit:copy-text! (caddr clipboard))
-                (log:add! 'terminal (format "Copied clipboard text from ~a"
-                                            (head:buffer-name buffer))))
+                (log:add! 'terminal:present-notices! (format "Copied clipboard text from ~a"
+                                                       (head:buffer-name buffer))))
               (for-each
                 (lambda (message)
                   (unless (member message (cdr old))
-                    (log:add! 'terminal (format "~a: ~a" (head:buffer-name buffer) message)))) diagnostics)))))
+                    (log:add! 'terminal:present-notices! (format "~a: ~a" (head:buffer-name buffer) message)))) diagnostics)))))
       (head:buffers)))
 
   (edoc "Scroll the terminal window a page up into its scrollback.")
