@@ -294,7 +294,7 @@
                                   (error 'restart "invalid maintenance status" status))
                                 (cdr entry))) '(heads terminals agents pending))])
           (format (current-error-port)
-            "e: restart keeps shared text and named views. Undo/redo history, local drafts and pending interactions are not kept; terminal processes and agent sessions end.\n")
+            "e: restart keeps shared text with undo/redo history, named views and checkpointed local text. Local undo history, the structured log and pending interactions are not kept; terminal processes and agent sessions end.\n")
           (let ([agreed?
                  (or (for-all zero? counts)
                      (begin

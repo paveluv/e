@@ -19,6 +19,7 @@
   (define restored-at #f)
   (define uncertain? #f)
   (define archives '())
+  (define rejected-archive #f)
   (define notice-pending? #f)
 
   (define (now)
@@ -60,6 +61,7 @@
                       (let ([bytes (get-bytevector-all port)])
                         (if (eof-object? bytes) #vu8() bytes))))]
            [value (and bytes (parse bytes))]
+           [rejected #f]
            [retained (if (file-exists? directory)
                          (map (lambda (name) (string-append directory "/" name))
                            (list-sort string<? (filter recovery-name? (directory-list directory)))) '())])
@@ -69,11 +71,14 @@
          ;; unexpected import error aborts this startup with session intact.
          (store:import! (cadddr value) (cdr (list-ref value 4)))
          (actor:import! (cdr (list-ref value 5)))]
-        [bytes (set! retained (append retained (list (sys:archive-session! directory))))])
+        [bytes
+         (set! rejected (sys:archive-session! directory))
+         (set! retained (append retained (list rejected)))])
       (with-mutex lock
         (set! saved-at (and value (caddr value)))
         (set! restored-at saved-at)
         (set! archives retained)
+        (set! rejected-archive rejected)
         (set! notice-pending? (or saved-at (pair? archives))))))
 
   (define (require-pause!)
@@ -120,9 +125,13 @@
       (and notice-pending?
            (begin
              (set! notice-pending? #f)
-             (string-append
-               (if restored-at (format "e: restored a session saved ~a\n" (age restored-at)) "")
-               (apply string-append
-                 (map (lambda (path)
-                        (format "e: a saved session could not be restored; it is kept at ~a\n" path)) archives)))))))
+             (let ([older (- (length archives) (if rejected-archive 1 0))])
+               (string-append
+                 (if restored-at (format "e: restored a session saved ~a\n" (age restored-at)) "")
+                 (if rejected-archive
+                     (format "e: the saved session could not be restored; it is kept at ~a\n" rejected-archive) "")
+                 (if (> older 0)
+                     (format "e: ~a older recovery archive~a remain~a in ~a (session.incompatible*).\n"
+                       older (if (= older 1) "" "s") (if (= older 1) "s" "") (path-parent (car archives)))
+                     "")))))))
 )

@@ -14,20 +14,20 @@ Before every commit, run `tools/scheme-format.sps -i` on all `*.sls`,
 
 ## Naming conventions
 
-Every library but the command layer `edit` is imported with its own
-prefix -- seams and apps alike (`store:`, `terminal:`, `git:`,
-`sys:`) -- and that is how M-x sees them; only `edit`'s names are
-bare, and apps import it as `(except (edit) init!)`.  Modules are
-named in the singular (`style`, `file`, `mode`, `string`, `actor`,
+Every module API, including the command layer `edit`, is imported with its own
+prefix -- seams and apps alike (`edit:`, `store:`, `terminal:`, `git:`,
+`sys:`) -- and that is how M-x sees them. Value constructors from `literal`
+and completing types are bare, such as `(buffer "name")` and `(file "path")`.
+Modules are named in the singular (`style`, `file`, `mode`, `string`, `actor`,
 `doc`), and exported names never repeat the module's stem:
 `style:set!`, `log:add!`, `git:branches`, `terminal:send!` -- never
 `styles:set-style!` or `git:git-branches`.  Rename in the export list
 (`(rename (internal external))`) if the definition keeps a longer
-name; a command that was the bare stem gets a verb (`terminal:open!!`,
-`eval:run!`, `describe:show!`). Commands that interact with the user
-(can block on input from the user) have double-bang suffix "!!". Commands
-without a bang, or with a single bang "!" are supposed to finish without
-the user's intervention.
+name; a command that was the bare stem gets a verb (`terminal:open!`,
+`eval:run!`, `describe:show!`). Effectful procedures use a single `!`;
+queries have no bang and predicates end in `?`. A procedure that waits for
+input declares `(prompts)` in its edoc; it does not get a separate suffix.
+The effect checker validates these conventions and documented exceptions.
 
 Log sources are the qualified name of the enclosing library-level function,
 using its exported spelling when renamed: `(log:add! 'file:create! datum)`.

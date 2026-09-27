@@ -875,9 +875,12 @@
                      (list (rpc head 'buffers) (call-with-input-file initialized read)
                            (map (lambda (path) (call-with-input-file path get-string-all)) paths)
                            (cdr (assq 'recovery-archives (rpc head 'status)))
-                           (> (occurrences (rpc head 'startup-notice) (car (last-pair paths))) 0)
+                           (let ([notice (rpc head 'startup-notice)])
+                             (list (occurrences notice "could not be restored")
+                                   (> (occurrences notice (car (last-pair paths))) 0)
+                                   (occurrences notice "older recovery archive")))
                            (file-exists? path))
-                     (list '() '() retained paths #t #f))
+                     (list '() '() retained paths (list 1 #t (if (> (length retained) 1) 1 0)) #f))
                    (stop-reviewed head))))) bad)
          ;; Successfully read bad data may be archived. An unreadable file,
          ;; unsafe permissions or later configuration failure must stay put.
@@ -925,12 +928,29 @@
                    (test:check 'a-later-save-does-not-invent-a-restore-notice
                      (list (number? (cdr (assq 'saved-at status))) (cdr (assq 'restored-at status))
                            (occurrences notice "restored a session saved")
-                           (> (occurrences notice (car (last-pair (archive-paths)))) 0)) '(#t #f 0 #t))))
+                           (occurrences notice "could not be restored")
+                           (occurrences notice (format "~a older recovery archives" (length (archive-paths)))))
+                     '(#t #f 0 0 1))))
                (test:check 'retained-archives-are-rediscovered-after-failed-startup
                  (list (cdr (assq 'recovery-archives (rpc head 'status)))
                        (rpc head 'startup-notice)
                        (stop-reviewed head) (length (archive-paths)))
-                 (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))))
+                 (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))
+         (fixture:call-with-base root base-directory
+           (lambda (base)
+             (set! test-base base)
+             (let ([head (connect)])
+               (hello head '(head "restored with archives"))
+               (let ([notice (rpc head 'startup-notice)])
+                 (test:check 'successful-restore-distinguishes-retained-archives-from-a-new-failure
+                   (list (occurrences notice "restored a session saved")
+                         (occurrences notice "could not be restored")
+                         (occurrences notice (format "~a older recovery archives remain in ~a"
+                                               (+ 1 (length bad)) base-directory))
+                         (rpc head 'startup-notice)
+                         (cdr (assq 'recovery-archives (rpc head 'status))))
+                   (list 1 0 1 #f (archive-paths))))
+               (stop-reviewed head))))))
 
      (define (help-scenarios!)
        (let* ([missing (string-append root "/help-unused")]
@@ -1217,7 +1237,7 @@
                (lambda () (head-sees? launcher "file argument after restart")))
              (test:check 'no-live-restart-keeps-omission-notice-and-opens-file-argument
                (list (occurrences (vector-ref launcher 3) "Restart anyway?")
-                     (> (occurrences (vector-ref launcher 3) "Undo/redo history") 0)
+                     (> (occurrences (vector-ref launcher 3) "restart keeps shared text with undo/redo history") 0)
                      (head-read launcher '(head:buffer-file (head:current-buffer)))) (list 0 #t file))
              (head-send! launcher "\x18;\x03;")
              (head-wait 'detach-before-lost-reply launcher (lambda () (head-sees? launcher "e: detached")))

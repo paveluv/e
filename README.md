@@ -21,10 +21,11 @@ Highlights:
   global ones, each with the command it runs and what that command does,
   straight from the command's documentation. The listing follows the active
   window, works inside prompts too, and `C-x TAB` again pages through it.
-- **Local installation.** All code and state are kept in the installation
-  directory (where you cloned `e`), including modules, configuration files,
-  and the base's session state and logs. To uninstall `e`, simply remove
-  the installation directory.
+- **Local installation.** By default, configuration, compiled libraries,
+  downloaded reference data, recovery snapshots and diagnostic logs live in
+  the installation directory (where you cloned `e`). Stop the base before
+  removing the installation. External extension checkouts and a custom base
+  directory, if configured, live separately.
 - **Multi-head and persistent sessions.** On its first invocation, `e` starts a
   *daemon base* to which multiple heads can connect (local connections only
   for now). Heads detach on exit and reattach on the next invocation.
@@ -43,7 +44,7 @@ Highlights:
 - **Easy filesystem navigation.** The `<finder>` and `<buffet>` apps have live,
   filterable tables with multi-column sorting and keyboard or mouse
   navigation. Finder combines an editable leading path with recursive search
-  tokens, and supports explicit file/directory creation.
+  tokens, and offers missing paths as file/directory creation rows.
 - **Tiling.** Windows form a recursive tiling layout that is easy to reshape:
   split in either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - **Virtual terminals.** `C-c t` opens a new PTY-backed terminal buffer able
@@ -64,8 +65,8 @@ Highlights:
 ### Prerequisites
 
 The core editor needs a threaded build of
-[Chez Scheme](https://cisco.github.io/ChezScheme/) 10 or newer, a Unix-like system and a
-terminal. Package installation examples:
+[Chez Scheme](https://cisco.github.io/ChezScheme/) 10 or newer, Linux, FreeBSD or
+macOS, and a terminal. Package installation examples:
 
 ```sh
 # Linux (Debian/Ubuntu)
@@ -86,8 +87,7 @@ uses the configured [browser command](manual/MARKDOWN.md#scheme-api).
 
 ### Install
 
-e is installed from source in your home directory. There are no prebuilt
-binaries or packages; stable Git tags mark the releases.
+Run e directly from a source checkout; stable Git tags mark the releases.
 
 Install as a personal editor:
 
@@ -107,9 +107,10 @@ $ ~/git/project/.e/e file.txt
 
 Each installation keeps its libraries, configuration, downloaded data and
 compiled objects beside its loader: `lib/`, `config.e`, `data/`, optional
-`base-config.e` and `eo/`. The daemon owns `.base/` there, including its
-socket, recovery snapshot and daily diagnostic logs, so checkouts have independent settings,
-caches and daemons.
+`base-config.e` and `eo/`. By default, the daemon owns `.base/` there, including
+its socket, recovery snapshot and daily diagnostic logs, so checkouts have
+independent settings, caches and daemons. `--base-working-dir DIR` selects
+another base directory.
 `lib/` groups flat-named `.sls` libraries by responsibility.
 Base and attached implementations use separate `eo/base/` and `eo/client/`
 caches of `.so` objects. The first start compiles the required libraries;
@@ -131,15 +132,17 @@ $ ~/.e/e --name work
 `C-x C-c` detaches that screen. Attach with the same name to restore its
 layout, positions and local buffers; use a different name for an independent
 screen. Shared edits and terminal processes continue while no screen is
-attached. `M-x (main:shutdown!!)` saves shared text and named views, then
+attached. `M-x (main:shutdown!)` saves shared text and head checkpoints, then
 stops the base and all its screens. It asks about local drafts, live processes
 and other screens. Set `(main:shutdown-on-exit #t)` in `config.e` to use
 this shutdown when the last screen quits.
 `e --restart --name work` also starts the replacement base and reattaches.
 All graceful stops, including `kill -TERM PID`, use the same save path;
-the next start restores the snapshot. Terminal processes, undo history and
-local drafts do not survive a stop; terminal text returns as read-only
-transcripts.
+the next start restores shared text with its retained undo/redo history and
+plain local buffer text checkpointed under each head's name. Local undo
+history, the structured log and pending interactions are not saved; terminal
+text returns as read-only transcripts without restarting its processes.
+These snapshots are saved on graceful stops, not continuously during editing.
 New heads check library sources and protocol compatibility against the running
 base and ask for `e --restart` when they differ.
 `e --help` shows the base's status, version, buffer and process counts,
@@ -179,7 +182,8 @@ for configuration, lifecycle and scripted clients.
 | `C-x g` | Browse Git history and patches |
 | `C-c t` | Open a terminal buffer |
 | `C-c a` | Answer a question another actor left for you |
-| `C-g`, Escape | Cancel the current interaction |
+| `C-g` | Cancel the current interaction |
+| Escape | Leave the current interaction; accepts the current match in incremental search |
 
 In Finder, edit the leading path or add search tokens after a space. Left/Right
 navigate directories and Enter opens a row; entering a directory resets the
@@ -188,7 +192,8 @@ rows; choosing one creates it and its missing parents. A trailing `/` creates
 directories only. Existing files are opened without replacement. In both
 Finder and Buffet, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.
-`M-x (visit-file! path)` uses the same file and directory creation logic.
+`M-x (edit:visit-file! (file "~/notes.txt"))` uses the same file and directory
+creation logic.
 
 ## Scheme at the center
 
@@ -198,14 +203,16 @@ modules. You can call it via `M-x`:
 ```scheme
 M-x (head:buffer-name (head:current-buffer))
 M-x (search:replace! "old" "new")
-M-x (log-view:buffer! 'eval)
+M-x (log-view:buffer! 'eval:report!)
 M-x (terminal:open!)
 M-x (describe:this terminal:open!)
 ```
 
-(The double-bang suffix `!!` means that the command is interactive. Every
-library but the command layer is seen under its prefix -- `head:`, `log-view:`,
-`terminal:` -- and the command layer's names are bare.)
+Module APIs use their prefixes, including the command layer: `edit:`, `head:`,
+`log-view:`, `terminal:`. Value constructors such as `(file "~/notes.txt")`,
+`(buffer "notes.txt")` and `(window 2)` are bare. A single `!` marks an effectful
+procedure; interactive commands use the same suffix, with prompting recorded
+in their documentation metadata.
 
 Configuration is Scheme too. Copy `config.template.e` to `config.e`, uncomment
 the settings worth changing, and save it; the running editor applies it
@@ -225,7 +232,7 @@ immediately.
 - [Terminal buffers](manual/TERMINAL.md): full/partial capture, emulation, scrollback,
   titles, process lifetime, and the terminal API.
 - [Search and replacement](manual/SEARCH.md): incremental search, smart case,
-  replacement over the region or the buffer, and structured replacement targets.
+  replacement over the region or the buffer, and Scheme forms for selecting its scope.
 - [Indentation and formatting](manual/FORMATTING.md): Scheme layout, conservative
   and intrusive formatting, save hooks, and the CLI formatter.
 - [Interactive prompts](manual/PROMPTS.md): editing, multiline input, completion,
@@ -243,8 +250,8 @@ immediately.
   unbinding, and inspection.
 - [Styles](manual/STYLES.md): the style DSL, faces, colors, terminal behavior, and
   configuration lifecycle.
-- [App buffers](manual/APPS.md): dynamic views, interaction, the escape
-  prefix, mouse events, and the `<buffet>` switcher, the buffers laid out to pick from.
+- [App buffers](manual/APPS.md): dynamic views, interaction, input capture,
+  mouse events, and the `<buffet>` buffer switcher.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.
@@ -269,7 +276,7 @@ same glyph rules as the terminal emulator.
   between windows; interactive Finder and Buffet apps with filtering, compound
   sorting and per-window column widths. The repository uses the settled R6RS
   library layout.
-- **v0.1** (2026-09-01) -- the first tagged release. The core editor:
+- **v0.1** (2026-09-02) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query
   replace, meaningful undo, mouse support, styles. `M-x` with semantic
   completion and captured output; hot-reloadable extension modules;

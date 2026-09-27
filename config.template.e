@@ -69,8 +69,8 @@
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's copy buffer
 ;; (head:min-window-lines 3)      ; minimum text height allowed by a split
-;; (prompt:in-window #t)          ; default #f; every prompt takes the window, as
-;;                                ; edit:find-file!! does, instead of the echo area
+;; (prompt:in-window #t)          ; default #f; prompts appear at the bottom of
+;;                                ; the current window instead of the echo area
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground
@@ -81,7 +81,7 @@
 ;;                                ; ghost styles suggestions and notices;
 ;;                                ; chrome styles prompt labels and log prefixes
 ;; (keymap:bind! "M-l" log-view:show!)    ; pop the <log> view with one chord
-;; (keymap:bind! "C-c s" edit:save!!)     ; arbitrary multi-key chords work
+;; (keymap:bind! "C-c s" edit:save!)      ; arbitrary multi-key chords work
 ;; (keymap:unbind! "C-v")            ; remove a global binding
 ;; (keymap:bind! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
 ;; (keymap:unbind! 'isearch "M-c")

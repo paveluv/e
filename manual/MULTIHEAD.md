@@ -115,8 +115,8 @@ rechecks the review before accepting shutdown. It saves through the same
 routine as restart and SIGTERM, before ending any process. A failed pause or
 save resumes service. If replacement succeeded but directory sync failed,
 the error reports that the new session is installed with uncertain durability.
-The next start restores the saved shared text and named views. Undo history,
-local drafts and processes are omitted, as described below.
+The next start restores shared text and its retained undo/redo history, named
+views and checkpointed local text. Processes are not restarted, as described below.
 
 To use this review when the last head quits, put
 `(main:shutdown-on-exit #t)` in `config.e`. The base decides which head is
@@ -130,11 +130,12 @@ after a reset or expired history, positions clamp to the current text. Markdown
 and describe companions rebuild from their shared sources at the new width.
 The finder rebuilds its directory/filter/sort state and selected paths
 from a small descriptor, then rescans at the new window widths.
-Existing registered tools reopen by identity. A missing or hidden source, or a
-local view without a restore provider, uses the startup buffer in that window.
-Arbitrary local buffer text and query settings of tools without a restore
-provider are not saved. Very
-small terminals use the editor's usual layout fitting. Named checkpoints also
+Existing registered tools reopen by identity. Plain local buffers retain their
+text and facts, without their undo history. A missing or hidden source, or an
+app view without a restore provider or registered tool identity, uses the
+startup buffer in that window. Query settings of tools without a restore
+provider are not saved. Very small terminals use the editor's usual layout
+fitting. Named checkpoints also
 survive saved-session recovery. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's
 disconnect withdraws its own unanswered questions.
@@ -168,7 +169,8 @@ buffer's delta log with its undo groups, so undo, redo, blame, history and
 entries. Generated tool buffers are omitted. Live and ended terminal
 buffers become ordinary read-only text containing their last published
 output, without a log; shells and other processes are not restarted. The
-structured log, local draft text and pending interactions are not saved.
+structured log, local undo history and pending interactions are not saved.
+Plain local buffer text is saved in each named head's checkpoint.
 Older checkpoints without an edit chain clamp their positions to restored text.
 
 Saving replaces `.base/session` only after the new file is written, flushed
@@ -192,7 +194,8 @@ An unreadable file or failed import stops startup and preserves recovery
 evidence. A successfully read but malformed or unsupported snapshot is moved
 without overwriting to `session.incompatible`, then `.1`, `.2`, and so on.
 Only durable preservation permits an empty start. The first head prints the
-archive paths; later starts rediscover them. Saving, shutdown and log rotation
+new archive's path; later starts report older archives separately, with their
+count and directory. Saving, shutdown and log rotation
 never delete these archives. If the OS cannot perform the required no-replace
 rename, startup refuses and leaves the session for manual recovery.
 
