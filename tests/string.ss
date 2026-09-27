@@ -40,6 +40,14 @@
        (list (path-filter:parse " ~/src  txt " "/home/test")
          (path-filter:parse (path-filter:format-keys '("a b/c" "~literal" "x\ny")) "/home/test"))
        '(("/home/test/src" "txt") ("a b/c" "~literal" "x\ny")))
+     (check 'path-key-ranges-include-cross-directory-fragments-and-respect-root-anchors
+       (map (lambda (case) (apply path-filter:ranges case))
+         '((("b/C" "txt") "A/B/C/file.TXT" #f)
+           (("b/C") "A/B/" #t) (("b/C") "A/B/" #f)
+           (("/a/b") "/A/" #t) (("/a/b") "/x/a/b/" #t)
+           (("aa" "aa") "aaa" #f)))
+       '(((2 . 5) (11 . 14)) ((2 . 4)) () ((0 . 3)) ()
+         ((0 . 2) (1 . 3) (0 . 2) (1 . 3))))
      (check 'path-key-completion-penalizes-spaces-and-prefers-fewer-keys-on-ties
        (map (lambda (case)
               (path-filter:complete (car case) (lambda (visit) (for-all visit (cadr case)))

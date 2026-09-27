@@ -42,8 +42,8 @@ Highlights:
   pages, rendered Markdown, and the file and buffer pickers.
 - **Easy filesystem navigation.** The `<finder>` and `<buffet>` apps have live,
   filterable tables with multi-column sorting and keyboard or mouse
-  navigation. Finder supports recursive path matching, clickable directory
-  breadcrumbs and explicit file/directory creation.
+  navigation. Finder combines an editable leading path with recursive search
+  tokens, and supports explicit file/directory creation.
 - **Tiling.** Windows form a recursive tiling layout that is easy to reshape:
   split in either direction (`C-x 2`, `C-x 3`) and drag edges with a mouse.
 - **Virtual terminals.** `C-c t` opens a new PTY-backed terminal buffer able
@@ -181,8 +181,9 @@ for configuration, lifecycle and scripted clients.
 | `C-c a` | Answer a question another actor left for you |
 | `C-g`, Escape | Cancel the current interaction |
 
-In Finder, type to filter, use Left/Right to navigate directories and Enter
-to open a row. `M-c` enters Create mode: Enter creates the typed file, or
+In Finder, edit the leading path or add search tokens after a space. Left/Right
+navigate directories and Enter opens a row; entering a directory resets the
+filter to its full path. `M-c` enters Create mode: Enter creates the typed file, or
 directories when the path ends in `/`. Existing names are refused. In both
 Finder and Buffet, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.

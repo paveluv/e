@@ -420,9 +420,10 @@ windows showing the same app.
 ## The finder
 
 `C-x C-f` opens `<finder>`: a local directory browser with incremental recursive
-filename filtering, ancestor navigation, match counts and sortable metadata.
+path filtering, directory navigation, match counts and sortable metadata.
 It shares the buffet's sort-key cycling and column fitting. Its
-directory, filter and sorting are shared within one head; formatting,
+filter and sorting are shared within one head; the directory comes from the
+filter's leading path token. Formatting,
 selection and scrolling belong to each window. Filesystem work runs outside
 refresh callbacks and publishes only while its request and registration are
 still current. See [Finder](FINDER.md) for controls and search behavior.

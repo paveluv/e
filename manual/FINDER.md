@@ -1,35 +1,39 @@
 # Finder
 
-`C-x C-f` opens the `<finder>` app in the current window. It starts in the
-current file's directory, an app's working directory, or the head's launch
-directory. `M-x (finder:open-directory! "/some/directory")` starts elsewhere.
+`C-x C-f` opens the `<finder>` app in the current window, retaining its last
+filter. On first use, the filter is prefilled with the current file's directory,
+an app's working directory, or the head's launch directory, as a full path
+starting and ending with `/`. `M-x (finder:open-directory! "/some/directory")`
+resets the filter to that directory's full path.
 The original path-entry prompt remains available as `M-x (edit:visit-file!)`.
 `C-x f` has no default binding.
 
 The first line is the filter, followed by an italic `[N matches]` count.
+Spaces in the filter appear as ` ∧ ` (logical AND), so `sls m19` is shown as `sls ∧ m19`.
+One Backspace removes the whole ` ∧ ` separator.
+This is only a display convention; typing, matching and completion use spaces.
 Connecting directories do not inflate that count. A trailing `+` means the
 scan is still running or some paths could not be read.
-The Directory line shows the
-directory with a trailing slash and scan status. Below your home directory,
-its prefix becomes `~/`, as in `~/git/e/`. Each ancestor component and its
-following slash is clickable: `git/` goes to `~/git/`, and `~/` goes home.
-At home itself the full path appears, such as `/home/paveluv/`, with its
-ancestors clickable. To reach root from a home descendant, click `~/`, then
-the first `/`. Paths outside home also appear in full.
-Hover highlights just that component with bold text and a muted dotted
-underline. The final component, `e/` here, is the current directory and
-stays plain. Narrow panes elide the start of the line; the ellipsis is not
-clickable, and visible components still lead to their full paths.
+There is no separate Directory field: the first token is the leading path.
+Its directory portion determines where the table starts. `/home/me/git/`
+shows that directory's children; `/home/me/gi` shows matching entries under
+`/home/me/`, without displaying the tree from root. Backspace edits this path
+one character at a time and the table follows immediately. A leading `~`
+expands to home; otherwise a missing initial `/` is supplied automatically.
+Directory lookup follows the filesystem's spelling; filtering names ignores
+case. Missing path components, and the path after them, appear in italics in
+the normal text color. Existence checks run in the worker and are cached until
+`C-r`. Narrow panes elide the filter's start and retain its editable tail.
 
 The list contains child directories first, then files. Enter or click a
 directory to enter it; Right does the same for a selected directory. Left
-goes up one level and selects the directory just left when it matches the
-filter, enabling hidden entries if needed to show it. Each window remembers
-its selection in visited directories for the same filter, so Left–Left–Left followed by
-Right–Right–Right retraces the route. A breadcrumb jump also selects the
-branch leading back to the previous location. Backspace goes up when the
-filter is empty. Left, Right, Enter and directory/breadcrumb clicks preserve
-the filter exactly as typed; C-u explicitly clears it.
+goes up one level and selects the directory just left, enabling hidden entries
+if needed to show it. Each window remembers its selection in visited directories,
+so Left–Left–Left followed by Right–Right–Right retraces the route. Entering a
+directory, by keyboard or mouse, replaces the whole filter with its absolute
+path ending in `/`; extra tokens are cleared. Left does the same for the parent.
+C-u clears the entire filter and shows root's immediate children. Backspace
+on an empty filter does nothing.
 
 Type to filter, ignoring case. Up/Down, C-p/C-n, Shift-Tab, Home/End
 and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority.
@@ -38,37 +42,41 @@ Esc or C-g returns to the document from which this window opened the app.
 
 | Key | Action |
 |---|---|
-| `C-u` | Clear the filter. |
-| `Tab` | Expand the filter without changing its matches. |
+| `C-u` | Clear the whole filter; show root's immediate children. |
+| `Tab` | Complete a unique directory path with `/`; otherwise expand the filter without changing its matches. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
 | `M-c` | Enter Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
 
-The filter is a list of literal keys separated by spaces. Every key must
-occur in the path, ignoring case, and their occurrences must not overlap.
-Keys may appear in any order and include slashes. Repeating a key requires
-another occurrence. Quote a key as a Scheme string to include spaces, for
-example `"my notes" txt`. A quoted leading tilde remains literal.
-
-A key starting with `/` matches from the filesystem root. An unquoted leading
-`~` expands to your home directory, so `~/src txt` searches there regardless
-of the directory shown. Without a rooted key, the current directory's full
-path, ending in `/`, is an implicit key. It consumes that prefix, leaving
-your explicit keys to match below the current directory.
+After the leading path, Space starts another literal key. For example,
+`/home/me/git/ sls m19` is displayed as `/home/me/git/ ∧ sls ∧ m19`.
+Every key must occur in the path, ignoring case, and occurrences must not
+overlap. Additional keys may appear in any order and include slashes;
+repeating a key requires another occurrence. Matching token text is underlined
+in the table, including fragments across directory boundaries. Quote a token
+as a Scheme string to include spaces, for example `/home/me/ "my notes" txt`.
+A quoted leading tilde remains literal. An unquoted leading tilde in a key
+expands to home; a key starting with `/` is anchored at root. As all keys need
+separate occurrences, a second rooted key cannot overlap the first one.
 
 Matching stops at the first file or directory that contains all keys.
-For `A/B/C/file.txt`, `A B` finds `A/B/`, `B/C` finds `A/B/C/`, and
-`A txt` finds the file. A matching directory's descendants are omitted:
+Below `/work/`, keys `A B` find `A/B/`, `B/C` finds `A/B/C/`, and
+`A txt` finds `A/B/C/file.txt`. A matching directory's descendants are omitted:
 matching a directory does not flood the list with everything inside it.
-An empty filter shows the current directory's immediate children.
+A leading directory path alone shows its immediate children.
 
-Tab extends the filter without changing its matches. It maximizes literal
+When the filter contains only a path matching a single directory, Tab appends
+`/` and lists that directory's children. For example, `/home/me` completes to
+`/home/me/`. An unfinished directory name completes the same way when unique.
+Otherwise Tab extends the filter without changing its matches. It maximizes literal
 characters minus separating spaces; fewer keys break a tie. For example,
-`file` scores 4 and `f i l e` scores 1. A single result expands to its whole
-path, quoted if necessary. Multiple results may produce several shared path
-fragments. Completion preserves hidden-entry visibility and directory scope.
+`file` scores 4 and `f i l e` scores 1. A single file expands to its whole
+path, quoted if necessary. A multi-key search completing to a directory keeps
+that match; Enter opens it.
+Multiple results may produce several shared path fragments. Completion
+preserves hidden-entry visibility, directory spelling and the match set.
 Tab waits for a complete scan, then computes in the background; `Completing…`
 marks that work. Keep typing to cancel it and refine the search. An unreadable
 subtree prevents completion from assuming the visible results are exhaustive.
@@ -78,7 +86,7 @@ Use M-c for the separate Create prompt and literal path completion.
 
 M-c sets the Filter aside and opens a temporary `<create-file>` view with an
 editable `Create file:` prompt at the bottom of the window, seeded from the
-filter's literal path. Directory follows the path being edited. The table
+filter's leading path token. Create's Directory line follows the path being edited. The table
 shows only immediate children whose names start with its final component,
 using the same case-sensitive
 matching as find-file. For example, `src/re` shows `re…` entries inside
@@ -100,15 +108,13 @@ Tab also refreshes the directory's metadata; C-r rescans without completing
 input, so external file creations and removals can be picked up in this mode. These keys, with F1–F6, are the `finder-create` context's, listed by `C-x TAB` while the mode is open.
 
 The input keeps find-file's editing, cursor, wrapping and error recovery.
-Esc or C-g removes the prompt and returns to normal files mode at the
-directory currently shown, with the filter you had before M-c. If that
-directory does not exist or cannot be read, Left still goes to its parent. Creation starts
-only when you press Enter.
+Esc or C-g removes the prompt and restores the filter you had before M-c.
+Creation starts only when you press Enter.
 
 ## Creating files and directories
 
 Creation is explicit and works regardless of what the filter matches. For
-example, type `notes`, press M-c, then Enter to create a new file called `notes`,
+example, append `notes` to the leading directory path, press M-c, then Enter to create a new file called `notes`,
 even if the list contains `notes.txt`. The prompt uses the literal path rather
 than the selected search result. Open existing files from the finder's browsing mode.
 
@@ -117,7 +123,7 @@ disk, then opens its buffer. No save is needed to create it. Creation refuses
 an existing name, including a symbolic link, without changing it. For example,
 `drafts/idea.txt` creates `drafts/` if needed. End the path with `/` to create
 directories only and enter the last one: `drafts/research/` creates both
-levels if necessary. The new directory opens with an empty filter. An existing directory with a trailing slash is refused
+levels if necessary. The new directory opens with its full path as the filter. An existing directory with a trailing slash is refused
 with the same transient inline ghost, `[directory already exists]`. Without
 a trailing slash the request is for a file, so any existing name is refused
 with `[file already exists]`. Use the finder's browsing mode to enter existing directories.
@@ -133,8 +139,8 @@ never replaced by directory creation.
 
 ## Recursive filtering
 
-A nonempty filter searches below the current directory, or from root when
-a key is rooted. Directory paths include their trailing `/` for matching.
+A filter with additional keys searches below the directory derived from
+its leading path. Directory paths include their trailing `/` for matching.
 Typing a dot component, such as `lib/.git/`, includes hidden entries.
 Every matching path is expanded as a tree, with one space of indentation per
 level and no limit on the number of matches or the depth of expansion.
@@ -153,10 +159,8 @@ A count includes matching files and directories below that row. Connecting
 directories do not count as matches themselves. A directory that satisfies
 the filter has a descendant count of zero, because search stops there.
 
-The implicit current-directory key changes when you navigate. Entering
-`lib/` with `lib foo` still in Filter may therefore produce no matches.
-Edit or clear the filter to search for `foo` there, or keep a rooted key to
-search independently of the current directory.
+Entering a listed directory starts a fresh overview there, clearing extra
+keys. There is no filter pruning or hidden matching base.
 
 Scanning, sorting and completion run in the background. Typing or navigating
 replaces pending work. The previous table remains as a preview until a new
@@ -233,7 +237,7 @@ pane on a directory.
 
 ## Windows and heads
 
-Like `<buffet>`, `<finder>` shares its directory, filter and sort order between
+Like `<buffet>`, `<finder>` shares its filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
@@ -244,8 +248,8 @@ chosen destination, using the prompt's usual focus-loss behavior.
 The focused pane's keyboard choice is bold with a soft blue background:
 pale in a light theme, dark navy in a dark theme. A hovered row
 gets the same tint and a muted dotted underline, taking precedence over the
-keyboard choice. Headings and breadcrumbs keep their own background and use
-bold text with the same dotted underline.
+keyboard choice. Headings keep their own background and use bold text with
+the same dotted underline.
 Hovering does not move the keyboard choice or scroll the list. Normal browsing
 hides the cursor and disables text selection. The status bar shows the pane's
 name only; `C-x TAB` lists its keys.
@@ -258,5 +262,5 @@ instead and the finder keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
 scrolls the pointed pane by the usual fraction of its height, without opening
 files or changing keyboard focus. Named-head
-reattachment restores the directory, filter, matching mode, sorts, hidden-entry setting and
+reattachment restores the filter, sorts, hidden-entry setting and
 selected paths, then rescans. Other heads have independent finders.

@@ -1,7 +1,7 @@
 ;; Literal path keys: unordered, disjoint occurrences, with root anchoring.
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation path-filter)
-  (export anchored? complete format-keys matcher parse possible?)
+  (export anchored? complete format-keys matcher parse possible? ranges)
   (import (chezscheme) (prefix (foundation string) string:))
 
   (edoc "Whether a key starts at the filesystem root."
@@ -40,6 +40,28 @@
 
   (define (disjoint? range used)
     (for-all (lambda (other) (or (<= (cdr range) (car other)) (<= (cdr other) (car range)))) used))
+
+  (edoc "Literal key occurrences as character ranges [start, end); a directory prefix also includes unfinished occurrences at its end. Rooted keys only start at zero."
+        (keys list "expanded keys") (path string "the path")
+        (prefix? boolean "whether the path can continue below this directory") (returns list))
+  (define (ranges keys path prefix?)
+    (let ([n (string-length path)])
+      (apply append
+        (map (lambda (key)
+               (let ([size (string-length key)] [search (string:searcher key #t)])
+                 (if (anchored? key)
+                     (let ([end (min size n)])
+                       (if (and (or prefix? (<= size n))
+                                (string-ci=? (substring key 0 end) (substring path 0 end)))
+                           (list (cons 0 end)) '()))
+                     (let full ([from 0] [out '()])
+                       (let ([at (and (positive? size) (search path from n))])
+                         (if at (full (+ at 1) (cons (cons at (+ at size)) out))
+                             (let partial ([size (if prefix? (min n (- size 1)) 0)] [out out])
+                               (if (<= size 0) (reverse out)
+                                   (partial (- size 1)
+                                     (if (string-ci=? (substring key 0 size) (substring path (- n size) n))
+                                         (cons (cons (- n size) n) out) out)))))))))) keys))))
 
   (edoc "Compile a case-insensitive predicate: every key occupies a separate literal range; leading slash keys are anchored at zero."
         (keys list "the expanded keys") (returns procedure))

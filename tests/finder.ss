@@ -16,6 +16,7 @@
   '(begin
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
              (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:)
+             (prefix (foundation path-filter) path-filter:)
              (prefix (head mode) mode:)
              (prefix (sys sys) sys:) (prefix (test) test:))
 
@@ -64,7 +65,14 @@
        ;; Each key sees a settled scan, as a user's next key would.
        (for-each (lambda (event) (dispatch:key! event) (settle!)) events))
      (define (type! text) (for-each (lambda (c) (dispatch:key! (string c))) (string->list text)) (settle!))
-     (define (filter! text) (press! "C-u") (type! text))
+     (define (filter-string directory text)
+       (string-append (path-filter:format-keys (list (string-append directory "/")))
+         (if (string=? text "") "" (string-append " " text))))
+     (define (at directory text) (list directory (filter-string directory text)))
+     (define (filter! text)
+       (let ([text (if (string:prefix? "/" text) text
+                       (filter-string (head:buffer-fact (view) 'directory #f) text))])
+         ((top-level-value 'finder:filter!) text) (settle!)))
      (define (files-open! . directory)
        (apply open! directory)
        (settle!))
@@ -74,7 +82,7 @@
                              (if (and (< i (string-length line)) (char=? (string-ref line i) #\space))
                                  (skip (+ i 1)) i))])
                 (substring line 0 (or (string:search line "  " start (string-length line)) (string-length line)))))
-         (list-tail (lines) 3)))
+         (list-tail (lines) 2)))
      (define (location)
        (list (head:buffer-fact (view) 'directory #f) (head:buffer-fact (view) 'file-filter #f)))
      (define (chosen-is? prefix) (string:prefix? prefix (head:buffer-line (head:current-buffer) (car (head:point)))))
@@ -84,15 +92,23 @@
      (define (sequence proc items)
        ;; map does not promise effect order; event sequences do.
        (reverse (fold-left (lambda (acc item) (cons (proc item) acc)) '() items)))
+     (define (underlined row line)
+       (styled-text row line '(plain mark)))
+     (define (styled-text row line face)
+       (let ([styles ((mode:row-styles (mode:of (view))) (view) row line)])
+         (list->string
+           (filter char?
+             (map (lambda (i) (and (equal? (vector-ref styles i) face) (string-ref line i)))
+               (iota (string-length line)))))))
 
      (files-open! root)
      (check 'finder-list-has-only-subdirectories-and-files-with-a-full-directory-path
-       (list (list-head (labels) 4) (cadr (lines))
+       (list (list-head (labels) 4) (car (location))
              (and (member "odd\\xA;name.txt" (labels)) #t) (and (member ".dot" (labels)) #t)
              (head:buffer-store-id (view)) (head:app-cursor-visible-in? (head:current-window))
              (head:buffer-selectable? (view))
              (eq? (keymap:binding "C-x C-f") (top-level-value 'finder:open!)))
-       (list '("empty/" "large/" "small/" "a 日本語 long (name).txt") (string-append "Directory: " root "/")
+       (list '("empty/" "large/" "small/" "a 日本語 long (name).txt") root
              #t #f #f #f #f #t))
      ;; Save As cannot turn the app's projection into a visiting buffer or
      ;; overwrite a file with its table. The next keys must still filter.
@@ -107,7 +123,7 @@
                  (head:buffer-fact (view) 'mode #f) (head:buffer-read-only (view)))
            (call-with-input-file (path "apple.txt") get-string-all) (file-exists? (path "new.txt"))))
        '((refused refused) #t ("<finder>" #f "finder" #t) "one\ntwo\n" #f))
-     (press! "DOWN" "DOWN") (type! "ONly") ; begin on small/, whose descendant will match
+     (press! "DOWN" "DOWN") (type! " ONly") ; begin on small/, whose descendant will match
      (check 'finder-single-recursive-match-is-the-default
        (list (labels) (group-count "small/") (group-count " nested/") (chosen-is? "  needle-only.txt")
          (car (lines))
@@ -115,7 +131,8 @@
                 [styles ((mode:row-styles (mode:of (view))) (view) 0 line)]
                 [at (string:search line "[1 match]" 0 (string-length line))])
            (and at (vector-ref styles at))))
-       '(("small/" " nested/" "  needle-only.txt") "  1" "  1" #t "Filter: ONly [1 match]" ghost))
+       (list '("small/" " nested/" "  needle-only.txt") "  1" "  1" #t
+         (string-append "Filter: " root "/ ∧ ONly [1 match]") 'ghost))
      (press! "RET")
      (define visited
        (begin (head:goto! '(1 . 1)) (insert-text! "!")
@@ -123,8 +140,70 @@
      (files-open! root) (filter! "only") (press! "RET")
      (check 'finder-reopening-reuses-unsaved-buffer-and-window-point
        (list (head:buffer-store-id (head:current-buffer)) (head:point) (buffer-text (head:current-buffer))) visited)
+     (open!) (settle!)
+     (check 'finder-reopens-the-same-directory-and-filter-after-opening-a-file
+       (list (location) (labels))
+       (list (at root "only") '("small/" " nested/" "  needle-only.txt")))
+     (press! "ESC") (open!) (settle!)
+     (check 'finder-retains-the-filter-after-cancelling (location) (at root "only"))
 
-     ;; A directory match ends its branch; entering it keeps the literal filter.
+     (filter! "SMALL/ne only")
+     (check 'finder-underlines-token-parts-in-their-own-path-components
+       (map (lambda (i) (underlined i (list-ref (lines) i))) '(2 3 4))
+       '("small/" "ne" "only"))
+     (filter! "日本語 name")
+     (let ([line (list-ref (lines) 2)])
+       (check 'finder-token-styling-excludes-elision-and-metadata
+         (list (underlined 2 line) (underlined 2 "a 日本語…  name"))
+         '("日本語name" "日本語")))
+     (filter! "odd")
+     (check 'finder-token-styling-keeps-escaped-name-offsets
+       (underlined 2 (list-ref (lines) 2)) "odd")
+
+     ;; Path editing changes scope immediately; completing a unique directory
+     ;; appends its slash and scans the children absent from the old results.
+     (files-open! (path "small")) (press! "BACKSPACE")
+     (define path-without-slash (list (location) (labels)))
+     (press! "TAB")
+     (check 'finder-tab-adds-the-slash-and-lists-the-completed-directorys-children
+       (list path-without-slash (location) (labels))
+       (list (list (list root (path "small")) '("small/")) (at (path "small") "") '("nested/" "needle-one.txt")))
+     (type! " needle") (press! "HOME" "RET")
+     (check 'finder-enter-clears-extra-keys-and-opens-a-full-path-overview
+       (location) (at (path "small/nested") ""))
+     (press! "LEFT") (press! " ") (press! "BACKSPACE")
+     (check 'finder-one-backspace-removes-the-spaced-conjunction (location) (at (path "small") ""))
+     (press! "C-u" "BACKSPACE")
+     (check 'finder-clear-removes-the-whole-filter-and-empty-backspace-is-a-no-op (location) '("/" ""))
+     (press! "ESC") (open!) (settle!)
+     (check 'finder-reopens-an-intentionally-empty-filter (location) '("/" ""))
+     (filter! (string-append root "/absent/deeper/"))
+     (check 'finder-missing-path-components-are-italic-in-the-normal-color
+       (styled-text 0 (car (lines)) '(plain italic)) "absent/deeper/")
+     (mkdir (path "absent")) (mkdir (path "absent/deeper"))
+     (press! "C-r")
+     (check 'finder-refresh-updates-path-existence-styling
+       (styled-text 0 (car (lines)) '(plain italic)) "")
+     (delete-directory (path "absent/deeper")) (delete-directory (path "absent"))
+     (let ([quoted (string-append root "/missing 日本語/next/")])
+       ((top-level-value 'finder:filter!) (format "~s" quoted)) (settle!)
+       (let* ([w (head:current-window)] [width (head:window-width w)] [height (head:window-size w)])
+         (head:window-width-set! w 52) (head:window-size-set! w 8) (head:refresh-visible-views!)
+         (let ([marked (styled-text 0 (head:window-line w 0) '(plain italic))])
+           (check 'finder-missing-path-style-excludes-the-clipped-ellipsis-quotes-and-ghost
+             (and (positive? (string-length marked)) (string:suffix? marked "missing ∧ 日本語/next/")) #t))
+         (head:window-width-set! w width) (head:window-size-set! w height) (head:refresh-visible-views!))
+       (check 'finder-missing-path-style-maps-quoted-spaces-and-unicode
+         (styled-text 0 (car (lines)) '(plain italic)) "missing ∧ 日本語/next/"))
+
+     (check 'finder-queued-tab-enters-unique-partial-empty-and-quoted-directory-paths
+       (sequence (lambda (text)
+                   ((top-level-value 'finder:filter!) text) ((top-level-value 'finder:complete!))
+                   (settle!) (location))
+         (list (path "sm") (path "empty") (format "~s" (path "small/.日本語\n"))))
+       (map (lambda (name) (at (path name) "")) '("small" "empty" "small/.日本語\n")))
+
+     ;; A directory match ends its branch until explicitly entered.
      (files-open! root) (filter! "small")
      (define named (list (visible? "small/") (visible? " needle-one.txt") (group-count "small/")))
      (filter! "small/")
@@ -137,43 +216,43 @@
              ;; Inspect the handler's immediate rendering before another
              ;; refresh can collect worker results: erase/refill and column
              ;; shifts on each keystroke would show here.
-             (let ([header (list-ref (lines) 2)])
+             (let ([header (list-ref (lines) 1)])
                (define (sample event)
                  (dispatch:key! event)
                  (let ([lines (lines)])
                    (define (has? name) (exists (lambda (s) (string:prefix? name s)) lines))
                    (list (for-all has? '("large/" "small/" " needle-one.txt" " nested/" "  needle-only.txt"))
-                         (has? "empty/") (equal? header (list-ref lines 2)))))
+                         (has? "empty/") (equal? header (list-ref lines 1)))))
                (let ([narrow (sample "-")]) (list narrow (sample "BACKSPACE")))))
        '(("large/" " needle-a.txt" " needle-b.txt" " needle-c.txt" "small/" " nested/" "  needle-only.txt" " needle-one.txt") "  3" "  2" "  1"
          ((#t #f #t) (#t #f #t))))
      (settle!)
-     ;; Right enters the chosen directory with the filter; Left returns with
+     ;; Right enters a fresh directory overview; Left returns with
      ;; it selected, and each directory recalls its own choice.
      (press! "HOME" "RIGHT" "DOWN")     ; into large/, then beyond its default row
-     (check 'finder-drilldown-and-return-preserve-filter-and-each-directorys-choice
+     (check 'finder-drilldown-and-return-reset-the-path-and-recall-each-directorys-choice
        (cons (location)
          (sequence (lambda (step) (press! (car step)) (list (location) (chosen-is? (cadr step))))
            '(("LEFT" "large/") ("RIGHT" "needle-b.txt") ("LEFT" "large/"))))
-       (list (list (path "large") "needle")
-         (list (list root "needle") #t) (list (list (path "large") "needle") #t) (list (list root "needle") #t)))
+       (list (at (path "large") "")
+         (list (at root "") #t) (list (at (path "large") "") #t) (list (at root "") #t)))
      ;; Tab preserves the matches and choice when the filter is already a
      ;; longest common completion. Row navigation remains on the arrows.
      (filter! "small/") (press! "RIGHT")
      (define inside (location))
-     (filter! "") (type! "ne")
+     (filter! "ne")
      (define before-tab (chosen-is? "nested/"))
      (press! "TAB")
-     (check 'finder-entering-a-typed-directory-path-keeps-the-filter-and-tab-preserves-the-choice
+     (check 'finder-entering-a-typed-directory-starts-an-overview-and-tab-preserves-the-choice
        (list inside before-tab (location) (chosen-is? "nested/"))
-       (list (list (path "small") "small/") #t (list (path "small") "ne ed") #t))
+       (list (at (path "small") "") #t (list (path "small") (string-append (path "small") "/ne ed")) #t))
      (files-open! root) (filter! "small/.日本語") (press! "DOWN")
      (define shown (location))
      (define escaped (visible? " .日本語\\xA;/"))
      (press! "RET")
      (check 'finder-filter-shows-a-safe-label-for-a-hidden-control-character-path-and-enters-it
        (list shown escaped (location))
-       (list (list root "small/.日本語") #t (list (path "small/.日本語\n") "small/.日本語")))
+       (list (at root "small/.日本語") #t (at (path "small/.日本語\n") "")))
      (unless (zero? ((foreign-procedure "symlink" (string string) int) (path "small/nested") (path "linked")))
        (error 'finder "cannot create directory-link fixture"))
      (files-open! root) (press! "C-r") (filter! "linked/needle")
@@ -183,7 +262,7 @@
      (filter! "needle-only.txt") (press! "RET")
      (check 'finder-typed-link-path-remains-navigable-without-recursively-following-links
        (list route inside-link (head:buffer-file (head:current-buffer)))
-       (list '("linked@/") (list (path "linked") "linked/needle") (path "small/nested/needle-only.txt")))
+       (list '("linked@/") (at (path "linked") "") (path "small/nested/needle-only.txt")))
      (delete-file (path "linked"))
      (files-open! (path "small/nested"))
      (check 'finder-left-right-retraces-three-levels-with-the-return-child-selected
@@ -232,7 +311,8 @@
      (kill-buffer! (head:current-buffer))
      (files-open! (path "empty"))
      (check 'finder-kill-and-recreate-rejects-the-old-scan
-       (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter:  [0 matches]" #t))
+       (list (car (location)) (car (lines)) (head:app-buffer? (view)))
+       (list (path "empty") (string-append "Filter: " (path "empty") "/ [0 matches]") #t))
      (define same-view
        (let ([before (head:current-buffer)])
          (dispatch:key! "n") (dispatch:key! "M-.")
@@ -242,7 +322,7 @@
      (check 'finder-reload-replaces-worker-ownership-and-restores-app-state
        (list same-view (visible? "No matching files") (car (location)) (car (lines))
              (head:app-buffer? (view)) (show-hidden))
-       (list #t #t (path "empty") "Filter: n [0 matches]" #t #t))
+       (list #t #t (path "empty") (string-append "Filter: " (path "empty") "/n [0 matches] [hidden]") #t #t))
 
      ;; Opening a file from the view without target links shows it in this
      ;; window and puts the view behind in the recency list, so C-x b offers
@@ -268,10 +348,10 @@
 
      ;; the app as an API: what an agent asks and does without keys
      (define (api name) (top-level-value name))
-     ((api 'finder:filter!) "long") (settle!)
+     ((api 'finder:filter!) (filter-string root "long")) (settle!)
      (check 'the-api-filters-lists-and-locates
        (list ((api 'finder:location)) ((api 'finder:entries))) (list root (list (list 'file (path "a 日本語 long (name).txt")))))
-     ((api 'finder:filter!) "") (settle!)
+     ((api 'finder:filter!) (filter-string root "")) (settle!)
      ((api 'finder:select!) "zeta.txt")
      (check 'the-api-selects-by-path-and-tells-the-choice ((api 'finder:chosen)) (path "zeta.txt"))
      (check 'the-api-sorts-by-column-and-tells-the-order
@@ -291,18 +371,20 @@
      ;; overlap, visibility, and quoted names without a second matching mode.
      (let ([dir (path "completion")]
            [files '("split-window!" "split-window-right!" "nested/split-window-right!"
-                    "alpha.sls" "beta.sls" ".hidden.sls" "a space.txt")])
-       (mkdir dir) (mkdir (string-append dir "/nested"))
+                    "alpha.sls" "beta.sls" ".hidden.sls" "a space.txt" "Case/token.dat" "case/token.dat")])
+       (mkdir dir)
+       (for-each (lambda (name) (mkdir (string-append dir "/" name))) '("nested" "Case" "case"))
        (for-each (lambda (name) (call-with-output-file (string-append dir "/" name) (lambda (p) (display "" p)))) files)
        (files-open! dir) (filter! "window split")
        (let ([before ((api 'finder:entries))])
          (press! "TAB")
          (check 'finder-tab-preserves-conjunctive-matches
-           (list (cadr (location)) (equal? before ((api 'finder:entries)))) '("split-window" #t)))
-       ((api 'finder:filter!) "space txt") ((api 'finder:complete!))
+           (list (cadr (location)) (equal? before ((api 'finder:entries))))
+           (list (filter-string dir "split-window") #t)))
+       ((api 'finder:filter!) (filter-string dir "space txt")) ((api 'finder:complete!))
        (settle!)
        (check 'finder-queued-tab-completes-a-single-path-with-spaces
-         (cadr (location)) "\"a space.txt\"")
+         (cadr (location)) (format "~s" (string-append dir "/a space.txt")))
        (filter! "window window")
        (check 'finder-repeated-keys-need-separate-occurrences ((api 'finder:entries)) '())
        ((api 'finder:show-hidden) #f) (filter! "sls")
@@ -313,12 +395,25 @@
        (files-open! (path "empty"))
        (filter! (string-append dir "/"))
        (press! "C-r" "TAB") ; the new directory was absent from its cached parent
-       (check 'finder-rooted-key-leaves-the-current-directory-and-stops-at-the-matching-directory
+       (check 'finder-rooted-directory-token-shows-its-children
          (list (car (location)) (cadr (location))
            (filter (lambda (entry) (string=? (cadr entry) dir)) ((api 'finder:entries)))
            (car (lines)))
-         (list (path "empty") (string-append dir "/") (list (list 'directory dir))
-           (string-append "Filter: " dir "/ [1 match]")))
+         (list dir (string-append dir "/") '()
+           (string-append "Filter: " dir "/ [8 matches]")))
+       (files-open! (string-append dir "/Case")) (filter! "token") (press! "TAB")
+       (let ([spelled (cadr (location))])
+         (filter! (string-append dir "/cas"))
+         (let ([before ((api 'finder:entries))])
+           (press! "TAB")
+           (check 'finder-tab-does-not-enter-an-ambiguous-directory-path
+             (list (car (location)) (equal? before ((api 'finder:entries)))) (list dir #t)))
+         (files-open! dir) (filter! "token")
+         (let ([before ((api 'finder:entries))])
+           (press! "TAB")
+           (check 'finder-completion-preserves-directory-spelling-and-both-case-variants
+             (list spelled (car (location)) (equal? before ((api 'finder:entries))))
+             (list (string-append dir "/Case/token.dat") dir #t))))
        (files-open! dir)
        (filter! "split") (settle!)
        (let ([before (head:window-lines (head:current-window))])
@@ -327,7 +422,8 @@
            (eq? before (head:window-lines (head:current-window))) #t))
        (files-open! root)
        (for-each (lambda (name) (delete-file (string-append dir "/" name))) files)
-       (delete-directory (string-append dir "/nested")) (delete-directory dir))
+       (for-each (lambda (name) (delete-directory (string-append dir "/" name))) '("nested" "Case" "case"))
+       (delete-directory dir))
 
      ;; Repeated basenames still identify distinct files, and each branch
      ;; stays together when sorting, regardless of depth.
