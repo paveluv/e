@@ -1761,6 +1761,26 @@
                    (map (lambda (name)
                           (list (list 'head name) (list 'head name) "<log>" 4096
                                 (string-append sources "/client/state/store.sls") #f #t #t)) '("screen A" "screen B")))
+                 (test:check 'client-preparation-failures-preserve-connection-and-concurrent-replies
+                   (head-read a
+                     `(begin
+                        (head:checkpoint!)
+                        (let ([saved (actor:checkpoint head:ui-actor)] [cycle (list 'cycle)])
+                          (set-cdr! cycle cycle)
+                          (let* ([rejected (map (lambda (value)
+                                                  (guard (ex [(client:ended? ex) (raise ex)] [else #t])
+                                                    (client:request 'checkpoint value) #f)) (list void cycle))]
+                                 [calls (list '(checkpoint) '(name ,id) (list 'checkpoint saved) '(name ,id))]
+                                 [results (make-vector (length calls))]
+                                 [workers (map (lambda (call i)
+                                                 (fork-thread
+                                                   (lambda ()
+                                                     (vector-set! results i
+                                                       (guard (ex [else (kernel:condition-text ex)])
+                                                         (apply client:request call)))))) calls (iota (length calls)))])
+                            (for-each thread-join workers)
+                            (list rejected (equal? (vector->list results) (list saved "attached text" #t "attached text")))))))
+                   '((#t #t) #t))
                  (let ([conflicted (rpc head 'create "coherent conflict" '("alpha tail")
                                         '((base . "alpha tail") (trailing . #f)))])
                    (define (review)

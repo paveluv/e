@@ -11,6 +11,7 @@
 (eval
   '(begin
      (import (prefix (head head) head:)
+             (prefix (head checkpoint) checkpoint:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
              (prefix (state actor) actor:)
@@ -474,18 +475,95 @@
                        (list-ref (actor:checkpoint head:ui-actor) 4)))
          '("Xaved kill" #f)))
 
+     ;; Checkpoint transmission can stall without blocking capture. Exercise
+     ;; coalescing against the real store's retained-text behavior; gates, not
+     ;; timing thresholds, delimit the in-flight and replaceable snapshots.
+     (let* ([owner '(head "queued checkpoints")]
+            [entered (test:gate)] [release (test:gate)] [sent (test:recorder)]
+            [one (checkpoint:text #f '#("one"))] [two (checkpoint:text #f '#("two"))]
+            [writer (checkpoint:make!
+                      (lambda (state)
+                        (sent state) (entered #t)
+                        (test:await 'checkpoint-release release)
+                        (actor:checkpoint! owner state))
+                      void)])
+       (define (screen point text)
+         (list 'screen 4 point '(layout)
+           (if text (list (list (list 'local (string-copy "<draft>") 1 '() text) #f '())) '())))
+       (define (payload state) (and (pair? (list-ref state 4)) (list-ref (caar (list-ref state 4)) 4)))
+       (actor:register! owner void)
+       (checkpoint:submit! writer (screen 0 one))
+       (test:await 'checkpoint-started entered)
+       (do ([point 1 (+ point 1)]) ((= point 100))
+         (checkpoint:submit! writer (screen point two)))
+       (let ([last (screen 100 two)])
+         (checkpoint:submit! writer last)
+         (set-car! (cddr last) 'mutated)
+         (string-set! (cadr (caar (list-ref last 4))) 1 #\X))
+       (let* ([flushing (test:gate)] [flushed (test:gate)]
+              [join (test:worker (lambda () (flushing #t) (checkpoint:flush! writer) (flushed #t)))])
+         (test:await 'checkpoint-flush-started flushing)
+         (check 'checkpoint-flush-waits-for-acknowledgement (flushed) #f)
+         (release #t) (join))
+       (check 'checkpoint-burst-keeps-only-latest-owned-state-and-full-unsent-text
+         (list (map caddr (sent)) (map payload (sent)) (caddr (actor:checkpoint owner))
+               (checkpoint:submit! writer (screen 100 two)))
+         '((0 100) (("one") ("two")) 100 #f))
+       (checkpoint:submit! writer (screen 101 two))
+       (checkpoint:flush! writer)
+       (check 'checkpoint-omits-only-acknowledged-text (payload (car (reverse (sent)))) 'kept)
+       ;; Removing and reintroducing a local while removal is in flight
+       ;; must not keep text from the older acknowledgement that still has it.
+       (release #f) (entered #f)
+       (checkpoint:submit! writer (screen 102 #f))
+       (test:await 'checkpoint-removal-started entered)
+       (checkpoint:submit! writer (screen 103 two))
+       (release #t) (checkpoint:flush! writer)
+       (check 'checkpoint-reintroduction-restores-text-after-in-flight-removal
+         (list (payload (car (reverse (sent)))) (payload (actor:checkpoint owner)))
+         '(("two") ("two")))
+       (checkpoint:submit! writer (screen 104 (checkpoint:text #f '#("new buffer"))))
+       (checkpoint:flush! writer)
+       (check 'checkpoint-reused-name-and-revision-do-not-reuse-old-text
+         (payload (actor:checkpoint owner)) '("new buffer"))
+       (actor:detach! owner))
+
+     ;; Delivery errors wake the head and fail every subsequent fence/offer.
+     ;; Pending replacements are not sent after an uncertain failed write.
+     (let* ([entered (test:gate)] [release (test:gate)] [notified (test:gate)]
+            [sent (test:recorder)] [failure (make-error)]
+            [writer (checkpoint:make!
+                      (lambda (state) (sent state) (entered #t)
+                        (test:await 'checkpoint-failure-release release) (raise failure))
+                      (lambda () (notified #t)))]
+            [first '(screen 4 0 (layout) ())] [last '(screen 4 1 (layout) ())])
+       (checkpoint:submit! writer first)
+       (test:await 'checkpoint-failure-started entered)
+       (checkpoint:submit! writer last)
+       (release #t)
+       (test:await 'checkpoint-failure-notified notified)
+       (check 'checkpoint-failure-is-observed-without-retry-or-later-writes
+         (list (sent)
+               (map (lambda (operation) (test:raises? operation (lambda (ex) (eq? ex failure))))
+                 (list (lambda () (checkpoint:flush! writer))
+                       (lambda () (checkpoint:submit! writer last))
+                       (lambda () (checkpoint:changed? writer last)))))
+         (list (list first) '(#t #t #t))))
+
      ;; One frame deadline serves both outer and nested pumps. Multiple
      ;; providers choose the earliest, the head owns its time value, and a
      ;; consumed request cannot keep repainting. The final worker only bounds
      ;; the test if deadline delivery regresses; join it before the next row.
      (for-each
        (lambda (outer?)
+         (define posted-context #t)
          ;; Drain earlier store wakes before timing this isolated request.
          (call/cc
            (lambda (done)
-             (head:run-on-main! (lambda () (done #t)))
+             (head:run-on-main!
+               (lambda () (set! posted-context (head:in-main-pump)) (done #t)))
              (parameterize ([head:in-main-pump #t]) (head:read-key-event))))
-         (let ([first? #t] [frames 0] [finished? (test:gate)])
+         (let ([first? #t] [frames 0] [outer-callback? #f] [finished? (test:gate)])
            (parameterize ([kernel:registering-module 'frame-deadline-test])
              (head:add-pre-redraw-hook!
                (lambda ()
@@ -511,6 +589,7 @@
                    (lambda (done)
                      (head:set-frame-hook!
                        (lambda ()
+                         (set! outer-callback? (or outer-callback? (head:in-main-pump)))
                          (head:before-frame!)
                          (if (finished?) (done #t)
                              (begin
@@ -523,7 +602,8 @@
                  (head:set-frame-hook! void)
                  (kernel:retract-module! 'frame-deadline-test)
                  (stop)))
-             (check (list 'frame-deadline-and-coalesced-wake outer?) frames 2))))
+             (check (list 'frame-deadline-and-coalesced-wake outer?)
+               (list frames posted-context outer-callback?) '(2 #f #f)))))
        '(#t #f))
 
      (test:finish! 'head-sync)))

@@ -304,11 +304,11 @@
         (let loop ()
           (unless (head:quitting?)
             (head:run-deferred!)
-            (paint:redraw!)
-            ;; This head's own key may have changed the screen: publish
-            ;; at once. Wake frames (foreign edits) checkpoint at most once
-            ;; a second, from the frame hook.
-            (head:checkpoint!)
+            (paint:redraw! #t)
+            ;; Queue the prepared state without waiting for the base. The
+            ;; writer coalesces pending snapshots; lifecycle checkpoints
+            ;; still wait. Wake frames queue at most once a second.
+            (head:checkpoint! 'async)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.

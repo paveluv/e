@@ -37,9 +37,9 @@
           buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
           bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
           checkpoint! clamp-buffer-positions! copy-buffer copy-text current-buffer current-keys
-          (rename (current current-window)) default-directory depart! detach-app!
-          dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer
-          fit-layout! flush-ui-audit! follow-app! forget-buffer! fresh-buffer!
+          (rename (current current-window)) default-directory defer-frame! depart! detach-app!
+          dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer finish-frame!
+          fit-layout! flush-ui-audit! follow-app! forget-buffer! frame-presented! fresh-buffer!
           (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
           in-main-pump input-live? interrupted? last-command layout layout-leaves
           layout-min-height layout-min-width layout-node! layout-parent layout-replace!
@@ -64,7 +64,7 @@
           show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
           store-reload! store-reread! store-reset! store-resolve! store-resolve-picks! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
           typed-text
-          ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wake-main!
+          ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wait-for-frame! wake-main!
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
           window-buffer-set! window-button-at window-buttons window-buttons-width
           window-content-width window-goal window-goal-set! window-index window-left
@@ -81,7 +81,7 @@
                 logbit? procedure-arity-mask
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* list-head iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
-                make-time add-duration
+                make-time add-duration sleep
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (core kernel) kernel:)
@@ -90,6 +90,8 @@
           (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation text) text:)
+          (prefix (head checkpoint) checkpoint:)
+          (prefix (head pacing) pacing:)
           (prefix (head render) render:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -731,6 +733,19 @@
   ;; anew. Providers request only still-live work while preparing or painting
   ;; a frame, so expiry, eviction and replacement need no alarm cancellation.
   (define frame-deadline #f)
+  (define frame-pending? #f)
+
+  (edoc "Publish any deferred full frame before a partial update or interaction; whether a frame was needed."
+        (returns boolean))
+  (define (finish-frame!)
+    (and frame-pending?
+      ;; A hook may itself prompt or redraw. Do not recursively flush the
+      ;; same pending frame; an unsuccessful flush remains pending.
+      (let ([complete? #f])
+        (dynamic-wind
+          (lambda () (set! complete? #f) (set! frame-pending? #f))
+          (lambda () (frame!) (set! complete? #t) #t)
+          (lambda () (unless complete? (set! frame-pending? #t)))))))
 
   (edoc "Ask for a frame by a monotonic deadline, the earliest request winning."
         (deadline any "a monotonic time"))
@@ -775,13 +790,14 @@
   (define (run-posted! thunk)
     ;; a posted thunk's error is news, not a crash
     (guard (ex [else (log:add! 'head:run-posted! (kernel:condition-text ex))])
-      (thunk)))
+      (parameterize ([in-main-pump #f]) (thunk))))
 
   (edoc "Run the thunks a nested pump set aside, oldest first.")
   (define (run-deferred!)
     ;; the thunks a nested pump set aside, oldest first
     (let ([runs (reverse deferred)])
       (set! deferred '())
+      (unless (null? runs) (finish-frame!))
       (for-each run-posted! runs)))
 
   ;; The pump's hooks: the frame hook prepares and paints a frame (the
@@ -883,7 +899,7 @@
 
   (define (frame!)
     ;; Wakes and deadlines use the same preparation as direct redraws.
-    (frame-hook)
+    (parameterize ([in-main-pump #f]) (frame-hook))
     ;; Nested prompts can temporarily borrow windows. Only an outer pump
     ;; frame checkpoints the screen the user will return to.
     (when (in-main-pump) (checkpoint! 'idle)))
@@ -992,6 +1008,33 @@
   ;; forever on a mailbox nothing feeds, so the prompts ask first.
   (define input-reader-started? #f)
 
+  (define presentation-clock
+    (pacing:make (lambda () (current-time 'time-monotonic)) sleep))
+
+  (edoc "Wait for the current input's presentation deadline without pumping another event."
+        (milliseconds integer "input-to-presentation budget, from 0 to 50 milliseconds"))
+  (define (wait-for-frame! milliseconds)
+    (pacing:wait! presentation-clock milliseconds))
+
+  (define (keyboard-message? message)
+    (and (pair? message) (eq? (car message) 'key)
+         (let ([event (caddr message)]) (or (char? event) (string? event)))))
+
+  (edoc "Defer this prepared frame only for an already-expired keyboard event at the front of the queue, within the presentation clock's bound."
+        (milliseconds integer "the input-to-presentation budget")
+        (returns boolean))
+  (define (defer-frame! milliseconds)
+    (let ([message (kernel:mailbox-peek mailbox)])
+      (and (keyboard-message? message)
+           (or (not frame-deadline) (time<? (current-time 'time-monotonic) frame-deadline))
+           (pacing:defer? presentation-clock (cadr message) milliseconds)
+           (begin (set! frame-pending? #t) #t))))
+
+  (edoc "Record successful terminal publication; the prepared geometry is now displayed.")
+  (define (frame-presented!)
+    (set! frame-pending? #f)
+    (pacing:presented! presentation-clock))
+
   (edoc "Whether terminal input reaches the pump: the input reader has started, so a prompt can be answered."
         (returns boolean))
   (define (input-live?) input-reader-started?)
@@ -1005,7 +1048,8 @@
           (let loop ()
             (let ([event (guard (ex [else (eof-object)])
                            (tty:read-event stdin))])
-              (kernel:mailbox-post! mailbox (cons 'key event))
+              (kernel:mailbox-post! mailbox
+                (list 'key (current-time 'time-monotonic) event))
               (unless (eof-object? event) (loop))))))))
 
   (edoc "Read the next key from the pump, applying mouse reports unless handle-mouse? is #f, in which case they are consumed without being applied, for a context that must not change focus; frames and posted thunks run while waiting."
@@ -1023,13 +1067,23 @@
        (read-key-event #t)]
       [(handle-mouse?)
        (let pump ()
+         ;; Fence before dequeueing: a rendering hook can itself read input.
+         ;; Only ordinary keys in the outer pump may use prepared geometry;
+         ;; mouse events, callbacks and modal readers require publication.
+         (when frame-pending?
+           (unless (and (in-main-pump)
+                        (keyboard-message? (kernel:mailbox-peek mailbox)))
+             (finish-frame!)))
          (let ([message (kernel:mailbox-receive! mailbox frame-deadline #t)])
            (case (and message (car message))
              [(#f)
               (frame!)
               (pump)]
              [(key)
-              (let ([event (cdr message)])
+              (let ([event (caddr message)])
+                (unless (and (pair? event)
+                             (memq (car event) '(host-color-scheme host-background)))
+                  (pacing:input! presentation-clock (cadr message)))
                 (cond
                   [(not (pair? event)) (set-mouse-position! #f) event]
                   [(eq? (car event) 'mouse)
@@ -2596,7 +2650,7 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 3 copy-text selected-number layout buffers).
+  ;; A checkpoint is (screen 4 selected-number layout buffers).
   ;; Version 1 had no capture preference; restore those windows with partial
   ;; capture. Version 2 kept line numbers per buffer; a window restored from
   ;; it follows the default. Splits retain their ordinary orientation/weights;
@@ -2606,41 +2660,17 @@
   ;; Shared references are (shared id revision); local views register a plain
   ;; descriptor and project their coordinates without exporting their cache.
   (define resume-registry (kernel:make-registry car))
-  (define last-checkpoint #f)
-
-  (define (checkpoint-entries state)
-    ;; the buffer entries of a version 4 screen checkpoint, else none
-    (if (and (list? state) (= (length state) 5) (eqv? (cadr state) 4) (list? (list-ref state 4)))
-        (list-ref state 4)
-        '()))
+  (define checkpoint-writer
+    (checkpoint:make! (lambda (state) (actor:checkpoint! ui-actor state)) wake-main!))
+  ;; Keep only the current captured text per local buffer, not another copy
+  ;; of every historical vector that undo or an extension might retain.
+  (define checkpoint-texts (make-weak-eq-hashtable))
 
   (define (without-copy-slot state)
     ;; screen checkpoints before version 4 carried the copy text third; it is not restored
     (if (and (list? state) (= (length state) 6) (memv (cadr state) '(1 2 3)))
         (cons* (car state) (cadr state) (cdddr state))
         state))
-
-  (define (sent-revision name)
-    ;; the content revision of a local buffer whose text the base holds
-    ;; from the last checkpoint sent, or #f
-    (exists (lambda (entry)
-              (let ([reference (car entry)])
-                (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) name)
-                     (caddr reference))))
-            (checkpoint-entries last-checkpoint)))
-
-  (define (with-kept-texts state)
-    ;; the checkpoint as later frames compare it: every local text the
-    ;; base now holds reads kept
-    (if (null? (checkpoint-entries state))
-        state
-        (list (car state) (cadr state) (caddr state) (cadddr state)
-          (map (lambda (entry)
-                 (let ([reference (car entry)])
-                   (if (and (pair? reference) (eq? (car reference) 'local))
-                       (cons (list 'local (cadr reference) (caddr reference) (cadddr reference) 'kept) (cdr entry))
-                       entry)))
-               (list-ref state 4)))))
 
   (edoc "Register how a kind of local view is captured for a checkpoint and restored on resume."
         (kind symbol "the view kind")
@@ -2675,13 +2705,16 @@
                        => (lambda (key) (values (list 'tool key (buffer-name b)) positions))]
                       [(app-of b) (values #f positions)]
                       [else
-                       ;; a plain local buffer travels with its facts and text, the
-                       ;; text only when its revision changed since the last checkpoint sent
+                       ;; Queue a self-contained text snapshot. The writer can
+                       ;; omit it only against acknowledged state, never against
+                       ;; a pending checkpoint that may be replaced.
                        (let-values ([(lines revision facts) (buffer-state b)])
-                         (values (list 'local (buffer-name b) revision
-                                       (list-sort (lambda (x y) (string<? (symbol->string (car x)) (symbol->string (car y)))) facts)
-                                       (if (eqv? revision (sent-revision (buffer-name b))) 'kept (vector->list lines)))
-                                 positions))])])
+                         (let ([text (checkpoint:text (hashtable-ref checkpoint-texts b #f) lines)])
+                           (hashtable-set! checkpoint-texts b text)
+                           (values (list 'local (buffer-name b) revision
+                                         (list-sort (lambda (x y) (string<? (symbol->string (car x)) (symbol->string (car y)))) facts)
+                                         text)
+                                   positions)))])])
         (list reference (buffer-marked b) positions))))
 
   ;; An idle checkpoint (a wake frame: foreign edits moved this head's
@@ -2689,18 +2722,24 @@
   ;; positions across later edits anyway, and a foreign burst must not
   ;; publish this head's whole screen per keystroke. A changed state
   ;; inside the interval requests a frame at its end. The main loop's
-  ;; own checkpoints, after this head's keys and at detach, go at once.
-  (define checkpoint-sent-at #f)
+  ;; own checkpoints queue at once. Explicit checkpoints fence all delivery
+  ;; before detach, shutdown and resume; the writer never reads live UI state.
+  (define checkpoint-queued-at #f)
   (define checkpoint-interval (make-time 'time-duration 0 1))
 
-  (edoc "Publish this head's screen state to the store for a later resume, buffers, layout and positions as painted; unchanged, nothing is sent, and an idle publication also waits out the interval since the last one."
-        (mode (one-of idle) "idle for an idle-time publication"))
+  (edoc "Capture this head's screen for resume. By default wait for acknowledgement; async queues without waiting, and idle also limits publication to once a second. Unchanged snapshots send nothing."
+        (mode (one-of async idle) "optional background publication mode"))
   (define checkpoint!
     (case-lambda
-      [() (publish-checkpoint! #f)]
+      [()
+       ;; Even a failing capture provider must not abandon a snapshot that
+       ;; was already queued when the head performs its final checkpoint.
+       (dynamic-wind void
+         (lambda () (publish-checkpoint! #f))
+         (lambda () (checkpoint:flush! checkpoint-writer)))]
       [(mode)
-       (unless (eq? mode 'idle) (error 'checkpoint! "expected idle" mode))
-       (publish-checkpoint! #t)]))
+       (unless (memq mode '(async idle)) (error 'checkpoint! "expected async or idle" mode))
+       (publish-checkpoint! (eq? mode 'idle))]))
   (define (publish-checkpoint! idle?)
     ;; No store reads here: every coordinate describes exactly the adopted
     ;; text/view the head just painted. Unchanged wake frames send nothing.
@@ -2716,16 +2755,12 @@
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
            [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
-      (unless (equal? state last-checkpoint)
+      (when (checkpoint:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
-              [due (and checkpoint-sent-at (add-duration checkpoint-sent-at checkpoint-interval))])
+              [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
           (if (or (not idle?) (not due) (time<=? due now))
-              (let ([state (datum:copy state)])
-                ;; A local text travels only when it changed; the base keeps
-                ;; the last one it received under the kept marker.
-                (actor:checkpoint! ui-actor state)
-                (set! last-checkpoint (with-kept-texts state))
-                (set! checkpoint-sent-at now))
+              (when (checkpoint:submit! checkpoint-writer state)
+                (set! checkpoint-queued-at now))
               (request-frame-at! due))))))
 
   (define (project-resume-positions positions lines changes)
@@ -2880,6 +2915,7 @@
 
   (edoc "Restore this head's windows and positions from its last publication, by names rather than stale coordinates.")
   (define (resume!)
+    (checkpoint:flush! checkpoint-writer)
     ;; Recover the old publication's *names*, not its stale coordinates.
     ;; The ordinary exact-revision diff removes abandoned windows/regions,
     ;; including buffers no longer displayed, without touching custom marks.
@@ -2897,7 +2933,6 @@
                    (and (pair? names) (list id #f (map (lambda (entry) (cons (car entry) #f)) names))))))
           (store:buffer-list))))
     (let ([state (actor:checkpoint ui-actor)])
-      (set! last-checkpoint (with-kept-texts (datum:copy (without-copy-slot state))))
       (and state
            (guard (ex [else (log:add! 'head:resume! (format "Screen checkpoint ignored: ~a" (kernel:condition-text ex))) #f])
              (call-with-display-update (lambda () (restore-screen! (without-copy-slot state))))))))

@@ -26,6 +26,7 @@
 ;; (main:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (paint:scroll-margin 8)              ; rows kept between the cursor and the edges
+;; (paint:input-delay 8)              ; presentation budget in ms; 0 disables pacing
 ;; (head:scrollbar #f)                 ; #t: show position bars in ordinary buffers
 ;; (head:scrollbar-position 'right)    ; position bars on the left or right edge
 ;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this

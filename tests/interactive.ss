@@ -130,6 +130,50 @@
      (send! "\x7;")                     ; C-g leaves the prompt
      (sys:close-connection! asker)
 
+     ;; A queued keyboard burst must have the same command/viewport semantics
+     ;; with or without coalescing. Mix wrapped motion, paging, mouse targeting,
+     ;; a multi-key binding and a bare modal read; compare state, not timings.
+     (let ([results
+            (map
+              (lambda (budget)
+                (evaluate
+                  `(begin
+                     (paint:input-delay ,budget)
+                     (window:delete-others!)
+                     (let ([b (head:fresh-buffer! "scroll-burst")])
+                       (head:buffer-lines-set! b
+                         (list->vector (map (lambda (i) (format "~a ~a" i (make-string 90 #\x))) (iota 100))))
+                       (head:show-buffer! b))
+                     (window:set-wrap! #t)
+                     (window:split-right!)
+                     (window:set-wrap! #t)
+                     (head:double-click? 0 0 0)
+                     (keymap:bind! "F11" paint:place-cursor!)
+                     (keymap:bind! "F12"
+                       (lambda ()
+                         (let ([answer (head:read-key-event #f)])
+                           (echo:set-text! (format "Burst complete ~a ~s" ,budget answer)))))
+                     #t))
+                (send! (string-append
+                         (apply string-append (make-list 40 "\x1b;[B"))
+                         "\x1b;[6~\x1b;[5~\x1b;[23~\x1b;[<0;43;3M\x1b;[<0;43;3m"
+                         "\x18;o\x18;o\x1b;[24~x"))
+                (wait-for! 'burst-reaches-its-modal-answer
+                  (lambda () (find-cell (format "Burst complete ~a ~s" budget "x"))) 5000)
+                (evaluate
+                  '(list (head:window-xoff (head:current-window))
+                         (map (lambda (w)
+                                (list (head:window-prow w) (head:window-pcol w)
+                                      (head:window-top w) (head:window-topseg w)))
+                              (map car (head:layout))))))
+              '(0 8))])
+       (check 'coalescing-preserves-wrapped-motion-paging-mouse-and-modal-input
+         (equal? (car results) (cadr results))))
+     (evaluate '(begin
+                  (keymap:unbind! "F11") (keymap:unbind! "F12") (paint:input-delay 8)
+                  (window:delete-others!)
+                  (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+
      ;; -- a nested terminal: default partial capture lets whole editor
      ;; commands through while other keys reach the child; full capture
      ;; forwards the editor prefixes too -------------------------------------

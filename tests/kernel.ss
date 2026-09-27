@@ -24,8 +24,11 @@
            (define (after ns) (add-duration (current-time 'time-monotonic) (make-time 'time-duration ns 0)))
            (kernel:mailbox-post! mail 'first)
            (kernel:mailbox-post! mail 'second)
-           (let* ([first (kernel:mailbox-receive! mail (current-time 'time-monotonic) signals?)]
+           (let* ([peek (list (kernel:mailbox-peek mail) (kernel:mailbox-peek mail))]
+                  [first (kernel:mailbox-receive! mail (current-time 'time-monotonic) signals?)]
+                  [peek-next (kernel:mailbox-peek mail)]
                   [second (kernel:mailbox-receive! mail #f signals?)]
+                  [peek-empty (kernel:mailbox-peek mail)]
                   [expired (kernel:mailbox-receive! mail (after 1000000) signals?)]
                   [waiting (test:worker
                              (lambda () (entered #t) (kernel:mailbox-receive! mail (after 900000000) signals?)))])
@@ -41,8 +44,8 @@
                              (set! received (+ received 1)))))
                        300 (lambda values 'completed) (lambda (_) 'expired))])
                  (test:check (list 'mailbox-queue-deadline-wake-and-fuel signals?)
-                   (list first second expired awake budget (< 0 received 100))
-                   '(first second #f awake expired #t)))))))
+                   (list peek first peek-next second peek-empty expired awake budget (< 0 received 100))
+                   '((first first) first second second #f #f awake expired #t)))))))
        '(#f #t))
 
      ;; A timer models a Scheme signal callback posting during dequeue.

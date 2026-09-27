@@ -94,6 +94,26 @@ procedure parameters set in `base-config.e`; examples, the session controls
 an attached head can run, and the policy API are in
 [Agents and sessions](MULTIHEAD.md#agents-and-sessions).
 
+## Scrolling and presentation
+
+`(paint:input-delay 8)` gives input-triggered frames an 8 ms preparation budget
+by default. Command execution and rendering count toward that budget; the
+editor waits only for any unused time before publishing the frame. This
+reduces scrolling jitter from variable rendering costs in all modes and
+window layouts, at the cost of a small input delay, including the first key.
+
+Set it in `config.e` or through M-x. It accepts integer milliseconds from 0
+to 50; `0` restores immediate presentation and disables coalescing. When
+keyboard input has accumulated, every command still runs in order, but
+intermediate screens may be combined. Each prepared frame checks a 16 ms
+limit since the last publication; the end of a burst publishes immediately.
+Mouse events, modal input and callbacks require publication first.
+
+Background-only updates are immediate. A single command or frame preparation
+can still exceed the budget and the coalescing limit. This does not smooth
+irregular input delivery or long pauses, and terminal or SSH delays can still
+affect visible timing.
+
 ## Loading and reloading
 
 Configuration loads after extension modules at startup, then reapplies after a

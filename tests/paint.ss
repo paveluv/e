@@ -12,6 +12,7 @@
 (eval
   '(begin
      (import (prefix (head paint) paint:)
+             (prefix (head pacing) pacing:)
              (prefix (head style) style:)
              (prefix (head head) head:)
              (prefix (head echo) echo:)
@@ -24,6 +25,61 @@
                    parameterize))
 
      (define check test:check)
+
+     ;; A fake clock covers the presentation policy without sleeping. Work
+     ;; before publication consumes the budget; early wakes do not extend it.
+     (define (stamp ms)
+       (make-time 'time-monotonic (* (mod ms 1000) 1000000) (div ms 1000)))
+     (define (milliseconds time)
+       (+ (* (time-second time) 1000) (/ (time-nanosecond time) 1000000)))
+     (check 'input-relative-presentation-deadlines
+       (map
+         (lambda (case)
+           (let* ([now (cadr case)] [pauses '()]
+                  [clock (pacing:make
+                           (lambda () (stamp now))
+                           (lambda (duration)
+                             (let ([ms (milliseconds duration)])
+                               (set! pauses (cons ms pauses))
+                               (set! now (+ now (min ms (cadddr case)))))))])
+             (for-each
+               (lambda (ms)
+                 (let ([received (stamp ms)])
+                   (pacing:input! clock received)
+                   (set-time-second! received 999)))
+               (car case))
+             (pacing:wait! clock (caddr case))
+             ;; A second publication, even with a larger budget, must not
+             ;; impose another wait on the same input (nested prompt frames).
+             (pacing:wait! clock 50)
+             (list now (reverse pauses))))
+         '((() 103 8 50) ((100) 103 8 50) ((100) 108 8 50)
+           ((100) 130 8 50) ((100) 103 0 50) ((100 104) 105 8 50)
+           ((999) 1002 8 50) ((100) 103 8 2)))
+       '((103 ()) (108 (5)) (108 ()) (130 ()) (103 ()) (112 (7))
+         (1007 (5)) (108 (5 3 1))))
+     (check 'input-delay-stays-bounded
+       (map (lambda (value)
+              (test:raises? (lambda () (paint:input-delay value))))
+         '(-1 51 1.5 8.0 #f))
+       '(#t #t #t #t #t))
+
+     ;; Expired input can coalesce only after a real publication, and only
+     ;; while its bounded interval remains. Checking does not move the bound.
+     (let* ([now (stamp 100)] [clock (pacing:make (lambda () now) void)])
+       (define (defer? received next at budget)
+         ;; This clock reuses its time object; publication must own its time.
+         (set-time-nanosecond! now (* at 1000000))
+         (when received (pacing:input! clock (stamp received)))
+         (pacing:defer? clock (stamp next) budget))
+       (check 'coalescing-needs-a-published-frame (defer? 0 0 100 8) #f)
+       (pacing:presented! clock)
+       (check 'coalescing-obeys-input-deadlines-and-publication-bound
+         (list (defer? 0 0 100 8) (defer? 0 100 105 8)
+               (defer? 0 100 108 8) (defer? 0 0 115 8)
+               (defer? 0 0 116 8) (defer? 0 0 110 0)
+               (begin (pacing:wait! clock 0) (defer? #f 0 110 8)))
+         '(#t #f #t #t #f #f #f)))
 
      ;; Text ownership survives only a deliberately retained live line.
      ;; Reusing the same string through an ordinary setter is a new message.
@@ -373,37 +429,89 @@
      (check 'scrolling-paints-visible-text
             (contains? (car (reverse scrolling)) (current-top-line)) #t)
 
-     ;; Malformed extension output can fail after the update begins.
-     ;; The error still reaches the caller, but the host must be released
-     ;; and the next frame must rebuild the invalidated shadow.
+     ;; A late callback can reenter after rows have already been prepared.
+     ;; It must see no partial output, can publish immediately, and supersedes
+     ;; the outer diff. The retry uses the new geometry and visible baseline.
+     (let ([sink (open-output-string)] [before #f] [nested #f]
+           [old-top (current-top-line)])
+       (parameterize ([kernel:registering-module 'paint-nested-test])
+         (paint:add-status-hint!
+           (lambda ()
+             (unless before
+               (set! before (get-output-string sink))
+               (head:window-prow-set! (head:current-window) 95)
+               (paint:set-screen-cols! 60)
+               (paint:redraw!)
+               (set! nested (get-output-string sink)))
+             ;; Asking for a fresh next frame is not a nested publication
+             ;; and must not cause this callback to be retried indefinitely.
+             (paint:invalidate-screen-cache!)
+             #f)))
+       (parameterize ([sys:terminal-output-port sink]) (paint:redraw!))
+       (let ([frame (string-append nested (get-output-string sink))])
+         (check 'nested-paint-publishes-before-return-and-discards-obsolete-output
+           (list before (sync-events nested) (sync-events frame)
+                 (contains? frame old-top) (contains? frame (current-top-line))
+                 (head:window-width (head:current-window)))
+           '("" (begin end) (begin end begin end) #f #t 60)))
+       (kernel:retract-module! 'paint-nested-test)
+       (paint:set-screen-cols! 80))
+
+     ;; A malformed highlighter or an escape after row preparation leaves
+     ;; the terminal untouched. Neither failed diff may become the baseline.
+     (head:window-prow-set! (head:current-window) 120)
      (parameterize ([kernel:registering-module 'paint-failure-test])
        (paint:add-highlighter! (lambda () #f)))
      (define failed-output (open-output-string))
      (check 'frame-error-propagates
             (parameterize ([sys:terminal-output-port failed-output])
               (guard (ex [else #t]) (paint:redraw!) #f)) #t)
-     (check 'failed-frame-releases-synchronization
-            (sync-events (get-output-string failed-output)) '(begin end))
+     (check 'failed-preparation-writes-nothing (get-output-string failed-output) "")
      (kernel:retract-module! 'paint-failure-test)
      (check 'failed-frame-forces-repaint
             (contains? (painted paint:redraw!) (current-top-line)) #t)
 
-     ;; A nonlocal return must follow the same frame lifetime rule.
+     ;; Escape late, after this new viewport has updated the private shadow.
+     (head:window-prow-set! (head:current-window) 150)
      (define escaped-output (open-output-string))
      (check 'frame-can-unwind
             (call/cc
               (lambda (escape)
                 (parameterize ([kernel:registering-module 'paint-escape-test])
-                  (paint:add-highlighter! (lambda () (escape 'escaped))))
+                  (paint:add-status-hint! (lambda () (escape 'escaped))))
                 (parameterize ([sys:terminal-output-port escaped-output])
                   (paint:redraw!))
                 'returned))
             'escaped)
-     (check 'unwound-frame-releases-synchronization
-            (sync-events (get-output-string escaped-output)) '(begin end))
+     (check 'escaped-preparation-writes-nothing (get-output-string escaped-output) "")
      (kernel:retract-module! 'paint-escape-test)
      (check 'unwound-frame-forces-repaint
             (contains? (painted paint:redraw!) (current-top-line)) #t)
+
+     ;; A failed terminal write is different: its bytes may have landed.
+     ;; Release synchronization and resend text, title and cursor next time.
+     (let ([failed? #f] [writes '()])
+       (define sink
+         (make-custom-textual-output-port "failed frame"
+           (lambda (text start count)
+             (set! writes (cons (substring text start (+ start count)) writes))
+             (unless failed?
+               (set! failed? #t)
+               (error 'test "terminal write failed"))
+             count)
+           #f #f #f))
+       (define raised?
+         (parameterize ([sys:terminal-output-port sink])
+           (test:raises? paint:redraw!)))
+       (close-output-port sink)
+       (let ([frame (painted paint:redraw!)])
+         (check 'failed-write-releases-and-forgets-all-terminal-state
+           (list raised?
+                 (car (reverse (sync-events (apply string-append (reverse writes)))))
+                 (contains? frame (current-top-line))
+                 (contains? frame "\x1b;]2;e: ")
+                 (contains? frame "\x1b;[0 q"))
+           '(#t end #t #t #t))))
 
      ;; A bell uses the ordinary nested input pump for both frames. Retrigger
      ;; it at the old expiry, before painting, including a burst of bad keys.

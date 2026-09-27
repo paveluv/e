@@ -125,7 +125,11 @@ head open. The default is `#f`. Restricted heads can always detach, but
 only an all-buffer head may prepare or accept shutdown.
 
 The daemon retains the latest completed screen checkpoint, including after an
-abrupt SSH disconnect. Shared edits made while absent move the saved positions;
+abrupt SSH disconnect. Routine checkpoints are delivered in the background;
+if delivery falls behind, a newer pending snapshot replaces the older one.
+Normal detach waits for the final checkpoint. `M-x (main:shutdown!)` also
+waits for the requesting head's checkpoint before stopping the base.
+Shared edits made while absent move the saved positions;
 after a reset or expired history, positions clamp to the current text. Markdown
 and describe companions rebuild from their shared sources at the new width.
 The finder rebuilds its directory/filter/sort state and selected paths

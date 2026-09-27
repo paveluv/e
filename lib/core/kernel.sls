@@ -9,7 +9,7 @@
   (export add-after-reload-hook! call-with-registration-update call-with-runtime-registrations
           condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery!
           fingerprint init-module! installation-directory load-config! load-module!
-          load-modules! loaded-modules mailbox-post! mailbox-receive! make-delivery-queue
+          load-modules! loaded-modules mailbox-peek mailbox-post! mailbox-receive! make-delivery-queue
           make-mailbox make-read-only-error make-refusal make-registry module-library
           module-requires? module-source persistent-cell pin-modules! read-only-error? refusal?
           registering-module registration-conflict? registry-add! registry-entries registry-find
@@ -79,6 +79,28 @@
 
   (define signal-check-interval (make-time 'time-duration 100000000 0))
 
+  (define (mailbox-front! mb)
+    ;; Caller holds the mailbox lock. A signal can post while reverse
+    ;; allocates; install only the tail we actually reversed.
+    (cond [(pair? (mailbox-head mb)) (mailbox-head mb)]
+          [(null? (mailbox-tail mb)) '()]
+          [else
+           (let* ([tail (mailbox-tail mb)] [front (reverse tail)])
+             (with-interrupts-disabled
+               (when (eq? tail (mailbox-tail mb))
+                 (mailbox-head-set! mb front)
+                 (mailbox-tail-set! mb '()))))
+           (mailbox-front! mb)]))
+
+  (edoc "Inspect the next queued message without consuming or waiting; #f when empty."
+        (mb any "the mailbox")
+        (returns any)
+        (effects internal))
+  (define (mailbox-peek mb)
+    (with-mutex (mailbox-lock mb)
+      (let ([front (mailbox-front! mb)])
+        (and (pair? front) (car front)))))
+
   (edoc "Take the next message from a mailbox, waiting for one; #f at a monotonic deadline when one is given, optionally checking for interrupts between bounded waits."
         (mb any "the mailbox")
         (deadline (or any #f) "a monotonic time, or #f to wait")
@@ -103,24 +125,13 @@
          (when service-signals? (with-interrupts-disabled (void)))
          (let-values ([(again? message)
                        (with-mutex (mailbox-lock mb)
-                         (let receive ()
+                         (let ([front (mailbox-front! mb)])
                            (cond
-                             [(pair? (mailbox-head mb))
+                             [(pair? front)
                               (with-interrupts-disabled
                                 (let ([message (car (mailbox-head mb))])
                                   (mailbox-head-set! mb (cdr (mailbox-head mb)))
                                   (values #f message)))]
-                             [(pair? (mailbox-tail mb))
-                              ;; A signal can post while reverse allocates.
-                              ;; Publish only if that tail is still current;
-                              ;; keep reversal interruptible and the two writes
-                              ;; indivisible, including for a same-thread post.
-                              (let* ([tail (mailbox-tail mb)] [front (reverse tail)])
-                                (with-interrupts-disabled
-                                  (when (eq? tail (mailbox-tail mb))
-                                    (mailbox-head-set! mb front)
-                                    (mailbox-tail-set! mb '()))))
-                              (receive)]
                              [else
                               (let* ([now (current-time 'time-monotonic)]
                                      [remaining (and deadline (time-difference deadline now))])

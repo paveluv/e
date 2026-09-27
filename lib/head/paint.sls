@@ -23,7 +23,7 @@
           display-echo-log-row! display-editor-line! echo-append! echo-box-border echo-box-width
           echo-cap echo-cursor-now echo-highlight echo-indent-now echo-index-at echo-log-prefix
           echo-log-rows echo-log-spans echo-position echo-queue! echo-width emit-runs!
-          erase-screen! fit goto! highlight-ranges hover-ranges invalidate-screen-cache!
+          erase-screen! fit goto! highlight-ranges hover-ranges input-delay invalidate-screen-cache!
           line-breaks line-segments mark-size-dirty! page-size paint! place-cursor!
           point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
           region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
@@ -37,7 +37,7 @@
           (rnrs mutable-strings)
           (rnrs r5rs)
           (only (chezscheme)
-                box void format make-parameter make-weak-eq-hashtable
+                box void format make-parameter parameterize make-weak-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! remq getenv
                 make-mutex with-mutex unbox set-box!
                 current-time add-duration make-time time<?)
@@ -308,8 +308,23 @@
   ;; row styler, memoized line styler -- comes from the mode registry
   ;; (mode), gathered once per window paint.
 
-  (define screen-cache '#())
-  (define cached-view #f)
+  ;; A frame draws against a private shadow. Only completed terminal output
+  ;; becomes the next diff baseline; failed or superseded preparations do not.
+  (define-record-type shadow
+    (fields (mutable rows) (mutable view) (mutable cursor) (mutable title)))
+  (define shown-shadow (make-shadow '#() #f "\x1b;[0 q" #f))
+  (define preparing-shadow (make-parameter #f))
+  (define frame-terminal (make-parameter #f))
+
+  (edoc "Milliseconds between input receipt and frame publication, including command and rendering time. A small budget absorbs rendering jitter; 0 presents immediately."
+        (value integer "0 to 50; default 8"))
+  (define input-delay
+    (make-parameter 8
+      (lambda (value)
+        (unless (and (integer? value) (exact? value) (<= 0 value 50))
+          (error 'input-delay "expected an integer from 0 to 50 milliseconds" value))
+        value)))
+  (define (current-shadow) (or (preparing-shadow) shown-shadow))
   (define editor-name "e")
 
   (define (mode-info b)
@@ -328,13 +343,18 @@
         (view any "what the frame shows, compared with the last")
         (rows integer "the screen height"))
   (define (begin-frame! view rows)
-    (unless (equal? view cached-view)
-      (set! screen-cache (make-vector rows #f))
-      (set! cached-view view)))
+    (let ([shadow (current-shadow)])
+      (unless (equal? view (shadow-view shadow))
+        (shadow-rows-set! shadow (make-vector rows #f))
+        (shadow-view-set! shadow view))))
 
   (edoc "Forget every cached row, so the next frame repaints all of it.")
   (define (invalidate-screen-cache!)
-    (set! cached-view #f))
+    ;; Invalidation requests a fresh next frame, including when a painter
+    ;; requests it on every call. It must not cause an endless retry here.
+    (shadow-view-set! shown-shadow #f)
+    (when (preparing-shadow)
+      (shadow-view-set! (preparing-shadow) #f)))
 
   (edoc "The columns of a row inside the selected window's active region, as (start . end), or #f."
         (row integer "the row")
@@ -785,7 +805,8 @@
     ;; Repaint the segment of the 0-based screen row starting at
     ;; column xoff unless it already shows key; a row shared by
     ;; side-by-side windows caches one key per segment.
-    (let* ([entry (vector-ref screen-cache row)]
+    (let* ([screen-cache (shadow-rows (current-shadow))]
+           [entry (vector-ref screen-cache row)]
            [hit (and (pair? entry) (assv xoff entry))])
       (unless (and hit (equal? (cdr hit) key))
         (ansi! "\x1b;[?25l") (goto! (+ row 1) (+ xoff 1))
@@ -1089,7 +1110,7 @@
   (edoc "Restore the terminal's default cursor shape, on the way out.")
   (define (reset-cursor-style!)
     ;; on the way out: the terminal's default cursor, unless it already shows
-    (unless (string=? cursor-style-shown "\x1b;[0 q")
+    (unless (equal? (shadow-cursor shown-shadow) "\x1b;[0 q")
       (ansi! "\x1b;[0 q")))
   (define visual-bell-deadline #f)
 
@@ -1353,7 +1374,6 @@
   ;; the whole cache.
   (define the-screen-live? #f) ; the terminal is ours only between main's
                            ; alternate-screen enter and exit
-  (define cursor-style-shown "\x1b;[0 q")   ; DECSCUSR last emitted
 
   ;; The echo area is a box of at most echo-box-width columns, borders
   ;; included, centered on the screen; a narrower screen is the whole box.
@@ -1553,10 +1573,9 @@
     (when the-screen-live?
       (let ([h (echo:height)])
         (update-echo-geometry!)
-        (if (= h (echo:height))
-            (paint-echo-area!)
-            (redraw!)))
-      (flush-output-port (sys:terminal-output-port))))
+        (if (and (= h (echo:height)) (not (preparing-shadow)))
+            (draw-partial-frame! paint-echo-area!)
+            (redraw!)))))
 
   (edoc "The grey component prefix of a transient-log entry, fitted to the echo width."
         (e datum "the log entry")
@@ -1772,8 +1791,6 @@
           (loop (+ row 1))))))
 
 
-  (define terminal-title-shown #f)
-
   (define (safe-terminal-title s)
     ;; OSC is terminated by BEL or ST. Do not let a buffer name inject either
     ;; terminator (or another terminal control) into the host terminal.
@@ -1785,10 +1802,13 @@
 
   (edoc "Set the terminal's title to the current buffer's name when it changed.")
   (define (update-terminal-title!)
+    (draw-partial-frame! paint-terminal-title!))
+
+  (define (paint-terminal-title!)
     ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
     (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current-window))))])
-      (unless (equal? title terminal-title-shown)
-        (set! terminal-title-shown title)
+      (unless (equal? title (shadow-title (current-shadow)))
+        (shadow-title-set! (current-shadow) title)
         (ansi! "\x1b;]2;" (safe-terminal-title title) "\x1b;\\"))))
 
   (edoc "The 1-based screen (row . col) of a displayed position in a window, wrap-aware."
@@ -1823,6 +1843,9 @@
 
   (edoc "Park the cursor in the echo area for a prompt or a running evaluation, else at point in the current window.")
   (define (place-cursor!)
+    (draw-partial-frame! paint-cursor!))
+
+  (define (paint-cursor!)
     ;; Park the cursor in the echo area (a prompt, or a running
     ;; evaluation -- the latter drawn as a blinking underline), else
     ;; put it at point in the current window.  Also called on its own
@@ -1858,11 +1881,10 @@
                       [(head:buffer-read-only (head:window-buffer (head:current-window)))
                        "\x1b;[5 q"]
                       [else "\x1b;[0 q"])])
-        (unless (string=? style cursor-style-shown)
-          (set! cursor-style-shown style)
+        (unless (equal? style (shadow-cursor (current-shadow)))
+          (shadow-cursor-set! (current-shadow) style)
           (ansi! style)))
-      (ansi! (if visible? "\x1b;[?25h" "\x1b;[?25l"))
-      (flush-output-port (sys:terminal-output-port))))
+      (ansi! (if visible? "\x1b;[?25h" "\x1b;[?25l"))))
 
   ;;; The frame -----------------------------------------------------------------------
 
@@ -1872,7 +1894,7 @@
         (value any))
   (define redraw-lock (make-mutex))
 
-  (define (paint-frame!)
+  (define (prepare-layout!)
     ;; Refresh here so direct prompt frames share the same bell lifetime.
     ;; The head derives its next wait from the live work in each frame.
     (when visual-bell-deadline
@@ -1897,7 +1919,9 @@
       (unless (equal? widths (map (lambda (entry) (head:window-content-width (car entry))) layout))
         (head:refresh-visible-views!)))
     (window-layout)
-    (head:request-app-size!)
+    (head:request-app-size!))
+
+  (define (paint-frame!)
     ;; Delivery may reenter and change the layout. Prepare and paint the
     ;; current windows after that callout, with no later resize delivery.
     (let ([layout (window-layout)])
@@ -1933,36 +1957,82 @@
                     layout))
         (paint-echo-area!)
         (paint-visual-bell!)))
-    (place-cursor!))
+    (paint-terminal-title!)
+    (paint-cursor!))
 
-  (define (redraw-frame!)
-    ;; Every frame, scrolling included, is one synchronized update.
-    ;; Release the terminal even if a renderer fails or escapes; its
-    ;; partial output also invalidates the shadow used by later frames.
+  (define (present-frame! output shadow)
+    ;; No application callbacks run while synchronization is open. The
+    ;; terminal receives a finished packet, followed by its release, even
+    ;; if a write fails. An uncertain write invalidates all terminal state.
     (let ([complete? #f])
       (dynamic-wind
+        (lambda () (set! complete? #f))
         (lambda ()
-          (set! complete? #f)
-          (ansi! "\x1b;[?2026h"))
-        (lambda ()
-          (paint-frame!)
+          (ansi! "\x1b;[?2026h" output)
+          (ansi! "\x1b;[?2026l")
+          (flush-output-port (sys:terminal-output-port))
+          (set! shown-shadow shadow)
+          (head:frame-presented!)
           (set! complete? #t))
         (lambda ()
-          (unless complete? (invalidate-screen-cache!))
-          (ansi! "\x1b;[?2026l")
-          (flush-output-port (sys:terminal-output-port))))))
+          (unless complete?
+            (set! shown-shadow (make-shadow (make-vector rows #f) #f #f #f))
+            (ansi! "\x1b;[?2026l")
+            (flush-output-port (sys:terminal-output-port)))))))
 
-  (edoc "Paint a frame: measure the terminal, tile, adopt foreign edits, then repaint what changed.")
-  (define (redraw!)
-    ;; Every entry, including direct prompt redraws, prepares against current
-    ;; geometry. Hooks can present messages and reenter, so finish them before
-    ;; opening this frame's synchronized update.
+  (define (draw-partial-frame! draw)
+    ;; A full pending frame owns viewport changes too. Publishing only a
+    ;; cursor or echo diff would falsely commit its still-unshown geometry.
+    (unless (head:finish-frame!) (draw-frame! void draw #f)))
+
+  (define (draw-frame! prepare draw coalesce?)
     (with-mutex redraw-lock
-      (terminal-size!)
-      (window-layout)
-      (head:before-frame!)
-      (update-terminal-title!)
-      (redraw-frame!)))
+      ;; A callback may present a message or even prompt for input. Its
+      ;; nested frame goes to the real terminal, never into the outer packet.
+      (parameterize ([sys:terminal-output-port (or (frame-terminal) (sys:terminal-output-port))]
+                     [preparing-shadow #f])
+        (let retry ()
+          (prepare)
+          (let* ([basis shown-shadow]
+                 [shadow (make-shadow (vector-map (lambda (row) row) (shadow-rows basis))
+                           (shadow-view basis) (shadow-cursor basis) (shadow-title basis))]
+                 [output (call-with-string-output-port
+                           (lambda (port)
+                             (parameterize ([frame-terminal (sys:terminal-output-port)]
+                                            [sys:terminal-output-port port]
+                                            [preparing-shadow shadow])
+                               (draw))))])
+            (cond
+              [(not (eq? basis shown-shadow)) (retry)]
+              [(and coalesce? (head:defer-frame! (input-delay)))
+               ;; Geometry still advances for the next command, but this
+               ;; output and shadow never become a terminal baseline. Only
+               ;; expired keyboard input may follow; the pump fences others.
+               (void)]
+              [else
+               ;; Wait without pumping input; recheck the shadow in case a
+               ;; signal reentered painting. No wait holds mode 2026 open.
+               (head:wait-for-frame! (input-delay))
+               (if (eq? basis shown-shadow)
+                   (present-frame! output shadow)
+                   (retry))]))))))
+
+  (edoc "Paint a frame: measure the terminal, tile, adopt foreign edits, then repaint what changed. Explicit redraws publish; the outer loop may coalesce expired keyboard input."
+        (coalesce? boolean "whether to allow bounded publication coalescing; default #f"))
+  (define redraw!
+    (case-lambda
+      [() (redraw! #f)]
+      [(coalesce?)
+       ;; Every entry, including direct prompt redraws, prepares against current
+       ;; geometry. Hooks can present messages and reenter, so finish them before
+       ;; opening this frame's synchronized update.
+       (with-mutex redraw-lock
+         (parameterize ([sys:terminal-output-port (or (frame-terminal) (sys:terminal-output-port))]
+                        [preparing-shadow #f])
+           (terminal-size!)
+           (window-layout)
+           (head:before-frame!)
+           (draw-frame! prepare-layout! paint-frame! coalesce?)))]))
 
   (edoc "Flash the screen briefly through the main pump, instead of ringing.")
   (define (visual-bell!)

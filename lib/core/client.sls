@@ -158,26 +158,34 @@
                  (identity)]
                 [else (error 'client "base refused attachment" hello)])))))))
 
-  (edoc "Send one request to the base and wait for its reply; an interrupted call closes the connection."
+  (define (check-connection)
+    ;; Caller holds lock; preparation can outlive another call's failure.
+    (unless (and connection (not failure))
+      (if failure (raise (make-ended)) (error 'client "head is not attached"))))
+
+  (edoc "Send one request to the base and wait for its reply. Preparation errors send nothing; interruption after admission closes the connection."
         (operation symbol "the request")
         (args (list-of any) "its arguments")
         (returns any)
         (effects remote))
   (define (request operation . args)
-    ;; Exactly one call in flight. An interrupted call closes the socket:
-    ;; an unknown commit is never replayed on this or a replacement session.
-    (with-mutex requests
-      (let ([completed? #f])
-        (dynamic-wind void
-          (lambda ()
-            (let ([id (with-mutex lock
-                        (unless (and connection (not failure))
-                          (if failure (raise (make-ended)) (error 'client "head is not attached")))
-                        (set! serial (+ serial 1))
-                        (set! waiting serial)
-                        (set! reply #f)
-                        serial)])
-              (wire:send! (sys:connection-output connection) (append (list 'request id operation) args))
+    ;; Prepare owned bytes before occupying the connection. A large worker
+    ;; checkpoint must not exclude foreground calls while it copies/encodes.
+    ;; IDs identify replies, not admission order across concurrent callers.
+    (let* ([id (with-mutex lock (check-connection) (set! serial (+ serial 1)) serial)]
+           [frame (wire:encode (append (list 'request id operation) args))])
+      ;; Exactly one call in flight. Once admitted, interruption closes the
+      ;; socket: an unknown commit is never replayed on a replacement session.
+      (with-mutex requests
+        (let ([completed? #f])
+          (dynamic-wind void
+            (lambda ()
+              (with-mutex lock
+                (check-connection)
+                (set! waiting id)
+                (set! reply #f))
+              (put-bytevector (sys:connection-output connection) frame)
+              (flush-output-port (sys:connection-output connection))
               (let ([result
                      (with-mutex lock
                        (let wait ()
@@ -186,8 +194,8 @@
                            [else (condition-wait ready lock) (wait)])))])
                 (set! completed? #t)
                 (if (eq? (caddr result) 'ok) (cadddr result)
-                    (error operation (cadddr result))))))
-          (lambda () (unless completed? (close! "Connection interrupted; reattach to inspect the base")))))))
+                    (error operation (cadddr result)))))
+            (lambda () (unless completed? (close! "Connection interrupted; reattach to inspect the base"))))))))
 
   (edoc "Subscribe a procedure to a kind of base event; the token unsubscribes."
         (kind symbol "the event kind")
