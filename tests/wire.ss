@@ -1044,7 +1044,7 @@
                (when (file-exists? ,hold)
                  (when (zero? left) (error 'fixture "replacement restore hold timed out"))
                  (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))))
-       (let* ([source-path (string-append sources "/head/head.sls")]
+       (let* ([source-path (string-append sources "/base/state/store.sls")]
               [source (call-with-input-file source-path get-string-all)]
               [wire-path (string-append sources "/foundation/wire.sls")]
               [wire-source (call-with-input-file wire-path get-string-all)]
@@ -1085,13 +1085,28 @@
        (call-with-restart-fixture
          (lambda (head control base original original-fingerprint
                    source-path source wire-path wire-source pid-path path temporary file hold restoring)
-           ;; An invalid head source must still reach the stale refusal:
-           ;; hello happens before importing or compiling any head code.
-           ;; Keep valid source and normal-wire changes afterward so all
-           ;; restart cases also exercise maintenance across both differences.
+           ;; Renderer edits do not stale the resident base. Admission still
+           ;; refuses real base changes and incompatible wire versions before
+           ;; importing head code; maintenance works across both differences.
            (let ([before (rpc control 'status)]
                  [policy-before (head-read head '(length (log:entries 'policy 100)))])
-             (write-text source-path "this is deliberately not a library\n")
+             (let* ([renderer-path (string-append sources "/head/head.sls")]
+                    [renderer (call-with-input-file renderer-path get-string-all)]
+                    [connection (connect)])
+               (dynamic-wind
+                 (lambda () (write-text renderer-path (string-append renderer "\n; renderer-only change\n")))
+                 (lambda ()
+                   (test:check 'renderer-change-admits-a-head-without-restarting-the-base
+                     (list (equal? original-fingerprint (fingerprint))
+                           (list-head (exchange connection (list 'hello wire:version '(head "new renderer") (fingerprint))) 3)
+                           (equal? original (call-with-input-file pid-path read)))
+                     (list #t (list 'hello wire:version '(head "new renderer")) #t)))
+                 (lambda () (write-text renderer-path renderer) (sys:close-connection! connection)))
+               (test:await 'renderer-check-head-detaches
+                 (lambda () (= (cdr (assq 'heads (rpc control 'status))) 1))))
+             ;; Admission preserves a named head checkpoint in the directory.
+             (set! before (rpc control 'status))
+             (write-text source-path (string-append source "\n; resident base change\n"))
              (test:check 'source-and-version-refusals-keep-the-owner-and-startup-fingerprint
                (list
                  (map (lambda (message)

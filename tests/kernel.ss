@@ -535,15 +535,20 @@
                      (kernel:config-file) (kernel:config-file 'base)))
              (list scratch (string-append scratch "/config.e")
                    (string-append scratch "/base-config.e")))
-           ;; The fingerprint reads the installation, including inactive
-           ;; runtime kinds and hidden sources. No compiler or Git is involved.
-           (let* ([directories '("base" "base/state" "client" "client/state" "modes")]
-                  [entries (list (cons "base/state/shared.sls" #vu8(0 255 10 65))
-                                 (cons "client/state/shared.sls" (string->utf8 "λ"))
-                                 (cons "modes/empty.sls" #vu8()) (cons "modes/.hidden.sls" #vu8(7)))]
-                  [ignored (list (string-append scratch "/config.e") (string-append objects "/outside.sls")
-                                 (string-append sources "/modes/old.e"))]
-                  [baseline "fnv1a64:8b8ed455c568c033"])
+           ;; Only the installed base import closure contributes. The reader
+           ;; handles elibrary's bootstrap import and nested import modifiers;
+           ;; it never imports these fixture libraries or consults active roots.
+           (let* ([directories '("base" "base/run" "base/state" "client" "client/state" "foundation" "head" "state")]
+                  [entries
+                   (map (lambda (entry) (cons (car entry) (string->utf8 (cdr entry))))
+                     '(("base/run/base.sls" . "(library (run base) (export) (import (rnrs) (state shared) (for (prefix (only (foundation primitive) x) p:) run)))")
+                       ("base/state/shared.sls" . "(import (only (foundation edoc) elibrary))\n(elibrary (state shared) (export) (import (except (foundation primitive) x)))")
+                       ("foundation/primitive.sls" . "(library (foundation primitive) (export x) (import (rnrs)) (define x \"λ\"))")
+                       ("foundation/edoc.sls" . "(library (foundation edoc) (export) (import (rnrs)))")))]
+                  [ignored (map (lambda (name) (string-append scratch "/" name))
+                             '("config.e" "eo/outside.sls" "lib/head/head.sls" "lib/client/state/shared.sls"
+                               "lib/state/shared.sls" "lib/foundation/unused.sls"))]
+                  [baseline #f])
              (define (path name) (string-append sources "/" name))
              (define (write-bytes path bytes)
                (call-with-port (open-file-output-port path (file-options no-fail))
@@ -553,41 +558,39 @@
                (lambda () (for-each (lambda (name) (mkdir (path name))) directories))
                (lambda ()
                  (for-each write-entry entries)
-                 ;; The fixed vector covers exact bytes and length framing,
-                 ;; independent of this random installation's absolute path.
-                 (test:check 'fingerprint-covers-raw-sorted-sources (kernel:fingerprint) baseline)
-                 (for-each (lambda (path) (write-bytes path #vu8(1))) ignored)
+                 (set! baseline (kernel:fingerprint))
+                 ;; Even unreadable source syntax outside the closure is
+                 ;; irrelevant, including a shadowed shared implementation.
+                 (for-each (lambda (path) (write-bytes path #vu8(0 255))) ignored)
                  (for-each (lambda (entry) (delete-file (path (car entry)))) entries)
                  (for-each write-entry (reverse entries))
-                 (test:check 'fingerprint-ignores-cache-config-roots-and-discovery-order
+                 (test:check 'fingerprint-ignores-head-client-shadowed-sources-cache-config-and-roots
                    (parameterize ([library-directories '()]) (kernel:fingerprint)) baseline)
-                 (test:check 'fingerprint-covers-every-content-and-relative-path
-                   (append
-                     (map (lambda (entry)
-                            (write-bytes (path (car entry)) #vu8(42))
-                            (let ([changed? (not (equal? baseline (kernel:fingerprint)))])
-                              (write-entry entry) changed?)) entries)
-                     (let ([empty (path "modes/empty.sls")] [renamed (path "modes/renamed.sls")])
-                       (rename-file empty renamed)
-                       (let ([moved? (not (equal? baseline (kernel:fingerprint)))])
-                         (delete-file renamed)
-                         (let ([removed? (not (equal? baseline (kernel:fingerprint)))])
-                           (write-bytes empty #vu8()) (write-bytes renamed #vu8())
-                           (let ([added? (not (equal? baseline (kernel:fingerprint)))])
-                             (delete-file renamed) (list moved? removed? added?))))))
-                   (make-list 7 #t))
+                 (test:check 'fingerprint-covers-every-base-dependency-byte
+                   (map (lambda (entry)
+                          (write-bytes (path (car entry)) (string->utf8 (string-append (utf8->string (cdr entry)) "\n; changed\n")))
+                          (let ([changed? (not (equal? baseline (kernel:fingerprint)))])
+                            (write-entry entry) changed?)) entries)
+                   (make-list (length entries) #t))
+                 (let ([overlay (path "base/state/shared.sls")] [shared (path "state/shared.sls")])
+                   (delete-file shared)
+                   (rename-file overlay shared)
+                   (test:check 'fingerprint-includes-selected-relative-path
+                     (equal? baseline (kernel:fingerprint)) #f)
+                   (rename-file shared overlay))
                  (let ([before (test:fd-count)])
+                   (delete-file (path "foundation/primitive.sls"))
                    (unless (zero? ((foreign-procedure "symlink" (string string) int)
-                                   (path "absent") (path "broken.sls")))
+                                   (path "absent") (path "foundation/primitive.sls")))
                      (error 'fixture "could not create broken source link"))
-                   (test:check 'fingerprint-read-failure-never-returns-a-partial-checksum
+                   (test:check 'fingerprint-missing-dependency-never-returns-a-partial-checksum
                      (list (test:raises? kernel:fingerprint)
                            (parameterize ([kernel:installation-directory (path "absent")])
                              (test:raises? kernel:fingerprint))
                            (equal? before (test:fd-count))) '(#t #t #t))))
                (lambda ()
                  (for-each (lambda (name) (delete-file (path name)))
-                   (append (map car entries) '("modes/renamed.sls" "broken.sls")))
+                   (map car entries))
                  (for-each delete-file ignored)
                  (for-each (lambda (name) (delete-directory (path name))) (reverse directories)))))
            (write-fixture "kernel-child" 'child)

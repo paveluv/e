@@ -18,9 +18,13 @@ runs `(main:run!)`.
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
-`kernel:fingerprint` reads every `.sls` below this installation's `lib/`,
-independent of runtime roots. A new head must match the base's startup
-fingerprint; see [attachment](MULTIHEAD.md#the-base-and-its-heads).
+`kernel:fingerprint` reads the installed base entry point and its transitive
+source imports, selecting `lib/base/` before shared `lib/`, independently of
+the caller's runtime roots. It hashes source paths and bytes without importing
+the base into a head. Head-only sources and unreferenced libraries are excluded.
+A new head must match the base's startup fingerprint; see
+[attachment](MULTIHEAD.md#the-base-and-its-heads). Base startup modules must
+appear in its import graph even when configuration makes their first call.
 `--restart` performs the maintenance review before importing head libraries.
 The daemon entry point lives in `lib/base/run/base.sls`, outside client roots.
 In the base, `session` restores store IDs, revisions and opaque named

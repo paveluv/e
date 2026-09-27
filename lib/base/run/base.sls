@@ -12,9 +12,13 @@
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
+          ;; Startup also publishes these modules into base configuration.
+          ;; Keep them in the resident import graph even before their first call.
+          (prefix (service git) git:)
           (prefix (service log) log:)
           (prefix (service policy) policy:)
           (prefix (service reference) reference:)
+          (prefix (service sandbox) sandbox:)
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
@@ -22,6 +26,7 @@
           (prefix (state store) store:)
           (prefix (state surface) surface:)
           (prefix (sys activity) activity:)
+          (prefix (sys https) https:)
           (prefix (sys sys) sys:))
 
   (define modules

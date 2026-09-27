@@ -23,7 +23,9 @@ The current normal protocol version is **5**. Send
 `(hello 5 (agent "name") fingerprint)`, using the installation's
 `kernel:fingerprint` string. The version and source fingerprint must match
 the running base. Older normal protocols are not negotiated. The fingerprint
-identifies compatible sources and grants no permissions.
+covers the installed base entry point and its imported source dependencies,
+excluding head-only sources. It checks source consistency and grants no
+permissions.
 
 A successful hello returns `(hello 5 actor capabilities)`. The base chooses
 the policy: heads default to all-buffer writes, agents to read-only sessions.
