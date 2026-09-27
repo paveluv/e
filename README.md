@@ -5,6 +5,8 @@ in [Chez Scheme](https://cisco.github.io/ChezScheme/). It feels like Emacs in
 many ways (buffers, recursive window splits, incremental search, built-in
 Scheme), but it's not trying to be an Emacs clone.
 
+The latest tagged release is [v0.2](https://github.com/paveluv/e/tree/v0.2).
+
 It's "self-aware" because it knows its own internals (like most Lisp systems).
 It's "fully customizable" because its code is just one big configuration
 (code is data :)
@@ -269,13 +271,15 @@ same glyph rules as the terminal emulator.
 
 ## Version history
 
-- **Current development version (unreleased)** -- a persistent daemon with named screens,
+- **v0.2** (2026-09-27) -- a persistent daemon with named screens,
   saved-session recovery and reviewed restart; shared terminals and attributed undo;
   agent-ready APIs; the `C-x TAB` key listing, every key a documented command
   and the apps driven by the same commands; the pop-up as a window, and links
   between windows; interactive Finder and Buffet apps with filtering, compound
-  sorting and per-window column widths. The repository uses the settled R6RS
-  library layout.
+  sorting and per-window column widths; undoable disk reloads with interactive
+  conflict resolution; fuzzy Scheme completion and extension loading with shared
+  evaluation tools; paced terminal frames and less allocation while scrolling.
+  The repository uses the settled R6RS library layout.
 - **v0.1** (2026-09-02) -- the first tagged release. The core editor:
   buffers, recursive tiling windows, incremental search and query
   replace, meaningful undo, mouse support, styles. `M-x` with semantic
