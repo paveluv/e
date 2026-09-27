@@ -18,15 +18,21 @@ runs `(main:run!)`.
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
 disconnect owns only that connection and its actor registration.
-`kernel:fingerprint` reads every `.sls` below this installation's `lib/`,
-independent of runtime roots. A new head must match the base's startup
-fingerprint; see [attachment](MULTIHEAD.md#the-base-and-its-heads).
+`kernel:fingerprint` reads the installed base entry point and its transitive
+source imports, selecting `lib/base/` before shared `lib/`, independently of
+the caller's runtime roots. It hashes source paths and bytes without importing
+the base into a head. Head-only sources and unreferenced libraries are excluded.
+A new head must match the base's startup fingerprint; see
+[attachment](MULTIHEAD.md#the-base-and-its-heads). Base startup modules must
+appear in its import graph even when configuration makes their first call.
 `--restart` performs the maintenance review before importing head libraries.
 The daemon entry point lives in `lib/base/run/base.sls`, outside client roots.
-In the base, `session` restores store IDs, revisions and opaque named
-checkpoints before module initialization and `base-config.e`; the listener
-binds last. Session serialization uses the store and VT representation
-boundaries and does not import a head.
+In the base, `session` restores store IDs, revisions, persistent models and
+opaque named checkpoints before module initialization and `base-config.e`;
+the listener binds last. Session serialization uses the store, model and VT
+representation boundaries and does not import a head. The base's
+[model API](MODELS.md) supplies revision-checked non-text state without
+encoding it in hidden buffers.
 
 A library is named by its kind directory and its file: `lib/core/kernel.sls`
 declares `(core kernel)`, `lib/head/edit.sls` declares `(head edit)`, and

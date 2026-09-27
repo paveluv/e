@@ -773,7 +773,48 @@
         (value directory))
   (define installation-directory (make-parameter (current-directory) path:canonical))
 
-  (edoc "A hash of the installation's sources, independent of timestamps and caches: consistency, not authentication."
+  (define (base-sources root)
+    ;; Read the installed base's import closure without loading it into the
+    ;; caller's runtime. Capture each file once so dependency discovery and
+    ;; hashing use the same bytes. The base overlay wins over the shared tree.
+    (define seen (make-hashtable equal-hash equal?))
+    (define result '())
+    (define (library-name spec)
+      (unless (and (list? spec) (pair? spec))
+        (error 'fingerprint "invalid import" spec))
+      (if (memq (car spec) '(prefix only except rename for))
+          (if (pair? (cdr spec)) (library-name (cadr spec))
+              (error 'fingerprint "invalid import modifier" spec))
+          spec))
+    (define (visit! name)
+      (unless (or (memq (car name) '(rnrs chezscheme)) (hashtable-contains? seen name))
+        (unless (and (= (length name) 2) (for-all symbol? name))
+          (error 'fingerprint "expected an installed (kind module) library" name))
+        (hashtable-set! seen name #t)
+        (let* ([shared (string-append (symbol->string (car name)) "/" (symbol->string (cadr name)) ".sls")]
+               [overlay (string-append "base/" shared)]
+               [relative (if (file-exists? (string-append root overlay)) overlay shared)]
+               [path (string-append root relative)])
+          (unless (file-regular? path) (error 'fingerprint "expected a regular library source" path))
+          (let* ([bytes (call-with-port (open-file-input-port path) get-bytevector-all)]
+                 [bytes (if (eof-object? bytes) #vu8() bytes)]
+                 [port (open-bytevector-input-port bytes (make-transcoder (utf-8-codec) 'none 'raise))]
+                 [first (read port)]
+                 [bootstrap? (and (pair? first) (eq? (car first) 'import))]
+                 [bootstrap (if bootstrap? (cdr first) '())]
+                 [library (if bootstrap? (read port) first)])
+            (close-port port)
+            (unless (and (list? library) (>= (length library) 4)
+                         (memq (car library) '(library elibrary)) (equal? (cadr library) name)
+                         (assq 'import (cddr library)))
+              (error 'fingerprint "expected a library declaration and imports" path name))
+            (set! result (cons (cons relative bytes) result))
+            (for-each (lambda (spec) (visit! (library-name spec)))
+              (append bootstrap (cdr (assq 'import (cddr library)))))))))
+    (visit! '(run base))
+    (list-sort (lambda (a b) (string<? (car a) (car b))) result))
+
+  (edoc "A hash of the installed base's sources and imported dependencies, independent of head sources, runtime roots and caches: consistency, not authentication."
         (returns string))
   (define (fingerprint)
     ;; Source consistency, independent of runtime roots, timestamps and cache.
@@ -781,14 +822,6 @@
     ;; its byte length (u64 little-endian). This is not an authentication hash.
     (let ([root (string-append (installation-directory) "/lib/")]
           [high #xcbf29ce4] [low #x84222325] [length-bytes (make-bytevector 8)])
-      (define (sources relative)
-        (apply append
-          (map (lambda (name)
-                 (let ([path (string-append relative name)])
-                   (cond [(file-directory? (string-append root path)) (sources (string-append path "/"))]
-                         [(equal? (path-extension name) "sls") (list path)]
-                         [else '()])))
-            (directory-list (string-append root relative)))))
       (define (add! bytes)
         (do ([i 0 (+ i 1)]) ((= i (bytevector-length bytes)))
           ;; Two 32-bit limbs avoid allocating bignums for every source byte
@@ -802,17 +835,8 @@
         (bytevector-u64-set! length-bytes 0 (bytevector-length bytes) (endianness little))
         (add! length-bytes) (add! bytes))
       (for-each
-        (lambda (relative)
-          (let ([path (string-append root relative)])
-            (unless (file-regular? path) (error 'fingerprint "expected a regular library source" path))
-            (part! (string->utf8 relative))
-            (let ([port (open-file-input-port path)])
-              (dynamic-wind void
-                (lambda ()
-                  (let ([bytes (get-bytevector-all port)])
-                    (part! (if (eof-object? bytes) #vu8() bytes))))
-                (lambda () (close-port port))))))
-        (list-sort string<? (sources "")))
+        (lambda (entry) (part! (string->utf8 (car entry))) (part! (cdr entry)))
+        (base-sources root))
       (let ([hex (string-downcase (number->string (+ (bitwise-arithmetic-shift-left high 32) low) 16))])
         (string-append "fnv1a64:" (make-string (- 16 (string-length hex)) #\0) hex))))
 

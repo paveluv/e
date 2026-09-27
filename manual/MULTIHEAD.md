@@ -70,11 +70,14 @@ status is reported without changing the base. If no socket answers, help
 reports that no base is listening; a base may still be starting or recovering.
 
 Before importing the head or loading its configuration, a new head compares
-its wire version and library fingerprint with the running base. Every `.sls`
-under `lib/` counts, including modes and both runtime trees. Any library edit
-therefore requires `e --restart` before a new head can attach. Configuration,
-compiled objects and Git metadata are excluded. Existing heads keep working
-and can still reload their own modules.
+its wire version and base-library fingerprint with the running base. The
+fingerprint covers the installed base entry point and its imported source
+dependencies, using the base implementations. Editing these requires
+`e --restart` before a new head can attach. Changes confined to head renderers,
+apps, modes or client implementations outside that dependency graph allow
+attachment without restarting the base. Configuration, compiled objects and
+Git metadata are excluded. Existing heads keep working and can still reload
+their own modules.
 
 A mismatch exits before entering the screen. It reports what the base holds
 and prints a restart command for that installation, head name and base

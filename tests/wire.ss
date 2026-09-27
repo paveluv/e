@@ -129,6 +129,13 @@
                          (kernel:loaded-modules))
                  (kernel:module-requires? "base" "head") (actor:current) (store:buffer-list)))
          (define held (policy:mint! '(agent "authority probe") (policy:reader) '(head "desk λ")))
+         (define model-checks 0)
+         (model:register-kind! 'wire-value 1
+           (lambda (value)
+             (set! model-checks (+ model-checks 1))
+             (call-with-output-file ,(string-append root "/model-checks")
+               (lambda (out) (write model-checks out)) 'replace)
+             (string? value)))
          (define old-eval policy:session-eval!)
          (define old-edit policy:session-edit!)
          (define old-undo policy:session-undo!)
@@ -623,11 +630,27 @@
              [temporary (string-append base-directory "/session.tmp")]
              [disk (string-append root "/persistent-file")]
              [initialized (string-append root "/restored-before-config")]
+             [model-state (string-append root "/restored-models")]
+             [expected-models #f]
              [saved #f] [note #f] [file #f] [term #f] [ended #f] [omitted #f] [gap #f]
              [checkpoint #f] [expected #f] [expected-history '()])
          (write-text (string-append root "/config.e") "(main:set-startup-page! #f)\n")
          (base-config!
            `((vt:shell "/bin/sh")
+             ;; First startup defines both schemas. Later startups retain
+             ;; one unknown schema and a known definition that cannot adopt
+             ;; its payload; neither may block maintenance or the next save.
+             (if (null? (model:ids))
+                 (begin
+                   (model:register-kind! 'session-model-fixture 1 string?)
+                   (model:register-kind! 'session-model-fixture 2 string?)
+                   (model:create! '(base fixture) 'session-model-fixture 1 '(head "kept desk") 'persistent '((buffer 999)) "kept")
+                   (model:create! '(base fixture) 'session-model-fixture 2 'session 'persistent '((model 1)) "future")
+                   (model:create! '(base fixture) 'session-model-fixture 2 'session 'transient '() "ephemeral"))
+                 (model:register-kind! 'session-model-fixture 1 (lambda (payload) #f)))
+             (call-with-output-file ,model-state
+               (lambda (port)
+                 (write (list (call-with-values model:export list) (map model:available? (model:ids))) port)) 'replace)
              (define default-policy (base:connection-policy))
              (base:connection-policy
                (lambda (who) (if (equal? who '(head "restricted")) (policy:reader) (default-policy who))))
@@ -756,8 +779,12 @@
                    (exchange control (list 'request 7 'restart (cadr review))) '(closing restart)))
                (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
                (set! saved (call-with-input-file path read))
+               (set! expected-models (call-with-input-file model-state (lambda (port) (car (read port)))))
                (test:check 'snapshot-has-private-mode-and-no-temporary-file
-                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 1))))))
+                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 2)))
+               (test:check 'session-saves-persistent-models-and-transient-allocation-gaps
+                 (list (list-ref saved 6) (car expected-models) (length (cadr expected-models)))
+                 (list (cons* 'models (car expected-models) (cadr expected-models)) 4 2)))))
          (write-text disk "changed while stopped\n")
          (let ([base (fixture:start! root base-directory)])
            (dynamic-wind void
@@ -766,6 +793,8 @@
                (let* ([head (connect)] [states (cdr (list-ref saved 4))]
                       [before (call-with-input-file initialized read)])
                  (hello head '(head "kept desk"))
+                 (test:check 'session-restores-opaque-models-before-config-and-disables-unsupported-actions
+                   (call-with-input-file model-state read) (list expected-models '(#f #f)))
                  (test:check 'restore-precedes-configuration-and-preserves-allocator-gaps
                    (list (list-sort < (car before)) (cadr before)
                      (assv omitted states) (assv gap states) (rpc head 'checkpoint))
@@ -840,8 +869,12 @@
                    (test:check (list 'repeated-stops-replace-session mode cycle)
                      (list (list-ref (assv note (cdr (list-ref saved 4))) 3)
                            (cadr (assoc "kept desk" (cdr (list-ref saved 5))))
+                           (list-ref saved 6)
+                           (call-with-input-file model-state read)
                            (get-mode path) (file-exists? temporary))
-                     (list (car expected) checkpoint #o600 #f))))))
+                     (list (car expected) checkpoint
+                           (cons* 'models (car expected-models) (cadr expected-models))
+                           (list expected-models '(#f #f)) #o600 #f))))))
            '(shutdown 15 shutdown 2 shutdown 15) (iota 6))))
 
      (define (recovery-scenarios!)
@@ -850,6 +883,7 @@
               [initialized (string-append root "/recovery-initialized")]
               [bad '("" "(" "#0=(a . #0#)" "(session 99 0 1 (buffers) (checkpoints))"
                      "(session 1 0 1 (buffers) (checkpoints)) extra"
+                     "(session 2 0 2 (buffers (1 0 \"valid prefix\" #(\"text\") ())) (checkpoints) (models 0))"
                      "(session 1 0 3 (buffers (1 7 \"valid first\" #(\"text\") ()) (1 0 \"duplicate id\" #(\"\") ())) (checkpoints))"
                      "(session 1 0 1 (buffers) (checkpoints (\"desk\" opaque) (\"desk\" another)))")]
               [retained '()])
@@ -1044,7 +1078,7 @@
                (when (file-exists? ,hold)
                  (when (zero? left) (error 'fixture "replacement restore hold timed out"))
                  (sleep (make-time 'time-duration 5000000 0)) (wait (- left 1)))))))
-       (let* ([source-path (string-append sources "/head/head.sls")]
+       (let* ([source-path (string-append sources "/base/state/store.sls")]
               [source (call-with-input-file source-path get-string-all)]
               [wire-path (string-append sources "/foundation/wire.sls")]
               [wire-source (call-with-input-file wire-path get-string-all)]
@@ -1085,13 +1119,28 @@
        (call-with-restart-fixture
          (lambda (head control base original original-fingerprint
                    source-path source wire-path wire-source pid-path path temporary file hold restoring)
-           ;; An invalid head source must still reach the stale refusal:
-           ;; hello happens before importing or compiling any head code.
-           ;; Keep valid source and normal-wire changes afterward so all
-           ;; restart cases also exercise maintenance across both differences.
+           ;; Renderer edits do not stale the resident base. Admission still
+           ;; refuses real base changes and incompatible wire versions before
+           ;; importing head code; maintenance works across both differences.
            (let ([before (rpc control 'status)]
                  [policy-before (head-read head '(length (log:entries 'policy 100)))])
-             (write-text source-path "this is deliberately not a library\n")
+             (let* ([renderer-path (string-append sources "/head/head.sls")]
+                    [renderer (call-with-input-file renderer-path get-string-all)]
+                    [connection (connect)])
+               (dynamic-wind
+                 (lambda () (write-text renderer-path (string-append renderer "\n; renderer-only change\n")))
+                 (lambda ()
+                   (test:check 'renderer-change-admits-a-head-without-restarting-the-base
+                     (list (equal? original-fingerprint (fingerprint))
+                           (list-head (exchange connection (list 'hello wire:version '(head "new renderer") (fingerprint))) 3)
+                           (equal? original (call-with-input-file pid-path read)))
+                     (list #t (list 'hello wire:version '(head "new renderer")) #t)))
+                 (lambda () (write-text renderer-path renderer) (sys:close-connection! connection)))
+               (test:await 'renderer-check-head-detaches
+                 (lambda () (= (cdr (assq 'heads (rpc control 'status))) 1))))
+             ;; Admission preserves a named head checkpoint in the directory.
+             (set! before (rpc control 'status))
+             (write-text source-path (string-append source "\n; resident base change\n"))
              (test:check 'source-and-version-refusals-keep-the-owner-and-startup-fingerprint
                (list
                  (map (lambda (message)
@@ -1171,6 +1220,9 @@
                (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
+                  [saved-widget (head-read head
+                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '(4 2))])
+                                     (widget:mount! id) (head:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1210,6 +1262,13 @@
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
                  (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
+               (head-read launcher `(begin (head:show-buffer! (widget:mount! ',saved-widget)) #t))
+               (head-wait 'restarted-widget-placeholder launcher (lambda () (head-sees? launcher "[Unavailable widget")))
+               (test:check 'restart-reclaims-view-generation-without-losing-unavailable-data-state
+                 (head-read launcher
+                   `(let ([descriptor (interaction:snapshot ',saved-widget)])
+                      (list (cadddr descriptor) (list-ref descriptor 7) (widget:actions ',saved-widget))))
+                 '(2 (4 2) ()))
                (head-wait 'old-screen-gets-restart-farewell head
                  (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
                (for-each
@@ -1748,6 +1807,92 @@
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
+                 (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
+                   (define (checks) (call-with-input-file (string-append root "/model-checks") read))
+                   (let ([view (rpc head 'view-create model 'value 1 0)])
+                     (for-each (lambda (ui) (head-read ui '(begin (kernel:load-module! "interaction") #t))) (list a b))
+                     (test:check 'view-single-mount-owner
+                       (map (lambda (ui) (head-read ui `(car (call-with-values (lambda () (interaction:claim! head:ui-actor ',view)) list))))
+                         (list a b)) '(applied owned))
+                     (test:check 'view-provisional-interaction-is-immediate
+                       (head-read a `(begin
+                                       (do ([n 1 (+ n 1)]) ((= n 101)) (interaction:set-state! head:ui-actor ',view 0 n))
+                                       (list (list-tail (interaction:snapshot ',view) 5)
+                                             (list-ref (view:snapshot ',view) 7)))) '((100 0 100) 0))
+                     (test:check 'view-publication-ack-does-not-roll-back-owner
+                       (head-read a `(begin (interaction:flush!) (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
+                     (head-read a `(begin (interaction:release! head:ui-actor ',view 1) #t))
+                     (test:check 'view-new-owner-restores-saved-state
+                       (head-read b `(begin (interaction:claim! head:ui-actor ',view) (interaction:publish!)
+                                            (list-tail (interaction:snapshot ',view) 5))) '(0 0 100))
+                     (head-read b `(begin (interaction:release! head:ui-actor ',view 2) #t)))
+                   (for-each (lambda (ui)
+                               (head-read ui
+                                 `(begin (define model-events '())
+                                         (define model-reader (model:subscribe! '(,model)
+                                                                (lambda (event) (set! model-events (cons event model-events)))))
+                                         (model:available? ',model)))) (list a b))
+                   (let ([before (checks)])
+                     (test:check 'model-shared-mirrors-are-owned-and-warm-reads-are-local
+                       (head-read a
+                         `(begin
+                            (define second-reader (model:subscribe! '(,model) void))
+                            (guard (ex [else (void)])
+                              (kernel:call-with-registration-update
+                                (lambda () (model:subscribe! '((model 999999)) void) (error 'rollback "rollback"))))
+                            (do ([i 0 (+ i 1)]) ((= i 1000)) (model:snapshot ',model) (model:available? ',model))
+                            (let ([copy (model:snapshot ',model)])
+                              (string-set! (cdr (assq 'value copy)) 0 #\X))
+                            (model:unsubscribe! second-reader)
+                            (list (cdr (assq 'value (model:snapshot ',model)))
+                                  (guard (ex [else #t]) (model:snapshot '(model 999999)) #f)))) '("first" #t))
+                     (test:check 'second-subscription-and-warm-reads-send-no-model-requests (checks) before))
+                   (rpc head 'model-commit (list (list model 0 '() "remote")))
+                   (for-each (lambda (ui)
+                               (head-wait 'model-background-mirror ui
+                                 (lambda () (equal? (head-read ui `(cdr (assq 'value (model:snapshot ',model)))) "remote")))) (list a b))
+                   (rpc head 'model-retire model 1)
+                   (for-each (lambda (ui)
+                               (head-wait 'model-retirement ui (lambda () (not (head-read ui `(model:snapshot ',model)))))
+                               (test:check 'model-last-subscriber-releases-mirror
+                                 (head-read ui `(begin (model:unsubscribe! model-reader)
+                                                       (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
+                 (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
+                        [first (rpc head 'view-create data 'text 1 '(0 0))]
+                        [second (rpc head 'view-create data 'text 1 '(0 0))]
+                        [missing (rpc head 'view-create data 'not-installed 1 '(0 0))])
+                   (head-read a `(begin (head:show-buffer! (widget:mount! ',first))
+                                        (head:set-window-buffer! (window:split-right!) (widget:mount! ',missing)) #t))
+                   (head-read b `(begin (head:show-buffer! (widget:mount! ',second)) #t))
+                   (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
+                   (head-send! a "\x1b;[B")
+                   (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
+                   (test:check 'widget-selections-are-independent-across-heads
+                     (list (head-read a `(list-ref (interaction:snapshot ',first) 7))
+                           (head-read b `(list-ref (interaction:snapshot ',second) 7))) '((1 0) (0 0)))
+                   (rpc head 'model-commit (list (list data 0 '() "alpha\nREMOTE beta\ngamma")))
+                   (for-each (lambda (ui) (head-wait 'widget-remote-update ui (lambda () (head-sees? ui "REMOTE beta")))) (list a b))
+                   (test:check 'widget-activation-carries-current-target-and-basis
+                     (head-read a `(widget:act! ',first 'choose)) (list data 1 1 "REMOTE beta"))
+                   (test:check 'widget-wheel-scrolls-without-selection-and-click-uses-visible-row
+                     (head-read b
+                       `(begin
+                          (head:dispatch-app-event! "WHEEL-DOWN")
+                          (let ([scrolled (list-ref (interaction:snapshot ',second) 7)])
+                            (parameterize ([head:app-event-buffer-position '(0 . 0)])
+                              (head:dispatch-app-event! "MOUSE-CLICK"))
+                            (list scrolled (list-ref (interaction:snapshot ',second) 7))))) '((0 2) (2 2)))
+                   (head-send! a "\x18;\x03;")
+                   (head-wait 'widget-head-detached a (lambda () (pump-head! a)))
+                   (test:await 'widget-owner-released (lambda () (not (list-ref (rpc head 'view-read first) 4))))
+                   (set! a (start-head "screen A"))
+                   (head-wait 'widget-resumed a
+                     (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
+                   (test:check 'widget-resume-preserves-state-and-missing-renderer
+                     (head-read a `(list (list-ref (interaction:snapshot ',first) 7) (widget:actions ',missing))) '((1 0) ()))
+                   (head-read a `(begin (widget:unmount! ',first) (widget:unmount! ',missing)
+                                        (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (head-read b `(begin (widget:unmount! ',second) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client

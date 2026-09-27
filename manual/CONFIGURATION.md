@@ -10,8 +10,9 @@ Help includes the selected base's status, version, buffer and process counts,
 attached and detached heads, resume commands and shutdown guidance. It never
 starts or restarts the base, including when combined with `--restart` or `--force`.
 Compatibility with a running base is also checked before head imports and
-`config.e`; a library-source or wire mismatch prints a restart command and
-exits. Configuration files themselves do not participate in the fingerprint.
+`config.e`; a base-library source or wire mismatch prints a restart command
+and exits. Head-only source changes do not require a base restart.
+Configuration files themselves do not participate in the fingerprint.
 
 Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,

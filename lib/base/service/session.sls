@@ -1,5 +1,5 @@
-;; session.sls -- one recovery snapshot of shared text and named views.
-;; The lifecycle pauses writers; the store and VT own their representation.
+;; session.sls -- one recovery snapshot of text, models and named heads.
+;; The lifecycle pauses writers; each state component owns its representation.
 (import (only (foundation edoc) elibrary))
 (elibrary (service session)
   (export restore! save! status take-notice!)
@@ -9,11 +9,12 @@
           (prefix (foundation string) string:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (sys activity) activity:)
           (prefix (sys sys) sys:))
 
-  (define format-version 1)
+  (define format-version 2)
   (define lock (make-mutex))
   (define saved-at #f)
   (define restored-at #f)
@@ -26,9 +27,16 @@
     (let ([time (current-time 'time-utc)])
       (+ (* (time-second time) 1000000000) (time-nanosecond time))))
 
-  (define (valid? value)
-    (and (list? value) (= (length value) 6) (eq? (car value) 'session)
-         (equal? (cadr value) format-version)
+  (define (valid? value restoring?)
+    (and (list? value) (memv (length value) '(6 7)) (eq? (car value) 'session)
+         (or (and (equal? (cadr value) 1) (= (length value) 6))
+             (and (equal? (cadr value) format-version) (= (length value) 7)
+                  (let ([models (list-ref value 6)])
+                    (and (list? models) (>= (length models) 2) (eq? (car models) 'models)
+                         ;; Export owns valid envelopes. Do not invoke kind
+                         ;; code while paused or let an unavailable payload
+                         ;; prevent saving the rest of the session.
+                         (or (not restoring?) (model:valid-import? (cadr models) (cddr models)))))))
          (integer? (caddr value)) (exact? (caddr value)) (>= (caddr value) 0)
          (list? (list-ref value 4)) (pair? (list-ref value 4))
          (eq? (car (list-ref value 4)) 'buffers)
@@ -45,7 +53,7 @@
       (let* ([port (open-bytevector-input-port bytes
                      (make-transcoder (utf-8-codec) 'none 'raise))]
              [value (datum:copy (read port))])
-        (and (eof-object? (read port)) (valid? value) value))))
+        (and (eof-object? (read port)) (valid? value #t) value))))
 
   (define (recovery-name? name)
     (or (string=? name "session.incompatible")
@@ -53,7 +61,7 @@
              (> (string-length name) 21)
              (for-all char-numeric? (string->list (string:tail name 21))))))
 
-  (edoc "Restore the saved session from the base directory: the store's buffers and the heads' checkpoints.")
+  (edoc "Restore buffers, persistent models and named heads' checkpoints from the base directory.")
   (define (restore!)
     (let* ([directory (startup:base-working-directory)]
            [bytes (sys:call-with-private-input-file (string-append directory "/session")
@@ -70,6 +78,9 @@
          ;; Configuration and listener binding have not happened. An
          ;; unexpected import error aborts this startup with session intact.
          (store:import! (cadddr value) (cdr (list-ref value 4)))
+         (if (= (length value) 7)
+             (let ([models (list-ref value 6)]) (model:import! (cadr models) (cddr models)))
+             (model:import! 1 '()))
          (actor:import! (cdr (list-ref value 5)))]
         [bytes
          (set! rejected (sys:archive-session! directory))
@@ -87,11 +98,13 @@
   (edoc "Save the session to the base directory atomically, during a lifecycle pause.")
   (define (save!)
     (require-pause!)
-    (let-values ([(next-id buffers) (store:export vt:transcript)])
+    (let-values ([(next-id buffers) (store:export vt:transcript)]
+                 [(next-model-id models) (model:export)])
       (let* ([written-at (now)]
              [value (list 'session format-version written-at next-id
-                      (cons 'buffers buffers) (cons 'checkpoints (actor:export)))])
-        (unless (valid? value) (error 'session "current state cannot be saved"))
+                      (cons 'buffers buffers) (cons 'checkpoints (actor:export))
+                      (cons* 'models next-model-id models))])
+        (unless (valid? value #f) (error 'session "current state cannot be saved"))
         (guard (ex [else
                     (when (sys:durability-uncertain? ex)
                       (with-mutex lock (set! saved-at written-at) (set! uncertain? #t)))

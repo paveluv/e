@@ -12,21 +12,28 @@
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
+          ;; Startup also publishes these modules into base configuration.
+          ;; Keep them in the resident import graph even before their first call.
+          (prefix (service git) git:)
           (prefix (service log) log:)
           (prefix (service policy) policy:)
           (prefix (service reference) reference:)
+          (prefix (service sandbox) sandbox:)
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
           (prefix (state journal) journal:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (sys activity) activity:)
+          (prefix (sys https) https:)
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path" "policy"
-      "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "vt" "wire"))
+    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy"
+      "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -64,6 +71,7 @@
         (lambda ()
           (set! source-fingerprint (kernel:fingerprint))
           (session:restore!)
+          (view:reset-owners!)
           ;; One producer for every head and for work while all heads are
           ;; absent. Log small operation facts, never retained text/deltas.
           (set! audit (store:subscribe! #f audit-store-event!))
@@ -106,6 +114,17 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (case operation
+      [(view-create) (control!) (arity 4) (apply view:create! actor args)]
+      [(view-read) (arity 1) (view:snapshot (car args))]
+      [(view-claim) (control!) (arity 1) (call-with-values (lambda () (apply view:claim! actor args)) list)]
+      [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
+      [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]
+      [(view-release) (control!) (arity 2) (call-with-values (lambda () (apply view:release! actor args)) list)]
+      [(model-ids) (apply model:ids args)]
+      [(model-read) (arity 1) (model:snapshots (car args))]
+      [(model-create) (control!) (arity 6) (apply model:create! actor args)]
+      [(model-commit) (control!) (arity 1) (call-with-values (lambda () (model:commit! actor (car args))) list)]
+      [(model-retire) (control!) (arity 2) (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)
@@ -516,7 +535,8 @@
     (let* ([connection (peer-connection peer)]
            [owner (list 'connection connection)] [out (kernel:make-mailbox)]
            [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
-           [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f])
+           [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f]
+           [model-token #f] [model-ids (make-eqv-hashtable)] [model-pending '()] [registered? #f])
       (define (close!)
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
@@ -535,7 +555,7 @@
           ;; #t is one coalesced watch wakeup; all other work is owned bytes.
           ;; Count includes an in-flight write. A stalled peer cannot retain
           ;; unlimited store versions, tiny mail envelopes or encoded replies.
-          (let* ([frame (if (eq? message #t) #t (wire:encode message))]
+          (let* ([frame (if (memq message '(#t models)) message (wire:encode message))]
                  [size (if (bytevector? frame) (bytevector-length frame) 0)])
             (unless (with-mutex out-lock
                       (and (not closed?) (< queued-count 256)
@@ -547,6 +567,37 @@
               ;; Overload is a disconnect, never a silently dropped reply or
               ;; actor message. Only invalidations may coalesce.
               (error 'wire "pending output limit reached")))))
+      (define (model-event! event)
+        (when
+          (with-mutex out-lock
+            (let* ([ids (cadr event)]
+                   [selected (if ids (filter (lambda (id) (hashtable-contains? model-ids (cadr id))) ids)
+                                 (and (zero? (hashtable-size model-ids)) '()))]
+                   [empty? (equal? model-pending '())])
+              (unless (equal? selected '())
+                (set! model-pending
+                  (and model-pending selected
+                       (let merge ([rest selected] [out model-pending])
+                         (cond [(null? rest) out]
+                               [(>= (length out) 256) #f]
+                               [else (merge (cdr rest)
+                                       (cons (cons (cadar rest) (car event))
+                                         (remp (lambda (old) (= (car old) (cadar rest))) out)))])))))
+              (and empty? (not (equal? model-pending '())))))
+          (post! 'models)))
+      (define (check-model-ids ids)
+        (unless (and (list? ids) (for-all (lambda (id) (and (list? id) (= (length id) 2)
+                                                         (eq? (car id) 'model) (integer? (cadr id))
+                                                         (exact? (cadr id)) (> (cadr id) 0))) ids))
+          (error 'wire "expected tagged model ids" ids)))
+      (define (models-watch! ids)
+        ;; Subscribe before reading: a racing commit is in one or both.
+        (check-model-ids ids)
+        (unless model-token
+          (parameterize ([kernel:registering-module owner])
+            (set! model-token (model:subscribe! #f model-event!))))
+        (with-mutex out-lock (for-each (lambda (id) (hashtable-set! model-ids (cadr id) #t)) ids))
+        (model:snapshots ids))
       (define (watch!)
         (unless changes
           ;; Publish the take procedure before the writer can consume a wake.
@@ -625,7 +676,8 @@
                         ;; this connection's session without touching the old owner.
                         (post! (list 'hello wire:version actor capabilities))
                         (parameterize ([kernel:registering-module owner])
-                          (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities))))
+                          (actor:register! actor (lambda (message) (post! (list 'event message))) capabilities))
+                        (set! registered? #t)))
                     (lambda ()
                       ;; Reservation and review ownership linearize here. The
                       ;; handshake finishes outside the mutex as admitted work.
@@ -646,8 +698,12 @@
                                   (close!))]
                             [item
                              (let ([frame
-                                    (if (bytevector? item) item
-                                      (wire:encode (list 'changed ((with-mutex out-lock changes)))))])
+                                    (cond [(bytevector? item) item]
+                                          [(eq? item 'models)
+                                           (wire:encode (list 'models
+                                                          (with-mutex out-lock
+                                                            (let ([pending model-pending]) (set! model-pending '()) pending))))]
+                                          [else (wire:encode (list 'changed ((with-mutex out-lock changes))))])])
                                (put-bytevector (sys:connection-output connection) frame)
                                (flush-output-port (sys:connection-output connection)))
                              (with-mutex out-lock
@@ -678,6 +734,15 @@
                               (error 'wire "operation is not available on this connection" (caddr message)))
                             (list 'reply (cadr message) 'ok
                               (case (caddr message)
+                                [(model-watch)
+                                 (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
+                                 (models-watch! (cadddr message))]
+                                [(model-unwatch)
+                                 (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
+                                 (let ([ids (cadddr message)])
+                                   (check-model-ids ids)
+                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids)))
+                                 #t]
                                 [(status)
                                  (unless (= (length message) 3) (error 'wire "status takes no arguments"))
                                  (status (with-mutex peer-lock (participants)))]
@@ -697,7 +762,9 @@
           (close!)
           (activity:call-with-retirement
             (lambda ()
-              (when session (policy:revoke! session))
+              (when session
+                (when registered? (view:release-owner! (policy:session-actor session)))
+                (policy:revoke! session))
               (kernel:retract-module! owner)))
           (when writer (thread-join writer))))))
 

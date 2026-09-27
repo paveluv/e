@@ -16,7 +16,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook!
+  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook! add-publication-hook!
           add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer?
           app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
           app-event-buffer-position app-event-button app-event-focus app-event-position
@@ -86,6 +86,7 @@
                 call-with-string-output-port)
           (prefix (core kernel) kernel:)
           (prefix (core property) property:)
+          (prefix (core publication) publication:)
           (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:)
@@ -1033,7 +1034,8 @@
   (edoc "Record successful terminal publication; the prepared geometry is now displayed.")
   (define (frame-presented!)
     (set! frame-pending? #f)
-    (pacing:presented! presentation-clock))
+    (pacing:presented! presentation-clock)
+    (for-each (lambda (hook) (hook #f)) (kernel:registry-items publication-hooks)))
 
   (edoc "Whether terminal input reaches the pump: the input reader has started, so a prompt can be answered."
         (returns boolean))
@@ -2665,6 +2667,13 @@
   ;; Keep only the current captured text per local buffer, not another copy
   ;; of every historical vector that undo or an extension might retain.
   (define checkpoint-texts (make-weak-eq-hashtable))
+  (define publication-hooks (kernel:make-registry))
+
+  (edoc "Register head state publication after presentation and before checkpoints. The hook must queue without waiting unless fence? is true before a lifecycle checkpoint."
+        (hook procedure "(hook fence?)"))
+  (define (add-publication-hook! hook)
+    (unless (procedure? hook) (error 'add-publication-hook! "expected a procedure"))
+    (kernel:registry-add! publication-hooks hook))
 
   (define (without-copy-slot state)
     ;; screen checkpoints before version 4 carried the copy text third; it is not restored
@@ -2735,10 +2744,13 @@
        ;; Even a failing capture provider must not abandon a snapshot that
        ;; was already queued when the head performs its final checkpoint.
        (dynamic-wind void
-         (lambda () (publish-checkpoint! #f))
-         (lambda () (checkpoint:flush! checkpoint-writer)))]
+         (lambda ()
+           (for-each (lambda (hook) (hook #t)) (kernel:registry-items publication-hooks))
+           (publish-checkpoint! #f))
+         (lambda () (publication:flush! checkpoint-writer)))]
       [(mode)
        (unless (memq mode '(async idle)) (error 'checkpoint! "expected async or idle" mode))
+       (for-each (lambda (hook) (hook #f)) (kernel:registry-items publication-hooks))
        (publish-checkpoint! (eq? mode 'idle))]))
   (define (publish-checkpoint! idle?)
     ;; No store reads here: every coordinate describes exactly the adopted
@@ -2755,11 +2767,11 @@
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
            [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
-      (when (checkpoint:changed? checkpoint-writer state)
+      (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
           (if (or (not idle?) (not due) (time<=? due now))
-              (when (checkpoint:submit! checkpoint-writer state)
+              (when (publication:submit! checkpoint-writer state)
                 (set! checkpoint-queued-at now))
               (request-frame-at! due))))))
 
@@ -2915,7 +2927,7 @@
 
   (edoc "Restore this head's windows and positions from its last publication, by names rather than stale coordinates.")
   (define (resume!)
-    (checkpoint:flush! checkpoint-writer)
+    (publication:flush! checkpoint-writer)
     ;; Recover the old publication's *names*, not its stale coordinates.
     ;; The ordinary exact-revision diff removes abandoned windows/regions,
     ;; including buffers no longer displayed, without touching custom marks.
