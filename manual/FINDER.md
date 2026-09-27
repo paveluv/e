@@ -5,17 +5,17 @@ filter. On first use, the filter is prefilled with the current file's directory,
 an app's working directory, or the head's launch directory, as a full path
 starting and ending with `/`. `M-x (finder:open-directory! "/some/directory")`
 resets the filter to that directory's full path.
-The original path-entry prompt remains available as `M-x (edit:visit-file!)`.
+`M-x (edit:visit-file! path)` also opens or creates a path, with path completion.
 `C-x f` has no default binding.
 
 The first line is the filter, followed by an italic `[N matches]` count.
 Spaces in the filter appear as ` ∧ ` (logical AND), so `sls m19` is shown as `sls ∧ m19`.
 One Backspace removes the whole ` ∧ ` separator.
 This is only a display convention; typing, matching and completion use spaces.
-Connecting directories do not inflate that count. A trailing `+` means the
+Connecting directories and creation suggestions do not inflate that count. A trailing `+` means the
 scan is still running or some paths could not be read.
 There is no separate Directory field: the first token is the leading path.
-Its directory portion determines where the table starts. `/home/me/git/`
+Its existing directory portion determines where the table starts. `/home/me/git/`
 shows that directory's children; `/home/me/gi` shows matching entries under
 `/home/me/`, without displaying the tree from root. Backspace edits this path
 one character at a time and the table follows immediately. A leading `~`
@@ -45,7 +45,6 @@ Esc or C-g returns to the document from which this window opened the app.
 | `C-u` | Clear the whole filter; show root's immediate children. |
 | `Tab` | Complete a unique directory path with `/`; otherwise expand the filter without changing its matches. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
-| `M-c` | Enter Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
@@ -80,62 +79,46 @@ preserves hidden-entry visibility, directory spelling and the match set.
 Tab waits for a complete scan, then computes in the background; `Completing…`
 marks that work. Keep typing to cancel it and refine the search. An unreadable
 subtree prevents completion from assuming the visible results are exhaustive.
-Use M-c for the separate Create prompt and literal path completion.
-
-## Create mode
-
-M-c sets the Filter aside and opens a temporary `<create-file>` view with an
-editable `Create file:` prompt at the bottom of the window, seeded from the
-filter's leading path token. Create's Directory line follows the path being edited. The table
-shows only immediate children whose names start with its final component,
-using the same case-sensitive
-matching as find-file. For example, `src/re` shows `re…` entries inside
-`src/`; it does not search below those entries. A trailing `/` shows the
-directory's children. Dot entries appear when the final component starts
-with `.`. Normal browsing's hidden-entry preference is retained for later.
-
-Tab completes a component or extends a common prefix, adding `/` for a
-directory. Candidates are already visible; repeated Tab pages through them
-only when they do not fit. PageUp/PageDown, Shift-Tab and the mouse wheel
-also page the table. Sorting by headings or F1–F6 still works and uses the
-whole matching list, before paging. Clicking a directory or breadcrumb
-updates the path and its table. Clicking a file fills the prompt so you can
-edit its name. Enter refuses an existing file and shows `[file already exists]`
-as an italic ghost immediately after the input. It disappears after two seconds
-or when you continue editing; it is not repeated in the echo area.
-Up/Down browse file history; Left/Right edit the path.
-Tab also refreshes the directory's metadata; C-r rescans without completing
-input, so external file creations and removals can be picked up in this mode. These keys, with F1–F6, are the `finder-create` context's, listed by `C-x TAB` while the mode is open.
-
-The input keeps find-file's editing, cursor, wrapping and error recovery.
-Esc or C-g removes the prompt and restores the filter you had before M-c.
-Creation starts only when you press Enter.
+Creation suggestions do not constrain completion or contribute to match counts.
 
 ## Creating files and directories
 
-Creation is explicit and works regardless of what the filter matches. For
-example, append `notes` to the leading directory path, press M-c, then Enter to create a new file called `notes`,
-even if the list contains `notes.txt`. The prompt uses the literal path rather
-than the selected search result. Open existing files from the finder's browsing mode.
+The missing portion of the leading path also appears as a hierarchy of virtual
+table entries. Each missing component is italic and has an italic `[create]`
+ghost. The table starts at the nearest existing directory: if `/a/b/` exists
+but `/a/b/c/d/file.txt` does not, it shows:
 
-For a new file, Enter creates missing parent directories and an empty file on
-disk, then opens its buffer. No save is needed to create it. Creation refuses
-an existing name, including a symbolic link, without changing it. For example,
-`drafts/idea.txt` creates `drafts/` if needed. End the path with `/` to create
-directories only and enter the last one: `drafts/research/` creates both
-levels if necessary. The new directory opens with its full path as the filter. An existing directory with a trailing slash is refused
-with the same transient inline ghost, `[directory already exists]`. Without
-a trailing slash the request is for a file, so any existing name is refused
-with `[file already exists]`. Use the finder's browsing mode to enter existing directories.
+```text
+c/ [create]
+ d/ [create]
+  file.txt [create]
+```
 
-Each newly created directory is logged as `Created directory /path/`, from
-parent to child, followed by `Created file /path/name` for a file. Existing
-directories and refused names do not produce creation entries.
+These entries remain available with additional filter keys, even when those
+keys do not match the proposed name. They sort alongside existing entries,
+using the same sibling ordering and directories-first rule. Their metadata
+is blank. Existing matches keep the default selection; when there are none,
+the proposed leaf is selected. To create `notes` when `notes.txt` matches,
+select the `notes [create]` row and press Enter or click it.
 
-Cancelling before Enter leaves the filesystem alone. Errors, including a
-file where a directory is required, keep the prompt editable. Paths created
-before a later error remain available and are logged; existing files are
-never replaced by directory creation.
+Choosing a proposed file calls `edit:visit-file!`: missing parents and an
+empty file are created on disk, then its buffer opens. Choosing a proposed
+directory creates only that directory and its parents, then enters it. A
+trailing `/` requests directories only. Selecting `c/` in the example creates
+only `c/`; selecting the file creates the entire path. Right enters or creates
+a directory and does nothing on a file. Creation refreshes the cached listing.
+
+The same API works directly: `(edit:visit-file! "/a/b/c/file.txt")` creates
+and opens a new file; `(edit:visit-file! "/a/b/c/")` creates directories and
+opens Finder there. Existing files and shared buffers are reused. If another
+process creates the target first, its contents are opened without replacement.
+Files or dangling links blocking a parent directory cause an error.
+
+Each new directory is logged as `Created directory /path/`, from parent to
+child, followed by `Created file /path/name` for a file. Paths created before
+a later error remain available and are logged. Typing or selecting a row
+with arrows does not create anything; Enter, Right on a directory, or a click
+performs the action. There is no separate Create app or M-c binding.
 
 ## Recursive filtering
 
@@ -223,15 +206,14 @@ The finder pane is driven entirely through `finder:` commands, so M-x or
 an agent can do everything a key does. Every key of the pane is bound in
 the `finder` context to one of them: `finder:choose!` for Enter, `enter!`,
 `parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
-`first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
+`first-row!`, `last-row!`, `erase!`, `clear-filter!`,
 `(toggle-sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
 `complete!`, `return!` and `paste-filter!`, and typing itself is the context's
 `SELF-INSERT` binding, `(extend-filter! text)` with the character typed, so
 `C-x TAB` lists them all, typing as `any character`, and `C-h k` describes
 one. Beside the keys, `(filter! text)` sets the filter that typing grows, `(select! path)` makes a listed entry the
 choice, `(chosen)` is the choice's path, `(entries)` lists what is shown as
-literals, `(file "path")` and `(directory "path")`, so each reads back as a
-value, `(location)` is the directory shown, and `(sorts)` the
+literals, `(file "path")` and `(directory "path")`, including creation suggestions. `choose!` creates a missing choice through `edit:visit-file!`, `(location)` is the directory shown, and `(sorts)` the
 sort order as `(column . descending?)` pairs; `open-directory!` opens the
 pane on a directory.
 
@@ -241,9 +223,6 @@ Like `<buffet>`, `<finder>` shares its filter and sort order between
 windows in one head. Each window fits its own columns and retains its own
 keyboard choice and viewport. Narrow panes hide lower-priority metadata;
 names stay visible and long labels are shortened without wrapping.
-While Create owns one pane, sorting can still be changed from another
-finder pane. Navigating from that other pane ends path entry and keeps the
-chosen destination, using the prompt's usual focus-loss behavior.
 
 The focused pane's keyboard choice is bold with a soft blue background:
 pale in a light theme, dark navy in a dark theme. A hovered row

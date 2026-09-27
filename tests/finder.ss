@@ -17,6 +17,7 @@
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
              (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:)
              (prefix (foundation path-filter) path-filter:)
+             (prefix (service log) log:)
              (prefix (head mode) mode:)
              (prefix (sys sys) sys:) (prefix (test) test:))
 
@@ -320,7 +321,7 @@
          (eq? before (head:current-buffer))))
      (settle!)
      (check 'finder-reload-replaces-worker-ownership-and-restores-app-state
-       (list same-view (visible? "No matching files") (car (location)) (car (lines))
+       (list same-view (visible? "n [create]") (car (location)) (car (lines))
              (head:app-buffer? (view)) (show-hidden))
        (list #t #t (path "empty") (string-append "Filter: " (path "empty") "/n [0 matches] [hidden]") #t #t))
 
@@ -348,6 +349,8 @@
 
      ;; the app as an API: what an agent asks and does without keys
      (define (api name) (top-level-value name))
+     (define (existing-entries)
+       (filter (lambda (entry) (file-exists? (cadr entry) #f)) ((api 'finder:entries))))
      ((api 'finder:filter!) (filter-string root "long")) (settle!)
      (check 'the-api-filters-lists-and-locates
        (list ((api 'finder:location)) ((api 'finder:entries))) (list root (list (list 'file (path "a 日本語 long (name).txt")))))
@@ -358,10 +361,8 @@
        (begin ((api 'finder:toggle-sort-column!) 2) (let ([first ((api 'finder:sorts))]) ((api 'finder:toggle-sort-column!) 2) (list first ((api 'finder:sorts)))))
        '(((2 . #f)) ((2 . #t))))
      (check 'the-api-refuses-an-unlisted-path (test:raises? (lambda () ((api 'finder:select!) "nowhere.txt"))) #t)
-     (check 'the-create-modes-keys-are-bound-in-its-own-context
-       (list (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'finder-create '("C-r")))) (api 'finder:refresh!))
-             (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'finder-create '("F2"))))))
-       '(#t "(finder:toggle-sort-column! 2)"))
+     (check 'finder-has-no-separate-create-mode-binding
+       (keymap:resolved-binding 'finder '("M-c")) #f)
      (check 'typing-is-a-binding-of-the-finder-context
        (let ([hit (keymap:resolved-binding 'finder '("SELF-INSERT"))])
          (and hit (keymap:action-text (keymap:binding-action (cdr hit)))))
@@ -376,10 +377,10 @@
        (for-each (lambda (name) (mkdir (string-append dir "/" name))) '("nested" "Case" "case"))
        (for-each (lambda (name) (call-with-output-file (string-append dir "/" name) (lambda (p) (display "" p)))) files)
        (files-open! dir) (filter! "window split")
-       (let ([before ((api 'finder:entries))])
+       (let ([before (existing-entries)])
          (press! "TAB")
          (check 'finder-tab-preserves-conjunctive-matches
-           (list (cadr (location)) (equal? before ((api 'finder:entries))))
+           (list (cadr (location)) (equal? before (existing-entries)))
            (list (filter-string dir "split-window") #t)))
        ((api 'finder:filter!) (filter-string dir "space txt")) ((api 'finder:complete!))
        (settle!)
@@ -388,10 +389,10 @@
        (filter! "window window")
        (check 'finder-repeated-keys-need-separate-occurrences ((api 'finder:entries)) '())
        ((api 'finder:show-hidden) #f) (filter! "sls")
-       (let ([before ((api 'finder:entries))])
+       (let ([before (existing-entries)])
          (press! "TAB")
          (check 'finder-tab-preserves-hidden-entry-visibility
-           (list (equal? before ((api 'finder:entries))) (show-hidden)) '(#t #f)))
+           (list (equal? before (existing-entries)) (show-hidden)) '(#t #f)))
        (files-open! (path "empty"))
        (filter! (string-append dir "/"))
        (press! "C-r" "TAB") ; the new directory was absent from its cached parent
@@ -404,15 +405,15 @@
        (files-open! (string-append dir "/Case")) (filter! "token") (press! "TAB")
        (let ([spelled (cadr (location))])
          (filter! (string-append dir "/cas"))
-         (let ([before ((api 'finder:entries))])
-           (press! "TAB")
-           (check 'finder-tab-does-not-enter-an-ambiguous-directory-path
-             (list (car (location)) (equal? before ((api 'finder:entries)))) (list dir #t)))
+         (press! "TAB")
+         (check 'finder-tab-does-not-enter-an-ambiguous-directory-path
+           (list (car (location)) ((api 'finder:entries)))
+           (list dir (map (lambda (name) (list 'directory (string-append dir "/" name))) '("Case" "case"))))
          (files-open! dir) (filter! "token")
-         (let ([before ((api 'finder:entries))])
+         (let ([before (existing-entries)])
            (press! "TAB")
            (check 'finder-completion-preserves-directory-spelling-and-both-case-variants
-             (list spelled (car (location)) (equal? before ((api 'finder:entries))))
+             (list spelled (car (location)) (equal? before (existing-entries)))
              (list (string-append dir "/Case/token.dat") dir #t))))
        (files-open! dir)
        (filter! "split") (settle!)
@@ -493,6 +494,86 @@
          (map path '("tree/A/B" "tree/A/B/C" "tree/A/D/foo.txt")))
        (for-each (lambda (name) (delete-file (path name))) files)
        (for-each (lambda (name) (delete-directory (path name))) (reverse dirs)))
+     ;; Creation rows share ordinary sorting and navigation, but neither
+     ;; count as matches nor constrain completion of existing paths.
+     (files-open! root)
+     (for-each (lambda (key)
+                 ((api 'finder:toggle-sort-column!) (car key))
+                 (unless (cdr key) ((api 'finder:toggle-sort-column!) (car key))))
+       ((api 'finder:sorts)))
+     (filter! (string-append (path "apple") " txt"))
+     (define creation-first (list (car (labels)) (visible? "[2 matches]") ((api 'finder:chosen))))
+     (press! "F1" "F1")
+     (check 'finder-creation-row-keeps-name-order-and-survives-additional-keys
+       (list creation-first (car (reverse (labels))))
+       (list (list "apple [create]" #t (path "APPLE.txt")) "apple [create]"))
+     (let ([before (existing-entries)])
+       (press! "TAB")
+       (check 'finder-creation-suggestion-does-not-constrain-completion
+         (existing-entries) before))
+     (press! "F1")
+
+     (check 'finder-creation-and-existing-paths-use-the-same-dot-component-resolution
+       (sequence (lambda (text) (filter! (path text)) (list (car (location)) (labels)))
+         '("small/absent/../../normalized.txt" "small/absent/../needle-one.txt"))
+       (list (list root '("normalized.txt [create]")) (list (path "small") '("needle-one.txt"))))
+
+     ((api 'finder:filter!) (string-append (format "~s" (path "new/inner 日本語/note.txt")) " unrelated")) (settle!)
+     (check 'finder-missing-hierarchy-is-rooted-in-the-existing-prefix-and-styled
+       (list (car (location)) (labels) (visible? "[0 matches]")
+         (map (lambda (i)
+                (let* ([line (list-ref (lines) i)] [styles ((mode:row-styles (mode:of (view))) (view) i line)]
+                       [face (vector-ref styles (- i 2))])
+                  (list (and (pair? face) (memq 'italic face) #t) (styled-text i line 'ghost)))) '(2 3 4)))
+       (list root '("new/ [create]" " inner 日本語/ [create]" "  note.txt [create]") #t
+         '((#t " [create]") (#t " [create]") (#t " [create]"))))
+     (let* ([w (head:current-window)] [width (head:window-width w)])
+       (head:window-width-set! w 20) (head:refresh-visible-views!)
+       (check 'finder-narrow-rows-retain-the-create-ghost
+         (map (lambda (row) (styled-text row (head:window-line w row) 'ghost)) '(2 3 4))
+         '(" [create]" " [create]" " [create]"))
+       (head:window-width-set! w width) (head:refresh-visible-views!))
+     (press! "RIGHT")
+     (check 'finder-right-on-a-proposed-file-does-not-create-its-parents (file-exists? (path "new")) #f)
+     (press! "RET")
+     (check 'finder-creates-and-opens-the-file-with-parent-first-logging
+       (list (head:buffer-file (head:current-buffer))
+         (eof-object? (call-with-input-file (path "new/inner 日本語/note.txt") get-string-all))
+         (map log:datum (reverse (list-head (log:entries 'file) 3))))
+       (list (path "new/inner 日本語/note.txt") #t
+         (list (string-append "Created directory " (path "new/"))
+               (string-append "Created directory " (path "new/inner 日本語/"))
+               (string-append "Created file " (path "new/inner 日本語/note.txt")))))
+     (open!) (settle!)
+     (check 'finder-creation-invalidates-the-missing-path-and-inventory-caches
+       (list (visible? "[create]") (styled-text 0 (car (lines)) '(plain italic))) '(#f ""))
+
+     (filter! (path "only/inner/"))
+     (parameterize ([head:app-event-buffer-position '(2 . 1)]) (head:dispatch-app-event! "MOUSE-CLICK")) (settle!)
+     (define created-parent (list (location) (file-directory? (path "only")) (file-exists? (path "only/inner"))))
+     (filter! (path "only/inner/")) (press! "RIGHT")
+     (check 'finder-click-creates-only-the-chosen-directory-and-right-creates-the-leaf
+       (list created-parent (location) (directory-list (path "only/inner")))
+       (list (list (at (path "only") "") #t #f) (at (path "only/inner") "") '()))
+     (check 'visit-file-creates-directories-and-opens-finder-directly
+       (begin (visit-file! (path "only/direct/")) (settle!)
+              (list (location) (file-directory? (path "only/direct"))))
+       (list (at (path "only/direct") "") #t))
+
+     (filter! (path "race"))
+     (define creation-logs (length (log:entries 'file)))
+     (call-with-output-file (path "race") (lambda (p) (display "another process" p)))
+     (press! "RET")
+     (check 'finder-creation-race-opens-the-existing-file-without-replacing-it
+       (list (buffer-text (head:current-buffer)) (length (log:entries 'file)))
+       (list "another process" creation-logs))
+     (files-open! root) (filter! (path "race/child")) (press! "RET")
+     (check 'finder-refuses-a-file-in-the-parent-path-without-leaving-the-app
+       (list (eq? (head:current-buffer) (view))
+         (call-with-input-file (path "race") get-string-all) (length (log:entries 'file)))
+       (list #t "another process" creation-logs))
+     (delete-file (path "race")) (delete-file (path "new/inner 日本語/note.txt"))
+     (for-each (lambda (name) (delete-directory (path name))) '("new/inner 日本語" "new" "only/inner" "only/direct" "only"))
      (kill-buffer! (view))
      (for-each (lambda (name) (delete-file (path name))) names)
      (for-each (lambda (name) (delete-directory (path name))) (reverse directories))

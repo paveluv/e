@@ -1,7 +1,7 @@
 # Interactive prompts
 
-Prompts share one editing and presentation engine. Create mode, the original
-find-file command, `M-x`, describe, and command-specific text questions use
+Prompts share one editing and presentation engine. `M-x`, describe,
+and command-specific text questions use
 the same movement, history, completion, wrapping, and styling behavior.
 The default [Finder](FINDER.md) and [Buffet](BUFFERS.md#the-buffet-app) pickers
 are table apps with their own navigation and filtering controls.
@@ -70,15 +70,11 @@ The repetition is command-based rather than inferred from the cursor position.
 
 ## Prompts in the window
 
-`M-x (edit:visit-file!)` reads its input in the current window instead of the
-echo area. Each invocation creates a temporary local `<find-file>` view.
-The input sits at the bottom of the window, with the same editing keys,
-styles, suggestions and text
-cursor as an echo-area prompt. Clicking the input moves its insertion point.
-
-`C-x b` and `C-x C-b` use the [filterable buffet](BUFFERS.md#the-buffet-app).
-The [finder's M-c mode](FINDER.md#create-mode) uses the same input editor
-below a live directory table, with sortable columns and paged matches.
+A prompt can use the current window instead of the echo area. Each invocation
+creates a temporary local view. The input sits at the bottom of the window,
+with the same editing keys, styles, suggestions and text cursor as an echo-area
+prompt. Clicking the input moves its insertion point. Finder and Buffet use
+their own table controls rather than this input editor.
 
 Long input wraps above the bottom row. Tab lists candidates above the input;
 repeated Tab pages through them. Every input change, including history
@@ -95,15 +91,11 @@ An explicit buffer choice in a side `<buffet>` panel takes effect and ends
 the prompt. Any split copies of the temporary view are restored too; the
 temporary buffer disappears when the interaction ends.
 
-For find-file, changing focus keeps the unfinished path and cursor for the
-next invocation in that window. Explicit cancellation discards this draft.
-Drafts last only in the current head process; reconnecting restores the
-last editing screen, without a pending prompt. File-open errors keep the
-path editable; see [File buffers](BUFFERS.md#file-buffers). The echo area
-keeps showing messages while a window prompt is active.
+The caller may retain unfinished input in a per-window draft; drafts live
+only in the current head process. The echo area keeps showing messages while
+a window prompt is active.
 
-Any prompt can use the window: `(prompt:in-window #t)` in `config.e` makes
-every `prompt:read!` take the current window. Find-file always uses the window.
+`(prompt:in-window #t)` in `config.e` makes `prompt:read!` use the current window.
 A nested prompt uses the echo area. Its own completion list takes the pop-up
 window temporarily, then returns to the outer prompt and its input.
 
@@ -227,8 +219,8 @@ this renderer; publish background results and wake the head to refresh.
 a vector indexed by character; choices is a list of `(start end value)`
 intervals. Clicking a string value fills the input. An action value is called
 and may return new input, or `#f` to keep editing unchanged, as with a sort
-heading. Hover defaults to the standard `hover` face; files rows use
-`candidate-hover` to include the subtle row tint. `handle` is `#f` or a
+heading. Hover defaults to the standard `hover` face; `candidate-hover`
+adds the subtle row tint. `handle` is `#f` or a
 key handler returning true for consumed events; editing and prompt/window
 commands otherwise retain their usual meaning. The content's table pages
 with repeated Tab, PageUp/PageDown, Shift-Tab or wheel input. Content ownership,

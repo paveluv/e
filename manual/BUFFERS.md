@@ -159,22 +159,16 @@ survive. Local draft text does not; see [restart and recovery](MULTIHEAD.md#rest
 
 ## File buffers
 
-`C-x C-f` opens the finder, `C-x C-s` saves, and `C-x C-w` saves under a
-new path. The direct path prompt, `M-x (edit:visit-file!)`, offers the current
-file's directory, a terminal's launch directory, or the head's working
-directory for other buffers. Clearing the offered path
-and typing a relative name still uses that starting directory. Absolute paths
-and `~/` select their own location; Tab on `~` extends it to `~/`. A terminal's
-default does not track subsequent shell `cd` commands.
+`C-x C-f` opens [Finder](FINDER.md), `C-x C-s` saves, and `C-x C-w` saves
+under a new path. Finder offers missing path components as italic `[create]`
+rows. Choose one to create and open it, including missing parent directories.
 
-Enter on a directory keeps the path open with a trailing `/`; Tab completes
-its contents. A read error or missing parent directory leaves the input and
-cursor available for correction. A new filename in an existing directory
-creates an empty buffer; the file is written only when saved. Up and Down
-browse this head's successful visits, most recent first, including revisits
-to existing buffers. Each path appears once. That history comes from the
-daemon's retained journal and remains available to the same named head when
-it reattaches.
+The same command is available directly as `(edit:visit-file! path)` in M-x,
+with path completion. A new file is created on disk immediately, before its
+empty buffer opens. A trailing `/` creates directories only and opens Finder
+there; an existing directory also opens Finder. Every newly created path is
+logged. Existing files and shared buffers are reused without overwriting
+their contents; a concurrent creation is opened as an existing file.
 
 An unnamed buffer needs an explicit destination, supplied with `C-x C-w` or
 `(edit:save-file! path)`. Saving as makes the buffer

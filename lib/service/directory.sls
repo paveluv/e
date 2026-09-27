@@ -3,7 +3,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service directory)
   (export clear! close! directory? entry-complete? entry-count entry-created entry-kind entry-link?
-          entry-matches entry-mode entry-modified entry-path entry-size filter-path make-cache matches?
+          entry-matches entry-mode entry-modified entry-path entry-size filter-path make-cache make-missing matches? missing?
           (rename (parent-path parent)) poll! read! relative-path scan!)
   (import (chezscheme)
           (prefix (foundation path-filter) path-filter:)
@@ -24,6 +24,15 @@
         (matches list "the retained child entries, including the directories leading to matches"))
   (define-record-type entry
     (fields path kind link? mode size modified created count complete? matches))
+
+  (edoc "An uncreated filesystem entry, distinct from entries observed on disk.")
+  (define-record-type (missing %make-missing missing?) (parent entry) (fields))
+
+  (edoc "An uncreated entry with optional uncreated children, for a filesystem view's creation choices."
+        (path string "the absolute path") (directory? boolean "whether to create a directory")
+        (children list "the missing child entries") (returns (record entry)))
+  (define (make-missing path directory? children)
+    (%make-missing path (if directory? 'directory 'file) #f #f #f #f #f #f #t children))
 
   (edoc "The canonical parent of a directory path."
         (path directory "the directory")

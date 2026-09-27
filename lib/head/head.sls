@@ -48,7 +48,7 @@
           layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
           layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
           make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
-          open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit
+          open-directory! open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit
           previous-window quit!
           quit-command! quitting?
           read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
@@ -57,7 +57,7 @@
           run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
           set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
           set-app-selectable! set-app-status-position! set-buffer-status! set-buffers! set-copy-text! set-current!
-          set-current-keys! set-departure! set-dividers! set-drag! set-file-opener!
+          set-current-keys! set-departure! set-directory-opener! set-dividers! set-drag! set-file-opener!
           set-frame-hook! set-full-capture! set-last-command! set-layout-root!
           set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
           set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
@@ -819,6 +819,7 @@
   ;; what runs after every key. The command layer reloads; the loop
   ;; does not, so these calls always use the latest installed hooks.
   (define file-opener (lambda (path) (void)))
+  (define directory-opener (lambda (path) (error 'open-directory! "no directory browser is installed" path)))
   (define quit-command (lambda () (quit!)))
   (define after-key-hook void)
   (define departure (lambda () (quit!)))
@@ -828,6 +829,11 @@
         (proc procedure "(open path)"))
   (define (set-file-opener! proc)
     (set! file-opener proc))
+
+  (edoc "Install the directory browser used by file-visiting commands."
+        (proc procedure "(open path)"))
+  (define (set-directory-opener! proc)
+    (set! directory-opener proc))
 
   (edoc "Install the quit command, the modified-buffers check."
         (proc thunk "the command"))
@@ -853,6 +859,11 @@
         (path file "the file"))
   (define (open-file! path)
     (file-opener path))
+
+  (edoc "Show an existing directory through the installed browser."
+        (path directory "the directory"))
+  (define (open-directory! path)
+    (directory-opener path))
 
   (edoc "Run the installed quit command.")
   (define (quit-command!)

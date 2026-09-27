@@ -1977,11 +1977,11 @@
                            (list
                              (make-list 2
                                (list (if existing? '#("disk") '#("")) 0
-                                     (list (cons 'file path) (if existing? '(base . "disk\n") 'base)
-                                           '(trailing . #t) '(mode . #f) '(mode-auto . #t) '(wrap . default) '(modified . #f))
+                                     (list (cons 'file path) (cons 'base (if existing? "disk\n" ""))
+                                           (cons 'trailing existing?) '(mode . #f) '(mode-auto . #t) '(wrap . default) '(modified . #f))
                                      (if existing? '#("agent disk") '#("agent ")) "scheme" #f
-                                     (and existing? "disk\n") #t))
-                             '((agent "opening")) (and existing? "disk\n")
+                                     (if existing? "disk\n" "") #t))
+                             '((agent "opening")) (if existing? "disk\n" (eof-object))
                              (list (if existing? '#("disk") '#("")) #f #f)))
                          (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                          (rpc head 'delete target))))
@@ -2020,12 +2020,12 @@
                                  (and (file-exists? path) (call-with-input-file path get-string-all)))
                            (list #t #t
                                  (make-list 2 (list target (if existing? '#("B callback disk") '#("B callback "))
-                                                    (and existing? "disk\n") "scheme" #f 2))
-                                 (and existing? "disk\n")))
+                                                    (if existing? "disk\n" "") "scheme" #f 2))
+                                 (if existing? "disk\n" (eof-object))))
                          (for-each (lambda (screen) (head-read screen `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                            (list a b))
                          (rpc head 'delete target))
-                       (when existing? (delete-file path))
+                       (delete-file path)
                        (delete-file open-held) (delete-file open-release)))
                    '(#t #f))
 
@@ -2113,12 +2113,12 @@
                      (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                      (rpc head 'delete target)))
 
-                 ;; A newly visited path appearing on disk before the first save has
-                 ;; no baseline to merge from: the save rereads the disk, undoably,
-                 ;; and refuses; undo brings the text back to save
+                 ;; A recovered visiting buffer may have no disk baseline.
+                 ;; Saving then rereads the disk undoably and refuses; undo
+                 ;; brings the text back to save. New visits now create a baseline.
                  (let* ([path (string-append root "/missing-save.txt")]
-                        [target (head-read a `(begin (edit:visit-file! ,path) (edit:insert-text! "mine")
-                                                     (head:buffer-store-id (head:current-buffer))))])
+                        [target (rpc head 'create "missing-save.txt" '("") (list (cons 'file path) '(trailing . #t)))])
+                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine") #t))
                    (write-text path "disk\n")
                    (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
                    (head-wait 'no-ancestor-rereads a (lambda () (head-sees? a "was reread")))

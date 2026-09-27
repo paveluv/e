@@ -340,15 +340,15 @@
                    (let ([kept? (and seen (equal? seen (current)))])
                      (list (equal? observed
                              (list lines 0
-                               (list (cons 'file target) (if content (cons 'base content) 'base)
-                                     (if content (cons 'stamp stamp) 'stamp) (cons 'trailing trailing)
+                               (list (cons 'file target) (cons 'base (or content ""))
+                                     (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing)
                                      (cons 'mode mode) '(mode-auto . #t) '(wrap . default) '(modified . #f))))
                            (eq? opened (head:current-buffer)) kept?
                            (equal? (reverse events)
                              (case effect [(edit) '(create edit)]
-                               [(revisit) (if content '(create property edit) '(create edit))]
+                               [(revisit) '(create property edit)]
                                [(metadata) '(create rename property property property property)] [else '(create)]))
-                           (equal? (and (file-exists? target) (file:read target)) content)
+                           (equal? (and (file-exists? target) (file:read target)) (or content ""))
                            (if (memq effect '(edit revisit))
                                (begin (store:undo! bot id) (head:before-frame!)
                                       (and (equal? (head:buffer-lines opened) lines) (not (head:buffer-modified opened))))
@@ -360,11 +360,11 @@
                    (when (file-exists? target) (delete-file target)))))))
          '(("disk\n" ".state" #("disk") #t "visit-state" edit)
            ("#!/usr/bin/env statesh\nλ text" "" #("#!/usr/bin/env statesh" "λ text") #f "visit-state" edit)
-           (#f ".state" #("") #t "visit-state" edit)
+           (#f ".state" #("") #f "visit-state" edit)
            ("disk" ".state" #("disk") #f "visit-state" metadata)
-           (#f ".state" #("") #t "visit-state" metadata)
+           (#f ".state" #("") #f "visit-state" metadata)
            ("disk\n" ".state" #("disk") #t "visit-state" revisit)
-           (#f ".state" #("") #t "visit-state" revisit)
+           (#f ".state" #("") #f "visit-state" revisit)
            ("" "" #("") #f #f none)))
        (make-list 8 '(#t #t #t #t #t #t)))
 

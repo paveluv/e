@@ -183,11 +183,12 @@ for configuration, lifecycle and scripted clients.
 
 In Finder, edit the leading path or add search tokens after a space. Left/Right
 navigate directories and Enter opens a row; entering a directory resets the
-filter to its full path. `M-c` enters Create mode: Enter creates the typed file, or
-directories when the path ends in `/`. Existing names are refused. In both
+filter to its full path. Missing path components appear as italic `[create]`
+rows; choosing one creates it and its missing parents. A trailing `/` creates
+directories only. Existing files are opened without replacement. In both
 Finder and Buffet, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.
-The original path-entry command remains available as `M-x (find-file!!)`.
+`M-x (visit-file! path)` uses the same file and directory creation logic.
 
 ## Scheme at the center
 
