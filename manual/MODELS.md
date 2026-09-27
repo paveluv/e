@@ -1,8 +1,8 @@
 # Canonical model state
 
 `(state model)` stores portable non-text state in the base, alongside the
-text buffer store. It is currently a base API, available to base modules and
-`base-config.e`; heads do not yet have model transport or mirrors.
+text buffer store. Base modules and `base-config.e` define kinds; the client
+implementation provides shared head mirrors over the existing connection.
 
 Use models for interaction state and derived values whose updates need no
 undo journal. Authored text remains in `store:`. An authored-data domain
@@ -79,6 +79,40 @@ barrier, so restart waits for admitted work.
 `(model:retire! actor id revision)` removes non-authored state. It returns
 `applied` and `#f`, or `stale`/`unavailable` and the current envelope. It does
 not delete files, buffers or other models.
+
+## Subscriptions and head mirrors
+
+In a head, subscribe before reading `snapshot` or `available?`:
+
+```scheme
+(define reader
+  (model:subscribe! (list selection)
+    (lambda (notice) (model:snapshot selection))))
+(model:snapshot selection) ; owned local copy, no request
+(model:unsubscribe! reader)
+```
+
+The callback receives `(generation ids)`, after adopting refreshed values on
+the client pump thread. Use these APIs on that thread. Subscriptions belong
+to their registering module. The first reader seeds the mirror; additional
+readers reuse it, and removing the last reader releases it. Registrations
+inside a staged module update acquire mirrors only when the update publishes.
+Read them after publication, not inside the staged initializer.
+
+The base subscribes before taking the initial snapshot. Monotone watermarks
+prevent late replies from replacing newer mirrors. Invalidation batches are
+bounded; overflow becomes a rescan. One background read batch and one pending
+invalidation set serve the head. Rendering never waits for refresh. Definition
+changes invalidate availability even when a record's revision stays unchanged.
+
+At the base, `subscribe!` also accepts `#f` for all IDs; notices have the form
+`(generation ids-or-#f)`, where `#f` requests a rescan. `snapshots` returns
+`(generation ((id available? envelope-or-#f) ...))`. Callbacks run outside
+the model writer and queued callbacks check that their owner remains live.
+
+Client mutations use the authenticated connection's actor, regardless of
+the supplied actor argument. Currently they require an all-buffer head
+connection; model-specific agent grants are deferred.
 
 ## Recovery
 

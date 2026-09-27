@@ -54,6 +54,13 @@ edit with an unknown outcome.
 | `(request id snapshot buffer-id [basis])` | Return `(text-vector revision facts)`; with a nonnegative exact basis, append the matching change chain as a fourth field. One `store:snapshot-state` read supplies all fields. |
 | `(request id watch)` | Subscribe to store invalidations before returning the current shared ids. Repeated calls reuse this connection's watch. |
 | `(request id watch-head)` | A head also subscribes to surface, presence and log notices. Idempotent; all registrations belong to this connection. |
+| `(request id model-ids)` | Live tagged model IDs, in allocation order. |
+| `(request id model-read ids)` | Coherent `(generation ((id available? envelope-or-#f) ...))`. |
+| `(request id model-watch ids)` | Add connection-owned interest before returning the same snapshot packet as `model-read`. Repeated interest is idempotent. |
+| `(request id model-unwatch ids)` | Release these IDs without reading their values. |
+| `(request id model-create kind schema scope persistence references value)` | Create non-authored model state; return its tagged ID. Requires an all-buffer head. |
+| `(request id model-commit changes)` | Atomic `(id revision references value)` changes; return `(applied-or-stale-or-unavailable envelopes)`. Requires an all-buffer head. |
+| `(request id model-retire id revision)` | Retire non-authored state; return `(status envelope-or-#f)`. Requires an all-buffer head. |
 | `(request id state buffer-id basis [delta?])` | Return `#f` if absent, otherwise `(name text revision facts [changes])`; `basis` is `#f` or a revision, with changes returned only for a revision. Existence, name, text, revision, facts and changes come from one `store:state` read, including across rename/deletion. Name/liveness changes also invalidate the cache. `delta?` is `#f`, `#t` or `facts`. `#t` says the client holds text at the basis: the text slot is then `#f` whenever the complete chain since the basis is included, and the client advances its own copy through that chain. `facts` says it also holds the stored facts: such a delta reply carries only the owner-maintained `modified` and `modified-at` facts, since stored facts change through the events the client already receives. |
 | `(request id find-file canonical-path)` | Return the id whose current `file` fact matches, or `#f`. File commands query shared identity before disk I/O or creation; cached head lists do not decide shared file identity. |
 | `(request id actors)` | Return the existing actor directory records. |
@@ -91,6 +98,7 @@ edit with an unknown outcome.
 | `(reply id ok result)` or `(reply id error text)` | A nonnegative exact request id correlates a reply; a valid request error keeps the connection open. |
 | `(event datum)` | Actor mail: `(message from payload)`, question wakeup `(ask ticket from question choices)`, pending-question invalidation `(pending)`, or asynchronous `(answer ask-request-id value)`. Trusted app traffic also uses this envelope. |
 | `(changed pending)` | An opted-in store watcher receives `(id . metadata?)` pairs, or `#f` for a full inventory rescan. |
+| `(models pending)` | Watched model invalidations: `(numeric-id . generation)` pairs, or `#f` for a rescan. One pending batch coalesces at most 256 IDs; availability changes also invalidate. Values travel only in snapshot replies. |
 | `(surface pending)`, `(presence)` | Head invalidations: `(id . event)` surface entries, or re-read the actor directory. Surface hints invalidate all rows so coalescing generations cannot lose a row change. |
 | `(logged entry presentation)` | One base log record with its original actor and presentation intent. |
 

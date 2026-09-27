@@ -3,7 +3,7 @@
 ;; mail and log presentation have the same finite budget as the base outbox.
 (import (only (foundation edoc) elibrary))
 (elibrary (core client)
-  (export call-with-runtime close! ended? identity inbox-limits leave! pump! request set-wake!
+  (export call-with-runtime close! ended? enqueue! identity inbox-limits leave! pump! request set-wake!
           subscribe! unsubscribe! watch!)
   (import (chezscheme)
           (prefix (core daemon) daemon:)
@@ -36,6 +36,7 @@
   (define bytes 0)
   (define changes '())
   (define surfaces '())
+  (define models '())
   (define presence? #f)
   (define subscriptions (kernel:make-registry car))
   (define deliveries (kernel:make-delivery-queue))
@@ -103,6 +104,8 @@
                           (set! changes (merge-pending changes (cadr message))) wake]
                          [(surface)
                           (set! surfaces (merge-pending surfaces (cadr message))) wake]
+                         [(models)
+                          (set! models (merge-pending models (cadr message))) wake]
                          [(presence) (set! presence? #t) wake]
                          [(event logged)
                           (let ([size (bytevector-length (wire:encode message))])
@@ -210,6 +213,12 @@
   (define (unsubscribe! token)
     (kernel:registry-remove! subscriptions (lambda (entry) (eq? (car entry) token))))
 
+  (edoc "Queue a bounded worker's completion on the client pump and wake the head; callers retain at most one queued completion per worker."
+        (thunk thunk "the completion"))
+  (define (enqueue! thunk)
+    (kernel:enqueue-delivery! deliveries thunk)
+    ((with-mutex lock wake)))
+
   (edoc "Subscribe to a kind of event, merging batches until asked: (values token take), take giving the pending batch."
         (kind symbol "the event kind")
         (notify thunk "run when events arrive"))
@@ -235,9 +244,10 @@
                (let ([batch (append
                               (if (equal? changes '()) '() (list (list 'changed changes)))
                               (if (equal? surfaces '()) '() (list (list 'surface surfaces)))
+                              (if (equal? models '()) '() (list (list 'models models)))
                               (if presence? '((presence)) '())
                               (reverse notices))])
-                 (set! changes '()) (set! surfaces '()) (set! presence? #f)
+                 (set! changes '()) (set! surfaces '()) (set! models '()) (set! presence? #f)
                  (set! notices '()) (set! count 0) (set! bytes 0)
                  batch))])
         (for-each
@@ -290,7 +300,7 @@
         (thunk thunk "the head")
         (returns integer "the exit status"))
   (define (call-with-runtime thunk)
-    (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "path"
+    (let ([modules '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path"
                      "property" "reference" "startup" "store" "string" "surface" "sys" "text" "vt" "wire")])
       (kernel:pin-modules! (cons* "client" "cache" modules))
       (guard (ex [(stale-base? ex) (report-stale! (stale-status ex)) 1]

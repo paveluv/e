@@ -110,6 +110,36 @@
   (let ([id (model:create! author 'copy-validator 1 'session 'transient '() "copy")])
     (test:check 'model-validator-cannot-mutate-admitted-data
       (list (model:available? id) (get (model:snapshot id) 'value)) '(#t "copy")))
+  ;; A blocked delivery must not hold the writer, and backlog is bounded by
+  ;; a rescan notice. Revoking another queued listener cancels its callback.
+  (let* ([entered (test:gate)] [release (test:gate)] [notices (test:recorder)]
+         [cancelled (test:recorder)] [first? #t]
+         [removed (model:subscribe! #f cancelled)]
+         [token (model:subscribe! #f
+                  (lambda (event)
+                    (notices event)
+                    (when first? (set! first? #f) (entered #t)
+                      (test:await 'model-delivery-release release))))]
+         [worker (test:worker (lambda () (model:create! author 'sample 1 'session 'transient '() '())))])
+    (test:await 'model-delivery-entered entered)
+    (do ([i 0 (+ i 1)]) ((= i 257)) (model:create! author 'sample 1 'session 'transient '() '()))
+    (model:unsubscribe! removed)
+    (release #t) (worker)
+    (test:check 'model-bounded-delivery-and-live-owner-check
+      (list (length (notices)) (cadr (cadr (notices))) (cancelled)) '(2 #f ()))
+    (model:unsubscribe! token))
+  (let* ([id (model:create! author 'sample 1 'session 'transient '() '())]
+         [seen (test:recorder)]
+         [token (model:subscribe! (list id)
+                  (lambda (event) (seen (list event (model:snapshots (list id))))))])
+    (commit author (list (list id 0 '() '())))
+    (commit author (list (list id 0 '() '("new"))))
+    (test:check 'model-no-op-silent-and-callback-sees-committed-state
+      (list (length (seen)) (get (caddr (car (cadr (cadr (car (seen)))))) 'value)) '(1 ("new")))
+    (model:register-kind! 'unrelated 1 string?)
+    (test:check 'model-definition-invalidation-does-not-change-record-revision
+      (list (cadar (cadr (seen))) (get (model:snapshot id) 'revision)) '(#f 1))
+    (model:unsubscribe! token))
   (model:register-kind! 'unknown 1 (lambda (value) #f))
   (test:check 'model-unavailable-data-still-exports-intact
     (list (model:available? '(model 3)) (model:snapshot '(model 3))

@@ -3,9 +3,9 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export available? commit! create! export ids import! register-kind! retire! snapshot valid-import?)
+  (export available? commit! create! export ids import! register-kind! retire! snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
-          (only (chezscheme) unbox make-mutex with-mutex)
+          (only (chezscheme) unbox make-mutex with-mutex void gensym)
           (prefix (core identity) identity:)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
@@ -15,12 +15,16 @@
     (nongenerative e-model-definition-v1)
     (fields key accepts?))
   (define-record-type state
-    (nongenerative e-model-state-v1)
-    (fields lock kinds (mutable records) (mutable next-id)))
+    (nongenerative e-model-state-v2)
+    (fields lock kinds (mutable records) (mutable next-id) subscriptions deliveries (mutable generation)))
+  (define-record-type subscription
+    (nongenerative e-model-subscription-v1)
+    (fields token ids procedure (mutable pending)))
   (define data
     (unbox (kernel:persistent-cell 'model
              (lambda () (make-state (make-mutex) (kernel:make-registry definition-key)
-                                    (make-eqv-hashtable) 1)))))
+                                    (make-eqv-hashtable) 1 (kernel:make-registry subscription-token)
+                                    (kernel:make-delivery-queue) 0)))))
   (define keys '(id kind schema scope persistence revision actor references value))
   (define (field entry key) (cdr (assq key entry)))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
@@ -63,6 +67,75 @@
       (unless (identity:valid? actor) (error 'model "expected an actor identity" actor))
       actor))
 
+  (define (mutate! thunk)
+    (activity:call-with
+      (lambda ()
+        (call-with-values thunk
+          (lambda result
+            (kernel:drain-deliveries! (state-deliveries data))
+            (apply values result))))))
+
+  (define (changed! ids)
+    ;; Under the writer. One queued wake per subscriber, with at most 256
+    ;; ids; #f requests a rescan. Definitions may change without revisions.
+    (state-generation-set! data (+ 1 (state-generation data)))
+    (for-each
+      (lambda (subscriber)
+        (let ([selected (and ids (filter (lambda (id) (or (not (subscription-ids subscriber))
+                                                          (member id (subscription-ids subscriber)))) ids))])
+          (unless (equal? selected '())
+            (let* ([old (subscription-pending subscriber)]
+                   [merged (and selected (or (not old) (cadr old))
+                                (fold-left (lambda (out id) (if (member id out) out (cons id out)))
+                                  selected (if old (cadr old) '())))])
+              (subscription-pending-set! subscriber
+                (list (state-generation data) (and merged (<= (length merged) 256) merged)))
+              (unless old
+                (kernel:enqueue-delivery! (state-deliveries data)
+                  (lambda ()
+                    (let ([event (with-mutex (state-lock data)
+                                   (let ([event (subscription-pending subscriber)])
+                                     (subscription-pending-set! subscriber #f) event))])
+                      (when (kernel:registry-find (state-subscriptions data) (lambda (entry) (eq? entry subscriber)))
+                        ((subscription-procedure subscriber) (datum:copy event)))))))))))
+      (kernel:call-with-runtime-registrations (lambda () (kernel:registry-items (state-subscriptions data))))))
+
+  (define definition-observer
+    (kernel:registry-observe! (state-kinds data)
+      (lambda (removed added)
+        (mutate! (lambda () (with-mutex (state-lock data) (changed! #f)))))))
+
+  (edoc "Subscribe to model invalidations: (procedure (generation ids-or-#f)); #f means rescan. Subscribe before reading snapshots; their watermark covers any earlier notices."
+        (ids (or list #f) "tagged model ids, or #f for all") (procedure procedure "the bounded invalidation callback")
+        (returns any))
+  (define (subscribe! ids procedure)
+    (unless (and (or (not ids) (and (list? ids) (for-all (lambda (id) (tagged? id 'model)) ids))) (procedure? procedure))
+      (error 'subscribe! "expected model ids or #f and a procedure" ids procedure))
+    (let ([token (gensym "model-subscription")])
+      (kernel:registry-add! (state-subscriptions data) (make-subscription token (datum:copy ids) procedure #f)) token))
+
+  (edoc "Retract a model subscription, including queued callbacks."
+        (token any "the subscription token"))
+  (define (unsubscribe! token)
+    (kernel:registry-remove! (state-subscriptions data) (lambda (entry) (eq? token (subscription-token entry)))))
+
+  (edoc "A coherent batch: (generation ((id available? envelope-or-#f) ...)); predicates run outside the writer on captured values."
+        (ids list "tagged model ids in result order") (returns list))
+  (define (snapshots ids)
+    (let ([ids (datum:copy ids)])
+      (unless (list? ids) (error 'snapshots "expected model ids" ids))
+      (for-each require-id ids)
+      (let-values ([(generation entries definitions)
+                    (with-mutex (state-lock data)
+                      (let ([entries (map record-of ids)] [definitions (kernel:registry-items (state-kinds data))])
+                        (values (state-generation data) entries definitions)))])
+        (list generation
+          (map (lambda (id entry)
+                 (list id (and entry
+                               (accepts? (find (lambda (definition)
+                                                 (equal? (definition-key definition) (list (field entry 'kind) (field entry 'schema)))) definitions) entry))
+                       (datum:copy entry))) ids entries)))))
+
   (edoc "Register a versioned kind of transient interaction or derived state; its pure payload predicate may use edoc types. Registration is module-owned; removing it leaves records intact."
         (kind symbol "the globally unique kind")
         (schema integer "the positive schema version")
@@ -70,7 +143,7 @@
   (define (register-kind! kind schema accepts?)
     (unless (and (symbol? kind) (positive-integer? schema) (procedure? accepts?))
       (error 'register-kind! "expected kind, positive schema version and predicate" kind schema accepts?))
-    (activity:call-with
+    (mutate!
       (lambda ()
         (kernel:registry-add! (state-kinds data) (make-definition (list kind schema) accepts?)))))
 
@@ -82,7 +155,7 @@
         (value datum "the initial payload")
         (returns list))
   (define (create! actor kind schema scope persistence references value)
-    (activity:call-with
+    (mutate!
       (lambda ()
         (let ([entry (datum:copy (map cons keys
                                    (list '(model 1) kind schema scope persistence 0 (own-actor actor) references value)))])
@@ -95,6 +168,7 @@
                      [entry (cons (cons 'id id) (cdr entry))])
                 (hashtable-set! (state-records data) n entry)
                 (state-next-id-set! data (+ n 1))
+                (changed! (list id))
                 (datum:copy id))))))))
 
   (edoc "All live model ids, in allocation order."
@@ -143,7 +217,7 @@
         (actor actor "the author")
         (changes list "(model-id expected-revision references value) entries"))
   (define (commit! actor changes)
-    (activity:call-with
+    (mutate!
       (lambda ()
         (let* ([actor (own-actor actor)] [changes (own-changes changes)]
                [ids (map car changes)] [before (read-records ids)])
@@ -161,12 +235,14 @@
                        (values 'unavailable (datum:copy current))]
                       [else
                        (for-each (lambda (id entry) (hashtable-set! (state-records data) (cadr id) entry)) ids after)
+                       (let ([changed (filter values (map (lambda (id old new) (and (not (eq? old new)) id)) ids before after))])
+                         (unless (null? changed) (changed! changed)))
                        (values 'applied (datum:copy after))])))))))))
 
   (edoc "Retire non-authored model state against its revision; values are applied with #f, or stale/unavailable with the current envelope. References are not cascaded into destructive operations."
         (actor actor "the author") (id list "the tagged model id") (revision integer "the expected revision"))
   (define (retire! actor id revision)
-    (activity:call-with
+    (mutate!
       (lambda ()
         (own-actor actor)
         (unless (natural? revision) (error 'retire! "expected a nonnegative revision" revision))
@@ -180,7 +256,7 @@
                  (values 'stale (datum:copy current))]
                 [(or (not available) (not (eq? definition (definition-of current))))
                  (values 'unavailable (datum:copy current))]
-                [else (hashtable-delete! (state-records data) (cadr id)) (values 'applied #f)])))))))
+                [else (hashtable-delete! (state-records data) (cadr id)) (changed! (list id)) (values 'applied #f)])))))))
 
   (edoc "The persistent model representation as (values next-id envelopes), including opaque unknown schemas."
         (returns any))

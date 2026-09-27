@@ -112,6 +112,11 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (case operation
+      [(model-ids) (arity 0) (model:ids)]
+      [(model-read) (arity 1) (model:snapshots (car args))]
+      [(model-create) (control!) (arity 6) (apply model:create! actor args)]
+      [(model-commit) (control!) (arity 1) (call-with-values (lambda () (model:commit! actor (car args))) list)]
+      [(model-retire) (control!) (arity 2) (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)
@@ -522,7 +527,8 @@
     (let* ([connection (peer-connection peer)]
            [owner (list 'connection connection)] [out (kernel:make-mailbox)]
            [out-lock (make-mutex)] [queued-bytes 0] [queued-count 0] [closed? #f]
-           [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f])
+           [writer #f] [session #f] [changes #f] [head-watch? #f] [control? #f] [closing #f]
+           [model-token #f] [model-ids (make-eqv-hashtable)] [model-pending '()])
       (define (close!)
         (when (with-mutex out-lock
                 (and (not closed?) (begin (set! closed? #t) #t)))
@@ -541,7 +547,7 @@
           ;; #t is one coalesced watch wakeup; all other work is owned bytes.
           ;; Count includes an in-flight write. A stalled peer cannot retain
           ;; unlimited store versions, tiny mail envelopes or encoded replies.
-          (let* ([frame (if (eq? message #t) #t (wire:encode message))]
+          (let* ([frame (if (memq message '(#t models)) message (wire:encode message))]
                  [size (if (bytevector? frame) (bytevector-length frame) 0)])
             (unless (with-mutex out-lock
                       (and (not closed?) (< queued-count 256)
@@ -553,6 +559,37 @@
               ;; Overload is a disconnect, never a silently dropped reply or
               ;; actor message. Only invalidations may coalesce.
               (error 'wire "pending output limit reached")))))
+      (define (model-event! event)
+        (when
+          (with-mutex out-lock
+            (let* ([ids (cadr event)]
+                   [selected (if ids (filter (lambda (id) (hashtable-contains? model-ids (cadr id))) ids)
+                                 (and (zero? (hashtable-size model-ids)) '()))]
+                   [empty? (equal? model-pending '())])
+              (unless (equal? selected '())
+                (set! model-pending
+                  (and model-pending selected
+                       (let merge ([rest selected] [out model-pending])
+                         (cond [(null? rest) out]
+                               [(>= (length out) 256) #f]
+                               [else (merge (cdr rest)
+                                       (cons (cons (cadar rest) (car event))
+                                         (remp (lambda (old) (= (car old) (cadar rest))) out)))])))))
+              (and empty? (not (equal? model-pending '())))))
+          (post! 'models)))
+      (define (check-model-ids ids)
+        (unless (and (list? ids) (for-all (lambda (id) (and (list? id) (= (length id) 2)
+                                                         (eq? (car id) 'model) (integer? (cadr id))
+                                                         (exact? (cadr id)) (> (cadr id) 0))) ids))
+          (error 'wire "expected tagged model ids" ids)))
+      (define (models-watch! ids)
+        ;; Subscribe before reading: a racing commit is in one or both.
+        (check-model-ids ids)
+        (unless model-token
+          (parameterize ([kernel:registering-module owner])
+            (set! model-token (model:subscribe! #f model-event!))))
+        (with-mutex out-lock (for-each (lambda (id) (hashtable-set! model-ids (cadr id) #t)) ids))
+        (model:snapshots ids))
       (define (watch!)
         (unless changes
           ;; Publish the take procedure before the writer can consume a wake.
@@ -652,8 +689,12 @@
                                   (close!))]
                             [item
                              (let ([frame
-                                    (if (bytevector? item) item
-                                      (wire:encode (list 'changed ((with-mutex out-lock changes)))))])
+                                    (cond [(bytevector? item) item]
+                                          [(eq? item 'models)
+                                           (wire:encode (list 'models
+                                                          (with-mutex out-lock
+                                                            (let ([pending model-pending]) (set! model-pending '()) pending))))]
+                                          [else (wire:encode (list 'changed ((with-mutex out-lock changes))))])])
                                (put-bytevector (sys:connection-output connection) frame)
                                (flush-output-port (sys:connection-output connection)))
                              (with-mutex out-lock
@@ -684,6 +725,15 @@
                               (error 'wire "operation is not available on this connection" (caddr message)))
                             (list 'reply (cadr message) 'ok
                               (case (caddr message)
+                                [(model-watch)
+                                 (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
+                                 (models-watch! (cadddr message))]
+                                [(model-unwatch)
+                                 (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
+                                 (let ([ids (cadddr message)])
+                                   (check-model-ids ids)
+                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids)))
+                                 #t]
                                 [(status)
                                  (unless (= (length message) 3) (error 'wire "status takes no arguments"))
                                  (status (with-mutex peer-lock (participants)))]

@@ -129,6 +129,13 @@
                          (kernel:loaded-modules))
                  (kernel:module-requires? "base" "head") (actor:current) (store:buffer-list)))
          (define held (policy:mint! '(agent "authority probe") (policy:reader) '(head "desk λ")))
+         (define model-checks 0)
+         (model:register-kind! 'wire-value 1
+           (lambda (value)
+             (set! model-checks (+ model-checks 1))
+             (call-with-output-file ,(string-append root "/model-checks")
+               (lambda (out) (write model-checks out)) 'replace)
+             (string? value)))
          (define old-eval policy:session-eval!)
          (define old-edit policy:session-edit!)
          (define old-undo policy:session-undo!)
@@ -1790,6 +1797,39 @@
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
+                 (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
+                   (define (checks) (call-with-input-file (string-append root "/model-checks") read))
+                   (for-each (lambda (ui)
+                               (head-read ui
+                                 `(begin (define model-events '())
+                                         (define model-reader (model:subscribe! '(,model)
+                                                                (lambda (event) (set! model-events (cons event model-events)))))
+                                         (model:available? ',model)))) (list a b))
+                   (let ([before (checks)])
+                     (test:check 'model-shared-mirrors-are-owned-and-warm-reads-are-local
+                       (head-read a
+                         `(begin
+                            (define second-reader (model:subscribe! '(,model) void))
+                            (guard (ex [else (void)])
+                              (kernel:call-with-registration-update
+                                (lambda () (model:subscribe! '((model 999999)) void) (error 'rollback "rollback"))))
+                            (do ([i 0 (+ i 1)]) ((= i 1000)) (model:snapshot ',model) (model:available? ',model))
+                            (let ([copy (model:snapshot ',model)])
+                              (string-set! (cdr (assq 'value copy)) 0 #\X))
+                            (model:unsubscribe! second-reader)
+                            (list (cdr (assq 'value (model:snapshot ',model)))
+                                  (guard (ex [else #t]) (model:snapshot '(model 999999)) #f)))) '("first" #t))
+                     (test:check 'second-subscription-and-warm-reads-send-no-model-requests (checks) before))
+                   (rpc head 'model-commit (list (list model 0 '() "remote")))
+                   (for-each (lambda (ui)
+                               (head-wait 'model-background-mirror ui
+                                 (lambda () (equal? (head-read ui `(cdr (assq 'value (model:snapshot ',model)))) "remote")))) (list a b))
+                   (rpc head 'model-retire model 1)
+                   (for-each (lambda (ui)
+                               (head-wait 'model-retirement ui (lambda () (not (head-read ui `(model:snapshot ',model)))))
+                               (test:check 'model-last-subscriber-releases-mirror
+                                 (head-read ui `(begin (model:unsubscribe! model-reader)
+                                                       (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client
