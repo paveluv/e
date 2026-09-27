@@ -3,14 +3,64 @@
 ;; and both coordinate directions. Public metadata reads own their data.
 (import (only (foundation edoc) elibrary))
 (elibrary (head render)
-  (export breaks character column header prepare present row width)
+  (export breaks character column defer deferred? header line-count line-ref lines-vector prefix prepare present row width)
   (import (rnrs)
           (prefix (foundation datum) datum:)
+          (prefix (foundation text) text:)
           (prefix (state surface) surface:)
           (prefix (sys glyph) glyph:))
 
   (define-record-type frame (fields id text header rows))
   (define-record-type line (fields shown styles links columns characters))
+
+  ;; Local tables may have millions of logical rows. Keep their projection
+  ;; demand-driven just like a terminal surface; geometry reads one row,
+  ;; and explicit whole-text consumers can still ask for a vector.
+  (edoc "A display whose immutable lines are computed on demand."
+        (count integer "the row count") (ref procedure "the line provider")
+        (vector (or vector #f) "explicitly materialized lines, if requested"))
+  (define-record-type (deferred make-deferred deferred?)
+    (fields count ref (mutable vector)))
+
+  (edoc "Defer formatting a fixed set of display lines until a row is requested."
+        (count integer "the positive row count")
+        (ref procedure "(ref row) returning an immutable line string")
+        (returns any))
+  (define (defer count ref)
+    (unless (and (integer? count) (exact? count) (positive? count) (procedure? ref))
+      (error 'defer "expected a positive row count and a line procedure" count ref))
+    (make-deferred count ref #f))
+
+  (edoc "The number of lines in a vector or deferred display."
+        (lines any "the lines") (returns integer))
+  (define (line-count lines)
+    (if (deferred? lines) (deferred-count lines) (vector-length lines)))
+
+  (edoc "Read a line, formatting only that row when its display is deferred."
+        (lines any "the lines") (row integer "the row") (returns string))
+  (define (line-ref lines row)
+    (if (not (deferred? lines)) (vector-ref lines row)
+        (if (deferred-vector lines) (vector-ref (deferred-vector lines) row)
+            (begin
+              (unless (<= 0 row (- (deferred-count lines) 1)) (error 'line-ref "row out of range" row))
+              (let ([line ((deferred-ref lines) row)])
+                (unless (text:line? line) (error 'line-ref "expected a line without newlines" line)) line)))))
+
+  (edoc "Materialize every display line as a vector; ordinary vectors are returned unchanged."
+        (lines any "the lines") (returns vector) (effects internal))
+  (define (lines-vector lines)
+    (if (not (deferred? lines)) lines
+        (or (deferred-vector lines)
+            (let ([v (make-vector (line-count lines))])
+              (do ([i 0 (+ i 1)]) ((= i (vector-length v))) (vector-set! v i (line-ref lines i)))
+              (deferred-vector-set! lines v) v))))
+
+  (edoc "Replace a line source's leading rows without copying or formatting its body."
+        (lines any "the original source") (front list "the replacement prefix") (returns any))
+  (define (prefix lines front)
+    (let ([front (text:normalize front)] [count (line-count lines)])
+      (unless (<= (vector-length front) count) (error 'prefix "prefix exceeds source"))
+      (defer count (lambda (i) (if (< i (vector-length front)) (vector-ref front i) (line-ref lines i))))))
 
   (define (positive-integer? n)
     (and (integer? n) (exact? n) (> n 0)))
@@ -108,7 +158,7 @@
         (for-each
           (lambda (i)
             (hashtable-set! table i
-              (or (and old (hashtable-ref old i #f)) (project (vector-ref text i) #f)))) wanted)
+              (or (and old (hashtable-ref old i #f)) (project (line-ref text i) #f)))) wanted)
         (make-frame id text #f table)))
     (let ([height (if (null? follow-height) 0 (car follow-height))])
       (let retry ([attempts 2])
@@ -119,7 +169,7 @@
           (let* ([cursor (and next (caddr next))]
                  [ranges (if (and cursor (> height 0))
                              (cons (cons (- (car cursor) height -1) (+ (car cursor) height)) ranges) ranges)]
-                 [wanted (requested-rows ranges (vector-length text))])
+                 [wanted (requested-rows ranges (line-count text))])
             (if (and previous (eqv? (frame-id previous) id)
                      (eq? (frame-text previous) text)
                      (equal? (frame-header previous) next)
@@ -138,7 +188,7 @@
                               [(not rows) (if (> attempts 0) (retry (- attempts 1)) (plain wanted))]
                               [(for-all
                                  (lambda (entry)
-                                   (let ([line (project (vector-ref text (car entry)) (cdr entry))])
+                                   (let ([line (project (line-ref text (car entry)) (cdr entry))])
                                      (and line (begin (hashtable-set! table (car entry) line) #t)))) rows)
                                (fetch (cdr tail))]
                               [else (plain wanted)]))))))))))))
@@ -150,11 +200,11 @@
     (and frame (datum:copy (frame-header frame))))
   (define (line-at frame row)
     (and frame
-         (<= 0 row) (< row (vector-length (frame-text frame)))
+         (<= 0 row) (< row (line-count (frame-text frame)))
          (let ([line (or (hashtable-ref (frame-rows frame) row #f)
                          ;; Navigation can address an undemanded plain row.
                          ;; Derive it without retaining a scrollback cache.
-                         (project (vector-ref (frame-text frame) row) #f))])
+                         (project (line-ref (frame-text frame) row) #f))])
            (and (line? line) line))))
 
   (edoc "A copy of a frame row's (cell-strings styles cell-link-ranges), or #f for plain text."

@@ -6,8 +6,11 @@ directory. `M-x (finder:open-directory! "/some/directory")` starts elsewhere.
 The original path-entry prompt remains available as `M-x (edit:visit-file!)`.
 `C-x f` has no default binding.
 
-The first line is the relative-path filter. The Directory line shows the
-directory with a trailing slash, plus scan status. Below your home directory,
+The first line is the filter, followed by an italic `[N matches]` count.
+Connecting directories do not inflate that count. A trailing `+` means the
+scan is still running or some paths could not be read.
+The Directory line shows the
+directory with a trailing slash and scan status. Below your home directory,
 its prefix becomes `~/`, as in `~/git/e/`. Each ancestor component and its
 following slash is clickable: `git/` goes to `~/git/`, and `~/` goes home.
 At home itself the full path appears, such as `/home/paveluv/`, with its
@@ -28,8 +31,7 @@ branch leading back to the previous location. Backspace goes up when the
 filter is empty. Left, Right, Enter and directory/breadcrumb clicks preserve
 the filter exactly as typed; C-u explicitly clears it.
 
-Type to filter by name, ignoring case; a filter containing `/` matches
-relative paths instead. Up/Down, C-p/C-n, Shift-Tab/Tab, Home/End
+Type to filter, ignoring case. Up/Down, C-p/C-n, Shift-Tab, Home/End
 and PageUp/PageDown choose a row; Enter opens it. An exact path takes priority.
 Otherwise a unique nested file match is selected directly. Enter on an empty result stays in the current directory.
 Esc or C-g returns to the document from which this window opened the app.
@@ -37,15 +39,40 @@ Esc or C-g returns to the document from which this window opened the app.
 | Key | Action |
 |---|---|
 | `C-u` | Clear the filter. |
+| `Tab` | Expand the filter without changing its matches. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
 | `M-c` | Enter Create mode, with a path prompt below the live table. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
 
-Filtering is a case-insensitive substring search, and the filter is never
-completed: Tab moves the row like Down. Use M-c to enter a literal path,
-including absolute, home or parent paths; its prompt completes components.
+The filter is a list of literal keys separated by spaces. Every key must
+occur in the path, ignoring case, and their occurrences must not overlap.
+Keys may appear in any order and include slashes. Repeating a key requires
+another occurrence. Quote a key as a Scheme string to include spaces, for
+example `"my notes" txt`. A quoted leading tilde remains literal.
+
+A key starting with `/` matches from the filesystem root. An unquoted leading
+`~` expands to your home directory, so `~/src txt` searches there regardless
+of the directory shown. Without a rooted key, the current directory's full
+path, ending in `/`, is an implicit key. It consumes that prefix, leaving
+your explicit keys to match below the current directory.
+
+Matching stops at the first file or directory that contains all keys.
+For `A/B/C/file.txt`, `A B` finds `A/B/`, `B/C` finds `A/B/C/`, and
+`A txt` finds the file. A matching directory's descendants are omitted:
+matching a directory does not flood the list with everything inside it.
+An empty filter shows the current directory's immediate children.
+
+Tab extends the filter without changing its matches. It maximizes literal
+characters minus separating spaces; fewer keys break a tie. For example,
+`file` scores 4 and `f i l e` scores 1. A single result expands to its whole
+path, quoted if necessary. Multiple results may produce several shared path
+fragments. Completion preserves hidden-entry visibility and directory scope.
+Tab waits for a complete scan, then computes in the background; `Completing…`
+marks that work. Keep typing to cancel it and refine the search. An unreadable
+subtree prevents completion from assuming the visible results are exhaustive.
+Use M-c for the separate Create prompt and literal path completion.
 
 ## Create mode
 
@@ -106,13 +133,9 @@ never replaced by directory creation.
 
 ## Recursive filtering
 
-A nonempty filter searches the whole tree below the directory. Without a
-slash it matches file and directory names only: `lib` finds every entry
-whose name contains `lib`, and a matching directory does not claim its
-contents. A filter containing `/` matches full relative paths instead, and
-slashes are literal: `lib/` matches that part of a path, including descendants
-whose own names do not contain `lib`. Directories include their trailing `/`
-for matching. Typing a dot component, such as `lib/.git/`, includes hidden entries.
+A nonempty filter searches below the current directory, or from root when
+a key is rooted. Directory paths include their trailing `/` for matching.
+Typing a dot component, such as `lib/.git/`, includes hidden entries.
 Every matching path is expanded as a tree, with one space of indentation per
 level and no limit on the number of matches or the depth of expansion.
 Intermediate directories show their own descendant counts and can be entered
@@ -126,34 +149,32 @@ A/             1
    foo.txt
 ```
 
-A count includes matching directories as well as files. Connecting directories
-count only when their own names or paths match. A directory's own match is
-independent of the descendant count shown beside it.
+A count includes matching files and directories below that row. Connecting
+directories do not count as matches themselves. A directory that satisfies
+the filter has a descendant count of zero, because search stops there.
 
-Relative paths are measured from the new directory: entering
-`lib/` with `lib/foo` still in Filter may produce no matches. Edit or clear the
-filter to search for `foo` there, or use M-c to work with a literal path.
+The implicit current-directory key changes when you navigate. Entering
+`lib/` with `lib foo` still in Filter may therefore produce no matches.
+Edit or clear the filter to search for `foo` there, or keep a rooted key to
+search independently of the current directory.
 
-Scanning runs in the background. Typing or navigating replaces the pending
-search; results from an older search cannot replace the new view. Known paths
-that still match stay visible while the search catches up, including when
-you erase part of the filter. Newly excluded paths disappear immediately.
-`Searching…`
-marks work in progress, `+` marks a lower bound, and `?` means unknown. An
-unreadable or vanished subtree is reported and leaves its count incomplete.
-Listings and metadata are cached for the lifetime of the Finder app. Editing
-the filter, toggling hidden entries and navigating back and forth reuse the
-inventory; only previously unexplored paths need filesystem reads. Cancelled
-searches retain what they already learned. `C-r` clears the whole cache and
-rescans the current directory.
+Scanning, sorting and completion run in the background. Typing or navigating
+replaces pending work. The previous table remains as a preview until a new
+result arrives; Enter cannot open a preview row excluded by the new filter.
+`Searching…` marks work in progress, `+` marks a lower bound, and `?` means
+unknown. An unreadable or vanished subtree leaves its count incomplete.
 
-On Linux, directory notifications automatically invalidate changed entries
-and refresh the view, including creates, writes, renames and deletes. Other
-cached paths stay intact. Lost notifications trigger a full rebuild. On other
-platforms, or where watches cannot be installed, use `C-r` to see external
-changes. Network filesystems and changes outside the watched paths may also
-require `C-r`. The inventory is not an atomic filesystem snapshot. Cancellation
-takes effect between filesystem operations.
+Listings and metadata are cached for the lifetime of the Finder app. Filters
+and navigation reuse this inventory, including work from cancelled searches.
+On Linux the scan reads entry types directly from directory listings.
+Metadata and formatted table cells are loaded only for visible rows, except
+that sorting by metadata needs those values for all results. Large result
+tables remain scrollable while background work continues.
+
+Filesystem subscriptions are disabled: Finder consumes no directory watches.
+Use `C-r` to discard the cache and pick up external changes. The inventory is
+not an atomic filesystem snapshot; cancellation takes effect between filesystem
+operations.
 
 Dotfiles and dot directories are excluded by default. `M-.` includes them;
 `(finder:show-hidden #t)` enables them in configuration. Directory symlinks
@@ -175,7 +196,7 @@ as text files.
 | Modified | Last data modification time, displayed in local time with the date. |
 | Created | Birth time, when available. |
 | Permissions | Unix type and permission flags, including setuid, setgid and sticky bits. |
-| Entries / Matches | Visible immediate entry count without a filter; descendant match count with one. |
+| Entries / Matches | Visible immediate entry count in the directory overview; descendant match count during a search. |
 
 Click a heading or press its F-key to cycle ascending → descending → off.
 Several columns may be active. Click order determines priority; changing
@@ -200,7 +221,7 @@ the `finder` context to one of them: `finder:choose!` for Enter, `enter!`,
 `parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
 `first-row!`, `last-row!`, `erase!`, `clear-filter!`, `create!`,
 `(toggle-sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
-`return!` and `paste-filter!`, and typing itself is the context's
+`complete!`, `return!` and `paste-filter!`, and typing itself is the context's
 `SELF-INSERT` binding, `(extend-filter! text)` with the character typed, so
 `C-x TAB` lists them all, typing as `any character`, and `C-h k` describes
 one. Beside the keys, `(filter! text)` sets the filter that typing grows, `(select! path)` makes a listed entry the
@@ -237,5 +258,5 @@ instead and the finder keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
 scrolls the pointed pane by the usual fraction of its height, without opening
 files or changing keyboard focus. Named-head
-reattachment restores the directory, filter, sorts, hidden-entry setting and
+reattachment restores the directory, filter, matching mode, sorts, hidden-entry setting and
 selected paths, then rescans. Other heads have independent finders.

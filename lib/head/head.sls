@@ -68,10 +68,10 @@
           weighted-first window window-at window-auto-scrollbar-set! window-buffer
           window-buffer-set! window-button-at window-buttons window-buttons-width
           window-content-width window-goal window-goal-set! window-index window-left
-          window-left-set! window-line-number-width window-line-numbers window-line-numbers-set!
+          window-left-set! window-line window-line-number-width window-line-numbers window-line-numbers-set!
           window-line-numbers? window-lines window-numbered window-pcol window-pcol-set!
           window-prow window-prow-set! window-rendition window-scrollbar-column
-          window-scrollbar? window-size window-size-set! window-status-actions-set! window-top
+          window-scrollbar? window-size window-size-set! window-status-actions-set! window-text window-top
           window-top-set! window-topseg window-topseg-set! window-width window-width-set!
           window-wrap window-wrap-set! window-xoff window-xoff-set! window? windows with-buffer
           with-window)
@@ -127,7 +127,7 @@
   (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
-            (mutable lines buffer-lines buffer-lines-raw-set!)
+            (mutable lines buffer-text buffer-lines-raw-set!)
             (mutable revision)      ; the seat's repaint counter
             (mutable mark-row) (mutable mark-col)
             (mutable marked buffer-marked buffer-marked-raw-set!)
@@ -217,16 +217,25 @@
     (let ([v (window-view w)] [b (window-buffer w)])
       (and v
            (if (and (eq? (view-owner v) (app-of b))
-                    (eq? (view-source v) (buffer-lines b))
+                    (eq? (view-source v) (buffer-text b))
                     (not (buffer-selectable? b))) v
                (begin (window-view-set! w #f) #f)))))
 
   (edoc "The lines a window shows: its local app view's, else its buffer's."
         (w window "the window")
-        (returns vector))
+        (returns vector) (effects internal))
   (define (window-lines w)
+    (render:lines-vector (window-text w)))
+
+  (edoc "The window's line source, possibly deferred; read it with render:line-ref and render:line-count."
+        (w window "the window") (returns any))
+  (define (window-text w)
     (let ([v (window-view-current w)])
-      (if v (view-lines v) (buffer-lines (window-buffer w)))))
+      (if v (view-lines v) (buffer-text (window-buffer w)))))
+
+  (edoc "One displayed line, without formatting the rest of the window's app."
+        (w window "the window") (row integer "the row") (returns string))
+  (define (window-line w row) (render:line-ref (window-text w) row))
 
   (edoc "The cell projection of what a window shows: its view's frame, else its buffer's rendition."
         (w window "the window")
@@ -489,8 +498,8 @@
     ;; Point belongs to the selected window, for apps and text alike.
     (let ([w the-current])
       (follow-app! w #f)
-      (window-prow-set! w (max 0 (min (car p) (- (vector-length (buffer-lines (window-buffer w))) 1))))
-      (window-pcol-set! w (max 0 (min (cdr p) (string-length (vector-ref (window-lines w) (window-prow w))))))))
+      (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
+      (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w))))))))
 
   (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
         (returns directory))
@@ -1291,7 +1300,7 @@
   (define (set-adopt-hook! proc)
     (set! adopt-hook proc))
 
-  (define (line-count b) (vector-length (buffer-lines b)))
+  (define (line-count b) (render:line-count (buffer-text b)))
 
   ;; Facts have one owner: the store for shared buffers, the record's
   ;; table for local ones.  Both distinguish an absent key (the caller's
@@ -1686,7 +1695,7 @@
            (or (buffer-rendition-raw b)
                ;; Commands may ask for geometry immediately after an edit,
                ;; before the next surface demand. Adopted text is sufficient.
-               (render:prepare #f #f (buffer-lines b) (content-revision b) '())))))
+               (render:prepare #f #f (buffer-text b) (content-revision b) '())))))
 
   (edoc "A projection of a buffer's current text for the demanded row ranges, following a surface with a height when one is given."
         (b buffer "the buffer")
@@ -1697,7 +1706,7 @@
     (case-lambda
       [(b ranges) (read-rendition b ranges 0)]
       [(b ranges follow-height)
-       (read-source-rendition b (buffer-lines b) (content-revision b) ranges follow-height)]))
+       (read-source-rendition b (buffer-text b) (content-revision b) ranges follow-height)]))
 
   (define (read-source-rendition b text revision ranges follow-height)
     ;; Explicit demand reads obey head visibility even through a retained
@@ -1757,7 +1766,7 @@
   (define (refresh-buffer-rendition! b)
     (let ([facts (app-facts b)])
       (let-values ([(next following)
-                    (prepare-buffer-rendition b (buffer-lines b) (content-revision b) '() facts)])
+                    (prepare-buffer-rendition b (buffer-text b) (content-revision b) '() facts)])
         (when (rendition-ready? facts next)
           (install-buffer-rendition! b next following facts)))))
 
@@ -1773,7 +1782,7 @@
     (when (buffer-store-id b)
       (error 'adopt-local! "a shared buffer must commit in the store"))
     (unless (if delta (equal? (text:delta-removed delta) (text:delta-inserted delta))
-                (equal? (buffer-lines b) text))
+                (equal? (buffer-text b) text))
       (note-local-modification! b))
     (let ([revision (+ (buffer-local-rev b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
@@ -1938,8 +1947,8 @@
       placements))
 
   (define (clamp-text-position text p)
-    (let ([row (max 0 (min (car p) (- (vector-length text) 1)))])
-      (cons row (max 0 (min (cdr p) (string-length (vector-ref text row)))))))
+    (let ([row (max 0 (min (car p) (- (render:line-count text) 1)))])
+      (cons row (max 0 (min (cdr p) (string-length (render:line-ref text row)))))))
 
   (edoc "The anchors of a buffer that travel through edits and resume: spot, spot-top, mark and every window's point."
         (b buffer "the buffer")
@@ -2165,7 +2174,7 @@
              [empty? (and (zero? last) (zero? col))])
         (store-edit! b (text:make-span last col last col)
                      (if empty? new-lines (cons "" new-lines))))
-      (let ([last (- (vector-length (buffer-lines b)) 1)])
+      (let ([last (- (render:line-count (buffer-text b)) 1)])
         (buffer-spot-row-set! b last)
         (buffer-spot-col-set! b 0)
         (for-each (lambda (w)
@@ -2228,18 +2237,22 @@
                                   (forget-buffer! b)
                                   #f)))))))))))
 
+  (edoc "Materialize a buffer's complete text as a vector; use buffer-line and buffer-line-count to read a local view without rendering unseen rows."
+        (b buffer "the buffer") (returns vector) (effects internal))
+  (define (buffer-lines b) (render:lines-vector (buffer-text b)))
+
   (edoc "How many lines a buffer has."
         (b buffer "the buffer to measure")
         (returns integer))
   (define (buffer-line-count b)
-    (vector-length (buffer-lines b)))
+    (render:line-count (buffer-text b)))
 
   (edoc "One line of a buffer, by zero-based row."
         (b buffer "the buffer to read")
         (row integer "the row")
         (returns string))
   (define (buffer-line b row)
-    (vector-ref (buffer-lines b) row))
+    (render:line-ref (buffer-text b) row))
 
   (edoc "Replace a buffer's text as a new baseline, through store-reset!."
         (b buffer "the buffer")
@@ -2252,24 +2265,24 @@
   (define (clamp-buffer-positions! b)
     ;; Keep selection, saved position/viewport, and every window inside
     ;; the (possibly shorter) current lines.
-    (let* ([v (buffer-lines b)]
-           [last (- (vector-length v) 1)])
+    (let* ([v (buffer-text b)]
+           [last (- (render:line-count v) 1)])
       (buffer-spot-row-set! b (min (buffer-spot-row b) last))
       (buffer-spot-col-set!
         b (min (buffer-spot-col b)
-               (string-length (vector-ref v (buffer-spot-row b)))))
+               (string-length (render:line-ref v (buffer-spot-row b)))))
       (buffer-spot-top-set! b (min (buffer-spot-top b) last))
       (buffer-mark-row-set! b (min (buffer-mark-row b) last))
       (buffer-mark-col-set!
         b (min (buffer-mark-col b)
-               (string-length (vector-ref v (buffer-mark-row b)))))
+               (string-length (render:line-ref v (buffer-mark-row b)))))
       (for-each
         (lambda (w)
           (when (eq? (window-buffer w) b)
             (window-prow-set! w (min (window-prow w) last))
             (window-pcol-set!
               w (min (window-pcol w)
-                     (string-length (vector-ref (window-lines w) (window-prow w)))))
+                     (string-length (render:line-ref (window-text w) (window-prow w)))))
             (window-top-set! w (min (window-top w) last))))
         the-windows)))
 
@@ -3036,7 +3049,7 @@
     (let* ([b (window-buffer w)] [cursor (caddr header)] [row (car cursor)] [cell (cadr cursor)])
       (window-prow-set! w row)
       (window-pcol-set! w
-        (min (render:character frame row cell) (string-length (vector-ref (buffer-lines b) row))))
+        (min (render:character frame row cell) (string-length (render:line-ref (buffer-text b) row))))
       (when (app-fact facts 'manages-viewport #f)
         ;; A managed grid occupies the transcript's tail. Smaller windows
         ;; clip it around the cursor; ordinary apps keep normal scrolling.
@@ -3470,7 +3483,7 @@
                                         (= (window-pcol w) (string-length (vector-ref v (- n 1))))))
                                  the-windows)]
                   [new (text:normalize (append (list-tail (vector->list v) (if virgin? 1 drop)) lines))]
-                  [last (- (vector-length new) 1)]
+                  [last (- (render:line-count new) 1)]
                   [end (cons last (string-length (vector-ref new last)))])
              (view-replace! b new '()
                (map (lambda (entry)
@@ -3482,7 +3495,7 @@
 
   (edoc "Adopt a local view's rendering as one state: its lines, optional facts, numeric placements and per-window presentations."
         (b buffer "the local view buffer")
-        (lines list "the rendered lines")
+        (lines any "a line list, vector, or render:defer source for a non-selectable app")
         (options (list-of any) "facts, then placements, then (window . lines) presentations"))
   (define (view-replace! b lines . options)
     ;; Adopt a local rendering, optional facts, and numeric placements as
@@ -3496,7 +3509,7 @@
       (error 'view-replace! "expected a local buffer" b))
     (unless (<= (length options) 3)
       (error 'view-replace! "expected facts, position placements and window presentations" options))
-    (let* ([new (text:normalize lines)]
+    (let* ([new (if (render:deferred? lines) lines (text:normalize lines))]
            [facts (store:validate-properties (if (pair? options) (car options) '()))]
            [placements (if (>= (length options) 2) (cadr options) '())]
            [presentations (if (= (length options) 3) (caddr options) '())]
@@ -3513,12 +3526,12 @@
                       (unless (and (pair? entry) (memq (car entry) the-windows)
                                    (eq? (window-buffer (car entry)) b) (not (memq (car entry) seen)))
                         (error 'view-replace! "invalid presentation window" entry))
-                      (let ([text (text:normalize (cdr entry))])
-                        (unless (= (vector-length text) (vector-length new))
+                      (let ([text (if (render:deferred? (cdr entry)) (cdr entry) (text:normalize (cdr entry)))])
+                        (unless (= (render:line-count text) (render:line-count new))
                           (error 'view-replace! "presentation must preserve the shared rows" entry))
                         (cons (cons (car entry) text) (validate (cdr rest) (cons (car entry) seen))))))))]
            [views-changed? #f]
-           [text-changed? (not (equal? (buffer-lines b) new))]
+           [text-changed? (not (equal? (buffer-text b) new))]
            [facts-changed?
             (exists (lambda (entry)
                       (or (not (hashtable-contains? (buffer-local-facts b) (car entry)))
@@ -3527,6 +3540,9 @@
       (check-placements! b placements)
       (unless (for-all (lambda (entry) (text:position? (cdr entry))) placements)
         (error 'view-replace! "expected numeric position placements" placements))
+      (when (and (render:deferred? new)
+                 (or (not (app-of b)) (app-fact facts 'selectable (buffer-selectable? b))))
+        (error 'view-replace! "deferred text requires a non-selectable local app"))
       (when text-changed? (adopt-local! b new #f))
       (buffer-facts-set! b facts)
       (when (pair? views) (buffer-marked-raw-set! b #f))
@@ -3541,7 +3557,7 @@
               (window-view-set! w
                 (and text
                      (let ([height (max 1 (window-size w))] [point (window-prow w)] [top (window-top w)])
-                       (make-view (app-of b) (buffer-lines b) text
+                       (make-view (app-of b) (buffer-text b) text
                          (render:prepare (and old (view-frame old)) #f text 0
                            (list (cons 0 (buffer-sticky-lines b)) (cons top (+ top height))
                                  (cons (- point height -1) (+ point height)))))))))))

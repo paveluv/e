@@ -2180,12 +2180,19 @@
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
                  (let ([scroll (rpc head 'create "scrolling"
                                     (map (lambda (n) (format "row ~3,'0d" n)) (iota 80)))])
+                   (define (frame-complete?)
+                     (let ([frames (vector-ref a 3)])
+                       (and (> (occurrences frames "\x1b;[?2026h") 0)
+                            (= (occurrences frames "\x1b;[?2026h")
+                               (occurrences frames "\x1b;[?2026l")))))
                    (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,scroll))
                                         (window:split-right!) #t))
-                   (head-wait 'split-before-scroll a (lambda () (head-sees? a "scrolling")))
+                   ;; A PTY read may end between row text and the frame's
+                   ;; closing marker. Both capture boundaries need a frame.
+                   (head-wait 'split-before-scroll a (lambda () (and (head-sees? a "scrolling") (frame-complete?))))
                    (vector-set! a 3 "")
                    (head-send! a (apply string-append (make-list 30 "\x1b;[B")))
-                   (head-wait 'held-down-scroll a (lambda () (head-sees? a "row 030")))
+                   (head-wait 'held-down-scroll a (lambda () (and (head-sees? a "row 030") (frame-complete?))))
                    (let* ([frames (vector-ref a 3)] [opened (occurrences frames "\x1b;[?2026h")]
                           [closed (occurrences frames "\x1b;[?2026l")])
                      (test:check 'attached-split-scrolling-uses-balanced-2026

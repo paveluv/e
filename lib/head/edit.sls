@@ -118,8 +118,6 @@
            [id (get place)]
            [(set! id v) (put place v)]))]))
 
-  (define-state lines (head:window-buffer current-window)
-    head:buffer-lines head:buffer-lines-set!)
   (define-state file-name (head:window-buffer current-window)
     head:buffer-file head:buffer-file-set!)
   (define-state trailing-newline? (head:window-buffer current-window)
@@ -177,11 +175,11 @@
 
   ;;; Buffer access and undo ------------------------------------------------
 
-  (define (vlen) (vector-length lines))
-  (define (line-at n) (vector-ref lines n))
+  (define (vlen) (head:buffer-line-count (head:current-buffer)))
+  (define (line-at n) (head:buffer-line (head:current-buffer) n))
   (define (current-line) (line-at point-row))
   ;; Navigation addresses the window presentation; editing addresses source.
-  (define (current-display-line) (vector-ref (head:window-lines current-window) point-row))
+  (define (current-display-line) (render:line-ref (head:window-text current-window) point-row))
 
   (define (submit-edit! b span replacement . properties)
     ;; The pending action supplies the store's grouping key, the label and
@@ -562,15 +560,15 @@
   (define (goal-position wrapped?)
     ;; Equal row/column numbers alone do not identify a navigation context.
     (let ([b (head:current-buffer)])
-      (list current-window b (caddr (head:edit-basis b))
-            (head:window-lines current-window)
+      (list current-window b (head:buffer-revision b)
+            (head:window-text current-window)
             (and wrapped? (paint:wrap-width current-window))
             (render:header (head:window-rendition current-window)) point-row point-col)))
 
   (define (visual-column w row col)
     (let* ([frame (head:window-rendition w)]
            [breaks (and (paint:window-wrapped? w)
-                        (paint:line-breaks w (vector-ref (head:window-lines w) row)))])
+                        (paint:line-breaks w (render:line-ref (head:window-text w) row)))])
       (- (render:column frame row col)
          (if breaks
              (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
@@ -1762,27 +1760,29 @@
     ;; A second outward page at an already-clamped edge moves point to that
     ;; edge. Wrapped segments count as rows; the visual column is preserved.
     (let* ([w current-window]
-           [v (head:window-lines w)]
-           [n (vector-length v)]
+           [v (head:window-text w)]
+           [n (render:line-count v)]
            [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- n 1))]
            [height (paint:page-size)]
            [wrapped? (paint:window-wrapped? w)]
            [visual-col (visual-column w point-row point-col)])
       (define (offset-at target segment)
-        (let loop ([row sticky] [offset 0])
-          (if (>= row target)
+        (if (not wrapped?) (+ (- target sticky) segment)
+          (let loop ([row sticky] [offset 0])
+            (if (>= row target)
               (+ offset segment)
               (loop (+ row 1)
-                    (+ offset (paint:line-segments w (vector-ref v row)))))))
+                    (+ offset (paint:line-segments w (render:line-ref v row))))))))
       (define (position-at offset)
-        (let loop ([row sticky] [left offset])
-          (let ([segments (paint:line-segments w (vector-ref v row))])
-            (if (or (= row (- n 1)) (< left segments))
+        (if (not wrapped?) (cons (min (- n 1) (+ sticky offset)) 0)
+          (let loop ([row sticky] [left offset])
+            (let ([segments (paint:line-segments w (render:line-ref v row))])
+              (if (or (= row (- n 1)) (< left segments))
                 (cons row (min left (- segments 1)))
-                (loop (+ row 1) (- left segments))))))
+                (loop (+ row 1) (- left segments)))))))
       (define (column-at position)
         (let* ([row (car position)]
-               [line (vector-ref v row)])
+               [line (render:line-ref v row)])
           (paint:column-at-cell w row (and wrapped? (paint:line-breaks w line)) (cdr position) visual-col)))
       (define (land! top-offset point-offset)
         (let ([top (position-at top-offset)]
@@ -1816,12 +1816,12 @@
   (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
         (position position "where point goes"))
   (define (set-point-without-scroll! position)
-    (let* ([v (head:window-lines current-window)]
-           [row (max 0 (min (car position) (- (vector-length v) 1)))])
+    (let* ([v (head:window-text current-window)]
+           [row (max 0 (min (car position) (- (render:line-count v) 1)))])
       (head:window-prow-set! current-window row)
       (head:window-pcol-set! current-window
                              (max 0 (min (cdr position)
-                                      (string-length (vector-ref v row)))))))
+                                      (string-length (render:line-ref v row)))))))
 
 
   ;; The head's side of the interaction protocol: another actor's

@@ -483,7 +483,7 @@
           (paint:hover-ranges
             (lambda (w row column)
               (and (active-refresh) (or (not (window-owner)) (eq? w (window-owner)))
-                   (let* ([line (vector-ref (head:buffer-lines (head:window-buffer w)) row)]
+                   (let* ([line (head:window-line w row)]
                           [info (hashtable-ref line-presentation line #f)]
                           [choice (and info (choice-at (cdr info) column))])
                      ;; Labels leave their padding plain; row candidates tint it too.

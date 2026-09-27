@@ -13,7 +13,7 @@
 
 (eval
   '(begin
-     (import (prefix (service file) file:) (prefix (service directory) directory:) (prefix (sys sys) sys:) (prefix (test) test:)
+     (import (prefix (service file) file:) (prefix (service directory) directory:) (prefix (foundation path-filter) path-filter:) (prefix (sys sys) sys:) (prefix (test) test:)
              (prefix (service log) log:)
              (only (chezscheme)
                    format getenv putenv current-directory
@@ -132,7 +132,7 @@
        (define cache (directory:make-cache #f))
        (define (scan needle hidden? . observe)
          (let ([result #f])
-           (directory:scan! cache root needle hidden? (lambda () #f)
+           (directory:scan! cache root (if (string=? needle "") '() (cons (string-append root "/") (path-filter:parse needle (getenv "HOME")))) hidden? #t (lambda () #f)
              (lambda (entries failures done?)
                (when (pair? observe) ((car observe) entries failures done?))
                (when done? (set! result (cons failures entries))))) result))
@@ -176,8 +176,12 @@
                  (directory:entry-kind (entry "pipe" result))
                  ;; Completion must use the same textual parent as opening,
                  ;; even when a link would traverse to a different OS parent.
-                 (file:complete "small/loop/../ne" root))
-           '(0 (4 #t ()) (5 #t ()) #t #f link special ("small/loop/../needle-one" "small/loop/../nested/"))))
+                 (file:complete "small/loop/../ne" root)
+                 (let ([read-directory (sys:directory-reader)] [fds (test:fd-count)])
+                   (list (read-directory (child "alias") #f)
+                         (length (read-directory (child "alias") #t))
+                         (equal? fds (test:fd-count)))))
+           '(0 (4 #t ()) (5 #t ()) #t #f link special ("small/loop/../needle-one" "small/loop/../nested/") (#f 4 #t))))
        (check 'directory-unresolved-links-match-by-name-without-making-counts-incomplete
          (map (lambda (query)
                 (let ([result (scan query #f)])
@@ -193,26 +197,19 @@
            (list (group ".private" result) (group "small" result)))
          '((1 #t ("needle-secret")) (3 #t (".needle-dot" "NEEDLE-two" "needle-one" "nested"))))
        (check 'directory-matches-full-relative-paths-and-directory-slashes
-         (let ([result (scan "ALL/NESTED/" #f)])
+         (let ([result (scan "SMALL/NESTED/" #f)])
            (list (group "small" result) (group "large" result)
-                 (map (lambda (s) (directory:matches? (entry "small" result) root s))
+                 (map (lambda (s) (directory:matches? (entry "small" result) (list s)))
                    '("small/" "ALL/" "small/nope"))))
-         '((2 #t ("NEEDLE-two" "nested")) (0 #t ()) (#t #t #f)))
-       ;; A filter without a slash names entries, so a directory whose own
-       ;; name matches does not claim its whole subtree. Adding a slash
-       ;; switches to path matching, and a preview must not carry the
-       ;; name-mode count across as exact evidence.
-       (check 'directory-name-filters-ignore-matching-ancestors
+         '((1 #t ("nested")) (0 #t ()) (#t #t #f)))
+       (check 'directory-matching-stops-at-the-first-satisfying-directory
          (let ([result (scan "small" #f)])
            (list (group "small" result) (group "large" result) (car result)
-                 (map (lambda (s) (directory:matches? (entry "small" result) root s)) '("MALL" "small/" "all/"))
-                 (group "small" (cons 0 (directory:refilter (cdr result) root "small" "small/" #f #f)))
-                 (group "small" (scan "small/" #f))))
-         '((0 #t ()) (0 #t ()) 0 (#t #t #t) (0 #f ())
-           (5 #t ("NEEDLE-two" "loop" "needle-one" "nested" "unrelated"))))
+                 (map (lambda (s) (directory:matches? (entry "small" result) (list s))) '("MALL" "small/" "all/"))))
+         '((0 #t ()) (0 #t ()) 0 (#t #t #t)))
        (check 'directory-cancel-has-no-late-publication
          (let ([cancel? #f] [publications '()])
-           (directory:scan! (directory:make-cache #f) root "needle" #f (lambda () cancel?)
+           (directory:scan! (directory:make-cache #f) root '("needle") #f #t (lambda () cancel?)
              (lambda (entries failures done?) (set! publications (cons done? publications)) (set! cancel? #t)))
            publications) '(#f))
        ;; With notifications disabled the exact same inventory must serve
@@ -221,7 +218,7 @@
          (rename-file root away)
          (dynamic-wind void
            (lambda ()
-             (directory:scan! cache (child "small/nested") "two" #f (lambda () #f)
+             (directory:scan! cache (child "small/nested") '("two") #f #t (lambda () #f)
                (lambda (entries failures done?)
                  (when done? (set! inside (list failures (map directory:entry-path entries))))))
              (check 'directory-cache-reuses-listings-metadata-and-navigation-without-disk

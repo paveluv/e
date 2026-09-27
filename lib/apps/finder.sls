@@ -1,12 +1,13 @@
 ;; finder.sls -- the local, filterable <finder> app, the directory browser.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps finder)
-  (export choose! (rename (chosen-path chosen)) clear-filter! create! enter! (rename (listed-entries entries)) erase!
+  (export choose! (rename (chosen-path chosen)) clear-filter! complete! create! enter! (rename (listed-entries entries)) erase!
           extend-filter! filter! first-row! init! last-row! (rename (directory-shown location)) next-row! open!
           open-directory! page-down! page-up! parent! paste-filter! previous-row! refresh! return! (rename (select-path! select!))
           show-hidden (rename (sort-order sorts)) toggle-hidden! toggle-sort-column!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
+          (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
@@ -14,6 +15,7 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head render) render:)
           (prefix (head style) style:)
           (prefix (head table) table:)
           (prefix (head window) window:)
@@ -29,14 +31,24 @@
   (define show-hidden (make-parameter #f
                         (lambda (value)
                           (unless (boolean? value) (error 'show-hidden "expected a boolean" value)) value)))
+
   (define view #f)
   (define location #f)
   (define query "")
   (define path-part #f)             ; #f while browsing; literal completion prefix otherwise
   (define sorts '())
-  (define inventory '())
   (define rows '())                 ; (full path . entry)
+  (define row-data '#())
+  (define row-positions (make-hashtable string-ci-hash string-ci=?))
+  (define default-choice #f)
+  (define source #f)
+  (define shown-query #f)
+  (define rendered #f)
+  (define cell-cache (make-weak-eq-hashtable))
+  (define details (make-hashtable string:hash string=?))
+  (define pending-completion? #f)
   (define complete? #f)
+  (define match-count 0)
   (define failures 0)
   (define first-row 3)              ; filter, directory, column headings
   (define hover #f)                 ; (window . path/column)
@@ -47,7 +59,9 @@
   ;; One worker per module instance, replacing its pending request. Stale
   ;; results cannot mutate a new query, a killed app or a reloaded module.
   (define-record-type scan
-    (fields buffer registration path query hidden? generation (mutable update) (mutable started?)))
+    (fields buffer registration path query keys hidden? show-hidden? sorts part generation (mutable update) (mutable started?)
+            (mutable wanted) (mutable detailed) (mutable details) (mutable finished) (mutable completion)))
+  (define-record-type result (fields inventory rows data positions choice source count))
   (define scan-lock (make-mutex))
   (define scan-ready (make-condition))
   (define generation 0)
@@ -58,26 +72,69 @@
          (scan-registration job)
          (eq? (scan-registration job) (head:app-of (scan-buffer job)))))
 
+  (define (typed-keys text) (path-filter:parse text (file:expand "~")))
+  (define (search-root text)
+    (if (exists path-filter:anchored? (typed-keys text)) "/" location))
+  (define (filter-keys text)
+    (let ([keys (typed-keys text)])
+      (if (or (null? keys) (exists path-filter:anchored? keys)) keys
+          (cons (if (string=? location "/") "/" (string-append location "/")) keys))))
+  (define (hidden-keys? keys)
+    (exists (lambda (key) (or (string:prefix? "." key)
+                            (and (string:search key "/." 0 (string-length key)) #t))) keys))
+  (define (query-hidden? text) (or (show-hidden) (hidden-keys? (typed-keys text))))
   (define (include-hidden?)
     (if path-part (string:prefix? "." path-part)
-        (or (show-hidden) (string:prefix? "." query)
-            (and (string:search query "/." 0 (string-length query)) #t))))
+        (query-hidden? query)))
 
   (define (start-scan!)
     (set! complete? #f)
+    (set! match-count 0)
     (set! failures 0)
     (let ([needle (if path-part "" query)] [hidden? (include-hidden?)])
       (with-mutex scan-lock
-        (set! inventory
-          (if (and request (string=? (scan-path request) location))
-              (directory:refilter inventory location (scan-query request) needle (scan-hidden? request) hidden?)
-              '()))
-        (set! request (make-scan view (head:app-of view) location needle hidden? generation #f #f))
+        ;; Retain the last owned presentation while the worker builds the
+        ;; next one. Never refilter a large result under the input lock.
+        (unless (and request (string=? (scan-path request) (search-root needle)))
+          (clear-rows!) (set! source #f))
+        (set! details (make-hashtable string:hash string=?))
+        (set! request (make-scan view (head:app-of view) (search-root needle) needle (filter-keys needle) hidden? (show-hidden) sorts path-part generation #f #f '() #f #f #f #f))
         (condition-signal scan-ready)))
     (render!))
 
   (define (scan-work!)
-    (let ([cache (directory:make-cache #t)] [seen-generation generation])
+    (let ([cache (directory:make-cache #f)] [seen-generation generation])
+      (define (load-details! job force?)
+        (let ([wanted (with-mutex scan-lock (scan-wanted job))])
+          (unless (and (not force?) (eq? wanted (scan-detailed job)))
+            (let loop ([rest wanted] [out '()])
+              (when (live-request? job)
+                (if (pair? rest) (loop (cdr rest) (cons (directory:read! cache (car rest)) out))
+                    (begin
+                      (with-mutex scan-lock
+                        (scan-detailed-set! job wanted) (scan-details-set! job out))
+                      (unless (null? out) (head:wake-main!)))))))))
+      (define (complete-filter! job)
+        (when (and (scan-finished job) (eq? (with-mutex scan-lock (scan-completion job)) 'requested))
+          (let* ([keys (typed-keys (scan-query job))] [absolute? (exists path-filter:anchored? keys)]
+                 [data (result-data (scan-finished job))]
+                 [match? (path-filter:matcher (scan-keys job))]
+                 [walk (lambda (visit)
+                         (let loop ([i 0])
+                           (or (= i (vector-length data))
+                               (and (or (not (zero? (mod i 256))) (live-request? job))
+                                    (let* ([entry (cdr (vector-ref data i))] [path (directory:filter-path entry)])
+                                      (and (or (not (match? path))
+                                               (visit (if absolute? path
+                                                          (string:tail path (if (string=? (scan-path job) "/") 1
+                                                                                (+ 1 (string-length (scan-path job))))))))
+                                           (loop (+ i 1))))))))]
+                 [next (path-filter:format-keys
+                         (path-filter:complete keys walk
+                           (lambda (parts) (eq? (or (scan-show-hidden? job) (hidden-keys? parts)) (scan-hidden? job)))
+                           (lambda () (not (live-request? job)))))])
+            (when (with-mutex scan-lock
+                    (and (eq? request job) (begin (scan-completion-set! job next) #t))) (head:wake-main!)))))
       (dynamic-wind
         void
         (lambda ()
@@ -86,21 +143,27 @@
               (define (publish entries skipped done? . failure)
                 ;; Wakes carry no callbacks or old inventories. Only the
                 ;; current request may publish, including from OS events.
-                (when (with-mutex scan-lock
-                        (and (eq? request job)
-                             (begin (scan-update-set! job
-                                      (list entries skipped done? (and (pair? failure) (car failure)))) #t)))
-                  (head:wake-main!)))
+                (load-details! job #f)
+                (let ([prepared (prepare-result entries job done?)])
+                  (when (and prepared (with-mutex scan-lock
+                                        (and (eq? request job)
+                                          (begin (when (and done? (zero? skipped)) (scan-finished-set! job prepared))
+                                            (scan-update-set! job
+                                              (list prepared skipped done? (and (pair? failure) (car failure)))) #t))))
+                    (head:wake-main!))))
               (cond
                 [(and job (live-request? job))
                  (unless (= seen-generation (scan-generation job))
                    (directory:clear! cache) (set! seen-generation (scan-generation job)))
                  (let ([changed? (directory:poll! cache)])
+                   (load-details! job changed?)
                    (when (or changed? (not (eq? previous job)))
                      (with-mutex scan-lock (scan-started?-set! job #t))
                      (guard (ex [else (publish '() 1 #t (kernel:condition-text ex))])
-                       (directory:scan! cache (scan-path job) (scan-query job) (scan-hidden? job)
+                       (directory:scan! cache (scan-path job) (scan-keys job) (scan-hidden? job)
+                         (and (exists (lambda (key) (memv (car key) '(1 2 3 4))) (scan-sorts job)) #t)
                          (lambda () (not (live-request? job))) publish))))
+                 (complete-filter! job)
                  ;; Check the nonblocking event queue while idle, without
                  ;; filesystem walks. New input wakes this wait immediately.
                  (with-mutex scan-lock
@@ -115,11 +178,23 @@
   (define (collect-scan!)
     (let ([job (with-mutex scan-lock request)])
       (when (and job (live-request? job))
+        (let ([fresh (with-mutex scan-lock
+                       (let ([fresh (scan-details job)]) (scan-details-set! job #f) fresh))])
+          (when (pair? fresh)
+            (set! details (make-hashtable string:hash string=?))
+            (for-each (lambda (entry) (hashtable-set! details (directory:entry-path entry) entry)) fresh)))
         (let ([update (with-mutex scan-lock
                         (let ([update (scan-update job)]) (scan-update-set! job #f) update))])
           (when update
-            (apply (lambda (entries skipped done? failure)
-                     (set! inventory entries)
+            (apply (lambda (result skipped done? failure)
+                     ;; The worker's initial notification is not an empty
+                     ;; result. Keep the preview until there is new evidence.
+                     (unless (and (not done?) (null? (result-inventory result)))
+                       (set! rows (result-rows result)) (set! row-data (result-data result))
+                       (set! row-positions (result-positions result))
+                       (set! default-choice (result-choice result)) (set! source (result-source result))
+                       (set! shown-query (scan-query job)))
+                     (set! match-count (result-count result))
                      (set! failures skipped) (set! complete? done?)
                      (when failure (edit:set-message! (string-append "File scan failed: " failure)))) update)))
         ;; Config/reload can render before publishing registration. Launch
@@ -132,36 +207,60 @@
           (fork-thread scan-work!)))))
 
   (define (over w) (and hover (eq? (car hover) w) (cdr hover)))
+  (define (request-details! saved)
+    (when request
+      (let ([wanted (make-hashtable string:hash string=?)])
+        (for-each
+          (lambda (s)
+            (let* ([w (car s)] [height (max 1 (head:window-size w))]
+                   [chosen (keyboard-row w)] [point (if chosen (row-index (car chosen)) first-row)])
+              (for-each (lambda (start)
+                          (do ([i (max first-row start) (+ i 1)])
+                              ((>= i (min (+ first-row (vector-length row-data)) (+ start height))))
+                            (let ([entry (cdr (at-row i))])
+                              (unless (directory:entry-mode entry)
+                                (hashtable-set! wanted (directory:entry-path entry) entry)))))
+                (list (head:window-top w) (max first-row (- point (quotient height 2))))))) saved)
+        (demand-details! (vector->list (hashtable-values wanted))))))
+  (define (demand-details! wanted)
+    (when request
+      (with-mutex scan-lock
+        (unless (equal? (map directory:entry-path wanted) (map directory:entry-path (scan-wanted request)))
+          (scan-wanted-set! request wanted) (condition-signal scan-ready)))))
   (define (at-row row)
-    (and (<= first-row row (+ first-row (length rows) -1)) (list-ref rows (- row first-row))))
+    (and (<= first-row row (+ first-row (vector-length row-data) -1)) (vector-ref row-data (- row first-row))))
   (define (row-index path)
-    (let loop ([left rows] [i first-row])
-      (cond [(null? left) #f] [(equal? path (caar left)) i]
-            [else (loop (cdr left) (+ i 1))])))
+    (and path
+         (find (lambda (i) (string=? path (car (at-row i))))
+           (hashtable-ref row-positions path '()))))
+  (define (path-row path)
+    (let ([index (row-index path)]) (and index (at-row index))))
+  (define (clear-rows!)
+    (set! rows '()) (set! row-data '#())
+    (set! row-positions (make-hashtable string-ci-hash string-ci=?))
+    (set! default-choice #f))
   (define (choice-for w)
     (or (hashtable-ref choices w #f)
         (let* ([saved (assv (head:window-index w) resumed-choices)]
-               [state (make-choice #f (and saved (cdr saved)) '() (make-hashtable string-hash string=?))])
+               [state (make-choice #f (and saved (cdr saved)) '() (make-hashtable string:hash string=?))])
           (when saved (set! resumed-choices (remq saved resumed-choices)))
           (hashtable-set! choices w state) state)))
   (define (exact-row text)
-    (define (find-path same?)
-      (find (lambda (row)
-              (let ([path (directory:relative-path (cdr row) location)])
-                (or (same? path text)
-                    (and (directory:directory? (cdr row)) (same? (string-append path "/") text))))) rows))
-    (or (find-path string=?) (find-path string-ci=?)))
-  (define (default-row)
-    ;; Exact paths take precedence, including a typed directory path.
-    ;; Otherwise select a filename ahead of its containing match group.
-    (or (exact-row query)
-        (and (not (string=? query ""))
-             (find (lambda (row) (not (directory:directory? (cdr row)))) rows))
-        (and (pair? rows) (car rows))))
+    (let* ([n (string-length text)] [dir? (and (positive? n) (char=? (string-ref text (- n 1)) #\/))]
+           [path (string-append (if (string=? location "/") "/" (string-append location "/"))
+                   (if dir? (substring text 0 (- n 1)) text))]
+           [indices (hashtable-ref row-positions path '())]
+           [index (or (row-index path) (and (pair? indices) (car indices)))]
+           [row (and index (at-row index))])
+      (and row (or (not dir?) (directory:directory? (cdr row))) row)))
   (define (keyboard-row w)
-    (or (assoc (choice-selected (choice-for w)) rows) (default-row)))
+    (or (path-row (choice-selected (choice-for w))) default-choice))
   (define (candidate w)
-    (or (and (string? (over w)) (assoc (over w) rows)) (keyboard-row w)))
+    (let ([row (or (and (string? (over w)) (path-row (over w))) (keyboard-row w))])
+      ;; A previous result may remain as a preview while new input is
+      ;; searched. Enter must never open a row excluded by that input.
+      (and row (or (equal? shown-query query)
+                   (directory:matches? (cdr row) (filter-keys query))) row)))
   (define (column-at w at)
     (and at (= (car at) (- first-row 1))
          (find (lambda (column) (<= (cadr column) (cdr at) (- (caddr column) 1)))
@@ -175,10 +274,10 @@
              (cond [(char=? c #\\) "\\\\"]
                    [(eq? (char-general-category c) 'Cc) (format "\\x~x;" (char->integer c))]
                    [else (string c)])) (string->list path))))
-  (define (label row)
+  (define (label row root)
     (string-append
       (make-string (length (filter (lambda (c) (char=? c #\/))
-                             (string->list (directory:relative-path (cdr row) location)))) #\space)
+                             (string->list (directory:relative-path (cdr row) root)))) #\space)
       (display-path (file:base-name (car row)))
       (if (directory:entry-link? (cdr row)) "@" "")
       (if (directory:directory? (cdr row)) "/" "")))
@@ -205,9 +304,9 @@
                         (unless (zero? (logand mode bit))
                           (string-set! text index (if (char=? (string-ref text index) #\x) set unset))))
               '(#o4000 #o2000 #o1000) '(3 6 9) '(#\s #\s #\t) '(#\S #\S #\T)) text))))
-  (define (cell row column)
+  (define (format-cell row column root)
     (let ([value (raw row column)] [entry (cdr row)])
-      (cond [(zero? column) (label row)]
+      (cond [(zero? column) (label row root)]
             [(= column 4) (permissions entry)]
             [(= column 5)
              (if (directory:directory? entry)
@@ -222,35 +321,47 @@
                (if (and (>= n 1024) (pair? (cdr units))) (scale (/ n 1024.0) (cdr units))
                    (if (string=? (car units) "B") (format "~a B" n)
                        (format "~,1f ~a" n (car units)))))])))
+  (define (cell row column)
+    (cell-at row column (search-root query) details))
+  (define (cell-at row column root metadata)
+    (let* ([entry (if (memv column '(1 2 3 4)) (hashtable-ref metadata (car row) (cdr row)) (cdr row))]
+           [known (hashtable-ref cell-cache entry #f)]
+           [cells (if (and known (equal? (car known) root)) (cdr known)
+                      (let ([cells (make-vector 6 #f)])
+                        (hashtable-set! cell-cache entry (cons root cells)) cells))])
+      (or (vector-ref cells column)
+          (let ([text (format-cell (cons (car row) entry) column root)]) (vector-set! cells column text) text))))
   (define (columns)
     (table:make (vector "Name" "Size" "Modified" "Created" "Permissions"
-                  (if (string=? query "") "Entries" "Matches"))
+                  (if (pair? (typed-keys query)) "Matches" "Entries"))
       '#(14 8 16 16 13 9) 0 '(3 4 2 1 5) '#(text right text text text right)))
   (define (heading column) (table:heading (columns) sorts column))
-  (define (entry<? a b)
-    (table:less? sorts raw
-      (lambda (a b)
-        (or (string-ci<? (car a) (car b))
-            (and (string-ci=? (car a) (car b)) (string<? (car a) (car b))))) a b))
-  (define (listing)
-    (define (tree entries)
+  (define (listing inventory location query keys hidden? sorts path-part complete? check!)
+    (define match? (path-filter:matcher keys))
+    (define (entry<? a b)
+      (check!)
+      (table:less? sorts raw
+        (lambda (a b) (or (string-ci<? (car a) (car b))
+                        (and (string-ci=? (car a) (car b)) (string<? (car a) (car b))))) a b))
+    (define (tree entries tail)
       ;; Sort siblings, then emit each directory beside its descendants.
       ;; Absolute paths remain the identity even when basenames repeat.
-      (let ([rows (map (lambda (e) (cons (directory:entry-path e) e)) entries)])
-        (fold-right (lambda (row rest) (cons row (append (tree (directory:entry-matches (cdr row))) rest)))
-          '() (append (sort entry<? (filter (lambda (row) (directory:directory? (cdr row))) rows))
-                (sort entry<? (filter (lambda (row) (not (directory:directory? (cdr row)))) rows))))))
-    (let* ([filtered? (not (string=? query ""))]
+      (if (null? entries) tail
+        (let ([rows (map (lambda (e) (cons (directory:entry-path e) e)) entries)])
+          (fold-right (lambda (row rest) (check!) (cons row (tree (directory:entry-matches (cdr row)) rest)))
+            tail (append (sort entry<? (filter (lambda (row) (directory:directory? (cdr row))) rows))
+                   (sort entry<? (filter (lambda (row) (not (directory:directory? (cdr row)))) rows)))))))
+    (let* ([filtered? (pair? keys)]
            [inventory (if path-part
                           (filter (lambda (e)
                                     (and (string:prefix? path-part (file:base-name (directory:entry-path e)))
-                                         (or (include-hidden?)
+                                         (or hidden?
                                              (not (string:prefix? "." (file:base-name (directory:entry-path e))))))) inventory)
                           inventory)]
            [dirs (filter directory:directory? inventory)]
            [visible-dirs
             (filter (lambda (e)
-                      (or (not filtered?) (directory:matches? e location query)
+                      (or (not filtered?) (match? (directory:filter-path e))
                           ;; Keep the route to an explicitly typed descendant,
                           ;; even when this directory is a non-traversed link.
                           (let ([prefix (string-append (directory:relative-path e location) "/")])
@@ -262,12 +373,63 @@
                           (and (not (directory:entry-link? e))
                                (or complete? (not (directory:entry-count e)))
                                (not (directory:entry-complete? e))))) dirs)]
-           [files (filter (lambda (e) (and (not (directory:directory? e)) (directory:matches? e location query))) inventory)])
-      (tree (append visible-dirs files))))
+           [files (filter (lambda (e) (and (not (directory:directory? e)) (match? (directory:filter-path e)))) inventory)])
+      (tree (append visible-dirs files) '())))
+
+  (define (prepare-result inventory job done?)
+    (call/cc
+      (lambda (cancel)
+        (define steps 0)
+        (define (check!)
+          (set! steps (+ steps 1))
+          (when (and (zero? (mod steps 256)) (not (live-request? job))) (cancel #f)))
+        (let* ([root (scan-path job)] [needle (scan-query job)]
+               [rows (listing inventory root needle (scan-keys job) (scan-hidden? job)
+                       (scan-sorts job) (scan-part job) done? check!)]
+               [data (list->vector rows)] [positions (make-hashtable string-ci-hash string-ci=?)]
+               [match? (path-filter:matcher (scan-keys job))] [count 0]
+               [exact #f] [folded #f] [file #f])
+          (do ([i 0 (+ i 1)]) ((= i (vector-length data)))
+            (check!)
+            (let* ([row (vector-ref data i)] [entry (cdr row)]
+                   [relative (directory:relative-path entry root)]
+                   [name (if (directory:directory? entry) (string-append relative "/") relative)])
+              ;; One case-insensitive index retains distinct case variants.
+              (hashtable-update! positions (car row)
+                (lambda (indices) (append indices (list (+ i first-row)))) '())
+              (when (or (string=? relative needle) (string=? name needle)) (set! exact row))
+              (when (and (not folded) (or (string-ci=? relative needle) (string-ci=? name needle))) (set! folded row))
+              (when (and (not file) (not (directory:directory? entry))) (set! file row))
+              (when (or (not (directory:directory? entry)) (match? (directory:filter-path entry)))
+                (set! count (+ count 1)))
+            ))
+          (and (live-request? job)
+               (make-result inventory rows data positions
+                 (or exact folded (and (not (string=? needle "")) file) (and (pair? rows) (car rows)))
+                 ;; Even canonical text is demanded by row. A large result
+                 ;; is an index, never millions of preformatted strings.
+                 (render:defer (+ first-row (max 1 (vector-length data)))
+                   (lambda (i)
+                     (if (or (< i first-row) (zero? (vector-length data))) ""
+                         (let* ([row (vector-ref data (- i first-row))] [entry (cdr row)])
+                           (string-append (label row root)
+                             (if (directory:directory? entry)
+                                 (format "  ~a~a" (or (directory:entry-count entry) "?")
+                                   (if (directory:entry-complete? entry) "" "+")) "")))))) count))))))
+  (define (match-ghost)
+    (format " [~a~a match~a]" match-count (if (and complete? (zero? failures)) "" "+")
+      (if (= match-count 1) "" "es")))
+  (define (filter-label width)
+    (let* ([ghost (match-ghost)] [text (display-path query)]
+           [space (max 0 (- width 8 (glyph:cells ghost)))])
+      (if (> (glyph:cells text) space)
+          (glyph:fit (string-append "Filter: " (glyph:fit text space 'left) ghost) width)
+          (glyph:fit (string-append "Filter: " text ghost) width))))
   (define (directory-label)
     (string-append "Directory: " (display-path (file:abbreviate location)) (if (string=? location "/") "" "/")
       (if (and (not path-part) (show-hidden)) "  [hidden]" "")
       (if complete? "" "  Searching…")
+      (if (and complete? pending-completion?) "  Completing…" "")
       (if (positive? failures) (format "  ~a unreadable path~a" failures (if (= failures 1) "" "s")) "")))
   (define (directory-links line)
     ;; Clicks and hover share character ranges in the actual fitted line.
@@ -292,50 +454,66 @@
   (define (breadcrumb-hit w row column)
     (and (eq? (head:window-buffer w) view) (= row 1) (not (string=? location "/"))
          (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
-           (directory-links (vector-ref (head:window-lines w) row)))))
+           (directory-links (head:window-line w row)))))
 
   (define (render!)
     (when (and view location (head:app-buffer? view))
-      (collect-scan!)
-      (head:call-with-display-update
-        (lambda ()
-          (let ([saved
-                 (map (lambda (w) (list w (choice-for w)
-                                    (let ([row (at-row (head:window-top w))]) (and row (car row)))))
-                   (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))])
-            (set! rows (listing))
-            (when (and hover (string? (cdr hover)) (not (assoc (cdr hover) rows))) (set! hover #f))
-            (let* ([empty (if (pair? rows) '()
-                              (list (cond [(not complete?) "Searching…"]
-                                          [(positive? failures) "Cannot read directory; Left goes to its parent"]
-                                          [(string=? query "") "Empty directory"] [else "No matching files"])))]
-                   [all (map (lambda (e) (cons (directory:entry-path e) e)) inventory)]
-                   [presentations
-                    (map (lambda (saved)
-                           (let* ([w (car saved)] [width (head:window-content-width w)])
-                             (let-values ([(format-row bounds) (table:layout (columns) sorts (append all rows) cell width)])
-                               (choice-columns-set! (cadr saved) bounds)
-                               (cons w
-                                 (cons* (if (< (head:window-size w) (+ first-row 1)) (glyph:fit "Enlarge pane" width)
-                                            (string-append (glyph:fit "Filter: " (min 8 width))
-                                              (glyph:fit (display-path query) (max 0 (- width 8)) 'left)))
-                                   (glyph:fit (directory-label) width 'left) (format-row #f)
-                                   (append (map format-row rows) (map (lambda (s) (glyph:fit s width)) empty))))))) saved)]
-                   [placements
-                    (apply append
-                      (map (lambda (saved)
-                             (let* ([w (car saved)] [chosen (keyboard-row w)]
-                                    [row (and chosen (row-index (car chosen)))])
-                               (when (and complete? chosen) (choice-selected-set! (cadr saved) (car chosen)))
-                               (list (cons w (cons (or row first-row) 0))
-                                     (cons (cons 'top w) (cons (or (row-index (caddr saved)) first-row) 0))))) saved))])
-              (head:view-replace! view
-                (cons* (string-append "Filter: " (display-path query)) (directory-label)
-                  (string:join (map heading (iota 6)) "  ")
-                  (append (map (lambda (row) (string:join (map (lambda (i) (cell row i)) (iota 6)) "  ")) rows) empty))
-                (list (cons 'directory location) (cons 'file-filter query) (cons 'file-sorts sorts)
+      (let ([saved (map (lambda (w) (list w (choice-for w)
+                                      (let ([row (at-row (head:window-top w))]) (and row (car row)))))
+                     (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))])
+        (collect-scan!)
+        (request-details! saved)
+        (let ([key (list location query path-part sorts complete? failures match-count pending-completion? (show-hidden) details
+                     (map (lambda (s) (let ([w (car s)])
+                                        (list w (head:window-content-width w) (head:window-size w)))) saved))])
+          (unless (and rendered (eq? (car rendered) source) (equal? (cdr rendered) key))
+            (head:call-with-display-update
+              (lambda ()
+                (when (and hover (string? (cdr hover)) (not (path-row (cdr hover)))) (set! hover #f))
+                (let* ([empty (cond [(not complete?) "Searching…"]
+                                    [(positive? failures) "Cannot read directory; Left goes to its parent"]
+                                    [(string=? query "") "Empty directory"] [else "No matching files"])]
+                       [data row-data] [root (search-root query)] [metadata details]
+                       [front (list (string-append "Filter: " (display-path query) (match-ghost)) (directory-label)
+                                (string:join (map heading (iota 6)) "  "))]
+                       [text (if (pair? rows) (render:prefix source front) (append front (list empty)))]
+                       [presentations
+                        (map (lambda (s)
+                               (let* ([w (car s)] [width (head:window-content-width w)])
+                                 ;; Metadata widths are stable; the identity
+                                 ;; column receives the remaining room. Layout
+                                 ;; never measures offscreen cells.
+                                 (let-values ([(format-row bounds)
+                                               (table:layout (columns) sorts (vector width 10 16 16 13 9)
+                                                 (lambda (row column) (cell-at row column root metadata)) width)])
+                                   (choice-columns-set! (cadr s) bounds)
+                                   (let ([headers
+                                          (vector (if (< (head:window-size w) (+ first-row 1)) (glyph:fit "Enlarge pane" width)
+                                                      (filter-label width))
+                                            (glyph:fit (directory-label) width 'left) (format-row #f))])
+                                     (cons w (render:defer (+ first-row (max 1 (vector-length data)))
+                                               (lambda (i)
+                                                 (cond [(< i first-row) (vector-ref headers i)]
+                                                       [(zero? (vector-length data)) (glyph:fit empty width)]
+                                                       [else (format-row (vector-ref data (- i first-row)))])))))))) saved)]
+                       [placements
+                        (apply append
+                          (map (lambda (s)
+                                 (let* ([w (car s)] [chosen (keyboard-row w)]
+                                        [row (and chosen (row-index (car chosen)))])
+                                   (when (and complete? chosen) (choice-selected-set! (cadr s) (car chosen)))
+                                   (list (cons w (cons (or row first-row) 0))
+                                     (cons (cons 'top w) (cons (or (row-index (caddr s)) first-row) 0))))) saved))])
+                  (head:view-replace! view text
+                    (list (cons 'directory location) (cons 'file-filter query) (cons 'file-sorts sorts)
                       (cons 'file-hidden (show-hidden)))
-                placements presentations)))))))
+                    placements presentations))))
+            (set! rendered (cons source key)))
+          (when pending-completion?
+            (let ([answer (with-mutex scan-lock (and request (scan-completion request)))])
+              (when (or (string? answer) (and complete? (positive? failures)))
+                (set! pending-completion? #f)
+                (if (and (string? answer) (not (string=? answer query))) (set-filter! answer) (render!)))))))))
 
   (define (select-row! row)
     (when row
@@ -346,8 +524,9 @@
            [index (if row (row-index (car row)) (- first-row 1))])
       (set! hover #f)
       (when (pair? rows)
-        (select-row! (at-row (min (+ first-row (length rows) -1) (max first-row (+ index delta))))))))
+        (select-row! (at-row (min (+ first-row (vector-length row-data) -1) (max first-row (+ index delta))))))))
   (define (navigate! path keep-filter? selected)
+    (set! pending-completion? #f)
     ;; Recall a directory's choice only for the same filter; a fresh query
     ;; must get its own default instead of an old unfiltered container.
     (let ([path (file:canonical (file:expand path))]
@@ -409,24 +588,29 @@
                         ;; document it replaced
                         (head:set-buffers! (append (remq view (head:buffers)) (list view)))])))]))))
 
-  (edoc "Set the filter: entries whose names match the text stay listed, a text with a slash matching paths; the choice stays when it still matches."
-        (text string "the filter text"))
+  (edoc "Set the unordered literal path keys. Leading slash keys search from root; otherwise the current directory is an implicit anchored key."
+        (text string "the filter"))
   (define (filter! text)
+    (unless (string? text) (error 'filter! "expected filter text" text))
+    (set-filter! text))
+
+  (define (set-filter! text)
     ;; A container visible only because descendants match must not keep
     ;; stealing Enter from the filename being typed. Preserve an existing
     ;; choice only when its path still matches and no exact path supersedes it.
     (let ([exact (exact-row text)])
       (vector-for-each
         (lambda (choice)
-          (let ([row (assoc (choice-selected choice) rows)])
-            (unless (and row (directory:matches? (cdr row) location text)
+          (let ([row (path-row (choice-selected choice))])
+            (unless (and row (directory:matches? (cdr row) (filter-keys text))
                          (or (not exact) (equal? (car row) (car exact))))
               (choice-selected-set! choice #f)))) (hashtable-values choices)))
     (set! query text)
+    (set! pending-completion? #f)
     (set! hover #f)
     (start-scan!))
   (define (cycle! column)
-    (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (render!))
+    (set! sorts (table:cycle-sort sorts column)) (set! hover #f) (start-scan!))
   (define (follow-path! input base)
     (let* ([full (file:expand (file:absolute (if (string=? input "~") "~/" input) base))]
            [directory (file:canonical (file:directory-part full))])
@@ -435,22 +619,25 @@
         (set! location directory) (set! hover #f)
         (vector-for-each (lambda (choice) (choice-selected-set! choice #f)) (hashtable-values choices)))
       (unless (and request (string=? (scan-path request) location)
-                   (string=? (scan-query request) "") (eq? (scan-hidden? request) (include-hidden?)))
+                   (string=? (scan-query request) "") (equal? (scan-part request) path-part)
+                   (eq? (scan-hidden? request) (include-hidden?)))
         (start-scan!))
-      (collect-scan!)
-      (set! rows (listing))))
+      (collect-scan!)))
   (define (path-lines input w available page base)
     (follow-path! input base)
     (head:buffer-facts-set! (head:window-buffer w)
       (list (cons 'directory location) (cons 'file-filter "") (cons 'file-sorts sorts)))
     (let* ([width (head:window-content-width w)] [size (max 1 (- available first-row))]
-           [pages (max 1 (div (+ (length rows) size -1) size))] [page (mod page pages)]
-           [from (* page size)] [shown (list-head (list-tail rows from) (min size (- (length rows) from)))])
+           [count (vector-length row-data)]
+           [pages (max 1 (div (+ count size -1) size))] [page (mod page pages)]
+           [from (* page size)]
+           [shown (map (lambda (i) (vector-ref row-data (+ from i))) (iota (min size (- count from))))])
       (define (path-input path directory?)
         (file:abbreviate (if directory? (file:absolute "" path) path)))
       (define (line row text links)
         (prompt:line text (styles view row text) links (if (< row first-row) 'hover 'candidate-hover)))
-      (let-values ([(format-row bounds) (table:layout (columns) sorts rows cell width)])
+      (demand-details! (map cdr shown))
+      (let-values ([(format-row bounds) (table:layout (columns) sorts (vector width 10 16 16 13 9) cell width)])
         (values
           (if (< available (+ first-row 1))
               (if (zero? available) '() (list (line 0 (glyph:fit "Enlarge pane" width) '())))
@@ -511,15 +698,15 @@
   (define (chosen-path)
     ;; read without making a window's choice record, as candidate would
     (let* ([w (head:current-window)] [choice (hashtable-ref choices w #f)]
-           [row (or (and (string? (over w)) (assoc (over w) rows))
-                    (and choice (assoc (choice-selected choice) rows))
-                    (default-row))])
+           [row (or (and (string? (over w)) (path-row (over w)))
+                    (and choice (path-row (choice-selected choice)))
+                    default-choice)])
       (and row (car row))))
 
   (edoc "Make a listed entry the choice in the current window, by its path, absolute or relative to the directory shown; refused when none is listed under it."
         (path string "the entry's path"))
   (define (select-path! path)
-    (let ([row (or (assoc (file:canonical (file:expand (file:absolute path location))) rows) (exact-row path))])
+    (let ([row (or (path-row (file:canonical (file:expand (file:absolute path location)))) (exact-row path))])
       (unless row (error 'select! "no such entry is listed" path))
       (select-row! row)))
 
@@ -547,10 +734,10 @@
   (define (page-up!) (move! (- (page))))
 
   (edoc "Move the choice to the first entry.")
-  (define (first-row!) (move! (- (length rows))))
+  (define (first-row!) (move! (- (vector-length row-data))))
 
   (edoc "Move the choice to the last entry.")
-  (define (last-row!) (move! (length rows)))
+  (define (last-row!) (move! (vector-length row-data)))
 
   (edoc "Erase the filter's last character; with the filter empty, go up to the parent directory.")
   (define (erase!)
@@ -559,6 +746,16 @@
 
   (edoc "Clear the filter, every entry of the directory listed again.")
   (define (clear-filter!) (filter! ""))
+
+  (edoc "Expand to a longest filter with the same matches and the fewest keys. The worker waits for a complete scan, and further typing cancels completion.")
+  (define (complete!)
+    (when request
+      (if (and complete? (positive? failures))
+          (edit:set-message! "Cannot complete an unreadable search; refresh after correcting it")
+          (begin
+            (set! pending-completion? #t)
+            (with-mutex scan-lock (scan-completion-set! request 'requested) (condition-signal scan-ready))
+            (render!)))))
 
   (edoc "Add text to the filter, as typing does: SELF-INSERT, any character, runs it with the character typed."
         (text string "the text to add"))
@@ -598,7 +795,7 @@
   ;; above, so the keys helper lists them and C-h k describes them
   (define finder-keys
     `((("RET") ,choose!) (("RIGHT") ,enter!) (("LEFT") ,parent!)
-      (("DOWN" "C-n" "TAB") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!)
+      (("DOWN" "C-n") ,next-row!) (("UP" "C-p" "S-TAB") ,previous-row!) (("TAB") ,complete!)
       (("PGDN" "C-v") ,page-down!) (("PGUP" "M-v") ,page-up!)
       (("HOME" "C-a" "M-<") ,first-row!) (("END" "C-e" "M->") ,last-row!)
       (("BS" "C-h") ,erase!) (("C-u") ,clear-filter!) (("M-c") ,create!)
@@ -643,7 +840,14 @@
                        [(not entry) 'chrome] [else 'plain])]
            [out (make-vector (string-length line) face)])
       (when (or (zero? row) (and (= row 1) (string:prefix? "Directory: " line)))
-        (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome)) out))
+        (style:fill-range! out 0 (min (vector-length out) (if (zero? row) 8 11)) 'chrome))
+      (when (zero? row)
+        (let* ([ghost (match-ghost)]
+               [end (let trim ([i (string-length line)])
+                      (if (and (positive? i) (char=? (string-ref line (- i 1)) #\space)) (trim (- i 1)) i))]
+               [start (- end (string-length ghost))])
+          (when (and (>= start 8) (string=? (substring line start end) ghost))
+            (style:fill-range! out start end 'ghost)))) out))
   (define (ensure!)
     (unless (and view (memq view (head:buffers)) (head:app-buffer? view))
       (set! view (head:register-app! "*finder*" render! handle!))
@@ -673,7 +877,7 @@
     (let* ([was (head:current-buffer)] [selected (head:buffer-file was)])
       (ensure!)
       (unless (eq? was view)
-        (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string-hash string=?))))
+        (hashtable-set! choices (head:current-window) (make-choice was selected '() (make-hashtable string:hash string=?))))
       (head:show-buffer! view)
       (if (and (eq? was view) (not explicit?)) (start-scan!)
           (navigate! dir #f selected))) (void))
@@ -693,7 +897,7 @@
           (hashtable-values choices))
         (when (eq? b view)
           (with-mutex scan-lock (set! request #f) (condition-signal scan-ready))
-          (set! view #f) (set! hover #f) (set! inventory '()) (set! rows '())
+          (set! view #f) (set! hover #f) (clear-rows!) (set! source #f) (set! rendered #f)
           (hashtable-clear! choices) (set! resumed-choices '()))))
     (head:add-shutdown-hook! (lambda () (with-mutex scan-lock (set! request #f) (condition-signal scan-ready))))
     (paint:add-highlighter!
@@ -708,7 +912,7 @@
                        (if column (list (list w 2 (cadr column)
                                           (min (caddr column) (+ (cadr column) (string-length (heading (car column))))) 'hover)) '())
                        (if (and row (or (eq? w (head:current-window)) (string? over)))
-                         (list (list w row 0 (string-length (vector-ref (head:window-lines w) row))
+                         (list (list w row 0 (string-length (head:window-line w row))
                                  (if (string? over) 'candidate-hover 'candidate))) '()))))
               (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))))))
     (when (head:find-tool-buffer "*finder*") (ensure!) (start-scan!))
@@ -718,11 +922,13 @@
                   (fold-right
                     (lambda (w out)
                       (let ([row (keyboard-row w)]) (if row (cons (cons (head:window-index w) (car row)) out) out)))
-                    '() (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))) positions))
+                    '() (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))
+                ) positions))
       (lambda (reference positions)
         (apply
-          (lambda (path filter keys hidden? name selected)
+          (lambda (path filter keys hidden? name selected . saved-mode)
             (unless (and (string? path) (string? filter) (string? name) (boolean? hidden?)
+                         (or (null? saved-mode) (and (= (length saved-mode) 1) (memq (car saved-mode) '(prefix fuzzy deep))))
                          (list? keys) (for-all (lambda (key)
                                                  (and (pair? key) (memv (car key) '(0 1 2 3 4 5)) (boolean? (cdr key)))) keys)
                          (list? selected) (for-all (lambda (p)
@@ -737,7 +943,7 @@
     (doc:register!
       '(((finder:open!) (("procedure" . "(finder:open!)")) "void"
          ("(apps finder)") finder "Finder" #f
-         "Open `<finder>` in this window at the current file's directory; `(finder:open-directory! path)` starts elsewhere. Type to filter names recursively, or relative paths when the filter contains a slash; Enter opens the selected file or directory. All matches expand as a tree, with counts on intermediate directories. Cached listings and metadata are reused across filters and navigation; Linux filesystem events invalidate changed paths. M-c opens `<create-file>` with immediate prefix matches. Enter creates the path, and Esc returns to browsing. Click ancestor path components to navigate. Left selects the directory just left when visible; Right recalls its selection. C-u clears the filter, M-. toggles hidden entries, and C-r clears the filesystem cache and rescans. Click headings or use F1–F6 for ordered ascending/descending/off sorting among siblings.")
+         "Open `<finder>` in this window at the current file's directory; `(finder:open-directory! path)` starts elsewhere. Space-separated literal keys match paths in any order, without overlapping. Rooted keys (including expanded ~) search from root; otherwise the current directory is an implicit key. Search stops at the first matching directory. Tab preserves the match set while maximizing literal characters minus separating spaces. Enter opens the chosen file or directory. Recursive results form a tree. Scanning, sorting and completion run in the background; only visible rows need formatting and metadata. Cached listings are reused until C-r; filesystem watches are disabled. M-c opens `<create-file>`. C-u clears the filter, M-. toggles hidden entries, and C-r clears the cache. Click headings or use F1–F6 for ordered ascending/descending/off sorting among siblings.")
         ((finder:show-hidden) (("parameter" . "(finder:show-hidden [boolean])")) "boolean"
          ("(apps finder)") finder "Finder" #f
          "Whether the finder's scan includes dot entries and traverses dot directories; default false. A filter with a path component starting with a dot also includes them. M-. toggles this setting and refreshes the view.")

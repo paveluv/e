@@ -200,7 +200,7 @@
         (b buffer "the buffer"))
   (define (assign-mode! b)
     (set-mode-of! b
-      (or (detect-mode (head:buffer-file b) (vector-ref (head:buffer-lines b) 0))
+      (or (detect-mode (head:buffer-file b) (head:buffer-line b 0))
           (scratch-mode b))
       #t))
 

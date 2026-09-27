@@ -69,7 +69,7 @@
   (edoc "Fit a table into a width from its unfiltered rows: (values row columns), row a procedure formatting a row's data, columns the shown (column start end) spans."
         (table (record table) "the table")
         (keys list "the sort keys")
-        (all list "every row's data")
+        (all (or list vector) "every row's data, or declared natural column widths")
         (cell procedure "(cell data column) giving a cell's text")
         (width integer "the columns available"))
   (define (layout table keys all cell width)
@@ -88,10 +88,10 @@
                   columns
                   (fit (remv (car drop) columns) (cdr drop))))]
            [natural
-            (list->vector
-              (map (lambda (i)
-                     (fold-left (lambda (n row) (max n (glyph:cells (cell row i))))
-                       (vector-ref minimum i) all)) indices))])
+            (if (vector? all) all (list->vector
+                                    (map (lambda (i)
+                                           (fold-left (lambda (n row) (max n (glyph:cells (cell row i))))
+                                             (vector-ref minimum i) all)) indices)))])
       (define (row data)
         (string:join
           (map (lambda (i)

@@ -48,7 +48,7 @@
     ;; point at its end.
     (let* ([w (head:current-window)] [b (head:window-buffer w)]
            [row (head:window-prow w)] [col (head:window-pcol w)]
-           [s (vector-ref (head:buffer-lines b) row)]
+           [s (head:buffer-line b row)]
            [n (string-length s)]
            [on? (lambda (i)
                   (and (>= i 0) (< i n) (word-char? (string-ref s i))))]

@@ -3,9 +3,10 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service directory)
   (export clear! close! directory? entry-complete? entry-count entry-created entry-kind entry-link?
-          entry-matches entry-mode entry-modified entry-path entry-size make-cache matches?
-          (rename (parent-path parent)) poll! refilter relative-path scan!)
+          entry-matches entry-mode entry-modified entry-path entry-size filter-path make-cache matches?
+          (rename (parent-path parent)) poll! read! relative-path scan!)
   (import (chezscheme)
+          (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
           (prefix (service file) file:)
           (prefix (sys sys) sys:))
@@ -41,28 +42,19 @@
         (root directory "the root")
         (returns string))
   (define (relative-path entry root)
-    (string:tail (entry-path entry) (if (string=? root "/") 1 (+ 1 (string-length root)))))
+    (if (string=? (entry-path entry) root) ""
+        (string:tail (entry-path entry) (if (string=? root "/") 1 (+ 1 (string-length root))))))
 
-  (define (path-query? query)
-    (and (string:search query "/" 0 (string-length query)) #t))
+  (edoc "The absolute match path, ending in a slash for directories."
+        (entry (record entry) "the entry") (returns string))
+  (define (filter-path entry)
+    (let ([path (entry-path entry)])
+      (if (and (directory? entry) (not (string=? path "/"))) (string-append path "/") path)))
 
-  (define (matcher root query)
-    ;; A filter with a slash matches the path relative to root; one without
-    ;; matches only the entry's own name, so a matching ancestor does not
-    ;; claim every descendant. Directories carry their trailing slash.
-    (let ([path? (path-query? query)])
-      (lambda (entry)
-        (let ([name (string-append (if path? (relative-path entry root) (file:base-name (entry-path entry)))
-                      (if (directory? entry) "/" ""))])
-          (and (string:search name query 0 (string-length name) #t) #t)))))
-
-  (edoc "Whether an entry matches a query under a root: by name, or by path when the query has a slash."
-        (entry (record entry) "the entry")
-        (root directory "the root")
-        (query string "the filter")
-        (returns boolean))
-  (define (matches? entry root query)
-    ((matcher root query) entry))
+  (edoc "Whether an entry's full path matches non-overlapping literal keys."
+        (entry (record entry) "the entry") (keys list "the expanded keys") (returns boolean))
+  (define (matches? entry keys)
+    ((path-filter:matcher keys) (filter-path entry)))
 
   (define (inspect-entry path)
     (let* ([info (sys:file-info path)]
@@ -80,73 +72,25 @@
       (entry-mode entry) (entry-size entry) (entry-modified entry) (entry-created entry)
       count complete? matches))
 
-  (define (visible? entry root hidden?)
-    (or hidden?
-        (let ([path (relative-path entry root)])
-          (not (or (string:prefix? "." path)
-                   (string:search path "/." 0 (string-length path)))))))
-
-  (define (retained-count entries match?)
-    (fold-left (lambda (n entry)
-                 (+ n (if (match? entry) 1 0) (retained-count (entry-matches entry) match?)))
-      0 entries))
-
-  (define (branch? entry match?)
-    (or (match? entry)
-        (and (entry-count entry) (positive? (entry-count entry)))))
-
-  (edoc "Filter the previous result immediately while a new query projects the cached inventory."
-        (entries list "the entries")
-        (root directory "the root")
-        (previous string "the previous query")
-        (query string "the new query")
-        (was-hidden? boolean "whether hidden entries were included")
-        (hidden? boolean "whether they are now")
-        (returns list))
-  (define (refilter entries root previous query was-hidden? hidden?)
-    ;; A narrower query is exact when the previous group retained every
-    ;; match. Otherwise keep the known subset, with a lower bound or an
-    ;; unknown count, until a fresh scan replaces it. Empty queries count
-    ;; immediate children, so their counts cannot stand in for search counts.
-    (let* ([match? (matcher root query)] [previous-match? (matcher root previous)]
-           ;; Containment implies a subset only within one matching mode: a
-           ;; name filter gaining a slash starts matching different text.
-           [same-kind? (eq? (path-query? previous) (path-query? query))]
-           [same? (and (string=? previous query) (eq? was-hidden? hidden?))]
-           [narrower? (and same-kind? (not (string=? query ""))
-                           (or (not hidden?) was-hidden?)
-                           (string:search query previous 0 (string-length query) #t))]
-           [wider? (and same-kind? (not (string=? previous "")) (not (string=? query ""))
-                        (or hidden? (not was-hidden?))
-                        (string:search previous query 0 (string-length previous) #t))])
-      (define (project entry)
-        (if (or (not (directory? entry)) (entry-link? entry)) entry
-            (let* ([old (entry-count entry)]
-                   [kept (retained-count (entry-matches entry) previous-match?)]
-                   [matches (if (string=? query "") '()
-                                (filter (lambda (e) (branch? e match?))
-                                  (map project (filter (lambda (e) (visible? e root hidden?))
-                                                 (entry-matches entry)))))]
-                   [known (retained-count matches match?)]
-                   [exact? (and (entry-complete? entry) (or same? (and narrower? old (= old kept))))]
-                   [count (cond [same? old] [exact? known] [wider? (and old (max old known))]
-                                [(positive? known) known]
-                                [(or (string=? query "") (not old) (> old kept)) #f]
-                                [else 0])])
-              (with-count entry count exact? matches))))
-      (map project (filter (lambda (entry) (visible? entry root hidden?)) entries))))
+  (edoc "Load an entry's metadata from the worker-owned cache, retaining its search counts and children."
+        (cache any "the inventory cache") (entry (record entry) "the entry") (returns (record entry)))
+  (define (read! cache entry)
+    (let* ([path (entry-path entry)]
+           [known (or (hashtable-ref (cache-entries cache) path #f)
+                      (let ([new (inspect-entry path)]) (hashtable-set! (cache-entries cache) path new) new))])
+      (with-count known (entry-count entry) (entry-complete? entry) (entry-matches entry))))
 
   ;; One worker owns a cache, including its event stream. Neither filters
   ;; nor navigation invalidate it. Listings include hidden names, but their
   ;; metadata and subtrees are loaded only when a query needs them.
   (define-record-type (cache %make-cache cache?)
-    (fields entries directories watch? (mutable watcher)))
+    (fields entries directories read watch? (mutable watcher)))
 
   (edoc "Create a filesystem inventory cache, optionally subscribing to directory changes."
         (watch? boolean "whether to use OS notifications when available") (returns any))
   (define (make-cache watch?)
-    (%make-cache (make-hashtable string-hash string=?) (make-hashtable string-hash string=?)
-      watch? (and watch? (sys:open-directory-watch))))
+    (%make-cache (make-hashtable string:hash string=?) (make-hashtable string:hash string=?)
+      (sys:directory-reader) watch? (and watch? (sys:open-directory-watch))))
 
   (edoc "Release the cache's filesystem subscriptions."
         (cache any "the inventory cache"))
@@ -202,72 +146,115 @@
           (fold-left (lambda (changed? event)
                        (or (invalidate! cache (car event) (eq? (cdr event) 'replaced)) changed?)) #f events))))
 
-  ;; Loading and projecting use one traversal. A read-only projection of a
-  ;; partially filled cache keeps everything already known; no separate
-  ;; union of old and new query results is necessary.
-  (define (inventory cache path query hidden? load? check! tick!)
-    (let ([failures 0] [pending 0] [match? (matcher path query)])
-      (define (names path)
-        (check!)
-        (when (eq? (hashtable-ref (cache-directories cache) path 'stale) 'stale)
-          (when load?
-            ;; Subscribe before listing, so mutations during discovery are
-            ;; queued and invalidate the just-read inventory on the next pass.
-            (sys:watch-directory! (cache-watcher cache) path)
-            (hashtable-set! (cache-directories cache) path
-              (guard (ex [else #f]) (directory-list path)))
-            (tick!)))
-        (cond [(eq? (hashtable-ref (cache-directories cache) path 'stale) 'stale)
-               (set! pending (+ pending 1)) #f]
-              [(hashtable-ref (cache-directories cache) path #f) =>
-               (lambda (names) (filter (lambda (name) (or hidden? (not (string:prefix? "." name)))) names))]
-              [else (set! failures (+ failures 1)) '()]))
-      (define (child path name)
-        (check!)
-        (let ([path (string-append path (if (string=? path "/") "" "/") name)])
-          (unless (hashtable-contains? (cache-entries cache) path)
-            (when load? (hashtable-set! (cache-entries cache) path (inspect-entry path)) (tick!)))
-          (let ([entry (hashtable-ref (cache-entries cache) path #f)])
-            (cond [(not entry) (set! pending (+ pending 1))]
-                  [(eq? (entry-kind entry) 'unavailable) (set! failures (+ failures 1))])
-            entry)))
-      (define (children path)
-        (fold-right (lambda (name out)
-                      (let ([entry (child path name)])
-                        (if entry (cons (visit entry) out) out))) '() (or (names path) '())))
-      (define (visit entry)
-        (if (or (not (directory? entry)) (entry-link? entry)) entry
-            (let* ([before failures] [waiting pending]
-                   [children (if (string=? query "") (names (entry-path entry)) (children (entry-path entry)))]
-                   [count (if (string=? query "") (and children (length children))
-                              (fold-left (lambda (n e) (+ n (if (match? e) 1 0) (or (entry-count e) 0))) 0 children))])
-              (with-count entry count (and (= before failures) (= waiting pending))
-                (if (string=? query "") '() (filter (lambda (e) (branch? e match?)) children))))))
-      (let ([entries (children path)])
-        (values entries failures (zero? pending)))))
-
-  (edoc "Project all recursive matches from the cache, loading missing inventory and publishing (entries failures done?) at most ten times a second."
+  (edoc "Search a cached inventory, loading missing listings and result metadata; publish (entries failures done?) at most ten times a second."
         (cache any "the inventory cache")
         (path directory "the directory")
-        (query string "the filter")
+        (keys list "expanded path keys, empty for an immediate directory overview")
         (hidden? boolean "whether to include dot names")
+        (metadata? boolean "whether all matches need metadata, for example for sorting")
         (cancelled? thunk "whether to stop")
         (publish! procedure "(publish! entries unreadable done?)"))
-  (define (scan! cache path query hidden? cancelled? publish!)
+  (define (scan! cache path keys hidden? metadata? cancelled? publish!)
     (call/cc
       (lambda (cancel)
-        (define next-update (add-duration (current-time 'time-monotonic) (make-time 'time-duration 100000000 0)))
+        (define failures 0)
+        (define frames '())
+        (define steps 0)
+        (define empty? (null? keys))
+        (define deep? (not empty?))
+        (define match-text? (path-filter:matcher keys))
+        (define root-prefix (if (string=? path "/") "/" (string-append path "/")))
+        (define next-update (sys:after 0.1))
         (define (check!) (when (cancelled?) (cancel (void))))
-        (define (publish entries failures done?)
-          (check!) (publish! entries failures done?) done?)
+        (define (visible? name) (or hidden? (not (char=? (string-ref name 0) #\.))))
+        (define (names path follow?)
+          (check!)
+          (let ([known (hashtable-ref (cache-directories cache) path 'stale)])
+            (let ([entries (if (eq? known 'stale)
+                             (begin
+                               (sys:watch-directory! (cache-watcher cache) path)
+                               (let ([entries ((cache-read cache) path follow?)])
+                                 (hashtable-set! (cache-directories cache) path entries) entries))
+                             known)])
+              (unless entries (set! failures (+ failures 1)))
+              (or entries '()))))
+        (define (entry! path kind)
+          (or (hashtable-ref (cache-entries cache) path #f)
+              (if (or metadata? (memq kind '(link unavailable))) (begin
+                                                                   (check!)
+                                                                   (let ([entry (inspect-entry path)])
+                                                                     (hashtable-set! (cache-entries cache) path entry) entry))
+                  (make-entry path kind #f #f #f #f #f #f #f '()))))
+        (define (publish entries done?)
+          (check!) (publish! entries failures done?))
         (define (tick!)
+          (check!)
           (when (time>=? (current-time 'time-monotonic) next-update)
-            (call-with-values (lambda () (inventory cache path query hidden? #f check! void)) publish)
-            (set! next-update (add-duration (current-time 'time-monotonic) (make-time 'time-duration 100000000 0)))))
+            ;; Frames hold only retained results, not the visited inventory.
+            ;; Seal the current branch around already completed siblings.
+            (let ([started (current-time 'time-monotonic)]
+                  [result (fold-left (lambda (child frame) (frame child #f)) #f frames)])
+              (when result (publish (car result) #f))
+              ;; Preparing a broad result can cost more than the scan that
+              ;; discovered it. Keep that work a fraction of the search,
+              ;; rather than repeatedly rebuilding an ever larger table.
+              (let ([elapsed (time-difference (current-time 'time-monotonic) started)])
+                (set! next-update (sys:after (max 0.1 (* 4 (+ (time-second elapsed) (/ (time-nanosecond elapsed) 1e9))))))))))
+        (define (walk directory node own? keep?)
+          (let ([out '()] [count 0] [before failures]
+                [prefix (if (string=? directory "/") "/" (string-append directory "/"))])
+            (define (snapshot child done?)
+              (let* ([children (reverse (if (and child (car child)) (cons (car child) out) out))]
+                     [total (+ count (if child (cdr child) 0))])
+                (cons (if node
+                          (and (or keep? own? (positive? total))
+                               (let ([entry (entry! directory 'directory)])
+                                 (when (and done? (eq? (entry-kind entry) 'unavailable))
+                                   (set! failures (+ failures 1)))
+                                 (with-count entry total (and done? (= failures before)) children)))
+                          children)
+                  (+ total (if own? 1 0)))))
+            (set! frames (cons snapshot frames))
+            (for-each
+              (lambda (item)
+                (let ([name (car item)] [kind (cdr item)])
+                  (when (visible? name)
+                    ;; Paths and metadata are materialized only for a match
+                    ;; or a directory we visit. Most files need neither.
+                    (let* ([full (string-append prefix name)]
+                           [link (and (eq? kind 'link) (entry! full kind))]
+                           [dir? (or (eq? kind 'directory) (and link (directory? link)))]
+                           [text (if dir? (string-append full "/") full)]
+                           [match? (or empty? (match-text? text))]
+                           [result
+                            (cond
+                              [(and dir? (not link) deep? (not match?) (path-filter:possible? keys text))
+                               (walk full #t #f (not node))]
+                              [(or match? (and (not deep?) dir?) (and (not node) (eq? kind 'link)))
+                               (let* ([entry (entry! (or full (string-append prefix name)) kind)]
+                                      [entry (cond [(and deep? dir?) (with-count entry 0 #t '())]
+                                               [(and (not deep?) dir? (not link))
+                                                (let* ([before failures] [children (names full #f)])
+                                                  (with-count entry (length (filter (lambda (p) (visible? (car p))) children))
+                                                    (= failures before) '()))] [else entry])])
+                                 (when (eq? (entry-kind entry) 'unavailable) (set! failures (+ failures 1)))
+                                 (cons entry (if match? 1 0)))]
+                              [else
+                               (when (eq? kind 'unavailable) (set! failures (+ failures 1)))
+                               (cons #f 0)])])
+                      (when (car result) (set! out (cons (car result) out)))
+                      (set! count (+ count (cdr result))))))
+                (set! steps (+ steps 1))
+                (when (zero? (mod steps 256)) (tick!)))
+              (names directory (not node)))
+            (set! frames (cdr frames))
+            (snapshot #f #t)))
         (check!)
         ;; Watching the parent also detects replacement/recreation of the
         ;; browsing root after its own watch disappears.
         (sys:watch-directory! (cache-watcher cache) (parent-path path))
-        (unless (call-with-values (lambda () (inventory cache path query hidden? #f check! void)) publish)
-          (call-with-values (lambda () (inventory cache path query hidden? #t check! tick!)) publish)))))
+        (publish '() #f)
+        (if (and deep? (match-text? root-prefix))
+            (publish (list (with-count (entry! path 'directory) 0 #t '())) #t)
+            (let ([result (walk path #f #f #t)]) (publish (car result) #t))))))
 )

@@ -8,9 +8,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation fuzzy)
-  (export expansions (rename (match-fragments fragments)) matches (rename (match-name name)) rank
+  (export expansions (rename (match-fragments fragments)) matcher matches (rename (match-name name)) rank
           (rename (match-score score)))
-  (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void))
+  (import (rnrs) (only (chezscheme) make-mutex with-mutex vector-copy iota void)
+          (prefix (foundation string) string:))
 
   (edoc "A name a query matched, with its rank and where the query's characters landed."
         (name string "the matched name")
@@ -190,6 +191,38 @@
   (define (score<? a b)
     (cond [(null? a) #f] [(< (car a) (car b)) #t] [(> (car a) (car b)) #f]
           [else (score<? (cdr a) (cdr b))]))
+
+  (edoc "Compile a predicate using the completion match relation, without ranking, shared caches or locks; optionally ignore character case."
+        (query string "the query")
+        (fold? boolean "whether to ignore case, false by default")
+        (returns procedure))
+  (define matcher
+    (case-lambda
+      [(query) (matcher query #f)]
+      [(query fold?)
+       (let* ([text (if fold? (string:fold-case query) query)] [size (string-length text)]
+              [prepared (build-source text)] [same? (if fold? char-ci=? char=?)]
+              [word? (exists (lambda (c) (not (separator? c))) (string->list text))])
+         (lambda (name)
+           (let ([n (string-length name)])
+             (or (fxzero? size)
+                 (and (fx<=? size n)
+                      ;; Most filesystem names fail before preparing a source.
+                      ;; A single literal run is already a complete alignment.
+                      (let scan ([i 0] [possible? #f])
+                        (cond
+                          [(fx=? i n)
+                           (and possible? (and (align prepared (build-source (if fold? (string:fold-case name) name))) #t))]
+                          [(and (same? (string-ref text 0) (string-ref name i))
+                                (or (fxzero? i) (separator? (string-ref name (fx- i 1)))
+                                    (separator? (string-ref name i))))
+                           (or (and (or word? (fxzero? i)) (fx<=? (fx+ i size) n)
+                                    (let prefix ([j 1])
+                                      (or (fx=? j size)
+                                          (and (same? (string-ref text j) (string-ref name (fx+ i j)))
+                                               (prefix (fx+ j 1))))))
+                               (scan (fx+ i 1) #t))]
+                          [else (scan (fx+ i 1) possible?)])))))))]))
 
   (edoc "The names a query matches as subsequences, best first: fewer segments, fewer reorderings, an earlier first character, a tighter span and a shorter name rank ahead."
         (query string "the typed characters")

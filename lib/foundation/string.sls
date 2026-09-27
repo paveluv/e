@@ -7,8 +7,22 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation string)
-  (export common-prefix delete elide insert join lines prefix? search suffix? tail)
+  (export common-prefix delete elide fold-case hash insert join lines prefix? search searcher suffix? tail)
   (import (rnrs))
+
+  (edoc "Fold character case without expanding characters or changing their positions, as char-ci=? compares them."
+        (text string "the text") (returns string))
+  (define (fold-case text)
+    (list->string (map char-foldcase (string->list text))))
+
+  (edoc "Hash every character, suitable for exact keys with long common prefixes."
+        (text string "the key") (returns integer))
+  (define (hash text)
+    ;; Chez's string-hash samples long strings. Filesystem paths often
+    ;; differ only beyond those samples, producing quadratic hash buckets.
+    (let loop ([i 0] [value 2166136261])
+      (if (= i (string-length text)) value
+          (loop (+ i 1) (bitwise-and (* (bitwise-xor value (char->integer (string-ref text i))) 16777619) #xffffffff)))))
 
   (edoc "A string from an index on."
         (s string "the string")
@@ -115,30 +129,37 @@
       [(s needle start limit)
        (search s needle start limit #f)]
       [(s needle start limit fold?)
-       (let ([eq? (if fold? char-ci=? char=?)]
-             [len (string-length needle)])
-         (if (= len 0)
-             start
-             (let ([failure (make-vector len 0)])
-               ;; KMP prefix table: the longest proper prefix ending here.
-               (let build ([i 1] [matched 0])
-                 (when (< i len)
-                   (cond
-                     [(eq? (string-ref needle i) (string-ref needle matched))
-                      (let ([matched (+ matched 1)])
-                        (vector-set! failure i matched)
-                        (build (+ i 1) matched))]
-                     [(> matched 0)
-                      (build i (vector-ref failure (- matched 1)))]
-                     [else (build (+ i 1) 0)])))
-               (let scan ([i start] [matched 0])
-                 (cond
-                   [(>= i limit) #f]
-                   [(eq? (string-ref s i) (string-ref needle matched))
-                    (let ([matched (+ matched 1)])
-                      (if (= matched len)
-                          (+ (- i len) 1)
-                          (scan (+ i 1) matched)))]
-                   [(> matched 0)
-                    (scan i (vector-ref failure (- matched 1)))]
-                   [else (scan (+ i 1) 0)])))))])))
+       ((searcher needle fold?) s start limit)]))
+
+  (edoc "Compile a literal search for repeated use, returning (find text start limit)."
+        (needle string "what to find") (fold? boolean "whether to ignore case") (returns procedure))
+  (define (searcher needle fold?)
+    (let ([eq? (if fold? char-ci=? char=?)]
+          [len (string-length needle)])
+      (if (= len 0)
+          (lambda (s start limit) start)
+          (let ([failure (make-vector len 0)])
+            ;; KMP prefix table: the longest proper prefix ending here.
+            (let build ([i 1] [matched 0])
+              (when (< i len)
+                (cond
+                  [(eq? (string-ref needle i) (string-ref needle matched))
+                   (let ([matched (+ matched 1)])
+                     (vector-set! failure i matched)
+                     (build (+ i 1) matched))]
+                  [(> matched 0)
+                   (build i (vector-ref failure (- matched 1)))]
+                  [else (build (+ i 1) 0)])))
+            (lambda (s start limit)
+              (let scan ([i start] [matched 0])
+                (cond
+                  [(>= i limit) #f]
+                  [(eq? (string-ref s i) (string-ref needle matched))
+                   (let ([matched (+ matched 1)])
+                     (if (= matched len)
+                         (+ (- i len) 1)
+                         (scan (+ i 1) matched)))]
+                  [(> matched 0)
+                   (scan i (vector-ref failure (- matched 1)))]
+                  [else (scan (+ i 1) 0)])))))))
+)

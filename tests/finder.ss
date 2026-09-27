@@ -16,6 +16,7 @@
   '(begin
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
              (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:)
+             (prefix (head mode) mode:)
              (prefix (sys sys) sys:) (prefix (test) test:))
 
      (define check test:check)
@@ -58,7 +59,7 @@
          (lambda ()
            (head:refresh-visible-views!)
            (or (not (memq (view) (map head:window-buffer (head:windows))))
-               (not (visible? "Searching…"))))))
+               (and (not (visible? "Searching…")) (not (visible? "Completing…")))))))
      (define (press! . events)
        ;; Each key sees a settled scan, as a user's next key would.
        (for-each (lambda (event) (dispatch:key! event) (settle!)) events))
@@ -108,8 +109,13 @@
        '((refused refused) #t ("<finder>" #f "finder" #t) "one\ntwo\n" #f))
      (press! "DOWN" "DOWN") (type! "ONly") ; begin on small/, whose descendant will match
      (check 'finder-single-recursive-match-is-the-default
-       (list (labels) (group-count "small/") (group-count " nested/") (chosen-is? "  needle-only.txt"))
-       '(("small/" " nested/" "  needle-only.txt") "  1" "  1" #t))
+       (list (labels) (group-count "small/") (group-count " nested/") (chosen-is? "  needle-only.txt")
+         (car (lines))
+         (let* ([line (head:buffer-line (view) 0)]
+                [styles ((mode:row-styles (mode:of (view))) (view) 0 line)]
+                [at (string:search line "[1 match]" 0 (string-length line))])
+           (and at (vector-ref styles at))))
+       '(("small/" " nested/" "  needle-only.txt") "  1" "  1" #t "Filter: ONly [1 match]" ghost))
      (press! "RET")
      (define visited
        (begin (head:goto! '(1 . 1)) (insert-text! "!")
@@ -118,14 +124,13 @@
      (check 'finder-reopening-reuses-unsaved-buffer-and-window-point
        (list (head:buffer-store-id (head:current-buffer)) (head:point) (buffer-text (head:current-buffer))) visited)
 
-     ;; A filter names entries unless it contains a slash: a directory whose
-     ;; name matches does not claim its contents, while its path does.
+     ;; A directory match ends its branch; entering it keeps the literal filter.
      (files-open! root) (filter! "small")
      (define named (list (visible? "small/") (visible? " needle-one.txt") (group-count "small/")))
      (filter! "small/")
-     (check 'finder-name-filters-match-entries-and-slash-filters-match-paths
+     (check 'finder-deep-filters-match-full-relative-paths
        (list named (visible? " needle-one.txt") (group-count "small/"))
-       '((#t #f "  0") #t "  3"))
+       '((#t #f "  0") #f "  0"))
      (files-open! root) (filter! "needle")
      (check 'finder-groups-remain-stable-through-filter-changes
        (list (labels) (group-count "large/") (group-count "small/") (group-count " nested/")
@@ -152,16 +157,16 @@
            '(("LEFT" "large/") ("RIGHT" "needle-b.txt") ("LEFT" "large/"))))
        (list (list (path "large") "needle")
          (list (list root "needle") #t) (list (list (path "large") "needle") #t) (list (list root "needle") #t)))
-     ;; The filter is never completed: Tab moves the row like Down. The
-     ;; empty filter's default row, nested/, still matches and stays chosen.
+     ;; Tab preserves the matches and choice when the filter is already a
+     ;; longest common completion. Row navigation remains on the arrows.
      (filter! "small/") (press! "RIGHT")
      (define inside (location))
      (filter! "") (type! "ne")
      (define before-tab (chosen-is? "nested/"))
      (press! "TAB")
-     (check 'finder-entering-a-typed-directory-path-keeps-the-filter-and-tab-moves-the-row
-       (list inside before-tab (location) (chosen-is? " needle-only.txt"))
-       (list (list (path "small") "small/") #t (list (path "small") "ne") #t))
+     (check 'finder-entering-a-typed-directory-path-keeps-the-filter-and-tab-preserves-the-choice
+       (list inside before-tab (location) (chosen-is? "nested/"))
+       (list (list (path "small") "small/") #t (list (path "small") "ne ed") #t))
      (files-open! root) (filter! "small/.日本語") (press! "DOWN")
      (define shown (location))
      (define escaped (visible? " .日本語\\xA;/"))
@@ -171,7 +176,7 @@
        (list (list root "small/.日本語") #t (list (path "small/.日本語\n") "small/.日本語")))
      (unless (zero? ((foreign-procedure "symlink" (string string) int) (path "small/nested") (path "linked")))
        (error 'finder "cannot create directory-link fixture"))
-     (files-open! root) (filter! "linked/needle")
+     (files-open! root) (press! "C-r") (filter! "linked/needle")
      (define route (labels))
      (press! "RIGHT")
      (define inside-link (location))
@@ -227,7 +232,7 @@
      (kill-buffer! (head:current-buffer))
      (files-open! (path "empty"))
      (check 'finder-kill-and-recreate-rejects-the-old-scan
-       (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter: " #t))
+       (list (car (location)) (car (lines)) (head:app-buffer? (view))) (list (path "empty") "Filter:  [0 matches]" #t))
      (define same-view
        (let ([before (head:current-buffer)])
          (dispatch:key! "n") (dispatch:key! "M-.")
@@ -237,7 +242,7 @@
      (check 'finder-reload-replaces-worker-ownership-and-restores-app-state
        (list same-view (visible? "No matching files") (car (location)) (car (lines))
              (head:app-buffer? (view)) (show-hidden))
-       (list #t #t (path "empty") "Filter: n" #t #t))
+       (list #t #t (path "empty") "Filter: n [0 matches]" #t #t))
 
      ;; Opening a file from the view without target links shows it in this
      ;; window and puts the view behind in the recency list, so C-x b offers
@@ -282,6 +287,48 @@
          (and hit (keymap:action-text (keymap:binding-action (cdr hit)))))
        "(finder:extend-filter! (head:typed-text))")
 
+     ;; The same corpus exercises conjunctive keys, queued completion,
+     ;; overlap, visibility, and quoted names without a second matching mode.
+     (let ([dir (path "completion")]
+           [files '("split-window!" "split-window-right!" "nested/split-window-right!"
+                    "alpha.sls" "beta.sls" ".hidden.sls" "a space.txt")])
+       (mkdir dir) (mkdir (string-append dir "/nested"))
+       (for-each (lambda (name) (call-with-output-file (string-append dir "/" name) (lambda (p) (display "" p)))) files)
+       (files-open! dir) (filter! "window split")
+       (let ([before ((api 'finder:entries))])
+         (press! "TAB")
+         (check 'finder-tab-preserves-conjunctive-matches
+           (list (cadr (location)) (equal? before ((api 'finder:entries)))) '("split-window" #t)))
+       ((api 'finder:filter!) "space txt") ((api 'finder:complete!))
+       (settle!)
+       (check 'finder-queued-tab-completes-a-single-path-with-spaces
+         (cadr (location)) "\"a space.txt\"")
+       (filter! "window window")
+       (check 'finder-repeated-keys-need-separate-occurrences ((api 'finder:entries)) '())
+       ((api 'finder:show-hidden) #f) (filter! "sls")
+       (let ([before ((api 'finder:entries))])
+         (press! "TAB")
+         (check 'finder-tab-preserves-hidden-entry-visibility
+           (list (equal? before ((api 'finder:entries))) (show-hidden)) '(#t #f)))
+       (files-open! (path "empty"))
+       (filter! (string-append dir "/"))
+       (press! "C-r" "TAB") ; the new directory was absent from its cached parent
+       (check 'finder-rooted-key-leaves-the-current-directory-and-stops-at-the-matching-directory
+         (list (car (location)) (cadr (location))
+           (filter (lambda (entry) (string=? (cadr entry) dir)) ((api 'finder:entries)))
+           (car (lines)))
+         (list (path "empty") (string-append dir "/") (list (list 'directory dir))
+           (string-append "Filter: " dir "/ [1 match]")))
+       (files-open! dir)
+       (filter! "split") (settle!)
+       (let ([before (head:window-lines (head:current-window))])
+         (head:refresh-visible-views!)
+         (check 'finder-unchanged-refresh-reuses-its-presentation
+           (eq? before (head:window-lines (head:current-window))) #t))
+       (files-open! root)
+       (for-each (lambda (name) (delete-file (string-append dir "/" name))) files)
+       (delete-directory (string-append dir "/nested")) (delete-directory dir))
+
      ;; Repeated basenames still identify distinct files, and each branch
      ;; stays together when sorting, regardless of depth.
      (let ([dirs '("tree" "tree/A" "tree/A/B" "tree/A/B/C" "tree/A/D" "tree/Z")]
@@ -305,24 +352,17 @@
          (labels) '("Z/" " foo.txt" "A/" " D/" "  foo.txt" " B/" "  C/" "   foo.txt" " foo.txt" "foo-root.txt"))
        (press! "F1")
 
-       ;; No input starts a new search here: filesystem events alone must
-       ;; refresh the current query, preserving the selected file's identity.
-       (let ([probe (sys:open-directory-watch)])
-         (when probe
-           (sys:close-directory-watch! probe)
-           (let ([selected ((api 'finder:chosen))] [added (path "tree/A/B/C/foo-added.txt")]
-                 [renamed (path "tree/A/B/C/other.txt")])
-             (call-with-output-file added (lambda (p) (display "new" p)))
-             (test:await 'finder-idle-create
-               (lambda () (head:refresh-visible-views!) (visible? "foo-added.txt")))
-             (check 'finder-watches-update-counts-and-keep-the-choice-without-input
-               (list (group-count "A/") (group-count " B/") (equal? selected ((api 'finder:chosen))))
-               '("  4" "  2" #t))
-             (rename-file added renamed)
-             (test:await 'finder-idle-rename
-               (lambda () (head:refresh-visible-views!)
-                 (and (not (visible? "foo-added.txt")) (equal? (group-count "A/") "  3"))))
-             (delete-file renamed))))
+       ;; Filesystem watches are disabled: the cached inventory is reused
+       ;; until C-r. Refresh updates counts while preserving path identity.
+       (let ([selected ((api 'finder:chosen))] [added (path "tree/A/B/C/foo-added.txt")])
+         (call-with-output-file added (lambda (p) (display "new" p)))
+         (head:refresh-visible-views!)
+         (check 'finder-cache-stays-stable-until-refresh (visible? "foo-added.txt") #f)
+         (press! "C-r")
+         (check 'finder-refresh-updates-counts-and-retains-selection
+           (list (group-count "A/") (group-count " B/") (equal? selected ((api 'finder:chosen))))
+           '("  4" "  2" #t))
+         (delete-file added) (press! "C-r"))
 
        (let* ([layout (head:root)] [panel (head:current-window)] [document (head:buffer-named "zeta.txt")]
               [other (head:make-window document 0 0 0 0 0 12 41 40 'default)])

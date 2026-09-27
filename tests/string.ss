@@ -13,10 +13,45 @@
      (import (prefix (test) test:)
              (prefix (foundation string) string:)
              (prefix (foundation fuzzy) fuzzy:)
+             (prefix (foundation path-filter) path-filter:)
              (only (chezscheme) format))
 
 
      (define check test:check)
+
+     (check 'long-path-hashes-cover-the-changing-interior
+       (let ([hashes (make-eqv-hashtable)])
+         (do ([i 0 (+ i 1)]) ((= i 1000))
+           (hashtable-set! hashes
+             (string:hash (string-append (make-string 80 #\a) (number->string i) (make-string 80 #\z))) #t))
+         (hashtable-size hashes)) 1000)
+
+     (check 'path-keys-use-disjoint-literal-occurrences-and-root-anchors
+       (map (lambda (case) ((path-filter:matcher (car case)) (cadr case)))
+         '((("A" "txt") "A/B/C/file.txt") (("B/C") "A/B/C/")
+           (("a" "ab") "aba") (("aa" "aa") "aaa") (("aa" "aa") "aaaa")
+           (("/A" "b") "/a/b/") (("/A") "other/a/") (("/a" "/a/b") "/a/b/")
+           (("sls") "src/lib/schema") (("sls") "lib/example.sls")
+           (("/a/" "a") "/a/b/") (("/a/" "a") "/a/ba/")
+           (("aa" "aa" "aa" "aa" "b") "aaaaaaab")
+           (("a" "a" "ab") "abaa")))
+       '(#t #t #t #f #t #t #f #f #f #t #f #t #f #t))
+     (check 'path-keys-expand-home-and-roundtrip-literal-spaces
+       (list (path-filter:parse " ~/src  txt " "/home/test")
+         (path-filter:parse (path-filter:format-keys '("a b/c" "~literal" "x\ny")) "/home/test"))
+       '(("/home/test/src" "txt") ("a b/c" "~literal" "x\ny")))
+     (check 'path-key-completion-penalizes-spaces-and-prefers-fewer-keys-on-ties
+       (map (lambda (case)
+              (path-filter:complete (car case) (lambda (visit) (for-all visit (cadr case)))
+                (lambda (parts) #t) (lambda () #f)))
+         '((("A" "txt") ("A/B/C/file.txt"))
+           (("sls") ("src/a/foo.sls" "src/b/foo.sls"))
+           (("sls") ("one.sls" "two.sls"))
+           (("/a" "s") ("/a/x.sls" "/a/y.sls"))
+           (("sls" "m19") ("project/probes/m19/tmp/vendor/abi/a.sls"
+                           "project/work/tmp/m19-edit/lib/one.sls"
+                           "project/work/tmp/m19-edit/tests/other.sls"))))
+       '(("a/b/c/file.txt") ("src/" "foo.sls") (".sls") ("/a/" ".sls") ("project/" "or" "tmp/" "m19" ".sls")))
 
      ;; -- tail, prefix, suffix ------------------------------------------
 
@@ -65,7 +100,10 @@
      ;; segments, which may still reorder.
      (for-each
        (lambda (case)
-         (check (list 'fuzzy (car case)) (fuzzy:matches (car case) (cadr case)) (caddr case)))
+         (check (list 'fuzzy (car case))
+           (list (fuzzy:matches (car case) (cadr case))
+                 (sort string<? (filter (fuzzy:matcher (car case)) (cadr case))))
+           (list (caddr case) (sort string<? (caddr case)))))
        '(("bc" ("cba" "abc" "bca") ("bca"))
          ("abc" ("abc:tail" "ab:c" "abcde" "c:ab" "abc" "x:abc")
           ("abc" "abcde" "abc:tail" "x:abc" "ab:c" "c:ab"))

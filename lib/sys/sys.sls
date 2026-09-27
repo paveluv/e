@@ -14,7 +14,7 @@
           call-with-private-input-file call-with-private-output-file call-with-streamed-output
           call-with-verified-base canonical-file-path close-connection! close-directory-watch! close-local-listener!
           close-process! close-terminal-process! connect-local connection-alive?
-          connection-input connection-output directory-changes! duplicate-output-port duplicate-standard-input-port
+          connection-input connection-output directory-changes! directory-reader duplicate-output-port duplicate-standard-input-port
           duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
           ensure-private-directory! file-info host-name listen-local open-directory-watch open-process
           process-exited? process-identity process-input
@@ -116,6 +116,13 @@
     (and libc-loaded? (eq? os 'linux)
          (guard (ex [else #f])
            (foreign-procedure __collect_safe "statx" (int u8* int unsigned u8*) int))))
+  (define c-getdents
+    (and libc-loaded? (eq? os 'linux)
+         (guard (ex [else #f])
+           (foreign-procedure __collect_safe "getdents64" (int u8* uptr) iptr))))
+  (define c-open-directory
+    (and c-getdents
+         (foreign-procedure __collect_safe "open" (u8* int) int)))
   (define c-inotify-init
     (and libc-loaded? (eq? os 'linux)
          (guard (ex [else #f]) (foreign-procedure "inotify_init1" (int) int))))
@@ -1477,6 +1484,59 @@
                      ;; Older kernels can have libc's entry but no syscall.
                      (and (= (foreign-ref 'int (c-errno) 0) 38) (portable))))
                (lambda () (unlock-object out) (unlock-object name)))))]))
+
+  (edoc "Make a single-owner directory reader: (reader path follow?) lists (name . kind) entries, or #f on failure. Only an explicitly visited directory may follow a link. Linux inspects only unknown entry types and reuses one read buffer."
+        (returns procedure))
+  (define (directory-reader)
+    (let ([bytes (and c-getdents (make-bytevector 32768))])
+      (lambda (path follow?)
+        (define (kind name)
+          (let ([info (file-info (string-append path "/" name))])
+            (if info (vector-ref info 0) 'unavailable)))
+        (unless (and (string? path)
+                  (let valid? ([i 0])
+                    (or (= i (string-length path))
+                      (and (not (char=? (string-ref path i) #\nul)) (valid? (+ i 1))))))
+          (error 'directory-reader "expected a path without NUL" path))
+        (if (not c-getdents)
+            (guard (ex [else #f])
+              (and (or follow? (not (file-symbolic-link? path)))
+                   (map (lambda (name) (cons name (kind name))) (directory-list path))))
+          (let ([name (string->utf8 (string-append path (string #\nul)))] [fd #f])
+            ;; Pinned buffers allow slow directory reads to release the Scheme
+            ;; runtime. The fixed Linux dirent64 layout is independent of libc.
+            (dynamic-wind
+              (lambda ()
+                (when (eq? fd 'closed) (error 'directory-reader "directory read scope has expired" path))
+                (lock-object name) (lock-object bytes))
+              (lambda ()
+                (with-interrupts-disabled
+                  (set! fd (c-open-directory name (logor #o2200000 (if follow? 0 #o400000))))) ; RDONLY | DIRECTORY | CLOEXEC | optional NOFOLLOW
+                (and (>= fd 0)
+                  (let read ([out '()])
+                    (let ([n (c-getdents fd bytes (bytevector-length bytes))])
+                      (cond [(zero? n) out]
+                            [(negative? n)
+                             (and (= (foreign-ref 'int (c-errno) 0) 4) (read out))]
+                            [else
+                             (let parse ([at 0] [out out])
+                               (if (= at n) (read out)
+                                   (let* ([length (bytevector-u16-native-ref bytes (+ at 16))]
+                                          [type (bytevector-u8-ref bytes (+ at 18))]
+                                          [end (let end ([i (+ at 19)])
+                                                 (if (zero? (bytevector-u8-ref bytes i)) i (end (+ i 1))))]
+                                          [text (make-bytevector (- end at 19))])
+                                     (bytevector-copy! bytes (+ at 19) text 0 (bytevector-length text))
+                                     (let ([name (utf8->string text)])
+                                       (parse (+ at length)
+                                         (if (or (string=? name ".") (string=? name "..")) out
+                                             (cons (cons name (case type
+                                                                [(4) 'directory] [(8) 'file] [(10) 'link]
+                                                                [(0) (kind name)] [else 'special])) out)))))))])))))
+              (lambda ()
+                (when (and fd (>= fd 0)) (c-close fd))
+                (set! fd 'closed)
+                (unlock-object bytes) (unlock-object name))))))))
 
   ;; Directory watches are owned and drained by one worker. The system seam
   ;; translates kernel events to paths; callers decide what to invalidate.
