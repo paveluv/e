@@ -148,6 +148,34 @@
      (press! "ESC") (open!) (settle!)
      (check 'finder-retains-the-filter-after-cancelling (location) (at root "only"))
 
+     ;; Reopening at unchanged geometry must reinstall the window's table,
+     ;; not expose canonical rows (names/counts without file metadata).
+     (let* ([w (head:current-window)] [width (head:window-width w)] [height (head:window-size w)])
+       (define (shown)
+         (list (head:window-line w 1) (head:window-line w (car (head:point)))))
+       (head:window-width-set! w 300) (head:window-size-set! w 20)
+       (test:await 'finder-visible-metadata
+         (lambda ()
+           (head:refresh-visible-views!)
+           (let ([row (cadr (shown))]) (string:search row "8 B" 0 (string-length row)))))
+       (let ([before (shown)])
+         (check 'finder-reopening-preserves-fitted-columns-metadata-and-idle-reuse
+           (sequence
+             (lambda (reopen)
+               (press! "RET") (reopen) (settle!)
+               (let ([text (head:window-text w)])
+                 (list (equal? (shown) before)
+                       (= (string-length (car (shown))) (head:window-content-width w))
+                       (begin (head:refresh-visible-views!) (eq? text (head:window-text w))))))
+             (list open! open! (lambda () (head:show-buffer! (view)))))
+           '((#t #t #t) (#t #t #t) (#t #t #t))))
+       (parameterize ([head:app-event-buffer-position '(1 . 1)]) (head:dispatch-app-event! "MOUSE-CLICK"))
+       (settle!)
+       (check 'finder-reopened-header-keeps-its-mouse-target
+         (head:buffer-fact (view) 'file-sorts #f) '((0 . #f)))
+       (press! "F1" "F1")
+       (head:window-width-set! w width) (head:window-size-set! w height) (head:refresh-visible-views!))
+
      (filter! "SMALL/ne only")
      (check 'finder-underlines-token-parts-in-their-own-path-components
        (map (lambda (i) (underlined i (list-ref (lines) i))) '(2 3 4))

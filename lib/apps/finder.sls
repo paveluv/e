@@ -41,7 +41,7 @@
   (define default-choice #f)
   (define source #f)
   (define shown-query #f)
-  (define rendered #f)
+  (define rendered #f)              ; (source key installed presentations)
   (define cell-cache (make-weak-eq-hashtable))
   (define details (make-hashtable string:hash string=?))
   (define pending-completion? #f)
@@ -561,7 +561,11 @@
         (let ([key (list location query sorts complete? failures match-count missing-path pending-completion? (show-hidden) details
                      (map (lambda (s) (let ([w (car s)])
                                         (list w (head:window-content-width w) (head:window-size w)))) saved))])
-          (unless (and rendered (eq? (car rendered) source) (equal? (cdr rendered) key))
+          ;; Switching buffers retires a window's presentation even when its
+          ;; geometry is unchanged. Reuse only rows that are still installed.
+          (unless (and rendered (eq? (car rendered) source) (equal? (cadr rendered) key)
+                       (for-all (lambda (entry) (eq? (head:window-text (car entry)) (cdr entry)))
+                         (caddr rendered)))
             (head:call-with-display-update
               (lambda ()
                 (when (and hover (string? (cdr hover)) (not (path-row (cdr hover)))) (set! hover #f))
@@ -611,8 +615,8 @@
                   (head:view-replace! view text
                     (list (cons 'directory location) (cons 'file-filter query) (cons 'file-sorts sorts)
                       (cons 'file-hidden (show-hidden)))
-                    placements presentations))))
-            (set! rendered (cons source key)))
+                    placements presentations)
+                  (set! rendered (list source key presentations))))))
           (when pending-completion?
             (let ([answer (with-mutex scan-lock (and request (scan-completion request)))])
               (when (or (string? answer) (and complete? (positive? failures)))
