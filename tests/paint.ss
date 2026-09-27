@@ -178,14 +178,21 @@
                    (vector (string-copy "31") (string-copy "31") (string-copy "31")) #f 3 3)
        "\x1b;[0m\x1b;[31mabc\x1b;[0m")
 
-     ;; a link opens and closes an OSC 8 around its run
-     (let ([out (paint-line "see http://x.example now"
-                            "see http://x.example now"
-                            #f '() '((4 20 "http://x.example")) 0 #f #f
-                            24 1000)])
-       (check 'link-opens (contains? out "\x1b;]8;;http://x.example\x1b;\\")
-              #t)
-       (check 'link-closes (contains? out "\x1b;]8;;\x1b;\\") #t))
+     ;; Run boundaries combine syntax, selection, overlapping backgrounds,
+     ;; hover and first-link precedence. Padding past bound clears the ink.
+     (check 'clipped-row-runs-preserve-overlays-and-link-precedence
+       (paint-line "abcde" "abcde" '(1 . 3)
+         '((1 4 match) (2 9 match-point) (3 9 active) (0 4 candidate) (2 3 hover))
+         '((1 3 "https://first") (2 4 "https://second"))
+         1 '#(keyword keyword number number plain) 'trunc 6 4)
+       (string-append
+         "\x1b;[0m" (style:code 'keyword) (style:code 'selection) (style:code 'match) (style:code 'candidate)
+         "\x1b;]8;;https://first\x1b;\\b\x1b;]8;;\x1b;\\"
+         "\x1b;[0m" (style:code 'number) (style:code 'selection) (style:code 'match-point) (style:code 'hover)
+         "\x1b;]8;;https://first\x1b;\\c\x1b;]8;;\x1b;\\"
+         "\x1b;[0m" (style:code 'number) (style:code 'active) (style:code 'candidate)
+         "\x1b;]8;;https://second\x1b;\\d\x1b;]8;;\x1b;\\"
+         "\x1b;[0m" (style:code 'plain) "  \x1b;[0m" (style:code 'chrome) "$\x1b;[0m"))
 
      ;; Text overlays retain the base/background; hover consistently wins
      ;; over keyboard emphasis regardless of registry order.
@@ -220,6 +227,34 @@
            ("e\x301;x" 1) ("🇺🇸x" 2) ("a\tb" 2)))
        '(#(0) #(0) #(0 4 8) #(0 4 8) #(0 2) #(0 3) #(0 2) #(0 1)
          #(0 2) #(0 2) #(0 2)))
+
+     ;; Viewport walks share line breaks, but never retain another window's
+     ;; width or a previous wrap setting. Check partial top segments and the
+     ;; exact overflow boundary while geometry changes on the same text.
+     (let* ([b (head:new-local-buffer! "viewport geometry")]
+            [w (head:make-window b 0 0 0 1 9 10 0 5 #t)]
+            [other (head:make-window b 0 0 0 1 9 10 0 11 #t)])
+       (head:buffer-lines-set! b '#("abcdefghij" "klmnopqrst" "uvwx"))
+       (head:window-line-numbers-set! other #f)
+       (parameterize ([head:scrollbar #f])
+         (check 'viewport-walks-follow-current-window-geometry
+           (map (lambda (case)
+                  (let ([width (car case)] [wrap (cadr case)] [numbers (caddr case)]
+                        [fact (list-ref case 3)] [topseg (list-ref case 4)] [height (list-ref case 5)])
+                    (head:window-width-set! w width)
+                    (head:window-wrap-set! w wrap)
+                    (head:window-line-numbers-set! w numbers)
+                    (head:buffer-fact-set! b 'wrap fact)
+                    (head:window-topseg-set! w topseg)
+                    (list (paint:rows-before w 1 9) (paint:rows-before other 1 9)
+                          (paint:view-overflows? w (head:window-text w) (- height 1))
+                          (paint:view-overflows? w (head:window-text w) height))))
+             '((5 #t #f default 1 6) (7 #t #f default 1 4)
+               (7 #t #t default 1 6) (7 #f #f default 0 3)
+               (7 #t #f clean 1 4) (7 #t #f (clean . 3) 1 9)
+               (5 #t #f default 1 6)))
+           '((4 1 #t #f) (2 1 #t #f) (4 1 #t #f) (1 1 #t #f)
+             (2 1 #t #f) (6 7 #t #f) (4 1 #t #f)))))
 
      ;; -- hyperlink detection ---------------------------------------------------------
 

@@ -102,23 +102,27 @@
       (if (pair? (cddr m)) (caddr m) 'mark))
     (define (covers? m col)
       (and (<= (car m) col) (< col (cadr m))))
+    ;; Direct scans avoid allocating a capturing predicate for every cell,
+    ;; including the common case with no marks or links at all.
     (define (bg-at col)
       ;; The strongest background among the marks covering col:
       ;; match-point and app selections over match, or #f.
-      (fold-left (lambda (acc m)
-                   (if (and (< col n) (covers? m col))
-                       (case (mark-style m)
-                         [(match-point) 'match-point]
-                         [(active) 'active]
-                         [(match) (or acc 'match)]
-                         [else acc])
-                       acc))
-                 #f marks))
+      (let loop ([rest marks] [face #f])
+        (if (or (>= col n) (null? rest)) face
+            (let ([m (car rest)])
+              (loop (cdr rest)
+                (if (covers? m col)
+                    (case (mark-style m)
+                      [(match-point) 'match-point]
+                      [(active) 'active]
+                      [(match) (or face 'match)]
+                      [else face]) face))))))
     (define (selected? col)
       (and (< col n) span (<= (car span) col) (< col (cdr span))))
     (define (link-at col)
-      (find (lambda (link) (and (<= (car link) col) (< col (cadr link))))
-            links))
+      (let loop ([rest links])
+        (and (pair? rest)
+             (if (covers? (car rest) col) (car rest) (loop (cdr rest))))))
     (define (safe-link-text text)
       (list->string
         (filter (lambda (character)
@@ -177,13 +181,14 @@
       ;; Pointer feedback wins over a keyboard candidate or other text
       ;; overlay, independently of highlighter registration order.
       (and (< col n)
-           (fold-left (lambda (face m)
-                        (let ([next (mark-style m)])
-                          (cond [(not (covers? m col)) face]
-                                [(memq next '(hover candidate-hover)) next]
-                                [(or face (memq next '(match match-point active))) face]
-                                [else next])))
-             #f marks)))
+           (let loop ([rest marks] [face #f])
+             (if (null? rest) face
+                 (let* ([m (car rest)] [next (mark-style m)])
+                   (loop (cdr rest)
+                     (cond [(not (covers? m col)) face]
+                           [(memq next '(hover candidate-hover)) next]
+                           [(or face (memq next '(match match-point active))) face]
+                           [else next])))))))
     ;; Emit runs of identically-attributed columns as single writes.
     (let loop ([col left])
       (when (< col limit)
@@ -650,9 +655,15 @@
         (returns vector)
         (effects internal))
   (define (line-breaks w line)
-    ;; The break table for line in w: a vector of segment starts.
-    (let* ([width (wrap-width w)]
-           [hit (eq-hashtable-ref wrap-cache line '())]
+    (cached-breaks line (wrap-width w)))
+
+  (edoc "Reuse a line's wrap boundaries at a resolved content width."
+        (line string "the line") (width integer "the width in cells")
+        (returns vector) (effects internal))
+  (define (cached-breaks line width)
+    ;; Geometry walks resolve their width once and share the same cache as
+    ;; single-line queries. No window setting is retained between walks.
+    (let* ([hit (eq-hashtable-ref wrap-cache line '())]
            [found (assv width hit)])
       (if found
           (cdr found)
@@ -1232,14 +1243,13 @@
     ;; point, wrap-aware.
     (if (not (window-wrapped? w)) (- prow (max (head:buffer-sticky-lines (head:window-buffer w)) (head:window-top w)))
       (let* ([v (head:window-text w)]
+             [width (wrap-width w)]
              [sticky (head:buffer-sticky-lines (head:window-buffer w))])
         (let loop ([i (max sticky (head:window-top w))]
                    [n (- (head:window-topseg w))])
           (if (>= i prow)
-            (+ n (if (window-wrapped? w)
-                     (segment-of (line-breaks w (render:line-ref v prow)) pcol)
-                     0))
-            (loop (+ i 1) (+ n (line-segments w (render:line-ref v i)))))))))
+            (+ n (segment-of (cached-breaks (render:line-ref v prow) width) pcol))
+            (loop (+ i 1) (+ n (vector-length (cached-breaks (render:line-ref v i) width)))))))))
 
   ;; The minimal visual distance kept between the cursor and the
   ;; window's top and bottom edges: scrolling starts that early, and
@@ -1276,13 +1286,14 @@
   (define (view-overflows? w v height)
     ;; Is there more content than the window holds, counting from its
     ;; top segment?
-    (let loop ([i (max (head:buffer-sticky-lines (head:window-buffer w))
-                       (head:window-top w))]
-               [n (- (head:window-topseg w))])
-      (cond [(> n height) #t]
-            [(>= i (render:line-count v)) #f]
-            [else (loop (+ i 1)
-                        (+ n (line-segments w (render:line-ref v i))))])))
+    (let ([width (and (window-wrapped? w) (wrap-width w))])
+      (let loop ([i (max (head:buffer-sticky-lines (head:window-buffer w))
+                         (head:window-top w))]
+                 [n (- (head:window-topseg w))])
+        (cond [(> n height) #t]
+              [(>= i (render:line-count v)) #f]
+              [else (loop (+ i 1)
+                          (+ n (if width (vector-length (cached-breaks (render:line-ref v i) width)) 1)))]))))
 
   (edoc "Clamp a window's point into its buffer and scroll so point stays visible, at least scroll-margin rows from the edges where the buffer allows."
         (w window "the window")

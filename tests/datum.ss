@@ -28,6 +28,15 @@
                   (eq? (list-ref copied 5) (list-ref original 5)))
             '(#t #f #f #f #f))
 
+     ;; Leaf copies need the same ownership and dispatch at the root as
+     ;; inside a compound value; only the latter needs a cycle check.
+     (check 'root-leaves-keep-values-and-own-mutable-data
+       (map (lambda (value)
+              (let ([copy (datum:copy value (lambda (leaf) (error 'test "unexpected opaque leaf" leaf)))])
+                (list (equal? copy value) (eq? copy value))))
+         (list '() 'plain #f #t 7 #\a (string-copy "text") (bytevector 1 2)))
+       '((#t #t) (#t #t) (#t #t) (#t #t) (#t #t) (#t #t) (#t #f) (#t #f)))
+
      (check 'improper-tails-and-nested-lists-survive
             (datum:copy '((1 2 . 3) (4 (5 (6))) . "tail"))
             '((1 2 . 3) (4 (5 (6))) . "tail"))
@@ -52,9 +61,11 @@
             '(cyclic cyclic cyclic cyclic))
 
      (check 'runtime-objects-are-refused-or-handed-to-the-leaf-copier
-            (list (refused? (lambda () (datum:copy (list (lambda () 1)))))
-                  (datum:copy (list 1 (lambda () 1)) (lambda (leaf) 'leaf)))
-            '("expected plain protocol data" (1 leaf)))
+            (map (lambda (value)
+                   (list (refused? (lambda () (datum:copy value)))
+                         (datum:copy value (lambda (leaf) 'leaf))))
+              (list void (list 1 void)))
+            '(("expected plain protocol data" leaf) ("expected plain protocol data" (1 leaf))))
 
      ;; The path-based check cost N^2/2 steps on a list: 1.5 s for 40,000
      ;; elements. One step per node leaves the bound far below that even on
