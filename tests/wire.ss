@@ -1220,6 +1220,9 @@
                (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
+                  [saved-widget (head-read head
+                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '(4 2))])
+                                     (widget:mount! id) (head:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1259,6 +1262,13 @@
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
                  (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
+               (head-read launcher `(begin (head:show-buffer! (widget:mount! ',saved-widget)) #t))
+               (head-wait 'restarted-widget-placeholder launcher (lambda () (head-sees? launcher "[Unavailable widget")))
+               (test:check 'restart-reclaims-view-generation-without-losing-unavailable-data-state
+                 (head-read launcher
+                   `(let ([descriptor (interaction:snapshot ',saved-widget)])
+                      (list (cadddr descriptor) (list-ref descriptor 7) (widget:actions ',saved-widget))))
+                 '(2 (4 2) ()))
                (head-wait 'old-screen-gets-restart-farewell head
                  (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
                (for-each

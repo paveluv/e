@@ -171,11 +171,16 @@
                 (changed! (list id))
                 (datum:copy id))))))))
 
-  (edoc "All live model ids, in allocation order."
+  (edoc "Live model ids in allocation order, optionally restricted to a kind without reading payloads."
+        (kinds (list-of symbol) "at most one kind")
         (returns list))
-  (define (ids)
+  (define (ids . kinds)
+    (unless (and (<= (length kinds) 1) (for-all symbol? kinds)) (error 'ids "expected at most one kind" kinds))
     (with-mutex (state-lock data)
-      (map (lambda (n) (list 'model n)) (list-sort < (vector->list (hashtable-keys (state-records data)))))))
+      (map (lambda (n) (list 'model n))
+        (list-sort < (filter (lambda (n) (or (null? kinds)
+                                           (eq? (car kinds) (field (hashtable-ref (state-records data) n #f) 'kind))))
+                       (vector->list (hashtable-keys (state-records data))))))))
 
   (edoc "An owned model envelope alist, or #f when absent; an unknown kind retains its complete portable payload."
         (id list "the tagged model id") (returns (or list #f)))

@@ -44,7 +44,8 @@ including IDs consumed by retired and transient records.
 
 ## Reads and changes
 
-`model:ids` lists live IDs in allocation order. `model:snapshot` returns an
+`model:ids` lists live IDs in allocation order. An optional kind, for example
+`(model:ids 'widget-view)`, filters without reading payloads. `model:snapshot` returns an
 owned alist, or `#f` for an absent ID, with these fields in order:
 
 `id`, `kind`, `schema`, `scope`, `persistence`, `revision`, `actor`,

@@ -254,6 +254,10 @@ immediately.
   configuration lifecycle.
 - [App buffers](manual/APPS.md): dynamic views, interaction, input capture,
   mouse events, and the `<buffet>` buffer switcher.
+- [Widgets](manual/WIDGETS.md): model-backed views, independent interaction,
+  renderer definitions and the experimental text widget.
+- [Model state](manual/MODELS.md): canonical records, shared head mirrors,
+  guarded view ownership and restart recovery.
 - [Git](manual/GIT.md): structured repository queries and the history browser.
 - [Pretty Scheme](manual/PRETTY_SCHEME.md): structural delimiter glyphs, depth
   and rainbow variants, and semantic symbol styling.

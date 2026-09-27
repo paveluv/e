@@ -562,7 +562,8 @@
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
      (interaction:init!) (widget:init!)
-     (model:register-kind! 'widget-test 1 string?)
+     (define model-checks 0)
+     (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
             [owner (string-copy "widget-test-renderer")] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
@@ -584,7 +585,10 @@
        (head:set-layout-root! (head:make-layout-split 'right w other 1 2))
        (head:window-width-set! w 12) (head:window-size-set! w 4)
        (head:window-width-set! other 24) (head:window-size-set! other 2)
-       (refresh!) (refresh!)
+       (refresh!)
+       (let ([before model-checks])
+         (refresh!)
+         (check 'widget-warm-frame-reuses-its-owned-model-snapshot model-checks before))
        (check 'widget-host-bounds-and-cached-rendering
          (list calls (map (lambda (window) (map glyph:cells (vector->list (head:window-lines window)))) (list w other)))
          '(2 ((12 12 12 12) (24 24))))
@@ -610,5 +614,15 @@
                (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
        (head:set-layout-root! root) (head:show-buffer! was)
        (kernel:retract-module! owner))
+
+     (model:register-kind! 'widget-view 2 string?)
+     (let* ([id (model:create! head:ui-actor 'widget-view 2 'session 'persistent '() "future descriptor")]
+            [b (widget:mount! id)] [previous (head:current-buffer)])
+       (head:show-buffer! b)
+       ((head:app-refresh! (head:app-of b)))
+       (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
+         (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
+         '(() #f "future descriptor"))
+       (widget:unmount! id) (head:show-buffer! previous))
 
      (test:finish! 'app)))

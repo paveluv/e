@@ -95,11 +95,12 @@
   (edoc "Release a disconnected head's mounts, preserving saved view state."
         (actor actor "the disconnected head"))
   (define (release-owner! actor)
-    (for-each (lambda (id) (let ([old (snapshot id)])
-                             (when (and old (equal? actor (list-ref old 4))) (release! actor id (cadddr old))))) (model:ids)))
+    (when (head? actor)
+      (for-each (lambda (id) (let ([old (snapshot id)])
+                               (when (and old (equal? actor (list-ref old 4))) (release! actor id (cadddr old))))) (model:ids 'widget-view))))
 
   (edoc "Clear saved mount owners after session restoration; ownership is a connection lifetime, not recoverable authority.")
   (define (reset-owners!)
     (for-each (lambda (id) (let ([old (snapshot id)])
-                             (when (and old (list-ref old 4)) (release! (list-ref old 4) id (cadddr old))))) (model:ids)))
+                             (when (and old (list-ref old 4)) (release! (list-ref old 4) id (cadddr old))))) (model:ids 'widget-view)))
 )

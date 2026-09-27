@@ -98,9 +98,10 @@
         (id list "the tagged model id") (returns boolean))
   (define (available? id) (cadr (mirror id)))
 
-  (edoc "Query the base for live model ids."
+  (edoc "Query the base for live model ids, optionally restricted to one kind without reading payloads."
+        (kinds (list-of symbol) "at most one kind")
         (returns list) (effects remote))
-  (define (ids) (client:request 'model-ids))
+  (define (ids . kinds) (apply client:request 'model-ids kinds))
 
   (edoc "Create base-owned non-authored model state, attributed to this connection."
         (actor actor "attribution is supplied by the connection") (kind symbol "the registered kind") (schema integer "its version")

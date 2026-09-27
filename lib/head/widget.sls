@@ -15,7 +15,7 @@
 
   (define definitions (kernel:make-registry car))
   (define mounts (make-hashtable equal-hash equal?))
-  (define-record-type mount (fields id owner buffer (mutable rendered)))
+  (define-record-type mount (fields id model owner buffer (mutable mirrored) (mutable rendered)))
   (define (definition descriptor)
     (kernel:registry-find definitions
       (lambda (entry) (equal? (car entry) (list (cadr descriptor) (caddr descriptor))))))
@@ -60,8 +60,10 @@
   (define (refresh! mount)
     (let* ([id (mount-id mount)] [b (mount-buffer mount)] [descriptor (interaction:snapshot id)]
            [entry (and descriptor (definition descriptor))]
-           [model (and descriptor (model:snapshot (car descriptor)))]
-           [available? (and model (model:available? (car descriptor)))]
+           [mirrored (or (mount-mirrored mount)
+                         (let ([value (cons (model:available? (mount-model mount)) (model:snapshot (mount-model mount)))])
+                           (mount-mirrored-set! mount value) value))]
+           [model (cdr mirrored)] [available? (car mirrored)]
            [windows (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))]
            [geometry (map (lambda (w) (list w (max 1 (head:window-content-width w)) (max 1 (head:window-size w)))) windows)]
            [key (list entry model available? descriptor geometry)])
@@ -73,8 +75,10 @@
                            (bounded
                              (if (and entry available?)
                                  ((cadr entry) (datum:copy model) (datum:copy (list-ref descriptor 7)) width height)
-                                 (list (format "[Unavailable widget ~a/~a; model ~s]"
-                                         (cadr descriptor) (caddr descriptor) (car descriptor)))) width height)))) geometry)]
+                                 (list (if descriptor
+                                           (format "[Unavailable widget ~a/~a; model ~s]"
+                                             (cadr descriptor) (caddr descriptor) (car descriptor))
+                                           (format "[Unavailable view ~s; inspect with model:snapshot]" id)))) width height)))) geometry)]
                [count (apply max 1 (map (lambda (entry) (length (cdr entry))) presentations))]
                [padded (map (lambda (entry) (cons (car entry) (append (cdr entry) (make-list (- count (length (cdr entry))) "")))) presentations)])
           (head:view-replace! b (if (null? padded) '("") (cdar padded)) '()
@@ -89,16 +93,20 @@
           (kernel:call-with-runtime-registrations
             (lambda ()
               (let-values ([(status descriptor) (interaction:claim! head:ui-actor id)])
-                (unless (eq? status 'applied) (error 'mount! "view cannot be mounted" status id))
+                (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
+                (unless (eq? status 'applied) (set! descriptor #f))
                 (let* ([owner (gensym "widget-mount")]
+                       [source (if descriptor (car descriptor) id)]
                        [b (head:new-local-buffer! (format "widget ~a" (cadr id)))]
-                       [mount (make-mount (datum:copy id) owner b #f)])
+                       [mount (make-mount (datum:copy id) (datum:copy source) owner b #f #f)])
                   (guard (ex [else
-                              (guard (ignored [else (void)]) (interaction:release! head:ui-actor id (cadddr descriptor)))
+                              (when descriptor
+                                (guard (ignored [else (void)]) (interaction:release! head:ui-actor id (cadddr descriptor))))
                               (kernel:retract-module! owner)
                               (hashtable-delete! mounts id) (head:forget-buffer! b) (raise ex)])
                     (parameterize ([kernel:registering-module owner])
-                      (model:subscribe! (list (car descriptor)) (lambda (notice) (head:wake-main!)))
+                      (model:subscribe! (list source)
+                        (lambda (notice) (mount-mirrored-set! mount #f) (head:wake-main!)))
                       (head:register-app! b (lambda () (refresh! mount))
                         (lambda (event)
                           (and (memq 'input (actions id))
@@ -121,7 +129,7 @@
       (when mount
         (let ([descriptor (interaction:snapshot id)])
           (dynamic-wind void
-            (lambda () (interaction:release! head:ui-actor id (cadddr descriptor)))
+            (lambda () (when descriptor (interaction:release! head:ui-actor id (cadddr descriptor))))
             (lambda ()
               (hashtable-delete! mounts id)
               (kernel:retract-module! (mount-owner mount))
@@ -141,8 +149,8 @@
         (list-head (list-tail lines top) (min height (- (length lines) top)))
         (map (lambda (n) (+ top n)) (iota (min height (- (length lines) top)))))))
   (define (text-move! id model descriptor offset height)
-    (let* ([state (text-state (list-ref descriptor 7) (length (text-lines model)))]
-           [row (max 0 (min (- (length (text-lines model)) 1) (+ (car state) offset)))]
+    (let* ([count (length (text-lines model))] [state (text-state (list-ref descriptor 7) count)]
+           [row (max 0 (min (- count 1) (+ (car state) offset)))]
            [top (min row (max (cadr state) (- row (max 1 height) -1)))])
       (interaction:set-state! head:ui-actor id (cdr (assq 'revision model)) (list row top)) (void)))
   (define (text-scroll! id model descriptor offset)

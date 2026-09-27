@@ -74,6 +74,10 @@ text. Reattach claims those views and restores acknowledged state. A missing
 renderer or unavailable model produces a placeholder with actions disabled;
 installing the definition makes the existing mount usable.
 
+An unsupported view descriptor itself remains an inert adapter with its
+original ID and no claimed interaction owner. Its complete envelope can be
+inspected with `model:snapshot`; recovery and subsequent saves preserve it.
+
 The [model API](MODELS.md) describes canonical envelopes, ownership, recovery
 and the distinction between remote `view:` reads and local `interaction:`
 reads. The head automatically queues interaction after presentation and

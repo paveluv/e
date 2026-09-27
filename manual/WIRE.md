@@ -54,7 +54,7 @@ edit with an unknown outcome.
 | `(request id snapshot buffer-id [basis])` | Return `(text-vector revision facts)`; with a nonnegative exact basis, append the matching change chain as a fourth field. One `store:snapshot-state` read supplies all fields. |
 | `(request id watch)` | Subscribe to store invalidations before returning the current shared ids. Repeated calls reuse this connection's watch. |
 | `(request id watch-head)` | A head also subscribes to surface, presence and log notices. Idempotent; all registrations belong to this connection. |
-| `(request id model-ids)` | Live tagged model IDs, in allocation order. |
+| `(request id model-ids [kind])` | Live tagged model IDs in allocation order, optionally restricted to one kind without transferring payloads. |
 | `(request id model-read ids)` | Coherent `(generation ((id available? envelope-or-#f) ...))`. |
 | `(request id model-watch ids)` | Add connection-owned interest before returning the same snapshot packet as `model-read`. Repeated interest is idempotent. |
 | `(request id model-unwatch ids)` | Release these IDs without reading their values. |

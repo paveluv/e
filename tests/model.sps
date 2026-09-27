@@ -155,7 +155,8 @@
     (test:check 'view-ownership-independent-descriptors-and-owner-routing
       (list (car claim) (result (lambda () (view:claim! author view)))
             (result (lambda () (view:set-state! bot view 0 '(selected . 9))))
-            (list-ref (view:snapshot another) 7)) '(applied owned owned (selected . 10)))
+            (list-ref (view:snapshot another) 7) (model:ids 'widget-view))
+      (list 'applied 'owned 'owned '(selected . 10) (list view another)))
     (publication:submit! writer (publish generation 1))
     (test:await 'view-publication-entered entered)
     (do ([n 2 (+ n 1)]) ((= n 101)) (publication:submit! writer (publish generation n)))

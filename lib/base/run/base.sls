@@ -120,7 +120,7 @@
       [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
       [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]
       [(view-release) (control!) (arity 2) (call-with-values (lambda () (apply view:release! actor args)) list)]
-      [(model-ids) (arity 0) (model:ids)]
+      [(model-ids) (apply model:ids args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
       [(model-create) (control!) (arity 6) (apply model:create! actor args)]
       [(model-commit) (control!) (arity 1) (call-with-values (lambda () (model:commit! actor (car args))) list)]
