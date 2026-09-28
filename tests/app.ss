@@ -17,7 +17,7 @@
              (prefix (state model) model:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
-             (prefix (head widget) widget:)
+             (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -561,7 +561,7 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (interaction:init!) (widget:init!)
+     (interaction:init!) (widget:init!) (window:init!)
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
@@ -569,16 +569,11 @@
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
             [first (view:create! head:ui-actor data 'probe 1 '() 0)]
             [second (view:create! head:ui-actor data 'probe 1 '() 0)]
-            [a (widget:mount! first)] [b (widget:mount! second)]
-            [other (head:make-window b 0 0 0 0 0 2 7 24 'default)])
+            [other (head:make-window was 0 0 0 0 0 2 7 24 'default)]
+            [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! 'probe 1
-             (lambda (model state width height)
-               (set! calls (+ calls 1))
-               (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq 'value model)) state)))
-             (list (cons 'choose (lambda (id model descriptor)
-                                   (values (cdr (assq 'revision model)) (view:state descriptor))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model state width height) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id model descriptor) (values (cdr (assq (quote revision) model)) (view:state descriptor))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -608,21 +603,59 @@
          (list (widget:actions first) (head:app-refresh-error (head:app-of a))) '(() #f))
        (install!) (refresh!)
        (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
-       (widget:unmount! first) (head:forget-buffer! b)
+       (head:forget-buffer! a) (head:forget-buffer! b)
        (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
          (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
                (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
        (head:set-layout-root! root) (head:show-buffer! was)
        (kernel:retract-module! owner))
 
+     ;; Tree mounts allocate no buffers. Reorder retains identity and state;
+     ;; failed ownership changes and duplicate hosts cannot release the tree.
+     (let* ([data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "one\ntwo")]
+            [parent (view:create! head:ui-actor #f 'column 1 '() '())]
+            [a (view:create! head:ui-actor data 'text 1 '() '(0 0))]
+            [b (view:create! head:ui-actor data 'text 1 '() '(0 0))]
+            [count (length (head:buffers))])
+       (view:arrange! head:ui-actor (list (list parent 0 (list (list 'a a 'fit) (list 'b b '(grow 1))) '())) '())
+       (let ([m (widget:mount! parent 'slot)])
+         (check 'recursive-mount-idempotent-with-no-adapter-buffers
+           (list (eq? m (widget:mount! parent 'slot)) (= count (length (head:buffers)))
+             (refused? (lambda () (widget:mount! parent 'another)))
+             (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
+         (widget:act! a 'move 1 2)
+         (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent)))
+                                                              (list (list 'b b '(grow 1)) (list 'a a 'fit)) '())))])
+           (check 'reordered-child-keeps-local-state-and-parent
+             (list status (view:state (interaction:snapshot a)) (view:parent (interaction:snapshot a)))
+             (list 'applied '(1 0) parent)))
+         (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent))) (list (list 'a a 'fit)) '())))])
+           (check 'removed-child-releases-runtime-and-owner
+             (list status (refused? (lambda () (widget:actions b))) (view:owner (view:snapshot b))) '(applied #t #f)))
+         (widget:unmount! parent)
+         (check 'recursive-release (map (lambda (id) (view:owner (view:snapshot id))) (list parent a)) '(#f #f))))
+
+     ;; Additional window placement forks descriptors; reopening hidden roots
+     ;; reuses their adapter and remembered interaction.
+     (let* ([w (head:current-window)] [was (head:current-buffer)]
+            [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
+            [id (view:create! head:ui-actor data 'text 1 '() '(0 0))]
+            [b (window:show-widget! w id)]
+            [other (head:make-window b 0 0 0 0 0 2 0 12 'default)]
+            [copy (head:window-buffer other)] [fork (head:buffer-fact copy 'widget-id #f)])
+       (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
+       (head:show-buffer! was)
+       (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
+       (head:show-buffer! was) (head:forget-buffer! b) (head:forget-buffer! copy))
+
      (model:register-kind! 'widget-view 3 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
-            [b (widget:mount! id)] [previous (head:current-buffer)])
+            [previous (head:current-buffer)] [b (window:show-widget! (head:current-window) id)])
        (head:show-buffer! b)
        ((head:app-refresh! (head:app-of b)))
        (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
          (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
          '(() #f "future descriptor"))
-       (widget:unmount! id) (head:show-buffer! previous))
+       (head:forget-buffer! b) (head:show-buffer! previous))
 
      (test:finish! 'app)))

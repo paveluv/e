@@ -10,18 +10,64 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next!
-          focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse!
-          register-link-tag! resize! set-line-numbers! set-wrap! split-above! split-below! split-left!
-          split-right! toggle-line-numbers! toggle-wrap! unlink!)
+  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse! register-link-tag! resize! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! unlink!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:))
+          (prefix (head prompt) prompt:)
+          (prefix (head widget) widget:)
+          (prefix (state view) view:))
+
+  (define (widget-buffer! id)
+    (or (find (lambda (b) (equal? id (head:buffer-fact b 'widget-id #f))) (head:buffers))
+      (kernel:call-with-runtime-registrations
+        (lambda ()
+          (let ([b (head:new-local-buffer! (format "widget ~a" (cadr id)))] [attached? #f])
+            (guard (ex [else (when attached? (widget:unmount! id)) (head:forget-buffer! b) (raise ex)])
+              (widget:mount! id b)
+              (set! attached? #t)
+              (head:register-app! b
+                (lambda ()
+                  (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
+                    (when w
+                      (let ([lines (widget:render! id (head:window-content-width w) (head:window-size w))])
+                        (head:view-replace! b (if (null? lines) '("") lines) '()
+                          (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
+                (lambda (event)
+                  (and (memq 'input (widget:actions id))
+                    (widget:act! id 'input event (head:app-event-buffer-position)
+                      (list (head:window-content-width (head:current-window)) (head:window-size (head:current-window)))))))
+              (head:buffer-fact-set! b 'resume-kind 'widget)
+              (head:buffer-fact-set! b 'widget-id id)
+              (head:set-app-presentation! b 0 #f #f)
+              (head:set-app-cursor-visible! b #f)
+              (head:set-app-selectable! b #f)
+              (head:set-app-manages-viewport! b #t)
+              (head:set-app-status-position! b (lambda (b) "")) b))))))
+
+  (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
+        (w window "outer host") (id list "root view id") (returns buffer))
+  (define (show-widget! w id)
+    (head:set-window-buffer! w (widget-buffer! id))
+    (head:window-buffer w))
+
+  (define (init-widget-host!)
+    (head:add-buffer-placement-hook!
+      (lambda (w b)
+        (let ([id (head:buffer-fact b 'widget-id #f)])
+          (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) (head:windows)))
+            (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
+            b))))
+    (head:add-buffer-kill-hook!
+      (lambda (b) (let ([id (head:buffer-fact b 'widget-id #f)]) (when id (widget:unmount! id)))))
+    (head:register-resume! 'widget
+      (lambda (b positions) (values (list (head:buffer-fact b 'widget-id #f)) '()))
+      (lambda (reference positions) (values (widget-buffer! (car reference)) '()))))
 
   (define (message! text)
     ;; an indicator in the echo area: shown, never logged
@@ -367,6 +413,7 @@
 
   (edoc "Install the default window keys, C-x ESC and C-x C-g emptying the pop-up among them, and allow the window commands inside a prompt.")
   (define (init!)
+    (init-widget-host!)
     ;; the global commands a prompt may run without losing its input:
     ;; pure window management
     (for-each prompt:allow!

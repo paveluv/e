@@ -16,65 +16,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook! add-publication-hook!
-          add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer?
-          app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
-          app-event-buffer-position app-event-button app-event-focus app-event-position
-          app-facts app-following? app-handle-event! app-manages-window-viewport? app-of
-          app-refresh! app-refresh-error app-refresh-error-set! app-status
-          app? before-frame! buffer buffer-append! buffer-base
-          buffer-base-set! buffer-conflicted buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
-          buffer-file-set! buffer-flags buffer-line buffer-line-count
-          buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
-          buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
-          buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified
-          buffer-modified-at buffer-modified-set! buffer-name buffer-name-set! buffer-named
-          buffer-narrowest-width buffer-of-store-id buffer-placements buffer-point
-          buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision
-          buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set!
-          buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines
-          buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
-          buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
-          bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
-          checkpoint! clamp-buffer-positions! copy-buffer copy-text current-buffer current-keys
-          (rename (current current-window)) default-directory defer-frame! depart! detach-app!
-          dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer finish-frame!
-          fit-layout! flush-ui-audit! follow-app! forget-buffer! frame-presented! fresh-buffer!
-          (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
-          in-main-pump input-live? interrupted? last-command layout layout-leaves
-          layout-min-height layout-min-width layout-node! layout-parent layout-replace!
-          layout-split-first layout-split-first-set! layout-split-first-weight
-          layout-split-first-weight-set! layout-split-orientation layout-split-second
-          layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
-          layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
-          make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
-          open-directory! open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit
-          previous-window quit!
-          quit-command! quitting?
-          read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
-          register-app! register-resume! register-view! registered-apps replace-layout-window!
-          request-app-size! request-frame-at! resize-popup! resume! resume-source! root run-deferred!
-          run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
-          set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
-          set-app-selectable! set-app-status-position! set-buffer-status! set-buffers! set-copy-text! set-current!
-          set-current-keys! set-departure! set-directory-opener! set-dividers! set-drag! set-file-opener!
-          set-frame-hook! set-full-capture! set-last-command! set-layout-root!
-          set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
-          set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
-          show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reload! store-reread! store-reset! store-resolve! store-resolve-picks! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
-          typed-text
-          ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wait-for-frame! wake-main!
-          weighted-first window window-at window-auto-scrollbar-set! window-buffer
-          window-buffer-set! window-button-at window-buttons window-buttons-width
-          window-content-width window-goal window-goal-set! window-index window-left
-          window-left-set! window-line window-line-number-width window-line-numbers window-line-numbers-set!
-          window-line-numbers? window-lines window-numbered window-pcol window-pcol-set!
-          window-prow window-prow-set! window-rendition window-scrollbar-column
-          window-scrollbar? window-size window-size-set! window-status-actions-set! window-text window-top
-          window-top-set! window-topseg window-topseg-set! window-width window-width-set!
-          window-wrap window-wrap-set! window-xoff window-xoff-set! window? windows with-buffer
-          with-window)
+  (export add-buffer! add-buffer-kill-hook! add-buffer-placement-hook! add-color-scheme-hook! add-pre-redraw-hook! add-publication-hook! add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer? app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set! app-event-buffer-position app-event-button app-event-focus app-event-position app-facts app-following? app-handle-event! app-manages-window-viewport? app-of app-refresh! app-refresh-error app-refresh-error-set! app-status app? before-frame! buffer buffer-append! buffer-base buffer-base-set! buffer-conflicted buffer-fact buffer-fact-set! buffer-facts-set! buffer-file buffer-file-set! buffer-flags buffer-line buffer-line-count buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified buffer-modified-at buffer-modified-set! buffer-name buffer-name-set! buffer-named buffer-narrowest-width buffer-of-store-id buffer-placements buffer-point buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set! buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt checkpoint! clamp-buffer-positions! content-revision copy-buffer copy-text current-buffer current-keys (rename (current current-window)) default-directory defer-frame! depart! detach-app! dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer finish-frame! fit-layout! flush-ui-audit! follow-app! forget-buffer! frame-presented! fresh-buffer! (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme in-main-pump input-live? interrupted? last-command layout layout-leaves layout-min-height layout-min-width layout-node! layout-parent layout-replace! layout-split-first layout-split-first-set! layout-split-first-weight layout-split-first-weight-set! layout-split-orientation layout-split-second layout-split-second-set! layout-split-second-weight layout-split-second-weight-set! layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split make-window mark min-window-lines mouse-position new-buffer! new-local-buffer! open-directory! open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit previous-window quit! quit-command! quitting? read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views! register-app! register-resume! register-view! registered-apps replace-layout-window! request-app-size! request-frame-at! resize-popup! resume! resume-source! root run-deferred! run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook! set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation! set-app-selectable! set-app-status-position! set-buffer-status! set-buffers! set-copy-text! set-current! set-current-keys! set-departure! set-directory-opener! set-dividers! set-drag! set-file-opener! set-frame-hook! set-full-capture! set-last-command! set-layout-root! set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command! set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows! show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history! store-reload! store-reread! store-reset! store-resolve! store-resolve-picks! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split! typed-text ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wait-for-frame! wake-main! weighted-first window window-at window-auto-scrollbar-set! window-buffer window-buffer-set! window-button-at window-buttons window-buttons-width window-content-width window-goal window-goal-set! window-index window-left window-left-set! window-line window-line-number-width window-line-numbers window-line-numbers-set! window-line-numbers? window-lines window-numbered window-pcol window-pcol-set! window-prow window-prow-set! window-rendition window-scrollbar-column window-scrollbar? window-size window-size-set! window-status-actions-set! window-text window-top window-top-set! window-topseg window-topseg-set! window-width window-width-set! window-wrap window-wrap-set! window-xoff window-xoff-set! window? windows with-buffer with-window)
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
@@ -397,8 +339,9 @@
         (returns window))
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
-    (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap 'default #f #t #f #f '()))
+    (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
+               size xoff width wrap 'default #f #t #f #f '())])
+      (window-buffer-set! w (placed-buffer! w buffer)) w))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -1687,6 +1630,8 @@
 
   (define initial-buffer-facts '((trailing . #t) (mode-auto . #t) (wrap . default)))
 
+  (edoc "The revision of this head's adopted text source, independent of its display rendition."
+        (b buffer "text source") (returns integer))
   (define (content-revision b)
     (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
 
@@ -2969,6 +2914,16 @@
 
   (define app-registry (kernel:make-registry))
   (define buffer-kill-hook-registry (kernel:make-registry))
+  (define buffer-placement-hook-registry (kernel:make-registry))
+
+  (edoc "Register an outer-host adapter that resolves a buffer before placement in a window."
+        (proc procedure "(procedure window buffer) returns the placed buffer"))
+  (define (add-buffer-placement-hook! proc)
+    (unless (procedure? proc) (error 'add-buffer-placement-hook! "expected a procedure"))
+    (kernel:registry-add! buffer-placement-hook-registry proc))
+  (define (placed-buffer! w b)
+    (fold-left (lambda (b hook) (hook w b)) b (kernel:registry-items buffer-placement-hook-registry)))
+
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
 
@@ -3651,6 +3606,7 @@
     ;; Display b in w, remembering where point was in the old buffer and
     ;; restoring where it last was in the new one. Redisplaying the same
     ;; buffer preserves the live window; saved spots belong to hidden ones.
+    (set! b (placed-buffer! w b))
     (ensure-buffer-visible! b)
     (let ([old (window-buffer w)])
       (unless (eq? old b)

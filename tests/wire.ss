@@ -1221,8 +1221,10 @@
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
                   [saved-widget (head-read head
-                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))])
-                                     (widget:mount! id) (head:checkpoint!) id))]
+                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))]
+                                         [was (head:current-buffer)])
+                                     (window:show-widget! (head:current-window) id)
+                                     (head:show-buffer! was) (head:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1262,7 +1264,7 @@
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
                  (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
-               (head-read launcher `(begin (head:show-buffer! (widget:mount! ',saved-widget)) #t))
+               (head-read launcher `(begin (window:show-widget! (head:current-window) (quote (unquote saved-widget))) #t))
                (head-wait 'restarted-widget-placeholder launcher (lambda () (head-sees? launcher "[Unavailable widget")))
                (test:check 'restart-reclaims-view-generation-without-losing-unavailable-data-state
                  (head-read launcher
@@ -1861,9 +1863,9 @@
                         [first (rpc head 'view-create data 'text 1 '() '(0 0))]
                         [second (rpc head 'view-create data 'text 1 '() '(0 0))]
                         [missing (rpc head 'view-create data 'not-installed 1 '() '(0 0))])
-                   (head-read a `(begin (head:show-buffer! (widget:mount! ',first))
-                                        (head:set-window-buffer! (window:split-right!) (widget:mount! ',missing)) #t))
-                   (head-read b `(begin (head:show-buffer! (widget:mount! ',second)) #t))
+                   (head-read a `(begin (window:show-widget! (head:current-window) (quote (unquote first)))
+                                        (window:show-widget! (window:split-right!) (quote (unquote missing))) #t))
+                   (head-read b `(begin (window:show-widget! (head:current-window) (quote (unquote second))) #t))
                    (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
                    (head-send! a "\x1b;[B")
                    (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
@@ -1890,9 +1892,9 @@
                      (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
                    (test:check 'widget-resume-preserves-state-and-missing-renderer
                      (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '((1 0) ()))
-                   (head-read a `(begin (widget:unmount! ',first) (widget:unmount! ',missing)
+                   (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote first)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
                                         (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                   (head-read b `(begin (widget:unmount! ',second) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                   (head-read b `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote second)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client

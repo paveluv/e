@@ -20,8 +20,8 @@ After restarting the base, evaluate in a head:
     'session 'persistent '() "first\nsecond\nthird"))
 (define first (view:create! (actor:current) data 'text 1 '() '(0 0)))
 (define second (view:create! (actor:current) data 'text 1 '() '(0 0)))
-(head:show-buffer! (widget:mount! first))
-(head:set-window-buffer! (window:split-right!) (widget:mount! second))
+(window:show-widget! (head:current-window) first)
+(window:show-widget! (window:split-right!) second)
 ```
 
 Each view selects a row with Up/Down or a click. The wheel scrolls its contents
@@ -46,8 +46,12 @@ validate the actual target and revision before committing an effect.
 
 ## Definitions and lifetime
 
-`widget:register!` takes a renderer kind, schema version, renderer procedure
-and an alist of named action procedures. A renderer receives
+`widget:register!` takes a kind, schema version and a definition alist.
+The definition's `render` field is a procedure, `actions` is an alist of
+named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
+and `capture` is `full` or `partial`. Optional `measure`, `layout` and
+`event` fields accept procedures. Unknown or duplicate fields are rejected.
+A renderer receives
 `(model-envelope interaction-state width height)` and returns a list of text
 lines. The host clips rows and terminal-cell widths, preserving whole glyph
 clusters. Rendering reads owned head snapshots and must be bounded and free
@@ -60,12 +64,17 @@ the same public actions used by programmatic hosts. No separate command API
 is needed. Renderer definitions are module-owned; runtime mounts belong to
 the head and survive definition reloads.
 
-`widget:mount!` claims a view and returns a local, read-only adapter buffer.
-Showing it is the host's choice; repeating the call reuses that mount.
-Different views have independent selections and render caches. Showing one
-adapter buffer in multiple windows shares that view's interaction, while
-each window supplies its own geometry. Use separate view IDs for independent
-interaction.
+`widget:mount!` takes a root ID and an opaque host slot, claims the entire
+tree and returns a head-local runtime handle. Repeating that attachment is
+idempotent; attaching the same root to another slot is refused. Children have
+no adapter buffers and share batched source subscriptions.
+
+`window:show-widget!` supplies the existing-window adapter. Showing a root
+in a second window, including an ordinary window split, forks its descriptors
+while sharing sources. Reopening a hidden root reuses its adapter and state.
+`widget:arrange!` stages source demand before committing an owned topology
+change. Reordering preserves child identities; unlinking releases their
+mounts without deleting their descriptors or data.
 
 `widget:unmount!`, or killing the adapter buffer, fences publication, releases
 subscriptions and relinquishes the owner generation. It keeps the underlying
