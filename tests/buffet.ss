@@ -44,8 +44,15 @@
      (define (press! . keys) (for-each dispatch:key! keys))
      (define a (head:new-buffer! "buffet-a"))
      (define b (head:new-buffer! "buffet-b"))
+     (define path "/tmp/buffet-path/with-many-components/file.scm")
+     (head:buffer-file-set! a path)
      (head:show-buffer! a) (head:show-buffer! b)
      (buffet:open!) (settle!)
+     (let* ([lines (widget:frame-lines (draw! (root) 120 15))] [heading (cadr lines)]
+            [name (string:search heading "Buffer" 0 120)] [next (string:search heading "Lines" 0 120)])
+       (test:check 'short-buffer-names-leave-room-for-the-full-file-path
+         (list (<= (- next name 2) 12)
+           (and (exists (lambda (line) (string:search line path 0 (string-length line))) (cddr lines)) #t)) '(#t #t)))
      (test:check 'default-previous-and-self-name
        (list (caddr (selection)) (head:buffer-name (head:current-buffer)))
        (list (document:reference a) "<buffet>"))
@@ -103,10 +110,12 @@
          (test:check 'leaving-shown-target-clears-mouse-section
            (string:prefix? "Mouse" (head:buffer-line b 0)) #f))
        (head:set-mouse-position! #f) (keys:hide!) (settle!))
-     (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
-     (test:check 'typing-from-entry-filters-in-base
-       (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection)))
-       (list 1 (document:reference b)))
+     (let ([heading (cadr (widget:frame-lines (draw! (root) 120 15)))])
+       (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
+       (test:check 'typing-from-entry-filters-in-base-without-shifting-columns
+         (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection))
+           (equal? heading (cadr (widget:frame-lines (draw! (root) 120 15)))))
+         (list 1 (document:reference b) #t)))
      (press! "C-u") (settle!)
      (define before (selection))
      (press! "UP") (settle!)

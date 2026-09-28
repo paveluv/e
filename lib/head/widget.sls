@@ -14,6 +14,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
+          (prefix (head spinner) spinner:)
           (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -31,7 +32,7 @@
 
   (edoc "Keep the outer host's focus after this pointer action; embedded actions can open into another host without focusing their panel.")
   (define (keep-host-focus!) (retain-focus? #t))
-  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret)))
+  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret) (mutable activity)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
         (id list "view id") (descriptor any "interaction basis") (definition any "definition identity")
@@ -45,6 +46,7 @@
   (define pending-reveal (make-hashtable equal-hash equal?))
   (define scroll-positions (make-hashtable equal-hash equal?))
   (define (release-service! id)
+    (let ([n (hashtable-ref nodes id #f)]) (when n (node-activity-set! n #f)))
     (let ([entry (hashtable-ref services id #f)])
       (when entry ((field entry 'release (lambda (id) (void))) id) (hashtable-delete! services id)))
     (hashtable-delete! pending-scroll id) (hashtable-delete! pending-reveal id) (hashtable-delete! scroll-positions id))
@@ -135,7 +137,7 @@
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
-                        [(prepare viewport service release render measure layout event pointer-bindings anchor locate decorate caret) (procedure? (cdr p))]
+                        [(prepare viewport service release render measure layout event pointer-bindings anchor locate decorate caret busy?) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -290,7 +292,7 @@
           (let* ([id (car row)] [old (hashtable-ref nodes id #f)])
             (if (and old (eq? (node-root old) mount))
               (begin (node-mirrored-set! old #f) (node-key-set! old #f))
-              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f))))) tree)
+              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f #f))))) tree)
       (mount-ids-set! mount ids)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
@@ -547,11 +549,16 @@
                                          ((field entry 'decorate (lambda args '())) (node-visible n) d width height range)))
                    (node-caret-set! n ((field entry 'caret (lambda args #f)) (node-visible n) d width height))
                    (node-key-set! n key)))
-               (let ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)])
-                 (make-frame id d entry source (inputs! id) (node-visible n) rect clip children
-                   (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))
-                   (composite-styles clip (node-styles n) children)
-                   (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p))))))))])))))
+               (let* ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)]
+                      [lines (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))]
+                      [cells (composite-styles clip (node-styles n) children)]
+                      [busy? (field entry 'busy? #f)])
+                 (unless busy? (node-activity-set! n #f))
+                 (when (and busy? (not (node-activity n)))
+                   (node-activity-set! n (spinner:make (lambda () (current-time 'time-monotonic)) head:request-frame-at!)))
+                 (let-values ([(lines cells) (if busy? (spinner:render! (node-activity n) (busy? (node-visible n) d) rect clip lines cells) (values lines cells))])
+                   (make-frame id d entry source (inputs! id) (node-visible n) rect clip children lines cells
+                     (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p)))))))))])))))
 
   (edoc "Prepare a recursive frame for a root allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live."
         (id list "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))

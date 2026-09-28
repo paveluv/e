@@ -51,11 +51,16 @@ validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
 
 While a query or its next row page is pending, the table retains one bounded
-viewport, replacing it when the new rows arrive. The heading shows an italic
-`[Updating]` in spare space, or `…` in a narrow pane. Retained rows preserve
+viewport, replacing it when the new rows arrive. Updates lasting more than
+200 ms show a single-cell spinner at the table's top-left corner, including
+its filter when present. It starts rotating after one second. Retained rows preserve
 their presentation but cannot activate an obsolete result. Initial loading
 and unavailable sources still have explicit placeholders. Viewport and
 selection lookups share a batch rather than waiting for each other.
+
+Columns measure formatted cells from the retained viewport. Each view remembers
+observed widths so filtering does not repeatedly shrink its columns; the last
+column takes spare room. No full collection scan or provider width data is needed.
 
 `table:register-presentation!` registers a head-local name, schema version
 and column rules `(column minimum alignment dependencies formatter)`. Alignment is `text`,
@@ -327,8 +332,15 @@ validate the actual target and revision before committing an effect.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
 and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
-`layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
+`layout`, `anchor`, `locate`, `decorate`, `caret`, `busy?` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
+
+`busy?` receives `(data descriptor)` on visible frame preparation and returns
+whether this widget is awaiting work. Read already mirrored state only. The
+head supplies the delayed activity indicator over the composited top-left
+cell, preserving layout and the underlying content. Clipped or hidden corners
+schedule no animation; completion restores the original cell. The timer,
+animation and frame deadlines stay in the head and publish no model state.
 
 `prepare` receives `(id source inputs)` and derives display data once per source,
 input or definition change; its result is
