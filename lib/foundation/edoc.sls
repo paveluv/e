@@ -33,9 +33,10 @@
 (library (foundation edoc)
   (export argument-name argument-notes argument-type argument? edoc edoc-entry edoc-named edoc-of
           edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
+          install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
-          signature-returns signature-summary signature? type-accepts? type-completions
-          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-preview type-prose type-read
+          signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
+          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-portable? type-preview type-prose type-read
           type-searcher type-spelling
           type-text type-value type-within)
   (import (rnrs)
@@ -115,15 +116,29 @@
     (fields (immutable name type-name-of) (immutable prose type-prose-of) (immutable predicate type-predicate-of)
             (immutable complete type-complete-of) (immutable read type-read-of) (immutable write type-write-of)
             (immutable owner type-owner-of) (immutable within type-within-of) (immutable search type-search-of)
-            (immutable preview type-preview-of)))
+            (immutable preview type-preview-of) (immutable portable? type-portable-of)))
   (define types (make-eq-hashtable))
   (define record-predicates (make-eq-hashtable))
+  ;; The catalogue lets an already initialized library be retried after a
+  ;; failed module load. Once the kernel starts, its transactional registry
+  ;; is the authority; the catalogue is not an active-definition fallback.
+  (define type-publish #f)
+  (define type-lookup #f)
+  (define type-observe #f)
+  (define (lookup-type name)
+    (if type-lookup (type-lookup name) (eq-hashtable-ref types name #f)))
 
-  (define (register-type! name prose predicate complete read write owner within search preview)
-    (let ([existing (eq-hashtable-ref types name #f)])
+  (define (register-type! name prose predicate complete read write owner within search preview . portable)
+    (let ([existing (lookup-type name)])
       (when (and existing (type-owner-of existing) (not (equal? (type-owner-of existing) owner)))
         (error 'edoc-type (format "type ~a is defined by ~a" name (type-owner-of existing)) owner))
-      (eq-hashtable-set! types name (make-type name prose predicate complete read write owner within search preview))))
+      (let ([type (make-type name prose predicate complete read write owner
+                    (if (eq? name 'integer) 'number within) search preview
+                    (or (and (pair? portable) (car portable))
+                        (and (equal? owner "(foundation edoc)")
+                          (memq name '(boolean string char integer number list pair vector bytevector symbol datum any)) #t)))])
+        (when type-publish (type-publish name owner type))
+        (eq-hashtable-set! types name type))))
 
   (define (register-record-type! name predicate)
     (eq-hashtable-set! record-predicates name predicate))
@@ -131,7 +146,7 @@
   (define (check-spec-types! spec name)
     ;; every type a recorded datum names is known by now
     (define (known? t)
-      (cond [(symbol? t) (eq-hashtable-contains? types t)]
+      (cond [(symbol? t) (and (lookup-type t) #t)]
             [(eq? t #f) #t]
             [(and (pair? t) (list? t))
              (case (car t)
@@ -205,10 +220,10 @@
   ;; the coverage tool reads these attach-name! definitions as documentation.
   (define edoc-type-documentation
     (attach-name! 'edoc-type
-      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (search s) (preview p) (read r) (write w) (within t)), all but the predicate optional; registered when the library initializes."
+      '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (search s) (preview p) (read r) (write w) (within t) (portable #t)), all but the predicate optional; registered when the library initializes."
          (name symbol "the type's name")
          (prose string "what values of the type are")
-         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (search s) giving a live search over the current buffer in place of a candidate list, (preview p) showing a value in the editor while a prompt has it as the inserted candidate and giving the thunk that undoes the showing, (read r) text to value, (write w) value to expression text, (within t) the type this one refines")
+         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (search s) giving a live search over the current buffer in place of a candidate list, (preview p) showing a value in the editor while a prompt has it as the inserted candidate and giving the thunk that undoes the showing, (read r) text to value, (write w) value to expression text, (within t) the type this one refines, (portable #t) a pure bounded predicate for portable contracts")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (define edoc-documentation
@@ -562,14 +577,18 @@
                  (and hit (syntax-case hit () [(_ e) #'e] [_ (syntax-violation who "expected (field expression)" form hit)]))))
              (for-each
                (lambda (f)
-                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete search read write within preview))
-                   (syntax-violation who "expected a predicate, complete, search, read, write, within or preview field" form f)))
+                 (unless (exists (lambda (key) (head-is? f key)) '(predicate complete search read write within preview portable))
+                   (syntax-violation who "expected a predicate, complete, search, read, write, within, preview or portable field" form f)))
                fields)
              (unless (field-of 'predicate) (syntax-violation who "a type needs a predicate" form))
              (with-syntax ([predicate (field-of 'predicate)]
                            [complete (or (field-of 'complete) #'#f)]
                            [search (or (field-of 'search) #'#f)]
                            [preview (or (field-of 'preview) #'#f)]
+                           [portable (let ([p (field-of 'portable)])
+                                       (cond [(not p) #'#f]
+                                             [(boolean? (syntax->datum p)) p]
+                                             [else (syntax-violation who "portable must be a boolean" form p)]))]
                            [read (or (field-of 'read) #'#f)]
                            [write (or (field-of 'write) #'#f)]
                            [within (let ([w (field-of 'within)])
@@ -577,7 +596,7 @@
                                            [(identifier? w) (list #'quote w)]
                                            [else (syntax-violation who "within names a type" form w)]))]
                            [library library-name])
-               #'(register-type! 'name prose predicate complete read write library within search preview)))]
+               #'(register-type! 'name prose predicate complete read write library within search preview portable)))]
           [_ (syntax-violation who "expected (edoc-type name prose (predicate p) field ...)" form)]))
       (define (export-identifiers exports)
         ;; the internal identifiers the export clause names
@@ -778,7 +797,7 @@
 
   (edefine (edoc-type? t)
     (edoc "Whether a value is an edoc type: a registered name, #f, or a compound over them." (t datum "the value") (returns boolean))
-    (type-ok? (lambda (name) (eq-hashtable-contains? types name)) t))
+    (type-ok? (lambda (name) (and (lookup-type name) #t)) t))
 
   ;; A signature: the kind of definition -- procedure, parameter, value,
   ;; syntax, record, condition, constructor, predicate, accessor or mutator
@@ -868,7 +887,64 @@
 
   (edefine (type-named name)
     (edoc "The type record registered under a name, or #f." (name symbol "the type's name") (returns (or (record type) #f)))
-    (eq-hashtable-ref types name #f))
+    (lookup-type name))
+
+  (edefine (install-type-registry! publish lookup observe)
+    (edoc "Install the kernel's transactional type registry once during bootstrap, seeding library declarations already initialized."
+          (publish procedure "(name library type)") (lookup procedure "name to active type")
+          (observe procedure "register a module-owned change observer"))
+    (when type-publish (error 'install-type-registry! "type registry already installed"))
+    (set! type-publish publish) (set! type-lookup lookup) (set! type-observe observe)
+    (vector-for-each (lambda (name) (let ([type (eq-hashtable-ref types name #f)])
+                                      (publish name (type-owner-of type) type))) (hashtable-keys types)))
+
+  (edefine (restore-types! library)
+    (edoc "Republish an imported library's declarations after module retraction or a failed initialization."
+          (library string "qualified library spelling"))
+    (when type-publish
+      (vector-for-each (lambda (name)
+                         (let ([type (eq-hashtable-ref types name #f)])
+                           (when (and (equal? library (type-owner-of type)) (not (eq? type (lookup-type name))))
+                             (type-publish name library type)))) (hashtable-keys types))))
+
+  (edefine (observe-types! proc)
+    (edoc "Observe committed type-definition changes through the kernel's module-owned registry."
+          (proc procedure "(removed added) definition entries") (returns any))
+    (unless type-observe (error 'observe-types! "kernel type registry is not installed"))
+    (type-observe proc))
+
+  (edefine (type-portable? t)
+    (edoc "Whether a concrete type declares a pure contract over portable data; values still need independent portable-data validation."
+          (t datum "type expression") (returns boolean))
+    (and (edoc-type? t)
+      (let walk ([t t] [seen '()])
+        (cond [(eq? t #f) #t]
+              [(symbol? t) (let ([type (lookup-type t)])
+                             (and type (type-owner-of type) (type-portable-of type)
+                               (not (memq t seen))
+                               (or (not (type-within-of type)) (walk (type-within-of type) (cons t seen))) #t))]
+              [(pair? t) (case (car t)
+                           [(one-of) #t]
+                           [(or list-of) (for-all (lambda (part) (walk part seen)) (cdr t))]
+                           [else #f])]
+              [else #f]))))
+
+  (edefine (type-compatible? from to)
+    (edoc "Whether a portable producer type conservatively fits a consumer: equality, declared refinements, finite literals, unions and covariant lists."
+          (from datum "producer type") (to datum "consumer type") (returns boolean))
+    (and (type-portable? from) (type-portable? to)
+      (let fits ([a from] [b to])
+        (cond [(equal? a b) #t]
+              [(memq b '(datum any)) #t]
+              [(and (pair? a) (eq? (car a) 'or)) (for-all (lambda (part) (fits part b)) (cdr a))]
+              [(and (pair? a) (eq? (car a) 'one-of)) (for-all (lambda (v) (type-accepts? b v)) (cdr a))]
+              [(eq? a #f) (type-accepts? b #f)]
+              [(and (pair? b) (eq? (car b) 'or)) (exists (lambda (part) (fits a part)) (cdr b))]
+              [(and (pair? a) (eq? (car a) 'list-of))
+               (or (eq? b 'list) (and (pair? b) (eq? (car b) 'list-of) (fits (cadr a) (cadr b))))]
+              [(symbol? a) (let* ([type (lookup-type a)] [parent (and type (type-within-of type))])
+                             (and parent (fits parent b)))]
+              [else #f]))))
 
   (edefine (type-owner type)
     (edoc "The library that defined a type, (literal) say, or #f for a placeholder." (type (record type) "the type record") (returns (or string #f)))
@@ -887,7 +963,7 @@
   (define (literal-type? name)
     ;; whether a type spells its values as literals: a library's own type
     ;; with a completer; the language's keep their native spellings
-    (let ([type (eq-hashtable-ref types name #f)])
+    (let ([type (lookup-type name)])
       (and type (type-complete-of type) (type-owner-of type)
            (not (equal? (type-owner-of type) "(foundation edoc)")) #t)))
 

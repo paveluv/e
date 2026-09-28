@@ -17,6 +17,32 @@
   (define incoming (list (saved 1 'sample 2 (list (string-copy "future")))
                          (saved 3 'unknown 1 '#(opaque (nested . payload)))))
 
+  (let ([owner (string-copy "ports")])
+    (parameterize ([kernel:registering-module owner])
+      (port:register! '(model port-fixture 1)
+        '((output files (list-of file) (value files)) (input optional (or string #f) (value optional)))))
+    (let ([r '((id model 999) (kind . port-fixture) (schema . 1)
+               (value (files "/tmp/a") (optional . #f)))])
+      (test:check 'ports-project-owned-values-and-preserve-false
+        (list (port:project r 'files #f) (port:project r 'optional #f)
+          (port:project r 'absent #f)
+          (test:raises? (lambda () (port:register! '(model invalid-port 1) '((input x buffer (value))))))
+          (test:raises? (lambda () (port:register! '(model invalid-port 1)
+                                     '((output x string (value)) (input x string (value)))))))
+        '((ready ("/tmp/a")) (ready #f) (unavailable contract) #t #t))
+      (test:check 'port-definition-retraction-is-transactional
+        (let* ([aborted (test:raises? (lambda () (kernel:call-with-registration-update
+                                                   (lambda () (kernel:retract-module! owner) (error 'abort "abort")))))]
+               [kept (and (port:describe '(model port-fixture 1)) #t)])
+          (kernel:retract-module! owner)
+          (list aborted kept (port:project r 'files #f)))
+        '(#t #t (unavailable contract))))
+    (test:check 'entry-port-uses-text-source-and-refuses-multiline
+      (map (lambda (lines)
+             (port:project '((kind . widget-view) (schema . 2) (value (kind . entry) (schema . 1)))
+               'text (list (cons 'revision 3) (cons 'value lines))))
+        '(#("hello") #("a" "b")))
+      '((ready "hello") (unavailable missing-value))))
   (model:register-kind! 'sample 1 strings?)
   (test:check 'model-import-validates-envelope-and-known-payload-before-install
     (let* ([good (car incoming)] [cycle (list 'cycle)])

@@ -16,6 +16,8 @@
              (prefix (state view) view:)
              (prefix (core publication) publication:)
              (prefix (core property) property:)
+             (prefix (core port) port:)
+             (prefix (service file) file:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation text) text:)
              (prefix (core kernel) kernel:)
@@ -31,6 +33,7 @@
      (define bot '(agent claude 1))
 
      ;; Canonical model state shares this base API fixture and process.
+     (file:absolute "/tmp") ; initialize the concrete filename type
      (include "tests/model.sps")
 
      (define (span sl sc el ec) (text:make-span sl sc el ec))

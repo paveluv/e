@@ -383,17 +383,21 @@
   (edoc "Remove every registration a module owns, from every registry."
         (owner string "the module"))
   (define (retract-module! owner)
-    (mutate-registrations!
-      (lambda ()
-        (with-mutex registry-lock
-          (let ([update (active-registration-update)])
-            (for-each
-              (lambda (r)
-                (remove-registration-entries! r
-                  (filter (lambda (entry) (eq? (registration-owner entry) owner))
-                          (visible-registry-entries r update))
-                  update))
-              registries))))))
+    (let ([type-owner (and (or (symbol? owner) (string? owner))
+                        (guard (ex [else #f])
+                          (cons 'edoc (format "~s" (module-library (if (symbol? owner) (symbol->string owner) owner))))))])
+      (mutate-registrations!
+        (lambda ()
+          (with-mutex registry-lock
+            (let ([update (active-registration-update)])
+              (for-each
+                (lambda (r)
+                  (remove-registration-entries! r
+                    (filter (lambda (entry) (or (eq? (registration-owner entry) owner)
+                                              (and type-owner (equal? (registration-owner entry) type-owner))))
+                            (visible-registry-entries r update))
+                    update))
+                registries)))))))
 
   (edoc "Watch a registry: (proc removed-items added-items) once per commit; the token unobserves."
         (r any "the registry")
@@ -520,6 +524,23 @@
           (apply values results)))))
 
   ;;; Persistent cells ------------------------------------------------------
+
+  ;; Edoc sits below the kernel, so bootstrap supplies its registry seam.
+  ;; Library identity owns declarations; module import republishes the
+  ;; catalogue when a cached initializer is retried after rollback.
+  (define type-definitions (make-registry car))
+  (define type-registry
+    (edoc:install-type-registry!
+      (lambda (name library type)
+        (call-with-registration-update
+          (lambda ()
+            (registry-remove! type-definitions (lambda (entry) (eq? (car entry) name)))
+            (parameterize ([registering-module (cons 'edoc library)])
+              (registry-add! type-definitions (cons name type))))))
+      (lambda (name)
+        (let ([entry (registry-find type-definitions (lambda (entry) (eq? (car entry) name)))])
+          (and entry (cdr entry))))
+      (lambda (proc) (registry-observe! type-definitions proc))))
 
   (define persistent-cells (make-hashtable equal-hash equal?))
   (define cells-lock (make-mutex))
@@ -714,6 +735,7 @@
                                  ,(string->symbol
                                     (string-append name ":")))))
             (interaction-environment))
+      (edoc:restore-types! (format "~s" lib))
       (when (memq 'init! (library-exports lib))
         (parameterize ([registering-module (string->symbol name)])
           (eval `(let () (import (only ,lib init!)) (init!))
