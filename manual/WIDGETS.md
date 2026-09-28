@@ -26,7 +26,8 @@ identity is the first column. `set-columns!` retains that identity.
 The table composes sticky headings and a normal scroll view;
 it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
 `sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
-keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
+keyboard and mouse. F1–F12 use `table:toggle-visible-sort!` to address visible
+headings by zero-based position. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
@@ -102,9 +103,15 @@ implicit current window. `widget:host` returns the opaque mounting slot;
 when it opens a document elsewhere.
 
 `C-x TAB` lists the focused widget path's keys, including app capture contexts
-and unshadowed entry, table and global bindings. The listing follows internal
-focus changes. `widget:key-scopes` exposes that routing without moving focus
-or touching a chord; dispatch uses `key-scopes!` to reconcile focus first.
+and unshadowed entry, table and global bindings. Its widget calls show the
+actual receiver ID, so they can be issued from eval or scripts outside key
+dispatch. Shared operations retain their `table:`, `entry:` or `widget:`
+names. `widget:descendant` follows named children, for example
+`(widget:descendant app-id 'table 'filter 'entry)` in Buffet. Nested
+`keymap:call` expressions compose these public operations in bindings.
+The listing follows internal focus changes. `widget:key-scopes` exposes that
+routing without moving focus or touching a chord; dispatch uses `key-scopes!`
+to reconcile focus first.
 
 ## Buffer catalogue
 

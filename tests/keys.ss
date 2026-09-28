@@ -109,6 +109,12 @@
        (let ([text (keymap:action-text (keymap:call beginning-of-line! 3))])
          (list (contains? text "beginning-of-line!") (string:suffix? " 3)" text)))
        '(#t #t))
+     (let* ([calls 0] [producer (lambda () (set! calls (+ calls 1)) 2)]
+            [action (keymap:call list (keymap:call + producer 3) '(a b))]
+            [text (keymap:action-text action (list (cons producer 2)))])
+       (check 'nested-calls-describe-without-running-and-evaluate-as-shown
+         (list calls (keymap:run! action) calls (eval (read (open-input-string text))))
+         '(0 (5 (a b)) 1 (5 (a b)))))
      (check 'section-titles-are-bold-and-rows-plain
        (let ([styles (mode:line-styles (view))])
          (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))

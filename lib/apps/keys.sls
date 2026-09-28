@@ -67,7 +67,7 @@
                       (map (lambda (i) (+ i 1)) (iota (length sequence)))))
             nearer))
 
-  (define (context-groups context nearer read-only? . keep)
+  (define (context-groups context nearer read-only? keep describe)
     ;; keep, when given, admits a binding: the commands allowed in a
     ;; prompt for the global section while one is open
     ;; (keys command description) for a context's bindings that work here:
@@ -85,12 +85,12 @@
           (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
                      (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
           (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
-                 [command (and action (keymap:action-text action))])
+                 [command (and action (if describe (describe b) (keymap:action-text action)))])
             (loop (cdr owned)
                   (if (and command
                            (not (shadowed? (keymap:binding-sequence b) nearer))
                            (not (and read-only? (edits? action)))
-                           (or (null? keep) ((car keep) b)))
+                           (or (not keep) (keep b)))
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -208,6 +208,15 @@
           (if (eq? (car path) context) (not (shadowed? sequence nearer))
             (loop (cdr path) (cons (car path) nearer)))))))
 
+  (define (describe-binding b context binding)
+    ;; Reify the known receiver; never run arbitrary argument producers to
+    ;; describe a key. The resulting Scheme call works outside key dispatch.
+    (let* ([root (head:buffer-fact b 'widget-id #f)]
+           [scope (find (lambda (scope) (memq context (cadr scope)))
+                    (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
+      (keymap:action-text (keymap:binding-action binding)
+        (if scope (list (cons widget:target (car scope))) '()))))
+
   (define (listing b width)
     ;; the keys that work now: with a prompt open, its content view's
     ;; context, the prompt's keys and the global commands allowed in a
@@ -227,11 +236,12 @@
               (loop (cdr contexts) (cons context nearer)
                     (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
                                    (append (if (and prompting? (eq? context 'global))
-                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))))
+                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
                                                (if (and widget? (not prompting?))
                                                  (context-groups context '() (and (eq? context 'global) read-only?)
-                                                   (lambda (binding) (reachable? b context binding)))
-                                                 (context-groups context nearer (and (not prompting?) read-only?))))
+                                                   (lambda (binding) (reachable? b context binding))
+                                                   (lambda (binding) (describe-binding b context binding)))
+                                                 (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
                                            (capture-note context))
                                    width)
                           out)))))))

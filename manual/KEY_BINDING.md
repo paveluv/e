@@ -71,8 +71,9 @@ a lambda works too, but shows as an anonymous command:
 ```
 
 Two structural actions describe themselves where a lambda shows as an
-anonymous command. `keymap:call` applies a command to what other procedures
-return when the key is pressed, and to any other argument as given, and
+anonymous command. `keymap:call` applies a command to what producer procedures
+or nested `keymap:call` expressions return when the key is pressed, and to
+any other argument as given. `keymap:run!` executes that same structured call;
 `keymap:prefill` opens M-x with the command's call typed up to its next
 argument, so completion asks for it:
 
@@ -83,8 +84,22 @@ argument, so completion asks for it:
 ```
 
 `C-h k` shows the first as `(edit:kill-buffer! (head:current-buffer))` and
-the second as `λ (edit:answer! `, by the names the top level gives the
+the third as `λ (edit:answer! `, by the names the top level gives the
 procedures, so a rename follows.
+
+Nested calls let a composition address a named child through public APIs:
+
+```scheme
+(keymap:bind! 'my-app "C-u"
+  (keymap:call entry:delete!
+    (keymap:call widget:descendant widget:target 'filter 'entry)
+    'all))
+```
+
+For widget bindings, `C-x TAB` substitutes the receiving view's ID for
+`widget:target`, so the shown Scheme expression also runs in eval or scripts.
+The ID addresses that view while it remains mounted. Describing a binding
+never invokes its argument producers.
 
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:

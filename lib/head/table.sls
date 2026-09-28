@@ -2,7 +2,7 @@
 ;; remains here until those apps adopt the composable controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export activate! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort!)
+  (export activate! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
@@ -595,7 +595,11 @@
                    (save-selection! s (get shown 'generation 0) (cadr hit) (get shown 'basis '()) (car hit))
                    (session-hovered-set! s #f) (repaint! s)
                    (when (assq 'activate (widget:commands (session-id s))) (activate! (session-id s))))))))])))
-  (define (sort-visible! id index)
+
+  (edoc "Cycle sorting for a currently visible heading by position. An absent or unsortable heading does nothing."
+        (id list "table or descendant") (index integer "zero-based visible column position"))
+  (define (toggle-visible-sort! id index)
+    (unless (natural? index) (error 'toggle-visible-sort! "expected a nonnegative column index" index))
     (let* ([s (runtime id)] [f (exists (lambda (p) (find-frame (car p) (child s 'heading))) (widget:shown))]
            [v (and f (widget:frame-data f))] [spans (if v (visible-spans v) '())])
       (when (< index (length spans))
@@ -618,4 +622,4 @@
     (for-each (lambda (p) (keymap:bind-default! 'widget-table (car p) (keymap:call move! widget:target (cdr p))))
       '(("UP" . previous) ("DOWN" . next) ("HOME" . first) ("END" . last) ("PGUP" . page-previous) ("PGDN" . page-next)))
     (keymap:bind-default! 'widget-table "RET" (keymap:call activate! widget:target))
-    (for-each (lambda (i) (keymap:bind-default! 'widget-table (format "F~a" (+ i 1)) (keymap:call sort-visible! widget:target i))) (iota 12))))
+    (for-each (lambda (i) (keymap:bind-default! 'widget-table (format "F~a" (+ i 1)) (keymap:call toggle-visible-sort! widget:target i))) (iota 12))))

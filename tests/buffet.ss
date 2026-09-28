@@ -11,6 +11,7 @@
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
+             (prefix (head keymap) keymap:)
              (prefix (head document) document:) (prefix (head paint) paint:)
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state model) model:) (prefix (state view) view:)
@@ -62,7 +63,17 @@
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
            (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
                    '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys"))
-             (equal? focus (widget:focused (root)))) '(#t #t)))
+             (not (string:search text "anonymous command" 0 (string-length text)))
+             (not (string:search text "(widget:target)" 0 (string-length text)))
+             (equal? focus (widget:focused (root)))) '(#t #t #t #t)))
+       (table:move! (table) 'first) (settle!)
+       (let* ([before (selection)]
+              [action (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("DOWN"))))]
+              [text (keymap:action-text action (list (cons widget:target (app))))])
+         (parameterize ([widget:target #f]) (eval (read (open-input-string text))))
+         (settle!)
+         (test:check 'listed-buffet-call-works-in-eval-outside-key-dispatch
+           (list (string:prefix? "(table:move! (widget:descendant '" text) (not (equal? (caddr before) (caddr (selection))))) '(#t #t)))
        (widget:focus! (root) (child (child (table) 'body) 'rows))
        (head:before-frame!)
        (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])

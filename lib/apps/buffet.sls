@@ -14,8 +14,8 @@
 
   (define (get xs key fallback) (cond [(assq key xs) => cdr] [else fallback]))
   (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
-  (define (target-table) (child (widget:target) 'table))
-  (define (target-entry) (child (child (target-table) 'filter) 'entry))
+  (define target-table (keymap:call widget:descendant widget:target 'table))
+  (define target-entry (keymap:call widget:descendant widget:target 'table 'filter 'entry))
   (define (event! id source descriptor event)
     (and (eq? (car event) 'text)
       (let ([entry (child (child (child id 'table) 'filter) 'entry)]

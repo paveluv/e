@@ -24,7 +24,7 @@
     context-capture (rename (key-event-binding event-binding))
     generation prefill prefill-action-arguments
     prefill-action-procedure prefill-action? prefill-name
-    prefill-text resolved-binding same-sequence?
+    prefill-text resolved-binding run! same-sequence?
     sequence-bindings sequence-text set-context-capture!
     (rename (key-spec spec)) (rename (unbind-key! unbind!)))
   (import (rnrs)
@@ -316,9 +316,9 @@
   ;; the procedures themselves, never from spelled names, and describe
   ;; themselves by the names the top level gives those procedures, so a
   ;; rename follows and C-h k shows the call as it runs.
-  (edoc "A key action calling a procedure with what other procedures produce when the key is pressed."
+  (edoc "A key action calling a procedure with constants and the results of producers or nested calls when the key is pressed."
         (procedure procedure "the command to call")
-        (arguments (list-of procedure) "the producers of its arguments, called in order"))
+        (arguments (list-of any) "constants, producer procedures or nested calls"))
   (define-record-type (call-action make-call-action call-action?)
     (fields (immutable procedure call-action-procedure) (immutable arguments call-action-arguments)))
 
@@ -328,14 +328,21 @@
   (define-record-type (prefill-action make-prefill-action prefill-action?)
     (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
 
-  (edoc "Bind a key to a call: the command applied, when the key is pressed, to what the producers return and to the other arguments as given, (keymap:call edit:kill-buffer! head:current-buffer) say, or (keymap:call finder:toggle-sort-column! 2)."
+  (edoc "Bind a key to a call: apply the command at the key press to the results of procedure producers or nested keymap:call expressions, and other arguments as given."
         (procedure procedure "the command to call")
-        (producers (list-of any) "its arguments in order: a procedure produces one at the press, any other value stands as it is")
+        (producers (list-of any) "arguments: procedures and nested calls are evaluated at the press; other values stand as they are")
         (returns (record call-action)))
   (define (call procedure . producers)
     (unless (procedure? procedure)
       (error 'call "expected a procedure" procedure))
     (make-call-action procedure producers))
+
+  (edoc "Execute a structured key call, evaluating procedure producers and nested calls only now. Describing a call never evaluates it."
+        (action (record call-action) "call to execute") (returns any))
+  (define (run! action)
+    (apply (call-action-procedure action)
+      (map (lambda (p) (cond [(call-action? p) (run! p)] [(procedure? p) (p)] [else p]))
+        (call-action-arguments action))))
 
   (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument, (keymap:prefill edit:answer!) say, the given arguments spelled first."
         (procedure procedure "the command the call names")
@@ -352,7 +359,7 @@
       (and sym (symbol->string sym))))
 
   (define (spell value)
-    (if (symbol? value) (format "'~s" value) (format "~s" value)))
+    (if (or (symbol? value) (pair? value) (null? value)) (format "'~s" value) (format "~s" value)))
 
   (edoc "The top-level name of the command a pre-filled M-x calls, or #f while it has none."
         (action (record prefill-action) "the pre-fill")
@@ -371,20 +378,30 @@
 
   (edoc "How a key action reads: a procedure by its top-level name, a call as the expression it runs, a pre-filled M-x as M-x and its text, a keymap action by name; unbound and anonymous say so."
         (action any "the action")
+        (bindings (list-of list) "optional alist of producer procedures to known values; substitutes without invoking them")
         (returns string))
-  (define (action-text action)
-    (cond [(not action) "unbound"]
-          [(symbol? action) (symbol->string action)]
-          [(call-action? action)
-           (string-append "(" (action-text (call-action-procedure action))
-                          (apply string-append
-                            (map (lambda (p) (if (procedure? p) (string-append " (" (action-text p) ")") (string-append " " (spell p))))
-                                 (call-action-arguments action)))
-                          ")")]
-          ;; the M-x prompt's label, as eval draws it, then the text it opens with
-          [(prefill-action? action) (string-append "λ " (prefill-text action))]
-          [(procedure? action) (or (top-level-name action) "anonymous command")]
-          [else (format "~s" action)]))
+  (define (action-text action . bindings)
+    (define substitutions (if (null? bindings) '() (car bindings)))
+    (define (describe action)
+      (cond [(not action) "unbound"]
+        [(symbol? action) (symbol->string action)]
+        [(call-action? action)
+         (string-append "(" (describe (call-action-procedure action))
+                        (apply string-append
+                          (map (lambda (p)
+                                 (string-append " "
+                                   (cond [(call-action? p) (describe p)]
+                                     [(procedure? p) (cond [(assq p substitutions) => (lambda (v) (spell (cdr v)))]
+                                                       [else (string-append "(" (describe p) ")")])]
+                                     [else (spell p)])))
+                               (call-action-arguments action)))
+                        ")")]
+        ;; the M-x prompt's label, as eval draws it, then the text it opens with
+        [(prefill-action? action) (string-append "λ " (prefill-text action))]
+        [(procedure? action) (or (top-level-name action) "anonymous command")]
+        [else (format "~s" action)]))
+    (unless (<= (length bindings) 1) (error 'action-text "expected optional producer values"))
+    (describe action))
 
   ;; The command type: what a key or a binding names, spelled as the
   ;; call it makes.

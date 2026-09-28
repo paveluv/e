@@ -1,7 +1,7 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next! focused
+  (export act! actions arrange! cancel! capture! caret commands context descendant event-frame focus! focus-next! focused
           frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
           host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
@@ -101,6 +101,16 @@
     (cond [(and entry (assq name (cdr entry))) => cdr] [else fallback]))
   (define (mounted id)
     (or (hashtable-ref nodes id #f) (error 'widget "view is not mounted" id)))
+
+  (edoc "Find a descendant of a mounted view by its named child path. Read the head's current logical tree; no geometry or window discovery is involved. A missing child refuses."
+        (id list "starting view") (path (list-of symbol) "child names in order") (returns list "descendant view") (effects internal))
+  (define (descendant id . path)
+    (unless (for-all symbol? path) (error 'descendant "expected child names" path))
+    (mounted id)
+    (fold-left (lambda (id name)
+                 (let* ([d (read-view id)] [child (and d (assq name (view:children d)))])
+                   (unless child (error 'descendant "child is unavailable" id name))
+                   (cadr child))) id path))
   (define (rows id)
     (let walk ([id id])
       (let ([d (read-view id)])
