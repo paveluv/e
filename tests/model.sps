@@ -141,40 +141,96 @@
       (list (cadar (cadr (seen))) (get (model:snapshot id) 'revision)) '(#f 1))
     (model:unsubscribe! token))
   (let* ([id (model:create! author 'sample 1 'session 'transient '() '())]
-         [view (view:create! author id 'value 1 '(selected . 0))]
-         [another (view:create! author id 'value 1 '(selected . 10))]
+         [view (view:create! author id 'value 1 '() '(selected . 0))]
+         [another (view:create! author id 'value 1 '() '(selected . 10))]
          [claim (call-with-values (lambda () (view:claim! author view)) list)]
-         [generation (cadddr (cadr claim))]
+         [generation (view:generation (cdr (assoc view (cadr claim))))]
          [entered (test:gate)] [release (test:gate)] [sent (test:recorder)]
          [writer (publication:make!
                    (lambda (state previous)
                      (entered #t) (test:await 'view-publication-release release)
                      (sent state) (view:publish! author (list state))) void values)])
-    (define (publish generation sequence) (list view generation sequence 0 (cons 'selected sequence)))
+    (define (publish generation sequence) (list view generation sequence 0 (cons 'selected sequence) #f))
     (define (result thunk) (car (call-with-values thunk list)))
     (test:check 'view-ownership-independent-descriptors-and-owner-routing
       (list (car claim) (result (lambda () (view:claim! author view)))
             (result (lambda () (view:set-state! bot view 0 '(selected . 9))))
-            (list-ref (view:snapshot another) 7) (model:ids 'widget-view))
+            (view:state (view:snapshot another)) (model:ids 'widget-view))
       (list 'applied 'owned 'owned '(selected . 10) (list view another)))
     (publication:submit! writer (publish generation 1))
     (test:await 'view-publication-entered entered)
     (do ([n 2 (+ n 1)]) ((= n 101)) (publication:submit! writer (publish generation n)))
-    (test:check 'view-held-ack-leaves-saved-state-unchanged (list-ref (view:snapshot view) 7) '(selected . 0))
+    (test:check 'view-held-ack-leaves-saved-state-unchanged (view:state (view:snapshot view)) '(selected . 0))
     (release #t) (publication:flush! writer)
     (test:check 'view-bounded-publication-and-delayed-ack
-      (list (map caddr (sent)) (list-ref (view:snapshot view) 7)) '((1 100) (selected . 100)))
+      (list (map caddr (sent)) (view:state (view:snapshot view))) '((1 100) (selected . 100)))
     (view:release-owner! author)
     (view:claim! author view)
     (test:check 'view-old-generation-and-out-of-order-batches-cannot-overwrite
       (list (result (lambda () (view:publish! author (list (publish generation 101)))))
             (result (lambda () (view:release! author view generation)))
             (result (lambda () (view:publish! author (list (publish (+ generation 1) 1)
-                                                       (list another 0 1 0 '(selected . 99))))))
-            (list-ref (view:snapshot view) 7)) '(stale stale stale (selected . 100)))
+                                                       (list another 0 1 0 '(selected . 99) #f)))))
+            (view:state (view:snapshot view))) '(stale stale stale (selected . 100)))
     (view:reset-owners!)
     (test:check 'view-restart-clears-owner-and-keeps-acknowledged-state
-      (list (list-ref (view:snapshot view) 4) (list-ref (view:snapshot view) 7)) '(#f (selected . 100))))
+      (list (view:owner (view:snapshot view)) (view:state (view:snapshot view))) '(#f (selected . 100))))
+  (let* ([root (view:create! author #f 'column 1 '() '())]
+         [other (view:create! author #f 'row 1 '() '())]
+         [a (view:create! author '(buffer 99) 'entry 1 '() '(0 0))]
+         [b (view:create! author '(model 1) 'text 1 '() '(0 0))])
+    (define (revision id) (get (model:snapshot id) 'revision))
+    (define (arrange rows leases) (call-with-values (lambda () (view:arrange! author rows leases)) list))
+    (define (children id ids) (list id (revision id) (map (lambda (id n) (list (string->symbol (number->string n)) id '(grow 1))) ids (iota (length ids))) '()))
+    (test:check 'view-tree-attachment-and-cyclic-or-duplicate-refusal
+      (list (car (arrange (list (children root (list a b))) '()))
+            (view:parent (view:snapshot a))
+            (car (arrange (list (children a (list root))) '()))
+            (test:raises? (lambda () (arrange (list (children other (list a a))) '())))
+            (view:parent (view:snapshot root)))
+      (list 'applied root 'invalid #t #f))
+    (view:claim! author root)
+    (let ([lease (view:generation (view:snapshot root))])
+      (test:check 'view-guarded-reparent-atomically-releases-detached-child
+        (list (car (arrange (list (children root (list b))) '()))
+              (car (arrange (list (children root (list b))) (list (list root lease))))
+              (view:owner (view:snapshot a)) (view:parent (view:snapshot a))
+              (view:owner (view:snapshot b))
+              (car (call-with-values (lambda () (view:publish! author (list (list root lease 1 #f 'old #f)))) list)))
+        (list 'owned 'applied #f #f author 'stale)))
+    (view:claim! '(head "foreign") a)
+    (let ([before (view:tree root)])
+      (test:check 'view-foreign-child-refusal-does-not-change-owned-tree
+        (list (car (arrange (list (children root (list b a)))
+                     (list (list root (view:generation (view:snapshot root))))))
+              (equal? before (view:tree root))) '(owned #t)))
+    (let* ([notices (test:recorder)] [token (model:subscribe! #f notices)]
+           [copy (view:fork! author root)] [leaf (cadar (view:children (view:snapshot copy)))])
+      (model:unsubscribe! token)
+      (test:check 'view-fork-shares-source-and-resets-recursive-identity
+        (list (not (equal? copy root)) (not (equal? leaf b)) (view:parent (view:snapshot leaf))
+              (view:source (view:snapshot leaf)) (map (lambda (row) (view:owner (cdr row))) (view:tree copy))
+              (length (notices)) (length (cadar (notices))))
+        (list #t #t copy '(model 1) '(#f #f) 1 2)))
+    (view:release-owner! author) (view:release-owner! '(head "foreign"))
+    (let* ([x (view:create! author #f 'row 1 '() '())]
+           [y (view:create! author #f 'row 1 '() '())]
+           [plans (list (children x (list y)) (children y (list x)))]
+           [results (test:parallel 2 (lambda (n) (car (arrange (list (list-ref plans n)) '()))))])
+      (test:check 'view-ancestor-witness-prevents-concurrent-cycle
+        (list (length (filter (lambda (status) (eq? status 'applied)) results))
+              (and (view:parent (view:snapshot x)) (view:parent (view:snapshot y)))) '(1 #f))))
+  (let* ([legacy (saved 1 'widget-view 1 (list '(model 3) 'text 1 7 author 9 2 '(4 2)))]
+         [upgraded (view:upgrade legacy)] [d (get upgraded 'value)]
+         [before (car (exported))])
+    (test:check 'view-leaf-migration-and-atomic-allocation-validation
+      (list (get upgraded 'schema) (view:source d) (view:parent d) (view:children d)
+            (view:generation d) (view:state d)
+            (equal? (view:upgrade (cadr incoming)) (cadr incoming))
+            (test:raises? (lambda () (model:allocate! author 2
+                                       (lambda (ids) (list (list 'sample 1 'session 'persistent '() '("valid"))
+                                                       (list 'sample 1 'session 'persistent '() 42))))))
+            (= before (car (exported)))) '(2 (model 3) #f () 7 (4 2) #t #t #t)))
   (model:register-kind! 'unknown 1 (lambda (value) #f))
   (test:check 'model-unavailable-data-still-exports-intact
     (list (model:available? '(model 3)) (model:snapshot '(model 3))

@@ -10,7 +10,7 @@
           (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
-          (prefix (state model) model:)
+          (prefix (state model) model:) (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
   (define definitions (kernel:make-registry car))
@@ -18,7 +18,7 @@
   (define-record-type mount (fields id model owner buffer (mutable mirrored) (mutable rendered)))
   (define (definition descriptor)
     (kernel:registry-find definitions
-      (lambda (entry) (equal? (car entry) (list (cadr descriptor) (caddr descriptor))))))
+      (lambda (entry) (equal? (car entry) (list (view:kind descriptor) (view:schema descriptor))))))
   (define (mounted id)
     (or (hashtable-ref mounts id #f) (error 'widget "view is not mounted" id)))
 
@@ -39,7 +39,7 @@
   (define (actions id)
     (mounted id)
     (let* ([descriptor (interaction:snapshot id)] [entry (and descriptor (definition descriptor))])
-      (if (and entry (model:available? (car descriptor))) (map car (caddr entry)) '())))
+      (if (and entry (model:available? (view:source descriptor))) (map car (caddr entry)) '())))
 
   (edoc "Operate a mounted widget through its public action, with the current model snapshot and actual provisional target/basis."
         (id list "view id") (action symbol "action name") (arguments (list-of any) "action arguments") (returns any))
@@ -47,8 +47,8 @@
     (mounted id)
     (let* ([descriptor (interaction:snapshot id)] [entry (and descriptor (definition descriptor))]
            [procedure (and entry (assq action (caddr entry)))])
-      (unless (and procedure (model:available? (car descriptor))) (error 'act! "widget action is unavailable" id action))
-      (call-with-values (lambda () (apply (cdr procedure) id (model:snapshot (car descriptor)) descriptor arguments))
+      (unless (and procedure (model:available? (view:source descriptor))) (error 'act! "widget action is unavailable" id action))
+      (call-with-values (lambda () (apply (cdr procedure) id (model:snapshot (view:source descriptor)) descriptor arguments))
         (lambda result
           (when (or (not (eq? action 'input)) (exists values result)) (head:wake-main!))
           (apply values result)))))
@@ -74,10 +74,10 @@
                          (cons (car size)
                            (bounded
                              (if (and entry available?)
-                                 ((cadr entry) (datum:copy model) (datum:copy (list-ref descriptor 7)) width height)
+                                 ((cadr entry) (datum:copy model) (datum:copy (view:state descriptor)) width height)
                                  (list (if descriptor
                                            (format "[Unavailable widget ~a/~a; model ~s]"
-                                             (cadr descriptor) (caddr descriptor) (car descriptor))
+                                             (view:kind descriptor) (view:schema descriptor) (view:source descriptor))
                                            (format "[Unavailable view ~s; inspect with model:snapshot]" id)))) width height)))) geometry)]
                [count (apply max 1 (map (lambda (entry) (length (cdr entry))) presentations))]
                [padded (map (lambda (entry) (cons (car entry) (append (cdr entry) (make-list (- count (length (cdr entry))) "")))) presentations)])
@@ -96,12 +96,12 @@
                 (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
                 (unless (eq? status 'applied) (set! descriptor #f))
                 (let* ([owner (gensym "widget-mount")]
-                       [source (if descriptor (car descriptor) id)]
+                       [source (if descriptor (view:source descriptor) id)]
                        [b (head:new-local-buffer! (format "widget ~a" (cadr id)))]
                        [mount (make-mount (datum:copy id) (datum:copy source) owner b #f #f)])
                   (guard (ex [else
                               (when descriptor
-                                (guard (ignored [else (void)]) (interaction:release! head:ui-actor id (cadddr descriptor))))
+                                (guard (ignored [else (void)]) (interaction:release! head:ui-actor id (view:generation descriptor))))
                               (kernel:retract-module! owner)
                               (hashtable-delete! mounts id) (head:forget-buffer! b) (raise ex)])
                     (parameterize ([kernel:registering-module owner])
@@ -129,7 +129,7 @@
       (when mount
         (let ([descriptor (interaction:snapshot id)])
           (dynamic-wind void
-            (lambda () (when descriptor (interaction:release! head:ui-actor id (cadddr descriptor))))
+            (lambda () (when descriptor (interaction:release! head:ui-actor id (view:generation descriptor))))
             (lambda ()
               (hashtable-delete! mounts id)
               (kernel:retract-module! (mount-owner mount))
@@ -149,23 +149,23 @@
         (list-head (list-tail lines top) (min height (- (length lines) top)))
         (map (lambda (n) (+ top n)) (iota (min height (- (length lines) top)))))))
   (define (text-move! id model descriptor offset height)
-    (let* ([count (length (text-lines model))] [state (text-state (list-ref descriptor 7) count)]
+    (let* ([count (length (text-lines model))] [state (text-state (view:state descriptor) count)]
            [row (max 0 (min (- count 1) (+ (car state) offset)))]
            [top (min row (max (cadr state) (- row (max 1 height) -1)))])
       (interaction:set-state! head:ui-actor id (cdr (assq 'revision model)) (list row top)) (void)))
   (define (text-scroll! id model descriptor offset)
-    (let* ([count (length (text-lines model))] [state (text-state (list-ref descriptor 7) count)])
+    (let* ([count (length (text-lines model))] [state (text-state (view:state descriptor) count)])
       (interaction:set-state! head:ui-actor id (cdr (assq 'revision model))
         (list (car state) (max 0 (min (- count 1) (+ (cadr state) offset))))) (void)))
   (define (text-select! id model descriptor row)
-    (let* ([count (length (text-lines model))] [state (text-state (list-ref descriptor 7) count)])
+    (let* ([count (length (text-lines model))] [state (text-state (view:state descriptor) count)])
       (interaction:set-state! head:ui-actor id (cdr (assq 'revision model))
         (list (max 0 (min (- count 1) (+ (cadr state) row))) (cadr state)))) (void))
   (define (text-choose! id model descriptor)
-    (let* ([lines (text-lines model)] [row (car (text-state (list-ref descriptor 7) (length lines)))]
+    (let* ([lines (text-lines model)] [row (car (text-state (view:state descriptor) (length lines)))]
            [chosen (list-ref lines row)])
       (echo:set-text! chosen)
-      (list (car descriptor) (cdr (assq 'revision model)) row chosen)))
+      (list (view:source descriptor) (cdr (assq 'revision model)) row chosen)))
   (define (text-input! id model descriptor event point size)
     (cond [(member event '("UP" "DOWN")) (act! id 'move (if (string=? event "UP") -1 1) (cadr size)) #t]
           [(member event '("WHEEL-UP" "WHEEL-DOWN")) (act! id 'scroll (if (string=? event "WHEEL-UP") -3 3)) #t]

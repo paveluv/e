@@ -567,8 +567,8 @@
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
             [owner (string-copy "widget-test-renderer")] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
-            [first (view:create! head:ui-actor data 'probe 1 0)]
-            [second (view:create! head:ui-actor data 'probe 1 0)]
+            [first (view:create! head:ui-actor data 'probe 1 '() 0)]
+            [second (view:create! head:ui-actor data 'probe 1 '() 0)]
             [a (widget:mount! first)] [b (widget:mount! second)]
             [other (head:make-window b 0 0 0 0 0 2 7 24 'default)])
        (define (install!)
@@ -578,7 +578,7 @@
                (set! calls (+ calls 1))
                (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq 'value model)) state)))
              (list (cons 'choose (lambda (id model descriptor)
-                                   (values (cdr (assq 'revision model)) (list-ref descriptor 7))))))))
+                                   (values (cdr (assq 'revision model)) (view:state descriptor))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -595,9 +595,9 @@
        (interaction:set-state! head:ui-actor first 0 9)
        (check 'widget-action-uses-provisional-target-before-ack
          (list (call-with-values (lambda () (widget:act! first 'choose)) list)
-               (list-ref (view:snapshot first) 7) (list-ref (interaction:snapshot second) 7)) '((0 9) 0 0))
+               (view:state (view:snapshot first)) (view:state (interaction:snapshot second))) '((0 9) 0 0))
        (head:checkpoint!)
-       (check 'widget-lifecycle-checkpoint-fences-state (list-ref (view:snapshot first) 7) 9)
+       (check 'widget-lifecycle-checkpoint-fences-state (view:state (view:snapshot first)) 9)
        (model:commit! '(base test) (list (list data 0 '() "new")))
        (refresh!)
        (let ([before calls])
@@ -610,13 +610,13 @@
        (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
        (widget:unmount! first) (head:forget-buffer! b)
        (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
-         (list (map (lambda (id) (list-ref (view:snapshot id) 4)) (list first second))
+         (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
                (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
        (head:set-layout-root! root) (head:show-buffer! was)
        (kernel:retract-module! owner))
 
-     (model:register-kind! 'widget-view 2 string?)
-     (let* ([id (model:create! head:ui-actor 'widget-view 2 'session 'persistent '() "future descriptor")]
+     (model:register-kind! 'widget-view 3 string?)
+     (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
             [b (widget:mount! id)] [previous (head:current-buffer)])
        (head:show-buffer! b)
        ((head:app-refresh! (head:app-of b)))

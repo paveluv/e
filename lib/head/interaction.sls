@@ -2,8 +2,9 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export claim! flush! init! publish! release! set-state! snapshot)
+  (export arrange! claim! flush! focus! init! publish! release! set-state! snapshot)
   (import (chezscheme)
+          (prefix (core descriptor) descriptor:)
           (prefix (core publication) publication:)
           (prefix (foundation datum) datum:)
           (prefix (head head) head:)
@@ -27,9 +28,31 @@
         (actor actor "attribution is supplied by the connection") (id list "view model id"))
   (define (claim! actor id)
     (let ([reply (call-with-values (lambda () (view:claim! actor id)) list)])
-      (when (eq? (car reply) 'applied)
-        (hashtable-set! owned (datum:copy id) (datum:copy (cadr reply))) (set! dirty? #t))
-      (apply values reply)))
+      (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
+      (values (car reply) (snapshot id))))
+
+  (define (adopt! rows)
+    (for-each (lambda (row)
+                (if (equal? head:ui-actor (view:owner (cdr row)))
+                    (hashtable-set! owned (datum:copy (car row)) (datum:copy (cdr row)))
+                    (hashtable-delete! owned (car row)))) rows)
+    (set! dirty? #t))
+
+  (edoc "Fence interaction and atomically arrange a tree through its owner."
+        (actor actor "head") (changes list "parent changes") (leases list "root guards"))
+  (define (arrange! actor changes leases)
+    (flush!)
+    (let-values ([(status rows) (view:arrange! actor changes leases)])
+      (when (eq? status 'applied) (adopt! rows)) (values status rows)))
+
+  (edoc "Set the owned root's logical focus target locally."
+        (id list "root") (target any "descendant or #f"))
+  (define (focus! id target)
+    (let ([d (snapshot id)])
+      (unless d (error 'focus! "root is not owned" id))
+      (unless (equal? target (view:focus d))
+        (hashtable-set! owned id (descriptor:with d (list (cons 'focus target) (cons 'sequence (+ 1 (view:sequence d))))))
+        (set! dirty? #t))))
 
   (edoc "Read the owned view's latest provisional descriptor locally. An unclaimed view returns #f."
         (id list "view model id") (returns (or list #f)))
@@ -42,8 +65,9 @@
     (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0))) (error 'set-state! "invalid basis" basis))
     (let ([old (hashtable-ref owned id #f)])
       (if old
-          (let ([next (if (equal? (list basis state) (list-tail old 6)) old
-                          (datum:copy (append (list-head old 5) (list (+ 1 (list-ref old 5)) basis state))))])
+          (let ([next (if (equal? (list basis state) (list (view:basis old) (view:state old))) old
+                          (descriptor:with old (list (cons 'sequence (+ 1 (view:sequence old)))
+                                                     (cons 'basis basis) (cons 'state state))))])
             (unless (eq? old next) (hashtable-set! owned id next) (set! dirty? #t))
             (values 'applied (datum:copy next)))
           (view:set-state! actor id basis state))))
@@ -56,7 +80,8 @@
           (list-sort (lambda (a b) (< (cadar a) (cadar b)))
             (filter (lambda (row) (> (caddr row) 0))
               (map (lambda (id descriptor)
-                     (cons id (cons (cadddr descriptor) (list-tail descriptor 5))))
+                     (list id (view:generation descriptor) (view:sequence descriptor)
+                           (view:basis descriptor) (view:state descriptor) (view:focus descriptor)))
                 (vector->list ids) (vector->list descriptors))))))
       (set! dirty? #f))
     (publication:submit! writer queued))
@@ -69,7 +94,7 @@
   (define (release! actor id generation)
     (flush!)
     (let ([reply (call-with-values (lambda () (view:release! actor id generation)) list)])
-      (when (eq? (car reply) 'applied) (hashtable-delete! owned id) (set! dirty? #t))
+      (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
       (apply values reply)))
 
   (edoc "Integrate interaction publication with presentation and lifecycle checkpoints.")

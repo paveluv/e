@@ -117,23 +117,36 @@ connection; model-specific agent grants are deferred.
 
 ## Views and provisional interaction
 
-`view:create!` creates a persistent `widget-view` model referencing an existing
-model ID. Its descriptor is:
+`view:create!` takes actor, source, widget kind, schema, options and initial
+interaction. The source is a tagged model/buffer ID, or `#f` for a container.
+Its persistent descriptor has named source, kind/schema, parent, children,
+options, generation, owner, sequence, basis, state and focus fields. Use the
+corresponding `view:` accessors on a descriptor; they never perform a lookup.
+Geometry is never saved. Basis identifies the source revision of an anchor.
 
-`(model-id renderer schema generation owner sequence basis state)`
+`view:arrange!` takes an actor, `(parent-id expected-revision children options)`
+changes and `(root-id generation)` leases for owned roots. Children are
+`(slot-symbol child-id sizing)` entries; sizing is `fit` or `(grow weight)`.
+Reparenting includes both parents. Backlinks, owner transfers and generations
+change atomically; cycles, duplicate children and foreign owners are refused.
+Removal retains the child subtree and its sources. An active owner fences
+publication and uses `interaction:arrange!` to adopt the returned descriptors.
 
-The renderer symbol/schema identifies head code. Geometry is never saved in
-the descriptor. State is portable interaction data; basis identifies the model
-revision against which a selection or anchor was made. Creating another view
-over the same model creates independent interaction state.
+`view:tree` returns a coherent list of `(id . descriptor)` entries.
+`view:fork!` copies that subtree's descriptors, remapping children and focus,
+while sharing sources and resetting ownership. Unavailable schemas refuse
+forking before allocation. These are explicit base requests in a head.
 
-`view:claim!` takes an actor and view ID and returns status plus descriptor.
-An already owned view returns `owned`, even to the same head. A successful
-claim increments the owner generation and resets sequence to zero.
+`view:claim!` takes an actor and root ID and returns status plus descriptor
+entries for the whole supported tree. A nested child cannot be claimed alone.
+An already owned tree returns `owned`, even to the same head. A successful
+claim increments generations and resets sequences to zero.
 `view:publish!` takes an actor and a batch of
-`(view-id generation sequence basis state)` updates. All owners/generations
+`(view-id generation sequence basis state focus)` updates. All owners/generations
 must match and each sequence must advance; otherwise nothing changes.
-`view:release!` checks the generation and retains the last acknowledged state.
+`view:release!` checks the root generation and releases its supported tree,
+retaining acknowledged state. An owned arrangement renews generations to
+prevent an old publication from overwriting corrected focus or removed state.
 Disconnect releases the head's views; restart clears recovered mount owners.
 
 `view:set-state!` changes saved state only while unmounted. Commands for an
@@ -156,6 +169,9 @@ interaction owner and its one worker live for the process, not per mount.
 Canonical `view:snapshot` in a head is an explicit remote inspection operation;
 it is unsuitable for rendering. `interaction:snapshot` is the rendering read.
 Both expose owned copies.
+
+The named descriptor uses schema 2. Recovery converts known schema-1 leaf
+descriptors once, while keeping unknown schemas opaque and inspectable.
 
 ## Recovery
 

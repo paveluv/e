@@ -18,8 +18,8 @@ After restarting the base, evaluate in a head:
 (define data
   (model:create! (actor:current) 'example-text 1
     'session 'persistent '() "first\nsecond\nthird"))
-(define first (view:create! (actor:current) data 'text 1 '(0 0)))
-(define second (view:create! (actor:current) data 'text 1 '(0 0)))
+(define first (view:create! (actor:current) data 'text 1 '() '(0 0)))
+(define second (view:create! (actor:current) data 'text 1 '() '(0 0)))
 (head:show-buffer! (widget:mount! first))
 (head:set-window-buffer! (window:split-right!) (widget:mount! second))
 ```

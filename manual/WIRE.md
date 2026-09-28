@@ -18,16 +18,16 @@ vectors, strings, symbols, numbers, booleans, characters and bytevectors
 are accepted; cycles and runtime objects are refused. EOF between frames
 disconnects; partial or malformed frames close the connection.
 
-The current normal protocol version is **5**. Send
-`(hello 5 (head "name") fingerprint)` or
-`(hello 5 (agent "name") fingerprint)`, using the installation's
+The current normal protocol version is **6**. Send
+`(hello 6 (head "name") fingerprint)` or
+`(hello 6 (agent "name") fingerprint)`, using the installation's
 `kernel:fingerprint` string. The version and source fingerprint must match
 the running base. Older normal protocols are not negotiated. The fingerprint
 covers the installed base entry point and its imported source dependencies,
 excluding head-only sources. It checks source consistency and grants no
 permissions.
 
-A successful hello returns `(hello 5 actor capabilities)`. The base chooses
+A successful hello returns `(hello 6 actor capabilities)`. The base chooses
 the policy: heads default to all-buffer writes, agents to read-only sessions.
 Capabilities are `(read)` or `(read edit undo redo)`; the hello cannot grant
 itself access. Admission failures return `(error #f reason)` and close.
@@ -61,12 +61,15 @@ edit with an unknown outcome.
 | `(request id model-create kind schema scope persistence references value)` | Create non-authored model state; return its tagged ID. Requires an all-buffer head. |
 | `(request id model-commit changes)` | Atomic `(id revision references value)` changes; return `(applied-or-stale-or-unavailable envelopes)`. Requires an all-buffer head. |
 | `(request id model-retire id revision)` | Retire non-authored state; return `(status envelope-or-#f)`. Requires an all-buffer head. |
-| `(request id view-create model renderer schema state)` | Create a persistent view descriptor over a model. All view mutations require an all-buffer head. |
+| `(request id view-create source kind schema options state)` | Create an unparented view over a model/buffer reference or `#f`. All view mutations require an all-buffer head. |
 | `(request id view-read view-id)` | Inspect the canonical descriptor, or `#f`. |
-| `(request id view-claim view-id)` | Claim a new ownership generation; return `(status descriptor)`. |
-| `(request id view-publish updates)` | Atomically publish `(view-id generation sequence basis state)` updates, with matching owners and increasing sequences. Return `(applied-or-stale #f)`. |
-| `(request id view-set view-id basis state)` | Set saved interaction while unmounted; return `(status descriptor)`. |
-| `(request id view-release view-id generation)` | Release the matching owner; return `(status descriptor)`. Disconnect releases this connection's admitted head ownership. |
+| `(request id view-claim view-id)` | Claim a new ownership generation; return `(status descriptor-entries)`. |
+| `(request id view-tree root)` | Read a coherent supported subtree as `(id . descriptor)` entries. |
+| `(request id view-arrange changes leases)` | Atomically arrange `(parent revision children options)` changes under `(root generation)` owner leases; return status and descriptor entries. |
+| `(request id view-fork root)` | Copy view descriptors and logical state, sharing domain sources; return the new root ID. |
+| `(request id view-publish updates)` | Atomically publish `(view-id generation sequence basis state focus)` updates, with matching owners and increasing sequences. Return `(status #f)` without echoing descriptors. |
+| `(request id view-set view-id basis state)` | Set saved interaction while unmounted; return `(status descriptor-entries)`. |
+| `(request id view-release view-id generation)` | Release the matching owner; return `(status descriptor-entries)`. Disconnect releases this connection's admitted head ownership. |
 | `(request id state buffer-id basis [delta?])` | Return `#f` if absent, otherwise `(name text revision facts [changes])`; `basis` is `#f` or a revision, with changes returned only for a revision. Existence, name, text, revision, facts and changes come from one `store:state` read, including across rename/deletion. Name/liveness changes also invalidate the cache. `delta?` is `#f`, `#t` or `facts`. `#t` says the client holds text at the basis: the text slot is then `#f` whenever the complete chain since the basis is included, and the client advances its own copy through that chain. `facts` says it also holds the stored facts: such a delta reply carries only the owner-maintained `modified` and `modified-at` facts, since stored facts change through the events the client already receives. |
 | `(request id find-file canonical-path)` | Return the id whose current `file` fact matches, or `#f`. File commands query shared identity before disk I/O or creation; cached head lists do not decide shared file identity. |
 | `(request id actors)` | Return the existing actor directory records. |

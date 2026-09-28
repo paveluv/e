@@ -114,8 +114,11 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (case operation
-      [(view-create) (control!) (arity 4) (apply view:create! actor args)]
+      [(view-create) (control!) (arity 5) (apply view:create! actor args)]
       [(view-read) (arity 1) (view:snapshot (car args))]
+      [(view-tree) (arity 1) (view:tree (car args))]
+      [(view-arrange) (control!) (arity 2) (call-with-values (lambda () (apply view:arrange! actor args)) list)]
+      [(view-fork) (control!) (arity 1) (view:fork! actor (car args))]
       [(view-claim) (control!) (arity 1) (call-with-values (lambda () (apply view:claim! actor args)) list)]
       [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
       [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]
