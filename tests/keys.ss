@@ -20,6 +20,7 @@
              (prefix (apps keys) keys:)
              (prefix (foundation string) string:)
              (prefix (head head) head:)
+             (prefix (head dispatch) dispatch:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head mouse) mouse:)
@@ -116,6 +117,39 @@
        (check 'nested-calls-describe-without-running-and-evaluate-as-shown
          (list calls (keymap:run! action) calls (eval (read (open-input-string text))))
          '(0 (5 (a b)) 1 (5 (a b)))))
+     (let* ([selected "first"] [checks 0] [produced 0]
+            [resolver (lambda (id)
+                        (if selected
+                          (keymap:checked
+                            (keymap:call list id selected (lambda () (set! produced (+ 1 produced)) produced))
+                            (lambda () (set! checks (+ 1 checks))))
+                          "No selection"))])
+       (keymap:bind-default! 'derived-test "C-x k" (keymap:derive list resolver))
+       (let* ([generation (keymap:generation)]
+              [binding (cdr (keymap:resolved-binding 'derived-test '("C-x" "k")))]
+              [action (keymap:binding-action binding 'left)])
+         (keymap:action-text action)
+         (check 'derivation-and-description-do-not-execute (list checks produced) '(0 0))
+         (dispatch:resolve! 'owner '((left (derived-test) #f)) "C-x")
+         (set! selected "second")
+         (check 'chord-resolves-current-value-in-original-receiver
+           (list (keymap:run! (caddr (dispatch:resolve! 'owner '((right (derived-test) #f)) "k")))
+             checks produced (= generation (keymap:generation)))
+           '((left "second" 1) 1 1 #t))
+         (check 'another-receiver-is-independent
+           (list-head (keymap:call-action-arguments (keymap:binding-action binding 'right)) 2) '(right "second"))
+         (set! selected #f)
+         (let ([disabled (keymap:binding-action binding 'left)])
+           (check 'unavailable-action-keeps-command-and-refuses
+             (list (eq? list (keymap:action-procedure disabled)) (keymap:action-reason disabled)
+               (test:raises? (lambda () (keymap:run! disabled))) checks produced)
+             '(#t "No selection" #t 1 1)))
+         (keymap:bind! 'derived-test "C-x k" (keymap:call list 'override))
+         (check 'user-binding-replaces-derived-default
+           (keymap:run! (keymap:binding-action (cdr (keymap:resolved-binding 'derived-test '("C-x" "k"))) 'left)) '(override))
+         (check 'resolver-must-return-the-declared-command
+           (test:raises? (lambda () (keymap:binding-action
+                                      (list 'derived-test '("x") (keymap:derive list (lambda (id) (keymap:call vector id)))) 'left))) #t)))
      (check 'section-titles-are-bold-and-rows-plain
        (let ([styles (mode:line-styles (view))])
          (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))

@@ -35,8 +35,8 @@
     (let ([f (show! 80)])
       (check 'table-hover-is-one-local-candidate-without-focus-or-selection-publication
         (list (map (lambda (row) (face f row 0)) '(1 2 3))
-          (view:state (interaction:snapshot table)) (widget:focused root))
-        (list '(#f #f candidate-hover) before focus)))
+          (caddr (car (table:target table))) (view:state (interaction:snapshot table)) (widget:focused root))
+        (list '(#f #f candidate-hover) 2 before focus)))
     (table:move! table 'next)
     (let ([f (show! 80)])
       (check 'table-keys-continue-from-hover-and-restore-keyboard-style
@@ -58,9 +58,11 @@
         (list hovered inactive (face (show! 80) 3 0) (key table))
         '((#f candidate-hover) #f candidate 2))))
   (table:select! table 1)
-  (table:select! table 199)
-  (check 'table-pending-selection-cannot-expose-or-destructively-activate-old-row
-    (list (selection table) (refused? (lambda () (table:activate! table 'trash)))) '(#f #t))
+  (let ([inspected (table:target table)])
+    (table:select! table 199)
+    (check 'table-pending-selection-cannot-expose-or-destructively-activate-old-row
+      (list (selection table) (table:target table) (refused? (lambda () (table:activate! table 'trash)))
+        (refused? (lambda () (table:accept! table inspected)))) '(#f #f #t #t)))
   (table:move! table 'previous)
   (await-key table 0)
   (table:select! table 199)

@@ -2,7 +2,7 @@
 ;; remains here until those apps adopt the composable controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export activate! choose! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
+  (export accept! activate! choose! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! target toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
@@ -361,6 +361,31 @@
       (session-hovered-set! s #f)
       (session-pending-set! s intent)
       (when (ready? v) (seek! s (session-pending s) v)) (repaint! s)))
+
+  (edoc "Read the hovered or selected target from local cached rows without adopting it or scheduling work. Return (selection basis row), where row is (ordinal key cells attributes), or false while selection or row data is unavailable."
+        (id list "table or descendant") (returns (or list #f)) (effects internal))
+  (define (target id)
+    (let* ([s (hashtable-ref sessions (root id) #f)])
+      (and s
+        (let* ([v (metadata s)] [hover (hovered-row s)]
+               [selection (if hover (cadr hover) (and (not (session-pending s)) (selected s)))]
+               [ordinal (if hover (cadddr hover) (session-ordinal s))]
+               [r (and (ready? v) selection (equal? (car selection) (session-query s))
+                    (= (cadr selection) (get v 'generation -1))
+                    (range:read (session-query s) (cadr selection) ordinal 1 (requested-columns s v)))])
+          (and r (eq? (car r) 'ready) (pair? (list-ref r 4))
+            (let ([row (car (list-ref r 4))])
+              (and (equal? (caddr selection) (cadr row)) (get (cadddr row) 'selectable #t)
+                (list selection (caddr r) row))))))))
+
+  (edoc "Adopt an inspected target only while it remains the current hover or selection. This is an execution boundary, never a discovery operation; the command must separately validate its authoritative mutation."
+        (id list "table or descendant") (chosen list "snapshot returned by table:target"))
+  (define (accept! id chosen)
+    (let ([current (target id)] [s (runtime id)])
+      (unless (and current (equal? current chosen)) (error 'accept! "the selected result changed"))
+      (session-hovered-set! s #f)
+      (save-selection! s (cadar chosen) (caddar chosen) (cadr chosen) (car (caddr chosen)))
+      (repaint! s)))
 
   (edoc "Adopt the hovered row, if any, and activate the selection through the explicit command binding; pending or stale rows refuse."
         (id list "table or descendant") (command (list-of symbol) "optional command binding, default activate") (returns any))

@@ -28,6 +28,9 @@
   (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
   (define keyboard-cache #f)
+  (define section-cache '()) ; context -> (derived calls . rendered lines)
+  (define description-cache (make-hashtable equal-hash equal?)) ; (context sequence) -> (call command summary)
+  (define derived-cache #f) ; routing basis -> (context binding receiver) declarations
   (define listed-pointer '()) ; the last inspected target, retained while browsing this help
 
   (define (stale-listing? b)
@@ -44,23 +47,18 @@
 
   ;;; The rows ------------------------------------------------------------------------
 
-  (define (action-procedure action)
-    ;; the procedure a key action runs, or #f
-    (cond [(procedure? action) action]
-          [(keymap:call-action? action) (keymap:call-action-procedure action)]
-          [(keymap:prefill-action? action) (keymap:prefill-action-procedure action)]
-          [else #f]))
-
   (define (edits? action)
     ;; whether the command declares (edits): refused where the text is read-only
-    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
+    (let* ([proc (keymap:action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
       (and (pair? sigs)
            (exists (lambda (f) (and (pair? f) (eq? (car f) 'edits))) (edoc:signature-flags (car sigs))))))
 
   (define (summary-of action)
     ;; what the procedure a key action runs does, from its documentation
-    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
-      (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
+    (let* ([proc (keymap:action-procedure action)] [sigs (and proc (edoc:edoc-of proc))]
+           [text (if (pair? sigs) (edoc:signature-summary (car sigs)) "")]
+           [reason (keymap:action-reason action)])
+      (if reason (string-append "Unavailable: " reason ". " text) text)))
 
   (define (shadowed? sequence nearer)
     ;; whether a nearer context binds the sequence, or a prefix of it, so
@@ -70,7 +68,7 @@
                       (map (lambda (i) (+ i 1)) (iota (length sequence)))))
             nearer))
 
-  (define (context-groups context nearer read-only? keep describe)
+  (define (context-groups context nearer read-only? keep receiver)
     ;; keep, when given, admits a binding: the commands allowed in a
     ;; prompt for the global section while one is open
     ;; (keys command description) for a context's bindings that work here:
@@ -83,18 +81,25 @@
         (if hit
             (map (lambda (g) (if (eq? g hit) (cons (cons key (car g)) (cdr g)) g)) groups)
             (cons (list (list key) command description) groups))))
+    (define (description binding id action)
+      (let* ([key (list context (keymap:binding-sequence binding))] [basis (list id (action-basis action))]
+             [old (hashtable-ref description-cache key #f)])
+        (if (and old (equal? (car old) basis)) (cdr old)
+          (let ([text (list (keymap:action-text action (list (cons widget:target id))) (summary-of action))])
+            (hashtable-set! description-cache key (cons basis text)) text))))
     (let loop ([owned (keymap:context-bindings context)] [groups '()])
       (if (null? owned)
           (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
                      (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
-          (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
-                 [command (and action (if describe (describe b) (keymap:action-text action)))])
+          (let* ([b (cdr (car owned))]
+                 [admit? (and (not (shadowed? (keymap:binding-sequence b) nearer)) (or (not keep) (keep b)))]
+                 [id (and admit? (receiver b))]
+                 [action (and admit? (keymap:binding-action b id))]
+                 [text (and action (description b id action))])
             (loop (cdr owned)
-                  (if (and command
-                           (not (shadowed? (keymap:binding-sequence b) nearer))
-                           (not (and read-only? (edits? action)))
-                           (or (not keep) (keep b)))
-                      (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
+                  (if (and text
+                           (not (and read-only? (edits? action))))
+                      (add (keymap:sequence-text (keymap:binding-sequence b)) (car text) (cadr text) groups)
                       groups))))))
 
   ;;; The text -------------------------------------------------------------------------
@@ -211,16 +216,42 @@
           (if (eq? (car path) context) (not (shadowed? sequence nearer))
             (loop (cdr path) (cons (car path) nearer)))))))
 
-  (define (describe-binding b context binding)
-    ;; Reify the known receiver; never run arbitrary argument producers to
-    ;; describe a key. The resulting Scheme call works outside key dispatch.
+  (define (receiver b context binding)
     (let* ([root (head:buffer-fact b 'widget-id #f)]
-           [scope (find (lambda (scope) (memq context (cadr scope)))
-                    (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
-      (keymap:action-text (keymap:binding-action binding)
-        (if scope (list (cons widget:target (car scope))) '()))))
+           [scope (and root (find (lambda (scope) (memq context (cadr scope)))
+                              (cadr (widget:key-scopes root (car (keymap:binding-sequence binding))))))])
+      (if scope (car scope) 'editor)))
 
-  (define (listing b width)
+  (define (derived-bindings b routing)
+    ;; Only resolved values enter the cache key, never fresh check closures.
+    ;; This runs only while Keys is shown, and resolvers cannot request data.
+    (unless (and derived-cache (equal? (car derived-cache) routing))
+      (set! derived-cache
+        (cons routing
+          (apply append
+            (map (lambda (context)
+                   (filter values
+                     (map (lambda (owned)
+                            (let* ([binding (cdr owned)] [raw (keymap:binding-action binding)])
+                              (and (reachable? b context binding)
+                                (let* ([id (receiver b context binding)] [action (keymap:binding-action binding id)])
+                                  (and (not (eq? raw action))
+                                    (list context binding id))))))
+                       (keymap:context-bindings context)))) (contexts b ""))))))
+    (map (lambda (entry)
+           (list (car entry) (keymap:binding-sequence (cadr entry))
+             (action-basis (keymap:binding-action (cadr entry) (caddr entry))))) (cdr derived-cache)))
+
+  (define (context-section context derived render)
+    ;; A changed selection only invalidates its own context's help. In
+    ;; particular, do not rediscover and format all global keys per row.
+    (let* ([basis (filter (lambda (entry) (eq? (car entry) context)) derived)]
+           [cached (assq context section-cache)])
+      (if (and cached (equal? (cadr cached) basis)) (cddr cached)
+        (let ([lines (render)])
+          (set! section-cache (cons (cons* context basis lines) (remq cached section-cache))) lines))))
+
+  (define (listing b width derived)
     ;; the keys that work now: with a prompt open, its content view's
     ;; context, the prompt's keys and the global commands allowed in a
     ;; prompt; else the buffer's mode contexts' bindings, an app's own keys
@@ -237,16 +268,16 @@
             (apply append (reverse out))
             (let ([context (car contexts)])
               (loop (cdr contexts) (cons context nearer)
-                    (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
-                                   (append (if (and prompting? (eq? context 'global))
-                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
-                                               (if (and widget? (not prompting?))
-                                                 (context-groups context '() (and (eq? context 'global) read-only?)
-                                                   (lambda (binding) (reachable? b context binding))
-                                                   (lambda (binding) (describe-binding b context binding)))
-                                                 (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
+                    (cons (context-section context derived
+                            (lambda () (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
+                                         (append (if (and prompting? (eq? context 'global))
+                                                   (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) (lambda (b) 'editor))
+                                                   (if (and widget? (not prompting?))
+                                                     (context-groups context '() (and (eq? context 'global) read-only?)
+                                                       (lambda (binding) (reachable? b context binding)) (lambda (binding) (receiver b context binding)))
+                                                     (context-groups context nearer (and (not prompting?) read-only?) #f (lambda (b) 'editor))))
                                            (capture-note context))
-                                   width)
+                                         width)))
                           out)))))))
 
   (define (heading? line)
@@ -309,23 +340,30 @@
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
     ;; comes last, so the rest compares on its own
-    (let ([root (head:buffer-fact b 'widget-id #f)])
-      (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
+    (let* ([root (head:buffer-fact b 'widget-id #f)] [scopes (and root (widget:key-scopes root ""))]
+           [routing (list (contexts b "") (keymap:generation) (and scopes (cadr scopes)))])
+      (list b routing
         (read-only-text? b) (prompt:active?) (prompt-context)
+        (if (prompt:active?) '() (derived-bindings b (list b routing (and scopes (car scopes)))))
         (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
         (listing-width))))
 
   (define (action-basis action)
     (if (keymap:call-action? action)
-      (cons (keymap:call-action-procedure action) (map action-basis (keymap:call-action-arguments action))) action))
+      (list (keymap:call-action-procedure action) (keymap:action-reason action)
+        (map action-basis (keymap:call-action-arguments action))) action))
 
   (define (fill! b pointer now)
     ;; the listing for a buffer into the view: from the top for a new
     ;; keyboard context; keep the reader's place through pointer or width changes
     (let* ([width (listing-width)]
            [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
-           [keyboard-key (append (list-head now 5) (list width))]
-           [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
+           [keyboard-key (append (list-head now 6) (list width))]
+           [keyboard (begin
+                       (unless same? (hashtable-clear! description-cache))
+                       (unless (and same? (= (list-ref listed 7) width)) (set! section-cache '()))
+                       (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache)
+                         (listing b width (list-ref now 5))))]
            [lines (append (section "Mouse bindings"
                             (map (lambda (binding)
                                    (list (list (mouse:gesture-text (car binding))) (keymap:action-text (cadr binding)) (summary-of (cadr binding)))) pointer) width)
@@ -363,6 +401,9 @@
     (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
     (set! view #f)
     (set! keyboard-cache #f)
+    (set! section-cache '())
+    (hashtable-clear! description-cache)
+    (set! derived-cache #f)
     (set! listed-pointer '())
     (set! listed #f))
 

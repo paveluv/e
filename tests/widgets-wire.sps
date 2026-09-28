@@ -92,6 +92,18 @@
   (let* ([app (head-read a '(cadr (assq 'app (view:children (interaction:snapshot (head:buffer-fact (head:current-buffer) 'widget-id #f))))))]
          [table (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',app)))))]
          [query (head-read a `(view:source (interaction:snapshot ',table)))])
+    (head-wait 'buffet-concrete-binding-ready a
+      (lambda () (head-read a `(not (keymap:action-reason
+                                      (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("C-k"))) ',app))))))
+    (test:check 'buffet-binding-discovery-sends-no-wire-data
+      (head-read a
+        `(let ([io (lambda () (call-with-input-file "/proc/self/io"
+                                (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
+                                                           (if (eq? k 'wchar:) v (loop)))))))])
+           (let ([before (io)] [binding (cdr (keymap:resolved-binding 'buffet '("C-k")))])
+             (do ([i 0 (+ i 1)]) ((= i 100))
+               (keymap:action-text (keymap:binding-action binding ',app)))
+             (- (io) before)))) 0)
     (head-send! a "__buffet-absent__")
     (head-wait 'buffet-wire-empty a (lambda () (head-sees? a "No matching buffers")))
     (head-send! a "\x07;\x18;b\r")

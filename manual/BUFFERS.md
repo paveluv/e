@@ -608,13 +608,18 @@ for `entry:insert!`, `entry:delete!` and the other normal entry operations.
 All these operations take explicit view IDs. The table's logical state holds
 its `(collection generation key)` selection and result basis.
 
-`table:activate!` invokes the selected row's `activate` command by default;
-pass `trash` or `delete` to perform the corresponding Buffet action. The
-domain commands `buffet:choose!`, `buffet:kill!` and `buffet:delete!` receive
-the app ID, selection and basis, and reject stale rows. Shared archive
-operations also check the document's displayed metadata version. Flags use
+`table:activate!` invokes the selected row's `activate` command, connected to
+`buffet:choose!` for opening or restoring the document through its host.
+Kill and permanent delete resolve directly to `edit:kill-buffer!` and
+`edit:delete-trashed!` for the hovered or selected buffer. `C-x TAB` displays
+these concrete calls and the edit commands' documentation. Resolving them
+reads cached rows only; executing them validates the selection and the
+document's displayed metadata version. Pending and stale targets refuse.
+There are no separate Buffet kill/delete APIs. Flags use
 the same `buffer-flag` enumeration as `head:buffer-flags`: `conflicted` and
-`read-only`. `(edit:delete-trashed! name)` remains the direct archive command.
+`read-only`. `(edit:delete-trashed! name)` is the direct archive command;
+an optional `(ID . metadata-version)` targets an exact reviewed archive.
+`edit:kill-buffer!` similarly accepts an optional reviewed metadata version.
 
 `(buffet:create! commands)` creates an independent, unmounted composition.
 An optional catalogue query shares its filter and ordering with another view.

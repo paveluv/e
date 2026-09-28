@@ -101,6 +101,33 @@ For widget bindings, `C-x TAB` substitutes the receiving view's ID for
 The ID addresses that view while it remains mounted. Describing a binding
 never invokes its argument producers.
 
+For a command whose target follows a view's selection, use
+`(keymap:derive command resolver)`. The resolver receives that view's ID and
+returns a concrete `keymap:call` to the declared command, or a string
+explaining why it is unavailable. Both dispatch and Keys resolve the same
+declaration. For example, Buffet's `C-k` resolves to
+`(edit:kill-buffer! (buffer "notes.scm") 17)`: the normal buffer command,
+with its own documentation and an optional reviewed metadata version.
+Manual use remains `(edit:kill-buffer! (buffer "notes.scm"))`.
+
+Resolvers read cached local state only. They must not fetch data, publish
+state, change selection or execute argument producers. A pending or absent
+target stays listed with an unavailable reason and consumes its binding;
+it never falls through to a different command. User bindings replace these
+defaults normally. No global rebinding occurs when selection changes, and
+each window resolves against its own receiver. A chord resolves its target
+when completed; focus and binding changes still cancel pending chords.
+
+`keymap:checked` wraps a concrete call with an execution-only check, for
+example to validate and adopt the hovered selection. Keys never runs that
+check. Pass the target's version to the authoritative mutation as well:
+a preflight check cannot prevent another actor from changing the object
+afterward. Copying a displayed call to eval invokes the domain command
+directly, including its displayed version guard, without the widget's
+selection check. `keymap:binding-action` accepts an optional receiver to
+resolve a declaration; `keymap:action-procedure` and `keymap:action-reason`
+expose the command and its availability.
+
 When the pointer has a target, `C-x TAB` starts with **Mouse bindings**.
 This section follows the pointer, including over an unfocused window; the
 keyboard sections continue to follow keyboard focus. A table heading shows

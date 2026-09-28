@@ -85,9 +85,13 @@ or queued for later execution. `lookup` also lets domain actions validate a
 row and its result basis without separate rank and range requests.
 
 `table:emphasize!` supplies a host's current document key without changing
-selection or sending interaction updates. `table:activate!` accepts an optional
-command name (default `activate`), allowing domain actions such as trash and
-delete to share the same hover, selection and pending-state validation.
+selection or sending interaction updates. `table:activate!` invokes the
+composition's `activate` command (or an explicitly supplied command name).
+For concrete domain bindings, `table:target` reads the cached hovered or
+selected `(selection basis row)` without fetching or adopting it, and returns
+false when unavailable. `table:accept!` validates and adopts that captured
+target at execution. Domain commands must also validate authoritative object
+versions; accepting a selection is not a transaction with its later mutation.
 
 Without a rule, string cells retain their raw text and match spans, and other
 values print as Scheme data. Logical depth indents the identity cell in the
@@ -117,6 +121,16 @@ names. `widget:descendant` follows named children, for example
 The listing follows internal focus changes. `widget:key-scopes` exposes that
 routing without moving focus or touching a chord; dispatch uses `key-scopes!`
 to reconcile focus first.
+
+When a key operates on the selected domain object, use `keymap:derive` to
+resolve the canonical command and concrete arguments from the receiving
+view. Buffet's kill/delete keys use the ordinary `edit:` commands this way;
+no forwarding app API or extra symbolic dispatch is needed. Derivation is
+pure and head-local, with no requests or selection publication. Keys and
+dispatch use the same resolver, including unavailable reasons. Use
+`keymap:checked` for execution-only selection validation and adoption; the
+concrete command still carries any required version guard to the base.
+See [derived key bindings](KEY_BINDING.md) for the full contract.
 
 The first Keys section follows the mouse independently of keyboard focus.
 Widget definitions can provide `pointer-bindings`: a procedure receiving a
