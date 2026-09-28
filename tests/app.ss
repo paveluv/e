@@ -15,10 +15,15 @@
              (prefix (head head) head:)
              (prefix (state store) store:)
              (prefix (state model) model:)
+             (prefix (state connection) connection:) (prefix (core port) port:)
+             (prefix (state collection) collection:) (prefix (head range) range:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head entry) entry:) (prefix (foundation text) text:)
+             (prefix (head control) control:) (prefix (core descriptor) descriptor:)
+             (prefix (head table) table:)
+             (prefix (foundation string) string:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -563,6 +568,22 @@
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
      (interaction:init!) (widget:init!) (window:init!) (entry:init!)
+     ;; Widget host hooks must leave shared buffers alone after their store
+     ;; records disappear, whether hidden or still shown in a window.
+     (let* ([was (head:current-buffer)]
+            [shown (head:new-buffer! "deleted while shown")]
+            [hidden (head:new-buffer! "deleted while hidden")]
+            [ids (map head:buffer-store-id (list shown hidden))]
+            [errors (log:entries 'head:forget-buffer!)])
+       (head:show-buffer! shown)
+       (for-each (lambda (id) (store:delete! '(base test) id)) ids)
+       (head:sync-foreign-edits!)
+       (check 'widget-host-retirement-never-reads-deleted-shared-facts
+         (list (map head:buffer-of-store-id ids)
+               (and (not (memq (head:current-buffer) (list shown hidden))) #t)
+               (equal? errors (log:entries 'head:forget-buffer!)))
+         '((#f #f) #t #t))
+       (head:show-buffer! was))
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
@@ -574,7 +595,7 @@
             [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -803,6 +824,32 @@
                (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
        (widget:unmount! root) (widget:invalidate!))
 
+     (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [producer (view:create! head:ui-actor #f 'connected-producer 1 '() '((choice . "first")))]
+            [consumer (view:create! head:ui-actor #f 'connected-consumer 1 '((choice . "default")) '())])
+       (port:register! '(view connected-producer 1) '((output choice string (state choice))))
+       (port:register! '(view connected-consumer 1) '((input choice string (options choice))))
+       (widget:register! 'connected-producer 1 '())
+       (widget:register! 'connected-consumer 1
+         (list (cons 'prepare (lambda (id source inputs) (caddr (assq 'choice inputs))))
+           (cons 'render (lambda (data descriptor width height range) (list data)))
+           (cons 'actions (list (cons 'inspect (lambda (id)
+                                                 (let-values ([(source descriptor inputs) (widget:context id)])
+                                                   (caddr (assq 'choice inputs)))))))))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'producer producer 'fit) (list 'consumer consumer '(grow 1))) '())) '())
+       (connection:bind! head:ui-actor root (list (list consumer 'choice #f (list producer 'choice))))
+       (widget:mount! root 'connection-fixture)
+       (let* ([frame (widget:prepare! root 30 2)] [shown (cadr (widget:frame-children frame))])
+         (interaction:set-state! head:ui-actor producer #f '((choice . "next")))
+         (check 'widget-connected-input-uses-provisional-state-and-pins-shown-bundle
+           (list (widget:act! consumer 'inspect)
+             (parameterize ([widget:event-frame shown]) (widget:act! consumer 'inspect))
+             (cadr (connection:read consumer 'choice)))
+           '("next" "first" "first"))
+         (interaction:flush!)
+         (check 'widget-published-input-is-visible-at-base (cadr (connection:read consumer 'choice)) "next"))
+       (widget:unmount! root) (widget:invalidate!))
+
      (model:register-kind! 'widget-view 3 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
             [previous (head:current-buffer)] [b (window:show-widget! (head:current-window) id)])
@@ -813,4 +860,7 @@
          '(() #f "future descriptor"))
        (head:forget-buffer! b) (head:show-buffer! previous))
 
+     (include "tests/control.sps")
+     (include "tests/table-widget.sps")
+     (include "tests/range.sps")
      (test:finish! 'app)))

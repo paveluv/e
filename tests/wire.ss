@@ -62,6 +62,9 @@
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
      (define (write-text path text)
        (call-with-output-file path (lambda (port) (display text port)) 'replace))
+     (define (write-control! text)
+       (let ([pending (string-append automatic-control ".next")])
+         (write-text pending text) (rename-file pending automatic-control)))
      (define (copy-text source target) (write-text target (call-with-input-file source get-string-all)))
      (define (copy-libraries source target)
        (for-each
@@ -1108,7 +1111,7 @@
              (when (file-exists? hold) (delete-file hold))
              (write-text source-path source)
              (write-text wire-path wire-source)
-             (write-text automatic-control "stop")
+             (write-control! "stop")
              (test:await 'restart-fixture-releases-ownership
                (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
                             (and lock (begin (sys:release-file-lock! lock) #t)))))
@@ -1220,6 +1223,10 @@
                (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
+                  [saved-query (head-read head
+                                 '(let* ([source (collection:create-source! head:ui-actor '((name "Name" string))
+                                                   '#(("persisted" ((name . "persisted")) ())) 'persistent)])
+                                    (collection:create! head:ui-actor source "" '() 'persistent)))]
                   [saved-widget (head-read head
                                   '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))]
                                          [was (head:current-buffer)])
@@ -1247,6 +1254,17 @@
                  (lambda (screen)
                    (head-wait 'restart-resumes-shared-work screen
                      (lambda () (head-sees? screen "kept after restart")))) heads)
+               (test:await 'restored-collection-index
+                 (lambda ()
+                   (head-read launcher
+                     `(let* ([r (collection:summary ',saved-query)] [v (cdr (assq 'value r))])
+                        (and (eq? (cdr (assq 'status v)) 'ready)
+                          (eq? (car (collection:range ',saved-query (cdr (assq 'generation v)) 0 1 '(name))) 'ready))))))
+               (test:check 'restart-rebuilds-collection-recipe
+                 (head-read launcher
+                   `(let* ([v (cdr (assq 'value (collection:summary ',saved-query)))]
+                           [r (collection:range ',saved-query (cdr (assq 'generation v)) 0 1 '(name))])
+                      (cadar (list-ref r 4)))) "persisted")
                (test:check 'restart-restores-named-view-after-pre-screen-notice
                  (list
                    (length
@@ -1396,7 +1414,7 @@
                            (sys:close-connection! head))
                          (fixture:stop! replacement))))))
                (lambda ()
-                 (write-text automatic-control "stop")
+                 (write-control! "stop")
                  (sys:close-process! process)
                  (test:await 'force-fixture-releases-ownership
                    (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
@@ -1419,7 +1437,7 @@
            (lambda () (body base pid signal! stop!))
            (lambda ()
              (write-text edit-release "continue")
-             (write-text automatic-control "stop")
+             (write-control! "stop")
              (guard (ex [else (void)]) (stop!))
              (for-each sys:close-connection! clients)
              (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
@@ -1436,7 +1454,7 @@
        (fixture:stop! test-base)
        (dynamic-wind void body
          (lambda ()
-           (write-text automatic-control "stop")
+           (write-control! "stop")
            (for-each sys:close-connection! clients)
            (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
            (test:await 'automatic-fixture-releases-ownership
@@ -1859,6 +1877,7 @@
                                (test:check 'model-last-subscriber-releases-mirror
                                  (head-read ui `(begin (model:unsubscribe! model-reader)
                                                        (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
+                 (include "tests/widgets-wire.sps")
                  (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
                         [first (rpc head 'view-create data 'text 2 '() 0)]
                         [second (rpc head 'view-create data 'text 2 '() 0)]
@@ -2991,7 +3010,7 @@
                            (cdr (assq 'heads (rpc inspector 'status))))
                      (list (list (- before 2) (- before 1)) (- before 2))))
                  (for-each sys:close-connection! (cons inspector leavers))
-                 (write-text automatic-control "crash")
+                 (write-control! "crash")
                  (head-wait 'unexpected-base-death again (lambda () (head-sees? again "e: the base is gone")))
                  (sys:reap-terminal-process! (vector-ref again 0))
                  (test:check 'crash-leaves-recoverable-endpoints
@@ -3002,7 +3021,7 @@
                    (test:check 'stale-cleanup-starts-a-fresh-in-memory-session
                      (list (not (equal? record (call-with-input-file pid-path read)))
                            (head-read fresh '(head:buffer-line (head:current-buffer) 0))) '(#t ""))
-                   (write-text automatic-control "stop")
+                   (write-control! "stop")
                    (head-wait 'announced-base-stop fresh (lambda () (head-sees? fresh "e: the base stopped (signal)")))
                    (sys:reap-terminal-process! (vector-ref fresh 0))
                    (test:await 'automatic-base-cleans-up (lambda () (not (file-exists? pid-path))))

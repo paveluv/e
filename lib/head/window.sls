@@ -24,8 +24,13 @@
           (prefix (head widget) widget:)
           (prefix (state view) view:))
 
+  (define (buffer-widget b)
+    ;; Widget hosts are local. Placement and cleanup also see shared buffers
+    ;; after deletion, when their base-owned facts no longer exist.
+    (and (not (head:buffer-store-id b)) (head:buffer-fact b 'widget-id #f)))
+
   (define (widget-buffer! id)
-    (cond [(find (lambda (b) (equal? id (head:buffer-fact b 'widget-id #f))) (head:buffers))
+    (cond [(find (lambda (b) (equal? id (buffer-widget b))) (head:buffers))
            => (lambda (b) (widget:mount! id b) b)]
       [else (kernel:call-with-runtime-registrations
               (lambda ()
@@ -37,12 +42,13 @@
                       (lambda ()
                         (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
                           (when w
+                            (widget:set-active! id (eq? w (head:current-window)))
                             (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
                               (head:view-replace! b (if (null? lines) '("") lines) '()
                                 (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
                       (lambda (event)
-                        (cond [(string=? event "BLUR") (widget:cancel! id 'blur) #t]
-                          [(string=? event "FOCUS") (widget:key-scopes! id "") #t]
+                        (cond [(string=? event "BLUR") (widget:set-active! id #f) (widget:cancel! id 'blur) #t]
+                          [(string=? event "FOCUS") (widget:set-active! id #t) (widget:key-scopes! id "") #t]
                           [else #f])))
                     (head:buffer-fact-set! b 'resume-kind 'widget)
                     (head:buffer-fact-set! b 'widget-id id)
@@ -62,19 +68,19 @@
   (define (init-widget-host!)
     (mode:register! "widget" '() '() #f #f
       (lambda (buffer row line)
-        (let* ([id (head:buffer-fact buffer 'widget-id #f)] [f (and id (widget:prepared id))])
+        (let* ([id (buffer-widget buffer)] [f (and id (widget:prepared id))])
           (and f (widget:frame-styles f row line)))))
     (head:add-buffer-placement-hook!
       (lambda (w b peers)
-        (let ([id (head:buffer-fact b 'widget-id #f)] [old (head:buffer-fact (head:window-buffer w) 'widget-id #f)])
+        (let ([id (buffer-widget b)] [old (buffer-widget (head:window-buffer w))])
           (when (and old (not (eq? b (head:window-buffer w)))) (widget:cancel! old 'hidden))
           (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) peers))
             (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
             b))))
     (head:add-buffer-kill-hook!
-      (lambda (b) (let ([id (head:buffer-fact b 'widget-id #f)]) (when id (widget:unmount! id)))))
+      (lambda (b) (let ([id (buffer-widget b)]) (when id (widget:unmount! id)))))
     (head:register-resume! 'widget
-      (lambda (b positions) (values (list (head:buffer-fact b 'widget-id #f)) '()))
+      (lambda (b positions) (values (list (buffer-widget b)) '()))
       (lambda (reference positions) (values (widget-buffer! (car reference)) '()))))
 
   (define (message! text)

@@ -42,7 +42,7 @@
   (define (selection source d)
     (let ([steps (changes source (or (view:basis d) (revision source)))])
       (and steps (map (lambda (p) (fold-left text:rebase-position p steps)) (state d)))))
-  (define (data source)
+  (define (data id source inputs)
     (source-buffer source)
     (let* ([lines (source-lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")])
       (list source line
@@ -77,7 +77,7 @@
     (let ([points (project data d)])
       (and points (> width 0) (> height 0) (cons (- (cdar points) (offset points width)) 0))))
   (define (context id)
-    (let-values ([(source d) (widget:context id)])
+    (let-values ([(source d inputs) (widget:context id)])
       (unless (and d (eq? (view:kind d) 'entry) (= (view:schema d) 1)) (error 'entry "expected an entry view" id))
       (source-buffer source)
       (values source d)))
@@ -89,7 +89,7 @@
       (error 'select! "expected nonnegative character indices" caret anchor))
     (let-values ([(source d) (context id)])
       (unless (single-line? (source-lines source)) (refuse "Entry requires a single-line source"))
-      (let ([edges (caddr (data source))])
+      (let ([edges (caddr (data id source '()))])
         (interaction:set-state! head:ui-actor id (revision source)
           (map (lambda (n) (cons 0 (car (edge edges n car)))) (list caret anchor))))))
 
@@ -100,7 +100,7 @@
     (unless (and (memq direction '(left right home end)) (<= (length extend) 1) (for-all boolean? extend))
       (error 'move! "invalid movement" direction extend))
     (let-values ([(source d) (context id)])
-      (let* ([data (data source)]
+      (let* ([data (data id source '())]
              [points (or (project data d)
                        (and (single-line? (source-lines source)) (memq direction '(home end))
                          (not (and (pair? extend) (car extend))) '((0 . 0) (0 . 0))))]
@@ -190,7 +190,7 @@
        (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
          [else (and (eq? (caddr event) 'primary)
                  (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
-                 (let* ([f (widget:event-frame)] [data (data source)]
+                 (let* ([f (widget:event-frame)] [data (data id source '())]
                         [points (project data (widget:frame-descriptor f))])
                    (and points
                      (let* ([x (+ (list-ref event 4) (offset points (caddr (widget:frame-rect f))))]

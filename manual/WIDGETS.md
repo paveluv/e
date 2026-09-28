@@ -1,10 +1,80 @@
 # Widgets and views
 
+`control:create-filter!` composes a label, an `entry` over an existing text
+buffer, and an italic status label. Its root exposes the `text` output port;
+the entry retains the normal editing, undo and stale-edit protection.
+
+An `action-text` view takes `text` and `enabled` input defaults in its options,
+plus explicit command bindings such as
+`(commands (activate target-view-id insert ("replacement")))`.
+`control:activate!` and Return/Space or a valid mouse press/release invoke the
+target's registered action. Targets must be mounted in the same head.
+Forks remap internal targets and retain external references. Changes to state
+connections never execute commands.
+
+`widget:context` returns source, descriptor and resolved inputs. Its optional
+`'current` argument checks current availability during a shown-frame action.
+`widget:repaint!` invalidates a control's local presentation without publishing
+hover or cached geometry to the base. Shared row/column allocation is exposed
+as `layout:container` for compound controls.
+
+`table:create!` takes an actor, collection and ordered column symbols. Pass
+`'list` as the fourth argument for the same selection engine with one column
+and no heading. The table composes sticky headings and a normal scroll view;
+it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
+`sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
+keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
+without changing selection. Sorting is shared through the collection;
+selection and visible columns belong to each view.
+
+Rows use the same theme-aware `candidate` and `candidate-hover` faces as
+Buffet. A hovered row takes precedence over the keyboard choice without
+moving focus, scrolling or publishing selection. Up/Down continues from that
+row; Enter adopts and activates it. Leaving the rows restores the keyboard
+choice, emphasized only while the table or its filter has focus. Heading
+hover adds bold and dotted underline while retaining the heading background.
+
+The optional `activate` command binding receives a `(collection generation
+key)` row reference and its result basis after the binding's fixed arguments.
+Pending navigation cannot activate the previous row. A domain action should
+validate the reference and basis before changing data. Cells retain raw
+types until the head formats them; unavailable rows have an explicit ghost.
+
+Paged controls use a `service` callback `(id latest-frame)` on the head pump
+and a `release` callback `(id)` on unmount or definition replacement. They
+request ranges there, outside painting. Their pure `viewport` callback
+`(data descriptor width height visible-range)` derives the bounded visible
+data used by rendering, decoration and `frame-data` for exact shown-row hits.
+Measurement continues to use the compact prepared summary. `anchor` and
+`locate` may return `#f` while a row/rank is unavailable: scrolling retains
+the last saved stable anchor and a temporary head-local destination.
+
 The widget adapter mounts a base-owned view tree in an ordinary editor
 window. Models hold data; views hold independent interaction state; the head
 owns rendering and geometry. Multiple views can share one model and its
 head mirror. Layout and input routing follow the same recursive tree;
 existing apps continue to work.
+
+The executable [composition example](../examples/widgets.e) combines a
+connected filter, filename table, editable answer and Undo action:
+
+```scheme
+(load (string-append (kernel:installation-directory) "/examples/widgets.e"))
+(widget-example:open! '("alpha.sls" "beta.ss" "gamma.e"))
+```
+
+Tab traverses the controls. The filter is inside the table's keyboard scope:
+type to filter, use Up/Down and Return to choose a row, or click it. Undo the
+inserted filename using the button or the entry's normal undo key. The example
+validates the selected query basis
+before editing. Its data and views survive detach; load its action definition
+again in head configuration when using it across head restarts.
+
+Base and head port declarations must agree. A differing or absent declaration
+makes its endpoint unavailable; restoring the matching declaration reacquires
+its dependencies. Change the contract schema when changing a nominal type's
+meaning, and load its implementation in both runtimes. Persistent collection
+recipes rebuild their indexes after a base restart.
 
 For a small experiment, register a derived text kind in `base-config.e`:
 
@@ -55,7 +125,8 @@ and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
 `layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
 
-`prepare` derives an index once per source/definition change; its result is
+`prepare` receives `(id source inputs)` and derives display data once per source,
+input or definition change; its result is
 borrowed immutable input to measurement and rendering. Without it, that input
 is the source envelope. A renderer receives
 `(data descriptor width height visible-range)`; the range is
@@ -71,9 +142,9 @@ have zero extent. `anchor` maps `(data position width)` to a logical anchor;
 `locate` maps `(data anchor width)` back to a backend position.
 
 An action receives `(view-id . args)`. Register the public operation itself;
-it obtains two values, source envelope and provisional descriptor, from
+it obtains three values, source envelope, provisional descriptor and resolved inputs, from
 `(widget:context view-id)`. This is a local read. During an action the source
-basis is pinned; pointer actions use the source that was actually displayed.
+basis is pinned; pointer actions use the source and inputs that were actually displayed.
 An optional `event` callback receives `(view-id source descriptor event)`
 and returns whether it handled the event. Events are normalized key, text,
 pointer, focus/blur or cancel data. Keyboard and mouse handlers call the same
@@ -82,11 +153,88 @@ is needed. Renderer definitions are module-owned; runtime mounts belong to
 the head and survive definition reloads.
 
 `decorate` receives the same arguments as `render` and returns
-`((rectangle face-symbol) ...)` in local backend coordinates. `caret` receives
+`((rectangle face) ...)` in local backend coordinates. A face is a semantic
+symbol or a nonempty list of symbols layered in order, such as `(header hover)`.
+Later rectangles replace earlier ones where they overlap. `caret` receives
 `(data descriptor width height)` and returns a local `(x . y)` or `#f`.
 The host clips and composes both with the text. Only the active root's focused
 descendant supplies the displayed caret. These are head presentation callbacks;
 cell coordinates never enter a base model or view state.
+
+## Connected state
+
+Declare portable input and output ports with `port:register!` in a shared
+module loaded by both the base and heads. A host connects them atomically:
+
+```scheme
+(connection:bind! (actor:current) owner
+  (list (list consumer 'files #f (list producer 'files))))
+```
+
+Each change names the consumer, input, expected producer and replacement.
+Use `#f` to disconnect. The owner must contain the consumer. Types, direction,
+ownership and the complete dependency graph are validated; a cycle or stale
+replacement leaves the batch unchanged. Retiring an endpoint removes its
+bindings, while losing a definition keeps them inert for later reload.
+Forking a composition remaps its internal bindings and shares borrowed data.
+For an actively mounted composition use `interaction:bind!` with the same
+arguments; it fences pending state and supplies the required ownership guards.
+
+The `inputs` alist maps port names to `(ready value basis)`,
+`(pending reason basis)` or `(unavailable reason basis)`. False and empty
+values are distinct from unavailable inputs. Connected inputs never silently
+use a fallback when their producer is unavailable. Same-head interaction is
+immediate; another head sees published state. A notification never invokes
+an action or edits a consumer's saved fallback.
+
+Outside a mounted widget, use `connection:subscribe!` to acquire dependencies
+before local `connection:read` calls, and `connection:unsubscribe!` to release
+them. All consumers share the model mirror reader. Mounts acquire demand
+before preparation, whose reads never start wire requests.
+
+## Indexed rows
+
+Use a collection for data larger than a small model value. The base owns
+the row source, filter/sort recipe and prepared indexes. Rows have the form
+`(stable-key ((column . raw-value) ...) attributes)`; columns are
+`(column-id label type)`. Omit a cell to represent missing data; `#f` is a
+present boolean value.
+
+```scheme
+(define source
+  (collection:create-source! (actor:current)
+    '((name "Name" string) (size "Size" integer))
+    '#((first ((name . "alpha") (size . 20)) ())
+       (second ((name . "beta") (size . 10)) ()))
+    'persistent))
+(define rows
+  (collection:create! (actor:current) source ""
+    '((size ascending) (name ascending)) 'persistent))
+```
+
+`collection:summary` reads compact authoritative metadata. Once its status
+is `ready`, `collection:range` and `collection:rank` accept that result's
+generation. An old generation returns `stale`. `collection:configure!`
+changes filter/sort fields against the query model revision; filters use
+case-insensitive literal substring matching. Connect an entry's `text`
+output to the query's `filter` input to reuse ordinary text editing and undo.
+Rows from another collection can themselves be an indexed source.
+
+Base providers register an immutable capture containing column contracts,
+count, row-at-ordinal and key-to-ordinal procedures. The supplied vector
+provider indexes a source revision once across queries. Filtering and sorting
+run in cancellable base jobs. Only metadata and requested ranges reach heads;
+queries do not embed another copy of their dataset in recovery snapshots.
+
+Head controls use `range:acquire!`, `request!` and `release!` to own bounded
+viewport demand. `range:summary`, `read` and `locate` read local state;
+`range:pump!` adopts replies and fetches missing demand outside rendering.
+One scheduler serves all views, with up to four operations per batch and a
+cache bounded by both entries and bytes. Row replies distinguish absent,
+ready and unavailable cells, including an explicit oversized-cell diagnostic.
+If visible demand itself exceeds the cache budget, the affected query reports
+`(unavailable cache-budget)` until its demand changes. It does not repeatedly
+fetch and evict the same pages; reducing the requested range permits a retry.
 
 ## Editable children
 

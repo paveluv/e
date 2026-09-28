@@ -173,6 +173,32 @@ Both expose owned copies.
 The named descriptor uses schema 2. Recovery converts known schema-1 leaf
 descriptors once, while keeping unknown schemas opaque and inspectable.
 
+## Portable ports
+
+`port:register!` declares `(model kind schema)` or `(view kind schema)`
+contracts as `(input|output name type selector)` entries. For example:
+
+```scheme
+(port:register! '(model filenames 1)
+  '((output files (list-of file) (value files))))
+```
+
+Selectors read `value`, view `state`/`options`, `id`, or a view's `source`.
+Trailing symbols select alist fields and integers select sequence elements.
+The built-in entry's `text` output uses `(source-text)` and becomes unavailable
+for a multiline source. `port:project` returns `(ready value)` or
+`(unavailable reason)`; `#f` and an empty list can be ordinary ready values.
+Declarations and returned values are owned copies. Definitions follow module
+registration/retraction, while saved data stays intact.
+
+Types must be concrete portable contracts. An `edoc-type` opts in with
+`(portable #t)`, promising a pure, bounded predicate; `within` declares its
+refinement. `edoc:type-compatible?` conservatively checks equality,
+refinements, finite literals, unions and covariant lists. Unknown types,
+placeholders and runtime records cannot authorize connections. Actual values
+also undergo portable-data validation. Filename producers use absolute paths;
+the filename type does not assert that a path exists.
+
 ## Recovery
 
 Persistent models share the atomic session file with buffers and head

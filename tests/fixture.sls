@@ -12,21 +12,26 @@
     ;; from modified ones -- what the refusal itself advertises, since this
     ;; client loads no editor code.
     (define (attempt version fingerprint retry?)
-      (let ([connection (sys:connect-local (string-append base-directory "/socket"))])
-        (wire:send! (sys:connection-output connection) (list 'hello version who fingerprint))
-        (let ([reply (wire:receive (sys:connection-input connection))])
-          (cond
-            [(and (pair? reply) (eq? (car reply) 'hello)) connection]
-            [(and retry? (list? reply) (= (length reply) 3) (eq? (car reply) 'error)
-                  (pair? (caddr reply)) (eq? (car (caddr reply)) 'stale-base) (pair? (cdr (caddr reply)))
-                  (list? (cadr (caddr reply)))
-                  (assq 'fingerprint (cadr (caddr reply))) (assq 'wire-version (cadr (caddr reply))))
-             (let ([status (cadr (caddr reply))])
-               (sys:close-connection! connection)
-               (attempt (cdr (assq 'wire-version status)) (cdr (assq 'fingerprint status)) #f))]
-            [else
+      (let* ([deadline (sys:after 10)]
+             [connection (sys:connect-local (string-append base-directory "/socket") deadline)]
+             [reply
+              (guard (ex [else (sys:close-connection! connection) (raise ex)])
+                (sys:call-with-connection-deadline connection deadline
+                  (lambda ()
+                    (wire:send! (sys:connection-output connection) (list 'hello version who fingerprint))
+                    (wire:receive (sys:connection-input connection)))))])
+        (cond
+          [(and (pair? reply) (eq? (car reply) 'hello)) connection]
+          [(and retry? (list? reply) (= (length reply) 3) (eq? (car reply) 'error)
+                (pair? (caddr reply)) (eq? (car (caddr reply)) 'stale-base) (pair? (cdr (caddr reply)))
+                (list? (cadr (caddr reply)))
+                (assq 'fingerprint (cadr (caddr reply))) (assq 'wire-version (cadr (caddr reply))))
+           (let ([status (cadr (caddr reply))])
              (sys:close-connection! connection)
-             (error 'evaluator "the base refused the evaluator" who reply)]))))
+             (attempt (cdr (assq 'wire-version status)) (cdr (assq 'fingerprint status)) #f))]
+          [else
+           (sys:close-connection! connection)
+           (error 'evaluator "the base refused the evaluator" who reply)])))
     (attempt wire:version
       (parameterize ([kernel:installation-directory installation]) (kernel:fingerprint)) #t))
 
@@ -41,14 +46,19 @@
                                [else #f])])
            (and (list? payload) (>= (length payload) 3) (eq? (car payload) 'evaluated)
                 (eqv? (cadr payload) token) payload))))
-  (define (evaluate connection who expression)
+  (define (evaluate connection who expression . timeout)
     ;; Ask the head `who` to evaluate a datum on its main thread, through the
     ;; E_TEST_EVAL mail it accepts, and read the printed result back. Replies
     ;; and unrelated events may interleave on the connection; a head that
     ;; never answers fails the caller instead of hanging the suite.
+    (unless (and (<= (length timeout) 1)
+                 (or (null? timeout) (and (real? (car timeout)) (< 0 (car timeout) +inf.0))))
+      (error 'evaluate "expected an optional positive timeout in seconds" timeout))
     (set! evaluation-token (+ evaluation-token 1))
     (let ([token evaluation-token]
-          [deadline (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 30))])
+          [deadline (add-duration (current-time 'time-monotonic)
+                      (let ([ns (exact (ceiling (* 1000000000 (if (null? timeout) 30 (car timeout)))))])
+                        (make-time 'time-duration (mod ns 1000000000) (div ns 1000000000))))])
       (guard (ex [(sys:unresponsive? ex)
                   (error 'evaluate "no evaluation reply within the deadline" who expression)])
         (sys:call-with-connection-deadline connection deadline

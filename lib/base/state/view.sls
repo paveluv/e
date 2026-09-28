@@ -14,7 +14,8 @@
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
     (rename (descriptor:state state)) tree upgrade)
-  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (state model) model:))
+  (import (chezscheme) (prefix (core descriptor) descriptor:)
+          (prefix (state connection) connection:) (prefix (state model) model:))
   (define registration (model:register-kind! 'widget-view 2 descriptor:valid?))
   (define (field r k) (cdr (assq k r)))
   (define (value r) (field r 'value))
@@ -224,9 +225,12 @@
         (error 'fork!
           "subtree contains unavailable descriptors"
           id))
-      (car (model:allocate!
+      (car (connection:fork!
              actor
-             (length rows)
+             (map (lambda (row)
+                    (let ([r (model:snapshot (car row))])
+                      (unless (and r (equal? (value r) (cdr row)))
+                        (error 'fork! "composition changed during fork; retry")) r)) rows)
              (lambda (ids)
                (let ([copies (map (lambda (row new) (cons (car row) new))
                                   rows
@@ -247,6 +251,12 @@
                                         (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c)))
                                              (descriptor:children old)))
                                       (cons 'focus (mapped (descriptor:focus old))) '(owner . #f)
+                                      (cons 'options
+                                        (map (lambda (p)
+                                               (if (eq? (car p) 'commands)
+                                                 (cons 'commands
+                                                   (map (lambda (c) (list (car c) (or (mapped (cadr c)) (cadr c)) (caddr c) (cadddr c))) (cdr p))) p))
+                                          (descriptor:options old)))
                                       '(generation . 0) '(sequence . 0)))])
                           (list 'widget-view 2 'session 'persistent
                             (descriptor:references d) d)))

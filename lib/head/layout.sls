@@ -1,8 +1,8 @@
 ;; Backend geometry. No device, window, store or interaction dependencies.
 (import (only (foundation edoc) elibrary))
 (elibrary (head layout)
-  (export contains? intersect linear translate)
-  (import (chezscheme))
+  (export container contains? intersect linear translate)
+  (import (chezscheme) (prefix (core descriptor) descriptor:))
 
   (edoc "Intersect half-open rectangles; disjoint rectangles have zero extent."
         (a list "(x y width height)") (b list "rectangle") (returns list))
@@ -59,4 +59,23 @@
                 (map + fits growth)))]
            [position 0])
       (ordered-map (lambda (size) (let ([at position]) (set! position (+ position size spacing)) (list at size))) sizes)))
-)
+  (define (linear-layout axis)
+    (lambda (d width height measure locate)
+      (let* ([children (descriptor:children d)] [horizontal? (eq? axis 'x)]
+             [gap (case (cond [(assq 'spacing (descriptor:options d)) => cdr] [else 'none]) [(normal) 1] [(wide) 2] [else 0])]
+             [sizes (linear (if horizontal? width height) gap
+                      (map (lambda (child) (append (measure (cadr child) axis (if horizontal? height width)) (list (caddr child)))) children))])
+        (map (lambda (child size)
+               (list (cadr child) (if horizontal? (list (car size) 0 (cadr size) height) (list 0 (car size) width (cadr size))))) children sizes))))
+  (define (spacing d)
+    (case (cond [(assq 'spacing (descriptor:options d)) => cdr] [else 'none]) [(normal) 1] [(wide) 2] [else 0]))
+  (define (linear-measure direction)
+    (lambda (data d axis cross measure)
+      (let* ([children (descriptor:children d)] [sizes (map (lambda (child) (measure (cadr child) axis cross)) children)]
+             [along? (eq? direction axis)] [gap (if along? (* (spacing d) (max 0 (- (length sizes) 1))) 0)])
+        (map (lambda (i) (+ gap (apply (if along? + max) (cons 0 (map (lambda (p) (list-ref p i)) sizes))))) '(0 1)))))
+
+  (edoc "A reusable row or column widget definition with backend allocation and intrinsic measurement." (axis symbol "x or y") (returns list))
+  (define (container axis)
+    (unless (memq axis '(x y)) (error 'container "expected x or y" axis))
+    (list (cons 'layout (linear-layout axis)) (cons 'measure (linear-measure axis)))))

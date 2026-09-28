@@ -1972,7 +1972,11 @@
           (filter values (map (lambda (entry)
                                 (let* ([w (car entry)] [id (head:buffer-fact (head:window-buffer w) 'widget-id #f)]
                                        [frame (and id (widget:prepared id))])
-                                  (and frame (list frame (head:window-xoff w) (- (cadr entry) 1))))) layout)))
+                                  (and frame (list frame
+                                               (+ (head:window-xoff w)
+                                                  (if (eq? (head:window-scrollbar? w) 'left) 1 0)
+                                                  (head:window-line-number-width w))
+                                               (cadr entry))))) layout)))
         (paint-dividers! layout)
         (let ([ranges (highlight-ranges)])
           (for-each (lambda (entry)

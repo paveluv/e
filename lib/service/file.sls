@@ -73,6 +73,8 @@
   ;; a directory it completes.
   (edoc-type file "a file, by its path"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
+    (portable #t)
+    (within string)
     (complete (lambda (partial) (map (lambda (path) (cons path #f)) (offered partial))))
     (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
 

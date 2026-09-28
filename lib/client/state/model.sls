@@ -2,7 +2,7 @@
 ;; One background batch and one pending invalidation set serve every mount.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export available? commit! create! ids retire! snapshot subscribe! unsubscribe!)
+  (export available? commit! create! ids retire! snapshot snapshots subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core kernel) kernel:)
@@ -36,6 +36,13 @@
             (when (kernel:registry-find subscribers (lambda (current) (eq? current entry)))
               (guard (ex [else (void)]) ((caddr entry) (list (car packet) (map car rows))))))))
       (kernel:registry-items subscribers)))
+
+  (define (receive! packet) (adopt! packet) (notify! packet))
+
+  (edoc "Read a coherent authoritative batch and refresh any subscribed mirrors. This explicit synchronization barrier may perform I/O; painting uses snapshot."
+        (ids list "tagged IDs") (returns list) (effects remote))
+  (define (snapshots ids)
+    (let ([packet (client:request 'model-read ids)]) (receive! packet) packet))
   (define (refresh!)
     (unless (or active? (zero? (hashtable-size dirty)))
       (let ([ids (map (lambda (n) (list 'model n)) (vector->list (hashtable-keys dirty)))])
@@ -47,7 +54,7 @@
               (let ([packet (client:request 'model-read ids)])
                 (client:enqueue!
                   (lambda ()
-                    (adopt! packet) (set! active? #f) (notify! packet) (refresh!))))))))))
+                    (set! active? #f) (receive! packet) (refresh!))))))))))
   (define invalidations
     (kernel:call-with-runtime-registrations
       (lambda ()

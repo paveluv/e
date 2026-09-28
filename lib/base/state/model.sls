@@ -3,7 +3,7 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! export ids import! register-kind! retire! snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! export ids import! register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void gensym)
           (prefix (core identity) identity:)
@@ -157,35 +157,53 @@
   (define (create! actor kind schema scope persistence references value)
     (car (allocate! actor 1 (lambda (ids) (list (list kind schema scope persistence references value))))))
 
-  (edoc "Atomically allocate related records. The pure builder receives prospective IDs and returns (kind schema scope persistence references value) specifications; it may be retried."
-        (actor actor "creator") (count integer "positive record count") (build procedure "pure specification builder") (returns list))
-  (define (allocate! actor count build)
-    (unless (and (positive-integer? count) (procedure? build)) (error 'allocate! "expected positive count and builder"))
+  (edoc "Atomically allocate related records, optionally updating existing records in the same transaction. Pure builders receive prospective IDs and may be retried. Return IDs, or #f if update witnesses became stale or unavailable."
+        (actor actor "creator") (count integer "positive record count")
+        (build procedure "(ids) -> (kind schema scope persistence references value) specifications")
+        (update (list-of procedure) "optional (ids) -> revision-guarded changes") (returns (or list #f)))
+  (define (allocate! actor count build . update)
+    (unless (and (positive-integer? count) (procedure? build) (<= (length update) 1) (for-all procedure? update))
+      (error 'allocate! "expected positive count and pure builders"))
     (mutate!
       (lambda ()
         (let ([actor (own-actor actor)])
           (let loop ()
             (let* ([start (with-mutex (state-lock data) (state-next-id data))]
                    [ids (let collect ([i 0]) (if (= i count) '() (cons (list 'model (+ start i)) (collect (+ i 1)))))]
-                   [specs (datum:copy (build (datum:copy ids)))])
+                   [specs (datum:copy (build (datum:copy ids)))]
+                   [changes (own-changes (if (null? update) '() ((car update) (datum:copy ids))))]
+                   [before (read-records (map car changes))])
               (unless (and (list? specs) (= (length specs) count)
                            (for-all (lambda (s) (and (list? s) (= (length s) 6))) specs))
                 (error 'allocate! "builder returned invalid specifications"))
               (let* ([entries (map (lambda (id spec)
                                      (map cons keys (append (list id (car spec) (cadr spec) (caddr spec) (cadddr spec) 0 actor)
                                                       (cddddr spec)))) ids specs)]
-                     [definitions (map definition-of entries)])
+                     [definitions (map definition-of entries)]
+                     [old-definitions (map (lambda (r) (and r (definition-of r))) before)]
+                     [after (and (matches? before changes)
+                              (map (lambda (r c) (replace-state r actor (caddr c) (cadddr c))) before changes))]
+                     [available (and after (for-all accepts? old-definitions before))])
                 (unless (and (for-all envelope? entries) (for-all accepts? definitions entries))
                   (error 'allocate! "unknown kind/schema or invalid payload"))
+                (when available
+                  (unless (for-all accepts? old-definitions after) (error 'allocate! "invalid update payload")))
                 (let ([done
                        (with-mutex (state-lock data)
-                         (and (= start (state-next-id data))
-                              (begin
-                                (unless (for-all (lambda (d e) (eq? d (definition-of e))) definitions entries)
-                                  (error 'allocate! "kind changed during validation"))
-                                (for-each (lambda (e) (hashtable-set! (state-records data) (cadr (field e 'id)) e)) entries)
-                                (state-next-id-set! data (+ start count)) (changed! ids) #t)))])
-                  (if done (datum:copy ids) (loop))))))))))
+                         (cond
+                           [(or (not available)
+                                (not (for-all eq? before (map record-of (map car changes))))
+                                (not (for-all (lambda (d r) (eq? d (definition-of r))) old-definitions before))) 'stale]
+                           [(not (= start (state-next-id data))) 'retry]
+                           [else
+                            (unless (for-all (lambda (d e) (eq? d (definition-of e))) definitions entries)
+                              (error 'allocate! "kind changed during validation"))
+                            (for-each (lambda (e) (hashtable-set! (state-records data) (cadr (field e 'id)) e)) entries)
+                            (for-each (lambda (e) (hashtable-set! (state-records data) (cadr (field e 'id)) e)) after)
+                            (state-next-id-set! data (+ start count))
+                            (changed! (append ids (filter values (map (lambda (a b) (and (not (eq? a b)) (field b 'id))) before after))))
+                            'applied]))])
+                  (case done [(applied) (datum:copy ids)] [(retry) (loop)] [else #f])))))))))
 
   (edoc "Live model ids in allocation order, optionally restricted to a kind without reading payloads."
         (kinds (list-of symbol) "at most one kind")
@@ -202,6 +220,11 @@
         (id list "the tagged model id") (returns (or list #f)))
   (define (snapshot id)
     (datum:copy (car (read-records (list id)))))
+
+  (edoc "Read a record's revision without copying its payload; #f denotes an absent record. Capture a snapshot when that revision changes."
+        (id list "tagged model ID") (returns (or integer #f)))
+  (define (revision id)
+    (let ([r (car (read-records (list id)))]) (and r (field r 'revision))))
 
   (edoc "Whether a live model's current kind definition accepts its saved payload."
         (id list "the tagged model id") (returns boolean))

@@ -172,10 +172,19 @@
      ;; -- re-registration and refresh -----------------------------------------
 
      (define old (mode:find "probe"))
+     (define refresh-writes 0)
+     (define refresh-token
+       (store:subscribe! #f
+         (lambda (event)
+           (when (and (eq? (car event) 'property) (memq (caddr event) '(mode mode-auto)))
+             (set! refresh-writes (+ refresh-writes 1))))))
      (mode:register! "probe" '(".probe") '("probesh") probe-styler)
-     (check 'newest-registration-wins (eq? (mode:find "probe") old) #f)
-     (check 'registration-re-resolves-open-buffers-at-once (eq? (mode:of by-file) (mode:find "probe")) #t)
-     (check 'refresh-keeps-name (mode:name-of by-file) "probe")
+     (mode:refresh!)
+     (store:unsubscribe! refresh-token)
+     (check 'refresh-resolves-replaced-modes-without-rewriting-unchanged-facts
+       (list (eq? (mode:find "probe") old) (eq? (mode:of by-file) (mode:find "probe"))
+             (mode:name-of by-file) refresh-writes)
+       '(#f #t "probe" 0))
 
      ;; A derived mode follows live behavior, while detection and keys stay
      ;; its own. Reusing the same line exercises parent-reload cache freshness.

@@ -58,6 +58,7 @@
               (define shared twice)
               ;; a type of the library's own, with a completer and a writer
               (edoc-type hue "a hue, by name"
+                (portable #t) (within symbol)
                 (predicate (lambda (v) (and (memq v '(red green blue)) #t)))
                 (complete (lambda (partial) (map (lambda (h) (cons h "a hue")) '(red green blue))))
                 (write (lambda (v) (format "'~a" v))))
@@ -247,5 +248,25 @@
                documented)
        '())
      (printf "edoc coverage: ~a of ~a editor procedures\n" (length documented) (length editor-procedures))
+
+     (check 'portable-contracts-are-conservative
+       (list (map type-portable? '(integer file directory port buffer hue missing-type (record place) (list-of hue) (or string #f)))
+         (map (lambda (pair) (apply type-compatible? pair))
+           '((integer number) (number integer) (hue symbol) (symbol hue)
+             ((one-of red blue) hue) ((one-of red black) hue)
+             ((or string #f) string) (string (or string #f))
+             ((list-of hue) (list-of symbol)) ((list-of symbol) (list-of hue))
+             (missing-type any) (buffer buffer))))
+       '((#t #t #f #f #f #t #f #f #t #t) (#t #f #t #f #t #f #f #t #t #f #f #f)))
+
+     (let* ([before (type-named 'file)]
+            [aborted (test:raises? (lambda () (kernel:call-with-registration-update
+                                                (lambda () (kernel:retract-module! 'file) (error 'abort "abort")))))]
+            [kept (eq? before (type-named 'file))])
+       (kernel:retract-module! 'file)
+       (let ([missing (not (type-portable? 'file))])
+         (restore-types! "(service file)")
+         (check 'portable-types-follow-module-rollback-retraction-and-reimport
+           (list aborted kept missing (eq? before (type-named 'file))) '(#t #t #t #t))))
 
      (test:finish! 'edoc)))
