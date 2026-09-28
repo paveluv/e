@@ -39,9 +39,9 @@
                         (head:view-replace! b (if (null? lines) '("") lines) '()
                           (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
                 (lambda (event)
-                  (and (memq 'input (widget:actions id))
-                    (widget:act! id 'input event (head:app-event-buffer-position)
-                      (list (head:window-content-width (head:current-window)) (head:window-size (head:current-window)))))))
+                  (cond [(string=? event "BLUR") (widget:cancel! id 'blur) #t]
+                        [(string=? event "FOCUS") (widget:key-scopes! id "") #t]
+                        [else #f])))
               (head:buffer-fact-set! b 'resume-kind 'widget)
               (head:buffer-fact-set! b 'widget-id id)
               (head:set-app-presentation! b 0 #f #f)

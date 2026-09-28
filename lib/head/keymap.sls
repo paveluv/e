@@ -13,15 +13,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head keymap)
-  (export action-text (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!))
-          (rename (key-binding binding)) binding-action binding-context binding-kind
-          binding-prefix? binding-sequence binding-spec call call-action-arguments
-          call-action-procedure call-action? choose-binding command-hint command-key
-          command-keys (rename (effective-bindings context-bindings)) context-capture
-          (rename (key-event-binding event-binding)) prefill
-          prefill-action-arguments prefill-action-procedure prefill-action? prefill-name
-          prefill-text resolved-binding same-sequence? sequence-bindings sequence-text
-          set-context-capture! (rename (key-spec spec)) (rename (unbind-key! unbind!)))
+  (export action-text (rename (bind-key! bind!)) (rename (bind-default-key! bind-default!)) (rename (key-binding binding)) binding-action binding-context binding-kind binding-prefix? binding-sequence binding-spec call call-action-arguments call-action-procedure call-action? choose-binding command-hint command-key command-keys (rename (effective-bindings context-bindings)) context-capture (rename (key-event-binding event-binding)) generation prefill prefill-action-arguments prefill-action-procedure prefill-action? prefill-name prefill-text resolved-binding same-sequence? sequence-bindings sequence-text set-context-capture! (rename (key-spec spec)) (rename (unbind-key! unbind!)))
   (import (rnrs)
           (only (chezscheme)
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
@@ -143,6 +135,14 @@
   ;;; The binding table ---------------------------------------------------------
 
   (define key-bindings (kernel:make-registry))
+  (define binding-generation 0)
+  (define binding-observer
+    (kernel:call-with-runtime-registrations
+      (lambda () (kernel:registry-observe! key-bindings
+                   (lambda (removed added) (set! binding-generation (+ binding-generation 1)))))))
+
+  (edoc "The current binding generation; pending chords use it to reject suffixes after a reload." (returns integer))
+  (define (generation) binding-generation)
 
   (define (binding-item context sequence action kind spec)
     (list context sequence action kind spec))

@@ -614,8 +614,8 @@
      ;; failed ownership changes and duplicate hosts cannot release the tree.
      (let* ([data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "one\ntwo")]
             [parent (view:create! head:ui-actor #f 'column 1 '() '())]
-            [a (view:create! head:ui-actor data 'text 1 '() '(0 0))]
-            [b (view:create! head:ui-actor data 'text 1 '() '(0 0))]
+            [a (view:create! head:ui-actor data 'text 2 '() 0)]
+            [b (view:create! head:ui-actor data 'text 2 '() 0)]
             [count (length (head:buffers))])
        (view:arrange! head:ui-actor (list (list parent 0 (list (list 'a a 'fit) (list 'b b '(grow 1))) '())) '())
        (let ([m (widget:mount! parent 'slot)])
@@ -623,12 +623,12 @@
            (list (eq? m (widget:mount! parent 'slot)) (= count (length (head:buffers)))
              (refused? (lambda () (widget:mount! parent 'another)))
              (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
-         (widget:act! a 'move 1 2)
+         (widget:act! a 'move 1)
          (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent)))
                                                               (list (list 'b b '(grow 1)) (list 'a a 'fit)) '())))])
            (check 'reordered-child-keeps-local-state-and-parent
              (list status (view:state (interaction:snapshot a)) (view:parent (interaction:snapshot a)))
-             (list 'applied '(1 0) parent)))
+             (list 'applied 1 parent)))
          (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent))) (list (list 'a a 'fit)) '())))])
            (check 'removed-child-releases-runtime-and-owner
              (list status (refused? (lambda () (widget:actions b))) (view:owner (view:snapshot b))) '(applied #t #f)))
@@ -639,7 +639,7 @@
      ;; reuses their adapter and remembered interaction.
      (let* ([w (head:current-window)] [was (head:current-buffer)]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
-            [id (view:create! head:ui-actor data 'text 1 '() '(0 0))]
+            [id (view:create! head:ui-actor data 'text 2 '() 0)]
             [b (window:show-widget! w id)]
             [other (head:make-window b 0 0 0 0 0 2 0 12 'default)]
             [copy (head:window-buffer other)] [fork (head:buffer-fact copy 'widget-id #f)])
@@ -647,6 +647,71 @@
        (head:show-buffer! was)
        (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
        (head:show-buffer! was) (head:forget-buffer! b) (head:forget-buffer! copy))
+
+     ;; A bare composition exercises the same routing used by window hosts.
+     (let* ([events '()] [owner 'routing-fixture]
+            [a (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
+            [b (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
+            [row (view:create! head:ui-actor #f 'route-row 1 '() '())]
+            [root (view:create! head:ui-actor #f 'overlay 1 '() '())]
+            [barrier (view:create! head:ui-actor #f 'overlay 1 '((modal . #t)) '())])
+       (define (record! id source d tag) (set! events (cons (list tag id) events)))
+       (define (install-leaf! full?)
+         (parameterize ([kernel:registering-module owner])
+           (widget:register! 'route-leaf 1
+             (list (cons 'focus #t) (cons 'contexts '(route-leaf)) (cons 'capture (if full? 'full 'partial))
+               (cons 'actions (list (cons 'record record!)))
+               (cons 'event (lambda (id source d event)
+                              (case (car event)
+                                [(text) (record! id source d (cadr event)) #t]
+                                [(pointer) (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id source d (cadr event)) #t]
+                                [else #f])))))))
+       (define (show!) (widget:present! (list (list (widget:prepare! root 10 2) 0 0))))
+       (define (key! key) (dispatch:input! root (list 'key key (and (= 1 (string-length key)) key))))
+       (define (take) (let ([out (reverse events)]) (set! events '()) out))
+       (install-leaf! #f)
+       (widget:register! 'route-row 1
+         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
+           (cons 'actions (list (cons 'record record!)))
+           (cons 'layout (lambda (d width height measure locate)
+                           (map (lambda (child x) (list (cadr child) (list x 0 5 height))) (view:children d) '(0 5))))))
+       (for-each (lambda (entry)
+                   (keymap:bind-default! (car entry) (cadr entry) (keymap:call widget:act! widget:target 'record (caddr entry))))
+         '((route-leaf "C-x a" leaf) (route-leaf "F2" shadowed) (route-leaf "z" shortcut)
+           (route-parent "F1" parent) (route-capture "F2" capture)))
+       (view:arrange! head:ui-actor
+         (list (list root 0 (list (list 'body row '(grow 1))) '())
+               (list row 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+       (widget:mount! root 'routing-test) (show!) (widget:focus! root a)
+       (key! "C-x")
+       (check 'chord-start-returns-without-reading-input (dispatch:pending?) #t)
+       (key! "a") (key! "F1") (key! "F2") (key! "z")
+       (dispatch:input! root '(text "z z" paste))
+       (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
+         (list (list 'leaf a) (list 'parent row) (list 'capture row) (list 'shortcut a) (list "z z" a)))
+       (key! "C-x") (widget:focus! root b) (key! "a")
+       (key! "C-x") (keymap:bind-default! 'unrelated "F9" void) (key! "a")
+       (check 'focus-and-binding-change-do-not-replay-chord-suffix (take) '())
+       (widget:focus! root a) (show!)
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(pointer move primary ()) 99 99)
+       (widget:pointer! '(pointer release primary ()) 99 99)
+       (widget:pointer! '(pointer move none ()) 99 99)
+       (check 'pointer-capture-survives-outside-and-ends-on-release (take)
+         (list (list 'press a) (list 'move a) (list 'release a) (list 'leave a)))
+       (key! "C-x") (kernel:retract-module! owner) (install-leaf! #t) (show!) (key! "a")
+       (key! "F1") (key! "x") (key! "F2")
+       (check 'reload-cancels-chord-full-capture-still-types-and-ancestor-capture-wins (take)
+         (list (list "x" a) (list 'capture row)))
+       (interaction:flush!)
+       (let-values ([(status rows) (widget:arrange! (list (list root (cdr (assq 'revision (model:snapshot root)))
+                                                            (list (list 'body row '(grow 1)) (list 'modal barrier '(grow 1))) '())))
+                    ])
+         (check 'modal-attachment-commits status 'applied))
+       (show!) (key! "x") (widget:pointer! '(pointer press primary ()) 1 0)
+       (check 'empty-modal-has-no-key-or-pointer-click-through (take) '())
+       (widget:unmount! root) (kernel:retract-module! owner)
+       (widget:invalidate!))
 
      (model:register-kind! 'widget-view 3 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]

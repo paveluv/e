@@ -1,7 +1,7 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! frame-children frame-clip frame-descriptor frame-id frame-lines frame-rect frame-source init! invalidate! mount! prepare! prepared present! register! shown unmount!)
+  (export act! actions arrange! cancel! capture! event-frame focus! frame-children frame-clip frame-descriptor frame-id frame-lines frame-rect frame-source init! input! invalidate! key-scopes! mount! pointer! prepare! prepared present! register! reveal! shown target unmount!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
@@ -9,6 +9,7 @@
           (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
+          (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (state model) model:)
           (prefix (state view) view:)
@@ -54,7 +55,8 @@
                                        (or (null? rest)
                                          (and (pair? (car rest)) (symbol? (caar rest)) (procedure? (cdar rest))
                                            (not (memq (caar rest) names)) (check (cdr rest) (cons (caar rest) names))))))]
-                        [(contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
+                        [(contexts capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
+                        [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
                         [(prepare render measure layout event anchor locate) (procedure? (cdr p))]
@@ -96,7 +98,7 @@
            [proc (assq action (field entry 'actions '()))])
       (let-values ([(available? source) (source! n d)])
         (unless (and available? proc) (error 'act! "widget action is unavailable" id action))
-        (call-with-values (lambda () (apply (cdr proc) id source d arguments))
+        (call-with-values (lambda () (apply (cdr proc) id (let ([f (event-frame)]) (if (and f (equal? id (frame-id f))) (frame-source f) source)) d arguments))
           (lambda result (head:wake-main!) (apply values result))))))
 
   (define (subscribe! mount tree)
@@ -146,6 +148,7 @@
   (define (unmount! id)
     (let ([m (hashtable-ref roots id #f)])
       (when m
+        (cancel! id 'unmount)
         (let ([d (interaction:snapshot id)])
           (when d (interaction:release! head:ui-actor id (view:generation d))))
         (hashtable-delete! roots id)
@@ -172,6 +175,7 @@
                                                     (let-values ([(status changed) (interaction:arrange! head:ui-actor changes
                                                                                      (map (lambda (m) (list (mount-id m) (view:generation (interaction:snapshot (mount-id m))))) affected))])
                                                       (when (eq? status 'applied)
+                                                        (for-each (lambda (m) (cancel! (mount-id m) 'arrange)) affected)
                                                         (for-each (lambda (m)
                                                                     (let* ([tree (rows (mount-id m))] [token (subscribe! m tree)] [old (mount-subscription m)])
                                                                       (reconcile! m tree) (mount-subscription-set! m token) (model:unsubscribe! old))) affected)
@@ -346,7 +350,169 @@
   (define (shown) presentations)
 
   (edoc "Invalidate uncertain output. Geometry-dependent input stays disabled until a successful full presentation.")
-  (define (invalidate!) (set! presentations '()))
+  (define (invalidate!) (defer-cancel! 'output-failure) (set! hover-target #f) (set! presentations '()))
+
+  ;; Routing targets and event frames are dynamic head context, never wire data.
+  (edoc "The explicit receiver of the current widget key binding or event, or #f." (returns any))
+  (define target (make-parameter #f))
+
+  (edoc "The shown frame supplying the current pointer event's source basis, or #f." (returns any))
+  (define event-frame (make-parameter #f))
+  (define pointer-capture #f)
+  (define hover-target #f)
+  (define cancelled-gestures '())
+  (define (defer-cancel! reason)
+    (when pointer-capture (set! cancelled-gestures (cons (cons pointer-capture reason) cancelled-gestures)))
+    (set! pointer-capture #f))
+  (define (drain-cancels!)
+    (let ([pending (reverse cancelled-gestures)])
+      (set! cancelled-gestures '())
+      (for-each (lambda (p)
+                  (let* ([f (car p)] [entry (frame-definition f)] [handler (field entry 'event #f)])
+                    (when (and handler (eq? entry (definition (frame-descriptor f))))
+                      (parameterize ([target (frame-id f)] [event-frame f])
+                        (handler (frame-id f) (frame-source f) (frame-descriptor f) (list 'cancel (cdr p))))))) pending)))
+  (define last-focus (make-hashtable equal-hash equal?))
+  (define (live-frame? f)
+    (let* ([n (hashtable-ref nodes (frame-id f) #f)] [d (and n (interaction:snapshot (frame-id f)))])
+      (and d (frame-descriptor f) (eq? (frame-definition f) (definition d))
+        (= (view:generation d) (view:generation (frame-descriptor f))))))
+  (define (shown-root id)
+    (exists (lambda (p) (and (equal? id (frame-id (car p))) (car p))) presentations))
+  (define (visible? f)
+    (and (> (caddr (frame-clip f)) 0) (> (cadddr (frame-clip f)) 0) (live-frame? f)))
+  (define (modal f)
+    (and (visible? f) (or (exists modal (reverse (frame-children f)))
+                        (and (option (frame-descriptor f) 'modal #f) f))))
+  (define (focus-order f)
+    (if (or (zero? (caddr (frame-clip f))) (zero? (cadddr (frame-clip f)))) '()
+      (append (if (field (frame-definition f) 'focus #f) (list (frame-id f)) '())
+        (apply append (map focus-order (frame-children f))))))
+  (define (focusable f)
+    (filter (lambda (id) (live-frame? (find-frame f id))) (focus-order f)))
+  (define (path id)
+    (let loop ([id id] [out '()])
+      (let ([d (and id (interaction:snapshot id))])
+        (if d (loop (view:parent d) (cons id out)) out))))
+  (define (send! id event frame)
+    (let* ([n (hashtable-ref nodes id #f)] [d (and n (interaction:snapshot id))] [entry (definition d)]
+           [handler (field entry 'event #f)])
+      (and handler (or (not frame) (live-frame? frame))
+        (let-values ([(available? source) (source! n d)])
+          (and available?
+            (parameterize ([target id] [event-frame frame])
+              (and (handler id (if frame (frame-source frame) source) d event) #t)))))))
+  (define (focus-frame root)
+    (let ([f (if (event-frame) (shown-root root) (or (prepared root) (shown-root root)))]) (and f (or (modal f) f))))
+
+  (edoc "Focus a visible accepting descendant within the root's current modal scope. Hidden roots retain their remembered target."
+        (root list "root view") (id list "descendant view"))
+  (define (focus! root id)
+    (let* ([frame (focus-frame root)] [d (interaction:snapshot root)] [old (and d (view:focus d))])
+      (unless (and frame d (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
+      (unless (equal? old id)
+        (let common ([before (path old)] [after (path id)])
+          (if (and (pair? before) (pair? after) (equal? (car before) (car after))) (common (cdr before) (cdr after))
+            (begin
+              (for-each (lambda (id) (send! id '(blur) #f)) (reverse before))
+              (interaction:focus! root id)
+              (for-each (lambda (id) (send! id '(focus) #f)) after))))
+        (hashtable-set! last-focus root id) (head:wake-main!))))
+  (define (ensure-focus! root)
+    (let* ([frame (focus-frame root)] [choices (if frame (focusable frame) '())]
+           [d (interaction:snapshot root)] [old (and d (view:focus d))]
+           [previous (or old (hashtable-ref last-focus root #f))]
+           [past (let ([old-frame (shown-root root)]) (if old-frame (focus-order old-frame) '()))]
+           [tail (and previous (member previous past))]
+           [next (or (and (member old choices) old)
+                   (and tail (find (lambda (id) (member id choices)) (cdr tail)))
+                   (and tail (find (lambda (id) (member id choices)) (reverse (list-head past (- (length past) (length tail))))))
+                   (and (pair? choices) (car choices)))])
+      (cond [next (focus! root next)] [(and d old) (interaction:focus! root #f)]) next))
+
+  (edoc "Build ordered keymap receivers and a chord ownership basis for this root. The outer host may append its own contexts."
+        (root list "active root") (key string "first key token") (returns list "(basis scopes focused-view)"))
+  (define (key-scopes! root key)
+    (drain-cancels!)
+    (let* ([focus (ensure-focus! root)] [scope (focus-frame root)]
+           [path (if focus (path focus) (if scope (path (frame-id scope)) (list root)))] [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))]
+           [normal (let loop ([rest (reverse path)] [out '()])
+                     (if (null? rest) (reverse out)
+                       (let* ([id (car rest)] [d (interaction:snapshot id)] [entry (definition d)]
+                              [full? (eq? (field entry 'capture 'partial) 'full)]
+                              [yield? (and (not full?) (member key (field entry 'yield '())))]
+                              [item (list id (if yield? '() (field entry 'contexts '())) (or full? (equal? id barrier)))])
+                         (if (equal? id barrier) (reverse (cons item out)) (loop (cdr rest) (cons item out))))))]
+           [captures (filter (lambda (scope) (pair? (cadr scope)))
+                       (map (lambda (id) (list id (field (definition (interaction:snapshot id)) 'capture-contexts '()) #f)) path))]
+           [basis (map (lambda (id) (let ([d (interaction:snapshot id)]) (list id (and d (view:generation d)) (definition d)))) path)])
+      (list (list root focus barrier basis) (append captures normal) focus)))
+
+  (edoc "Offer committed text or an unbound normalized key to the focused path; a full capture or modal boundary stops bubbling."
+        (root list "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
+  (define (input! root event)
+    (drain-cancels!)
+    (let* ([focus (ensure-focus! root)] [scope (focus-frame root)]
+           [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))])
+      (let loop ([ids (reverse (if focus (path focus) (if scope (path (frame-id scope)) (list root))))])
+        (and (pair? ids)
+          (let* ([id (car ids)] [d (interaction:snapshot id)] [entry (definition d)])
+            (or (and (not (and (eq? (car event) 'key) (member (cadr event) (field entry 'yield '()))))
+                     (or (send! id (if (eq? (car event) 'key) (list-head event 2) event) #f)
+                       (and (eq? (car event) 'key) (= (length event) 3) (caddr event)
+                         (send! id (list 'text (caddr event) 'typed) #f))))
+                (eq? (field entry 'capture 'partial) 'full) (equal? id barrier) (loop (cdr ids))))))))
+
+  (edoc "Capture pointer motion and release for the current shown press target, including outside its allocation."
+        (id list "current event receiver"))
+  (define (capture! id)
+    (let ([f (event-frame)])
+      (unless (and f (equal? id (frame-id f)) (live-frame? f)) (error 'capture! "capture requires a live shown target" id))
+      (set! pointer-capture f)))
+
+  (edoc "Cancel a root's pointer gesture when its host hides, blurs or loses the device; retain logical focus."
+        (root list "root") (reason symbol "cancellation reason"))
+  (define (cancel! root reason)
+    (let ([n (and pointer-capture (hashtable-ref nodes (frame-id pointer-capture) #f))])
+      (when (and n (equal? root (mount-id (node-root n)))) (defer-cancel! reason)))
+    (drain-cancels!))
+  (define (hit f x y)
+    (and (layout:contains? (frame-clip f) x y)
+      (or (exists (lambda (child) (hit child x y)) (reverse (frame-children f)))
+        (and (or (option (frame-descriptor f) 'modal #f) (not (option (frame-descriptor f) 'pass-through #f))) f))))
+
+  (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
+        (event list "(pointer phase button modifiers) or (scroll dx dy units)")
+        (x integer "screen x, zero based") (y integer "screen y, zero based") (returns any))
+  (define (pointer! event x y)
+    (drain-cancels!)
+    (let* ([captured (and pointer-capture (live-frame? pointer-capture) (not (eq? (car event) 'scroll)))]
+           [placement (if captured
+                        (find (lambda (p) (find-frame (car p) (frame-id pointer-capture))) presentations)
+                        (find (lambda (p) (layout:contains? (frame-clip (car p)) (- x (cadr p)) (- y (caddr p)))) (reverse presentations)))]
+           [root (and placement (car placement))]
+           [x (if placement (- x (cadr placement)) x)] [y (if placement (- y (caddr placement)) y)]
+           [f (and root (if captured (find-frame root (frame-id pointer-capture)) (hit (or (modal root) root) x y)))])
+      (unless captured (when pointer-capture (defer-cancel! 'stale-target)))
+      (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'move))
+        (unless (and hover-target f (equal? (frame-id hover-target) (frame-id f)))
+          (when hover-target (send! (frame-id hover-target) '(pointer leave none () 0 0) hover-target))
+          (set! hover-target f)))
+      (and root
+        (begin
+          (when (and f (live-frame? f))
+            (if (eq? (car event) 'scroll)
+              (let loop ([ids (reverse (path (frame-id f)))] [left (caddr event)])
+                (unless (or (null? ids) (zero? left))
+                  (let* ([id (car ids)] [d (interaction:snapshot id)] [entry (definition d)]
+                         [scroll? (assq 'scroll (field entry 'actions '()))])
+                    (loop (cdr ids) (if scroll? (act! id 'scroll left) left)))))
+              (begin
+                (when (and (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f)) (parameterize ([event-frame f]) (focus! (frame-id root) (frame-id f))))
+                (send! (frame-id f) (append event (list (- x (car (frame-rect f))) (- y (cadr (frame-rect f))))) f))))
+          (when (and (eq? (car event) 'pointer) (memq (cadr event) '(release leave))) (set! pointer-capture #f))
+          (list (frame-id root) (and f (eq? (car event) 'pointer) (eq? (cadr event) 'press)
+                                     (field (frame-definition f) 'focus #f)))))))
 
   ;; The minimal text widget deliberately consumes arbitrary model values.
   ;; It needs no extra base dataset service or evaluator allocation.
@@ -356,51 +522,56 @@
   (define (text-source! id source descriptor)
     (cdr (projection! (mounted id) (definition descriptor) source)))
   (define (text-state state count)
-    (map (lambda (n) (if (and (integer? n) (exact? n)) (max 0 (min (- count 1) n)) 0))
-      (if (and (list? state) (= (length state) 2)) state '(0 0))))
+    (if (and (integer? state) (exact? state)) (max 0 (min (- count 1) state)) 0))
   (define (text-render data state width height range)
-    (let* ([data (cdr data)] [count (vector-length data)] [state (text-state state count)]
-           [top (min count (+ (cadr state) (car range)))])
+    (let* ([data (cdr data)] [count (vector-length data)] [selected (text-state state count)] [top (min count (car range))])
       (map (lambda (i) (let ([row (+ top i)])
-                         (string-append (if (= row (car state)) "> " "  ") (vector-ref data row))))
-        (iota (min (cdr range) (- count top))))))
-  (define (text-move! id model descriptor offset height)
-    (let* ([count (vector-length (text-source! id model descriptor))] [state (text-state (view:state descriptor) count)]
-           [row (max 0 (min (- count 1) (+ (car state) offset)))]
-           [top (min row (max (cadr state) (- row (max 1 height) -1)))])
-      (interaction:set-state! head:ui-actor id (cdr (assq 'revision model)) (list row top)) (void)))
-  (define (text-scroll! id model descriptor offset)
-    (let* ([count (vector-length (text-source! id model descriptor))] [state (text-state (view:state descriptor) count)])
-      (interaction:set-state! head:ui-actor id (cdr (assq 'revision model))
-        (list (car state) (max 0 (min (- count 1) (+ (cadr state) offset))))) (void)))
-  (define (text-select! id model descriptor row)
-    (let* ([count (vector-length (text-source! id model descriptor))] [state (text-state (view:state descriptor) count)])
-      (interaction:set-state! head:ui-actor id (cdr (assq 'revision model))
-        (list (max 0 (min (- count 1) (+ (cadr state) row))) (cadr state)))) (void))
-  (define (text-choose! id model descriptor)
-    (let* ([lines (text-source! id model descriptor)] [row (car (text-state (view:state descriptor) (vector-length lines)))]
-           [chosen (vector-ref lines row)])
-      (echo:set-text! chosen)
-      (list (view:source descriptor) (cdr (assq 'revision model)) row chosen)))
-  (define (text-input! id model descriptor event point size)
-    (cond [(member event '("UP" "DOWN")) (act! id 'move (if (string=? event "UP") -1 1) (cadr size)) #t]
-          [(member event '("WHEEL-UP" "WHEEL-DOWN")) (act! id 'scroll (if (string=? event "WHEEL-UP") -3 3)) #t]
-          [(string=? event "MOUSE-CLICK") (when point (act! id 'select (car point))) 'keep-focus]
-          [(string=? event "RET") (act! id 'choose) #t]
-          [else #f]))
+                         (string-append (if (= row selected) "> " "  ") (vector-ref data row)))) (iota (min (cdr range) (- count top))))))
+  (define (text-move! id source d offset)
+    (let* ([data (text-source! id source d)] [count (vector-length data)] [row (text-state (+ (text-state (view:state d) count) offset) count)])
+      (interaction:set-state! head:ui-actor id (cdr (assq 'revision source)) row)
+      (reveal! id (list (cdr (assq 'revision source)) row))))
+  (define (text-select! id source d row)
+    (interaction:set-state! head:ui-actor id (cdr (assq 'revision source)) (text-state row (vector-length (text-source! id source d)))))
+  (define (text-choose! id source d)
+    (let* ([data (text-source! id source d)] [row (text-state (view:state d) (vector-length data))] [text (vector-ref data row)])
+      (echo:set-text! text) (list (view:source d) (cdr (assq 'revision source)) row text)))
+  (define (text-event! id source d event)
+    (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
+      (begin (act! id 'select (list-ref event 5)) #t)))
 
+  (edoc "Reveal a logical source anchor in its nearest containing scroll viewport, without changing selection."
+        (id list "descendant") (anchor datum "source anchor"))
+  (define (reveal! id anchor)
+    (let loop ([child id] [rest (cdr (reverse (path id)))] [anchor anchor])
+      (unless (null? rest)
+        (let* ([parent (car rest)] [d (interaction:snapshot parent)] [f (allocation parent)])
+          (if (and f (eq? (view:kind d) 'scroll))
+            (let* ([width (caddr (frame-rect f))] [height (cadddr (frame-rect f))]
+                   [point (locate! child anchor width)] [top (locate! child (view:state d) width)]
+                   [delta (cond [(< point top) (- point top)] [(>= point (+ top height)) (+ 1 (- point top height))] [else 0])])
+              (unless (zero? delta) (act! parent 'scroll delta)))
+            (loop parent (cdr rest) (list 'child child anchor '() '())))))))
 
   (edoc "Install the text definition and renderer invalidation.")
   (define (init!)
-    (register! 'text 1 (list (cons 'prepare text-data) (cons 'render text-render)
+    (register! 'text 2 (list (cons 'prepare text-data) (cons 'render text-render)
                          (cons 'measure (lambda (data descriptor axis cross measure) (if (eq? axis 'y) (list 1 (vector-length (cdr data))) '(1 1))))
                          (cons 'locate (lambda (data anchor width)
                                          (if (and (list? anchor) (= (length anchor) 2) (equal? (car anchor) (car data)) (integer? (cadr anchor))) (max 0 (cadr anchor)) 0)))
                          (cons 'anchor (lambda (data position width) (list (car data) position))) (cons 'focus #t)
-                         (cons 'actions (list (cons 'input text-input!) (cons 'move text-move!) (cons 'scroll text-scroll!) (cons 'select text-select!) (cons 'choose text-choose!)))))
+                         (cons 'contexts '(widget-text)) (cons 'event text-event!)
+                         (cons 'actions (list (cons 'move text-move!) (cons 'select text-select!) (cons 'choose text-choose!)))))
+    (keymap:bind-default! 'widget-text "UP" (keymap:call act! target 'move -1))
+    (keymap:bind-default! 'widget-text "DOWN" (keymap:call act! target 'move 1))
+    (keymap:bind-default! 'widget-text "RET" (keymap:call act! target 'choose))
     (register! 'row 1 (list (cons 'layout (linear-layout 'x)) (cons 'measure (linear-measure 'x))))
     (register! 'column 1 (list (cons 'layout (linear-layout 'y)) (cons 'measure (linear-measure 'y))))
     (register! 'overlay 1 (list (cons 'layout overlay-layout) (cons 'measure overlay-measure)))
     (register! 'scroll 1 (list (cons 'layout scroll-layout) (cons 'measure overlay-measure) (cons 'actions (list (cons 'scroll scroll-action!)))))
-    (kernel:registry-observe! definitions (lambda (removed added) (head:wake-main!))))
+    (head:add-pre-redraw-hook! drain-cancels!)
+    (kernel:registry-observe! definitions
+      (lambda (removed added)
+        (when (and pointer-capture (not (live-frame? pointer-capture))) (defer-cancel! 'reload))
+        (head:wake-main!))))
 )

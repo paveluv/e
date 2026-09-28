@@ -18,14 +18,15 @@ After restarting the base, evaluate in a head:
 (define data
   (model:create! (actor:current) 'example-text 1
     'session 'persistent '() "first\nsecond\nthird"))
-(define first (view:create! (actor:current) data 'text 1 '() '(0 0)))
-(define second (view:create! (actor:current) data 'text 1 '() '(0 0)))
+(define first (view:create! (actor:current) data 'text 2 '() 0))
+(define second (view:create! (actor:current) data 'text 2 '() 0))
 (window:show-widget! (head:current-window) first)
 (window:show-widget! (window:split-right!) second)
 ```
 
-Each view selects a row with Up/Down or a click. The wheel scrolls its contents
-without changing selection. Enter shows the selected value in the echo area.
+Each view selects a row with Up/Down or a click. To scroll a long value,
+place it inside a scroll container; the wheel changes that viewport without
+changing the text selection. Enter shows the selected value in the echo area.
 Resize either window freely. A `model:commit!` from another head updates both
 views. This example is derived model state, with no authored-data undo journal;
 use the text store for ordinary editing.
@@ -33,13 +34,14 @@ use the text store for ordinary editing.
 `widget:actions` lists public actions. `widget:act!` invokes them explicitly:
 
 ```scheme
-(widget:act! first 'move 1 10) ; offset and visible height
+(widget:act! first 'move 1)   ; selection offset
 (widget:act! first 'choose)   ; (model-id revision row text)
 ```
 
 The built-in `text` renderer accepts any model: strings become lines and other
-values are printed as Scheme data. Its interaction state is `(selection top)`.
-`move`, `select`, `scroll`, `choose` and `input` are its public actions. Actions
+values are printed as Scheme data. Its schema-2 interaction state is the
+selected row number. `move`, `select` and `choose` are its public actions.
+The scroll container owns the viewport; the text leaf has no second offset. Actions
 receive the current mirrored model and provisional descriptor, so activation
 does not depend on an older acknowledged selection. An authored domain must
 validate the actual target and revision before committing an effect.
@@ -69,9 +71,10 @@ have zero extent. `anchor` maps `(data position width)` to a logical anchor;
 `locate` maps `(data anchor width)` back to a backend position.
 
 An action receives `(view-id model-envelope provisional-descriptor . args)`.
-An optional `input` action receives an event string, a zero-based pointer
-position or `#f`, and `(width height)`. Keyboard and mouse handlers should call
-the same public actions used by programmatic hosts. No separate command API
+An optional `event` callback receives `(view-id source descriptor event)`
+and returns whether it handled the event. Events are normalized key, text,
+pointer, focus/blur or cancel data. Keyboard and mouse handlers call the same
+public actions used by programmatic hosts. No separate command API
 is needed. Renderer definitions are module-owned; runtime mounts belong to
 the head and survive definition reloads.
 
@@ -84,7 +87,8 @@ no adapter buffers and share batched source subscriptions.
 in a second window, including an ordinary window split, forks its descriptors
 while sharing sources. Reopening a hidden root reuses its adapter and state.
 `widget:arrange!` stages source demand before committing an owned topology
-change. Reordering preserves child identities; unlinking releases their
+change. Fence interaction before reading expected parent revisions; a stale
+revision refuses the batch. Reordering preserves child identities; unlinking releases their
 mounts without deleting their descriptors or data.
 
 `widget:unmount!`, or killing the adapter buffer, fences publication, releases
@@ -118,3 +122,28 @@ Preparation is separate from presentation: the painter adopts the exact
 frames included in successfully flushed output. Partial echo updates retain
 the previously shown geometry. Failed terminal output disables widget hits
 until a full repaint succeeds. No layout or frame data is sent to the base.
+
+## Focus and input
+
+`widget:focus!` selects a visible accepting descendant. The root remembers
+its focus in the base; inactive roots retain it. Modal overlays confine focus
+and consume input even when their contents are empty.
+
+Definitions list ordinary `contexts` and optional `capture-contexts`.
+Captures are checked from outermost ancestor first; ordinary bindings bubble
+from the focused leaf. A `full` capture stops unhandled input; a `partial`
+capture can list first-key tokens in `yield`. Bind named actions through
+`keymap:call` and use `widget:target` to obtain the explicit receiver.
+
+`dispatch:input!` accepts a root and normalized `(key token text-fallback)`
+or `(text string source)` input. Optional trailing contexts belong to the
+outer host. Paste uses the text path alone. Chords advance one event at a
+time, and focus, definition or binding changes invalidate their pending
+suffix. Prompt readers use the same resolver.
+
+Pointer callbacks receive `(pointer phase button modifiers x y)` in their
+allocation's coordinates. `widget:event-frame` supplies the shown source
+basis; `widget:capture!` keeps motion and release on that target outside its
+rectangle. Blur, removal and failed output cancel capture. The TUI decodes
+device button codes before routing. Wheel movement changes scroll anchors,
+preserves focus and selection, and bubbles only its unconsumed remainder.

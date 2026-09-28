@@ -1860,8 +1860,8 @@
                                  (head-read ui `(begin (model:unsubscribe! model-reader)
                                                        (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
                  (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
-                        [first (rpc head 'view-create data 'text 1 '() '(0 0))]
-                        [second (rpc head 'view-create data 'text 1 '() '(0 0))]
+                        [first (rpc head 'view-create data 'text 2 '() 0)]
+                        [second (rpc head 'view-create data 'text 2 '() 0)]
                         [missing (rpc head 'view-create data 'not-installed 1 '() '(0 0))])
                    (head-read a `(begin (window:show-widget! (head:current-window) (quote (unquote first)))
                                         (window:show-widget! (window:split-right!) (quote (unquote missing))) #t))
@@ -1871,19 +1871,18 @@
                    (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
                    (test:check 'widget-selections-are-independent-across-heads
                      (list (head-read a `(view:state (interaction:snapshot ',first)))
-                           (head-read b `(view:state (interaction:snapshot ',second)))) '((1 0) (0 0)))
+                           (head-read b `(view:state (interaction:snapshot ',second)))) '(1 0))
                    (rpc head 'model-commit (list (list data 0 '() "alpha\nREMOTE beta\ngamma")))
                    (for-each (lambda (ui) (head-wait 'widget-remote-update ui (lambda () (head-sees? ui "REMOTE beta")))) (list a b))
                    (test:check 'widget-activation-carries-current-target-and-basis
                      (head-read a `(widget:act! ',first 'choose)) (list data 1 1 "REMOTE beta"))
-                   (test:check 'widget-wheel-scrolls-without-selection-and-click-uses-visible-row
+                   (test:check 'widget-wheel-does-not-select-and-pointer-uses-shown-row
                      (head-read b
-                       `(begin
-                          (head:dispatch-app-event! "WHEEL-DOWN")
-                          (let ([scrolled (view:state (interaction:snapshot ',second))])
-                            (parameterize ([head:app-event-buffer-position '(0 . 0)])
-                              (head:dispatch-app-event! "MOUSE-CLICK"))
-                            (list scrolled (view:state (interaction:snapshot ',second)))))) '((0 2) (2 2)))
+                       `(let* ([p (car (widget:shown))] [x (cadr p)] [y (caddr p)])
+                          (widget:pointer! '(scroll 0 3 cells) x y)
+                          (let ([before (view:state (interaction:snapshot ',second))])
+                            (widget:pointer! '(pointer press primary ()) x (+ y 2))
+                            (list before (view:state (interaction:snapshot ',second)))))) '(0 2))
                    (head-send! a "\x18;\x03;")
                    (head-wait 'widget-head-detached a (lambda () (pump-head! a)))
                    (test:await 'widget-owner-released (lambda () (not (cdr (assq 'owner (rpc head 'view-read first))))))
@@ -1891,7 +1890,7 @@
                    (head-wait 'widget-resumed a
                      (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
                    (test:check 'widget-resume-preserves-state-and-missing-renderer
-                     (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '((1 0) ()))
+                     (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
                    (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote first)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
                                         (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                    (head-read b `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote second)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))

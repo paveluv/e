@@ -627,7 +627,7 @@
      (model:register-kind! 'frame-test 1 string?)
      (let* ([w (head:current-window)] [was (head:current-buffer)]
             [source (model:create! head:ui-actor 'frame-test 1 'session 'persistent '() "a\nb\nc\nd\ne")]
-            [text (view:create! head:ui-actor source 'text 1 '() '(0 0))]
+            [text (view:create! head:ui-actor source 'text 2 '() 0)]
             [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f)])
        (view:arrange! head:ui-actor (list (list scroll 0 (list (list 'text text 'fit)) '())) '())
        (let* ([b (window:show-widget! w scroll)] [first (widget:prepare! scroll 6 2)])
@@ -636,7 +636,7 @@
          (check 'scroll-anchor-is-logical-and-selection-independent
            (list (view:state (interaction:snapshot scroll)) (view:state (interaction:snapshot text))
              (widget:frame-lines (widget:prepare! scroll 6 2)))
-           '((0 2) (0 0) ("  c   " "  d   ")))
+           '((0 2) 0 ("  c   " "  d   ")))
          (check 'zero-allocation-produces-no-output (widget:frame-lines (widget:prepare! scroll 0 0)) '())
          (painted paint:redraw!)
          (let ([shown (widget:shown)])
