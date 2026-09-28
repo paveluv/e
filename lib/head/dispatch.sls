@@ -72,7 +72,7 @@
       (and hit
            (begin
              (head:set-current-keys! (list key))
-             (run-key-action! (keymap:binding-action (cdr hit) 'editor) #f)
+             (run-key-action! (keymap:binding-action (cdr hit)) #f)
              #t))))
 
   ;; One chord for this pump, shared by ordinary dispatch and prompt readers.
@@ -106,7 +106,7 @@
                 [(and match (cadr match))
                  (set! chord (list owner (keymap:generation) sequence (if old (list-ref old 3) scopes)))
                  (list 'prefix receiver #f sequence)]
-                [match (list 'command receiver (keymap:binding-action (cdar match) receiver) sequence)]
+                [match (list 'command receiver (keymap:binding-action (cdar match)) sequence)]
                 [(caddr scope) (list (if old 'invalid 'blocked) receiver #f sequence)]
                 [else (loop (cdr rest))])))))))
 
@@ -123,7 +123,7 @@
          (let ([hit (and (tty:key-event-character first)
                       (or (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts)
                         (keymap:resolved-binding 'global '("SELF-INSERT"))))])
-           (if hit (begin (head:set-current-keys! sequence) (run-key-action! (keymap:binding-action (cdr hit) 'editor) capture))
+           (if hit (begin (head:set-current-keys! sequence) (run-key-action! (keymap:binding-action (cdr hit)) capture))
              (begin (head:set-last-command! #f) (echo:set-text! (format "~a is undefined" (keymap:sequence-text sequence))))))]
         [else (head:set-last-command! #f) (echo:set-text! "Key sequence cancelled")])) )
 

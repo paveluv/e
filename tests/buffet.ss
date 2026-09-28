@@ -6,19 +6,19 @@
 (eval
   '(begin
      (import (prefix (apps buffet) buffet:) (prefix (head head) head:)
-             (prefix (apps keys) keys:)
+             (prefix (apps bindings) bindings:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
-             (prefix (head keymap) keymap:) (prefix (head edit) edit:) (head literal)
+             (prefix (head keymap) keymap:) (head literal)
              (prefix (head mouse) mouse:)
              (prefix (head document) document:) (prefix (head paint) paint:)
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (edit:init!) (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (keys:init!)
+     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
@@ -38,11 +38,10 @@
            (draw! (root) 120 15)
            (let* ([r (collection:summary (query))] [v (get r 'value)] [s (selection)])
              (and (eq? (get v 'status) 'ready) s (= (cadr s) (get v 'generation))
-               (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at version))]) (eq? (car r) 'ready)))))))
+               (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
        (table:select! (table) (document:reference b)) (settle!))
      (define (press! . keys) (for-each dispatch:key! keys))
-     (define (binding key id) (keymap:binding-action (cdr (keymap:resolved-binding 'buffet key)) id))
      (define a (head:new-buffer! "buffet-a"))
      (define b (head:new-buffer! "buffet-b"))
      (define path "/tmp/buffet-path/with-many-components/file.scm")
@@ -67,15 +66,26 @@
      (test:check 'internal-filter-is-not-a-switchable-document
        (exists (lambda (b) (equal? filter-id (head:buffer-store-id b))) (head:buffers)) #f)
      (let ([focus (widget:focused (root))])
-       (select! a) (press! "C-x" "TAB")
+       (press! "C-x" "TAB")
        (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
-           (list (filter (lambda (needle) (not (string:search text needle 0 (string-length text))))
-                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "edit:kill-buffer!" "Kill a buffer" "Unavailable:"
-                     "Widget commands" "app/table (table): (model " "activate" "buffet:choose!" "basis)"))
+           (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
+                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "Widget commands" "app/table (table): (model "
+                     "activate" "trash" "delete" "buffet:choose!" "buffet:kill!" "buffet:delete!" "basis)"))
              (not (string:search text "anonymous command" 0 (string-length text)))
              (not (string:search text "(widget:target)" 0 (string-length text)))
-             (equal? focus (widget:focused (root)))) '(() #t #t #t)))
+             (not (string:search text "Unavailable target." 0 (string-length text)))
+             (equal? focus (widget:focused (root)))) '(#t #t #t #t #t)))
+       (test:check 'archive-keys-show-table-activation-with-a-model-literal
+         (map (lambda (keys)
+                (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'buffet keys)))
+                  (list (cons widget:target (app))))) '(("C-k") ("C-x" "D")))
+         (map (lambda (command) (format "(table:activate! (widget:descendant (model ~a) 'table) '~a)" (cadr (app)) command))
+           '(trash delete)))
+       (select! a) (head:before-frame!)
+       (let* ([help (head:window-buffer (head:popup))] [lines (head:buffer-lines help)])
+         (select! b) (head:before-frame!)
+         (test:check 'selection-does-not-rebuild-static-key-help (eq? lines (head:buffer-lines help)) #t))
        (table:move! (table) 'first) (settle!)
        (let* ([before (selection)]
               [action (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("DOWN"))))]
@@ -90,7 +100,7 @@
          (test:check 'keys-follows-widget-focus
            (and (string:search text "buffet keys" 0 (string-length text))
              (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
-       (keys:hide!) (widget:focus! (root) focus) (settle!))
+       (bindings:hide!) (widget:focus! (root) focus) (settle!))
      (let* ([id (table)] [options (view:options (interaction:snapshot id))]
             [activate (assq 'activate (cdr (assq 'commands options)))])
        (define (replace! action)
@@ -103,7 +113,7 @@
                                                                (list 'activate (cadr c) action (cadddr c)) c)) (cdr p))) p)) options)))
            (list (list (root) (view:generation (interaction:snapshot (root))))))
          (head:before-frame!))
-       (keys:show!)
+       (bindings:show!)
        (replace! 'unregistered-action)
        (test:check 'keys-shows-rewired-unavailable-command-template
          (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
@@ -113,23 +123,9 @@
        (test:check 'keys-updates-restored-command
          (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
            (not (string:search text "unregistered-action" 0 (string-length text)))) #t)
-       (keys:hide!) (settle!))
-     (select! a)
-     (let ([generation (keymap:generation)])
-       (keys:show!) (settle!) (head:before-frame!)
-       (let* ([before (state)] [help (head:window-buffer (head:popup))] [old (head:buffer-lines help)]
-              [call (binding '("C-k") (app))])
-         (test:check 'concrete-kill-binding-is-educational-and-discovery-is-pure
-           (list (eq? (keymap:action-procedure call) edit:kill-buffer!)
-             (string:prefix? "(edit:kill-buffer! (buffer \"buffet-a\") " (keymap:action-text call))
-             (equal? before (state)) (= generation (keymap:generation))) '(#t #t #t #t))
-         (select! b) (head:before-frame!)
-         (test:check 'keys-follows-selection-without-rebinding
-           (list (not (eq? old (head:buffer-lines help))) (car (keymap:call-action-arguments (binding '("C-k") (app)))) )
-           (list #t b)))
-       (keys:hide!))
+       (bindings:hide!) (settle!))
      (let ([focus (widget:focused (root))] [selected (selection)] [sort (get (get (collection:summary (query)) 'value) 'sort)])
-       (head:set-mouse-position! '(2 . 2)) (keys:show!) (settle!) (head:before-frame!)
+       (head:set-mouse-position! '(2 . 2)) (bindings:show!) (settle!) (head:before-frame!)
        (let* ([b (head:window-buffer (head:popup))] [lines (head:buffer-lines b)]
               [header (cadr (assoc '(click primary ()) (mouse:bindings)))])
          (head:before-frame!)
@@ -148,7 +144,7 @@
          (head:set-mouse-position! '(1000 . 1000)) (head:before-frame!)
          (test:check 'leaving-shown-target-clears-mouse-section
            (string:prefix? "Mouse" (head:buffer-line b 0)) #f))
-       (head:set-mouse-position! #f) (keys:hide!) (settle!))
+       (head:set-mouse-position! #f) (bindings:hide!) (settle!))
      (let ([heading (cadr (widget:frame-lines (draw! (root) 120 15)))])
        (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
        (test:check 'typing-from-entry-filters-in-base-without-shifting-columns
@@ -165,10 +161,10 @@
      (test:check 'global-cycle-uses-compound-order (eq? (head:current-buffer) b) #t)
      (buffet:open!) (settle!)
      (select! b)
-     (define stale (binding '("C-k") (app)))
+     (define stale (selection)) (define stale-basis (get (state) 'basis))
      (head:buffer-name-set! b "buffet-b-renamed")
      (test:check 'stale-destructive-action-refuses
-       (test:raises? (lambda () (keymap:run! stale))) #t)
+       (test:raises? (lambda () (buffet:kill! (app) stale stale-basis))) #t)
      (settle!) (select! b) (press! "C-k") (settle!)
      (test:check 'trash-retires-the-head-buffer
        (list (and (store:property (head:buffer-store-id b) 'trashed #f) #t) (memq b (head:buffers))) '(#t #f))
@@ -176,7 +172,6 @@
        (test:check 'archive-age-and-retention-are-presented
          (and (string:search text " ago" 0 (string-length text)) (string:search text " left" 0 (string-length text)) #t) #t))
      (table:select! (table) (list 'buffer (head:buffer-store-id b))) (settle!)
-     (test:check 'archive-kill-is-disabled (keymap:action-reason (binding '("C-k") (app))) "Choose a live buffer")
      (press! "RET")
      (test:check 'archive-restore-preserves-identity
        (list (head:buffer-store-id (head:current-buffer)) (store:property (head:buffer-store-id b) 'trashed #f))
@@ -184,18 +179,17 @@
      (buffet:open!) (settle!)
      (select! (head:buffer-of-store-id (head:buffer-store-id b))) (press! "C-k") (settle!)
      (table:select! (table) (list 'buffer (head:buffer-store-id b))) (settle!)
-     (let ([call (binding '("C-x" "D") (app))])
-       (test:check 'archive-binding-is-the-canonical-delete (keymap:action-procedure call) edit:delete-trashed!)
-       (eval (read (open-input-string (keymap:action-text call)))))
+     (press! "C-x" "D")
      (test:check 'permanent-archive-delete (store:exists? (head:buffer-store-id b)) #f)
      (settle!)
      (let ([local (head:register-view! "buffet-local" void)])
        (select! local)
-       (let ([call (binding '("C-k") (app))])
+       (let ([old (selection)] [basis (get (state) 'basis)])
          (head:buffer-name-set! local "<buffet-local-renamed>")
-         (test:check 'local-version-fences-retirement (test:raises? (lambda () (keymap:run! call))) #t))
+         (test:check 'local-version-fences-retirement
+           (test:raises? (lambda () (buffet:kill! (app) old basis))) #t))
        (select! local) (press! "C-k")
-       (test:check 'canonical-kill-retires-local-buffer (memq local (head:buffers)) #f)
+       (test:check 'table-activation-retires-local-buffer (memq local (head:buffers)) #f)
        (settle!))
      (let* ([w (head:current-window)] [picker (head:current-buffer)]
             [other (window:split-right!)] [fork (head:buffer-fact (head:window-buffer other) 'widget-id #f)]
@@ -204,20 +198,6 @@
          (list (equal? host fork) (equal? original-table fork-table)
            (equal? original-query (view:source (interaction:snapshot fork-table)))) '(#f #f #t))
        (draw! fork 27 8)
-       (select! a)
-       (test:await 'fork-selection
-         (lambda ()
-           (draw! fork 120 15)
-           (and (table:target fork-table) #t)))
-       (table:select! fork-table (document:reference picker))
-       (test:await 'fork-binding
-         (lambda () (draw! fork 120 15)
-           (let ([action (binding '("C-k") (child fork 'app))])
-             (and (not (keymap:action-reason action))
-               (eq? (car (keymap:call-action-arguments action)) picker)))))
-       (test:check 'split-bindings-use-their-own-selection
-         (map (lambda (id) (car (keymap:call-action-arguments (binding '("C-k") id))))
-           (list original-app (child fork 'app))) (list a picker))
        (let ([wide (widget:frame-lines (draw! host 300 15))])
          (test:check 'split-width-does-not-truncate-peer-metadata
            (and (string:search (cadr wide) "Modified" 0 300)

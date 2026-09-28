@@ -378,7 +378,7 @@ only changes are its own caches, and `(effects remote)` for a transport
 such as `client:request`, whose effect is the message's and whose caller
 keeps the bang. A fourth, `(edits)`, marks a command whose purpose is
 editing the buffer's text; the check confirms such a command reaches an
-edit, and the keys listing leaves it out where the text is read-only. Its verdict is on the name importers see, so an export
+edit, and the bindings listing leaves it out where the text is read-only. Its verdict is on the name importers see, so an export
 renamed with `rename` is judged by its exported spelling.
 
 The check is one of the linter's, `tools/elinter.sps`, beside two layout
@@ -520,7 +520,7 @@ mode context leaves unbound and passes the rest through to the keymaps; an app
 that consumes everything (the terminal) names an escape prefix in its mode's
 keymap context, and the dispatcher hands that key to the keymaps before the
 handler sees it. An app's keys are commands bound in its mode's context, so
-the keys listing, `C-h k` and M-x know them. Apps act on the selected window,
+the bindings listing, `C-h k` and M-x know them. Apps act on the selected window,
 publish their status, control cursor display, and consume mouse events without
 taking focus.
 

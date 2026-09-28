@@ -59,7 +59,7 @@ message. Every buffer's name shows, an app's too. Temporary interactions
 such as find-file use the space after it for match counts and pages instead
 of generated-buffer coordinates, and a buffer may replace those details
 with text of its own after its name through `head:set-buffer-status!`, as
-`<keys>` does with its page.
+`<bindings>` does with its page.
 
 Window 0 is the pop-up window. It has no rows and no status line until a
 completion list needs it or a buffer is sent to it, when it appears above the
@@ -610,16 +610,16 @@ its `(collection generation key)` selection and result basis.
 
 `table:activate!` invokes the selected row's `activate` command, connected to
 `buffet:choose!` for opening or restoring the document through its host.
-Kill and permanent delete resolve directly to `edit:kill-buffer!` and
-`edit:delete-trashed!` for the hovered or selected buffer. `C-x TAB` displays
-these concrete calls and the edit commands' documentation. Resolving them
-reads cached rows only; executing them validates the selection and the
-document's displayed metadata version. Pending and stale targets refuse.
-There are no separate Buffet kill/delete APIs. Flags use
+`C-k` invokes the table's `trash` command, connected to `buffet:kill!`;
+`C-x D` invokes `delete`, connected to `buffet:delete!`. Each receives the
+Buffet view, selection and result basis. `C-x TAB` shows the table activation
+expression in the keyboard section and its target API in **Widget commands**.
+The table adopts the hovered or selected row; the app validates the result
+basis and passes the document's metadata version to the archive operation.
+Pending and stale targets refuse. Flags use
 the same `buffer-flag` enumeration as `head:buffer-flags`: `conflicted` and
 `read-only`. `(edit:delete-trashed! name)` is the direct archive command;
-an optional `(ID . metadata-version)` targets an exact reviewed archive.
-`edit:kill-buffer!` similarly accepts an optional reviewed metadata version.
+`(edit:kill-buffer! buffer)` kills a buffer directly.
 
 `(buffet:create! commands)` creates an independent, unmounted composition.
 An optional catalogue query shares its filter and ordering with another view.

@@ -8,16 +8,17 @@ Press `C-h k`, then a key or complete chord, to open `<help>`. The report shows
 the resolved global command, where it was defined, shadowed definitions, and
 any meanings the key has inside prompts, incremental search, or query-replace.
 
-## Listing the keys
+## Inspecting bindings
 
-`C-x TAB` shows the keys that work in the active window, in the pop-up window
-above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
-first, as its app declares them, then the bindings of its mode contexts,
-then the global ones, each section's title in bold, with a scrollbar for
-its length and a status bar of its own reading `<keys>`, the page the window
-is on of how many, counted in the window's rows, and the paging keys; the
-listing is laid out for the window showing it and again when the terminal
-is resized. It lists what works here: a key a nearer context takes, `RET`
+`C-x TAB` opens the read-only `<bindings>` inspector above the echo area.
+It shows mouse bindings first, followed by the active window's keyboard
+bindings and its widget command connections. Each row shows the public API
+and its documentation. Keyboard bindings are grouped by app and mode context,
+then by global bindings. The listing fits its window, with a scrollbar and
+the current page in its status bar. `(bindings:show!)` opens the same inspector
+from M-x or a script.
+
+It lists what works here: a key a nearer context takes, `RET`
 in `<finder>` say, is left out of the global section, and where the text is
 read-only, an app's buffer or one made read-only, the editing commands are
 left out, those whose edoc declares `(edits)`. Keys that run one
@@ -36,7 +37,7 @@ global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
-line puts it away, as `(keys:hide!)` does. `(keys:open!)` shows the listing
+line puts it away, as `(bindings:hide!)` does. `(bindings:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and
 `C-x TAB` pages it there. An app binds its keys in its
 mode's context to its own commands, `finder:choose!` for Enter in
@@ -62,7 +63,7 @@ in the echo area.
 A command must be a procedure callable with no arguments. Existing commands
 such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:focus-next!` can be
 used directly. `keymap:call` adapts a command that needs arguments, and the
-binding then reads as the call it makes in the keys listing and under `C-h k`;
+binding then reads as the call it makes in the bindings listing and under `C-h k`;
 a lambda works too, but shows as an anonymous command:
 
 ```scheme
@@ -101,39 +102,25 @@ For widget bindings, `C-x TAB` substitutes the receiving view's ID for
 The ID addresses that view while it remains mounted. Describing a binding
 never invokes its argument producers.
 
-For a command whose target follows a view's selection, use
-`(keymap:derive command resolver)`. The resolver receives that view's ID and
-returns a concrete `keymap:call` to the declared command, or a string
-explaining why it is unavailable. Both dispatch and Keys resolve the same
-declaration. For example, Buffet's `C-k` resolves to
-`(edit:kill-buffer! (buffer "notes.scm") 17)`: the normal buffer command,
-with its own documentation and an optional reviewed metadata version.
-Manual use remains `(edit:kill-buffer! (buffer "notes.scm"))`.
+For a table action, bind the key to `table:activate!` with a named command.
+Buffet's `C-k`, for example, is displayed as:
 
-Resolvers read cached local state only. They must not fetch data, publish
-state, change selection or execute argument producers. A pending or absent
-target stays listed with an unavailable reason and consumes its binding;
-it never falls through to a different command. User bindings replace these
-defaults normally. No global rebinding occurs when selection changes, and
-each window resolves against its own receiver. A chord resolves its target
-when completed; focus and binding changes still cancel pending chords.
+```scheme
+(table:activate! (widget:descendant (model 109) 'table) 'trash)
+```
 
-`keymap:checked` wraps a concrete call with an execution-only check, for
-example to validate and adopt the hovered selection. Keys never runs that
-check. Pass the target's version to the authoritative mutation as well:
-a preflight check cannot prevent another actor from changing the object
-afterward. Copying a displayed call to eval invokes the domain command
-directly, including its displayed version guard, without the widget's
-selection check. `keymap:binding-action` accepts an optional receiver to
-resolve a declaration; `keymap:action-procedure` and `keymap:action-reason`
-expose the command and its availability.
+The table supplies its hovered or selected row and result basis to the
+connected action. The **Widget commands** section shows that connection's
+target API and documentation. Selection changes do not rewrite the binding
+or its help. Copying the expression to eval uses the same activation and
+validation path as pressing the key.
 
 When the pointer has a target, `C-x TAB` starts with **Mouse bindings**.
 This section follows the pointer, including over an unfocused window; the
 keyboard sections continue to follow keyboard focus. A table heading shows
 its sort command, a row shows its explicit choice, and an entry shows caret
 placement and selection. Unavailable widget actions are omitted.
-While the pointer is over `<keys>` itself, the mouse section keeps the last
+While the pointer is over `<bindings>` itself, the mouse section keeps the last
 inspected target so you can read and scroll it. Moving elsewhere resumes
 inspection without resetting your reading position. A different keyboard
 context starts the listing at the top.
@@ -149,8 +136,8 @@ Unavailable targets stay listed with an explanation. Rewiring updates the
 listing without resetting its reading position.
 
 This discovery reads mounted descriptors and cached sources locally. It
-does not execute actions or query the base, and does no work while Keys is
-hidden. Argument spelling in Keys and prefilled M-x expressions uses the
+does not execute actions or query the base, and does no work while Bindings is
+hidden. Argument spelling in Bindings and prefilled M-x expressions uses the
 same edoc types as completion; a model argument is `(model N)`, while an
 ordinary list argument stays quoted.
 
@@ -205,7 +192,7 @@ printable character without a binding of its own resolves to, in the mode's
 context first, then the global map, and its command receives the character
 through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
 inserts it, while in `<finder>` and `<buffet>` the context binds it to
-`extend-filter!`, so typing grows the filter. The keys listing shows the
+`extend-filter!`, so typing grows the filter. The bindings listing shows the
 pseudo-key as `any character`. `MOUSE-CLICK`
 fires in a mode's context after a text click has placed point, so a mode can
 act on the click (the markdown viewer follows links with it). Mouse reports
@@ -276,7 +263,7 @@ A context may also come from a buffer's state rather than its mode. An app
 registers it with a predicate, `(mode:add-context! 'conflicted conflicted?)`
 say, and every buffer the predicate holds of has the context, before its
 mode's, so keys bound in it work only while the state holds, keep their
-other meanings elsewhere, and the keys listing shows them only where they
+other meanings elsewhere, and the bindings listing shows them only where they
 work.
 
 Buffer-mode contexts can bind command procedures and complete chords. Terminals

@@ -13,15 +13,15 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head keymap)
-  (export action-procedure action-reason action-text (rename (bind-key! bind!))
+  (export action-text (rename (bind-key! bind!))
     (rename (bind-default-key! bind-default!))
     (rename (key-binding binding)) binding-action
     binding-context binding-kind binding-prefix?
     binding-sequence binding-spec call call-action-arguments
-    call-action-procedure call-action? checked choose-binding
+    call-action-procedure call-action? choose-binding
     command-hint command-key command-keys
     (rename (effective-bindings context-bindings))
-    context-capture derive (rename (key-event-binding event-binding))
+    context-capture (rename (key-event-binding event-binding))
     generation prefill prefill-action-arguments
     prefill-action-procedure prefill-action? prefill-name
     prefill-text resolved-binding run! same-sequence?
@@ -173,19 +173,11 @@
   (define (binding-sequence b)
     (cadr b))
 
-  (edoc "What a binding runs. With a receiver, derive its concrete call from local state; without one, return the declaration. Derivation never runs argument producers or execution checks."
+  (edoc "What a binding runs: a procedure, a structured call or prefill, a symbol for a keymap action, or #f when it unbinds."
         (b list "the binding")
-        (receiver (list-of any) "optional context receiver, a view ID for widgets") (returns any))
-  (define (binding-action b . receiver)
-    (unless (<= (length receiver) 1) (error 'binding-action "expected at most one receiver"))
-    (let ([action (caddr b)])
-      (if (and (pair? receiver) (call-action? action) (call-action-resolver action))
-        (let ([resolved ((call-action-resolver action) (car receiver))])
-          (cond [(string? resolved) (make-call-action (call-action-procedure action) '() #f #f resolved)]
-            [(and (call-action? resolved) (not (call-action-resolver resolved))
-               (eq? (call-action-procedure action) (call-action-procedure resolved))) resolved]
-            [else (error 'binding-action "resolver must return a concrete call to its declared command or an unavailable reason" resolved)]))
-        action)))
+        (returns (or procedure (record call-action) (record prefill-action) symbol #f)))
+  (define (binding-action b)
+    (caddr b))
 
   (edoc "Whether a binding is a user or default one."
         (b list "the binding")
@@ -325,17 +317,11 @@
   ;; the procedures themselves, never from spelled names, and describe
   ;; themselves by the names the top level gives those procedures, so a
   ;; rename follows and C-h k shows the call as it runs.
-  ;; A derived declaration resolves from its receiver to the same concrete
-  ;; call used by help and dispatch. Checks run only at execution.
   (edoc "A key action calling a procedure with constants and the results of producers or nested calls when the key is pressed."
         (procedure procedure "the command to call")
-        (arguments (list-of any) "constants, producer procedures or nested calls")
-        (resolver (or procedure #f) "pure receiver-to-call resolver")
-        (check (or procedure #f) "execution-only validity check")
-        (reason (or string #f) "why this concrete action is unavailable"))
+        (arguments (list-of any) "constants, producer procedures or nested calls"))
   (define-record-type (call-action make-call-action call-action?)
-    (fields (immutable procedure call-action-procedure) (immutable arguments call-action-arguments)
-      (immutable resolver call-action-resolver) (immutable check call-action-check) (immutable reason call-action-reason)))
+    (fields (immutable procedure call-action-procedure) (immutable arguments call-action-arguments)))
 
   (edoc "A key action that opens M-x with a call typed up to its next argument, so completion does the asking."
         (procedure procedure "the command the call names")
@@ -350,41 +336,11 @@
   (define (call procedure . producers)
     (unless (procedure? procedure)
       (error 'call "expected a procedure" procedure))
-    (make-call-action procedure producers #f #f #f))
-
-  (edoc "Declare a command whose concrete binding depends on its receiver. The resolver reads only local state and returns a keymap:call to that command, optionally checked, or a string explaining unavailability. It must not fetch, publish, adopt selection or run argument producers. User overrides replace the declaration normally."
-        (procedure procedure "canonical public command") (resolver procedure "(resolver receiver) -> concrete call or unavailable reason")
-        (returns (record call-action)))
-  (define (derive procedure resolver)
-    (unless (and (procedure? procedure) (procedure? resolver)) (error 'derive "expected a command and resolver"))
-    (make-call-action procedure '() resolver #f #f))
-
-  (edoc "Attach an execution-only check to a concrete call. The check raises to refuse a stale target; discovery never invokes it. Mutation versions must also reach the authoritative operation, since a preflight check alone cannot fence a concurrent change."
-        (action (record call-action) "concrete call") (check thunk "validate the captured target before execution")
-        (returns (record call-action)))
-  (define (checked action check)
-    (unless (and (call-action? action) (not (call-action-resolver action)) (procedure? check))
-      (error 'checked "expected a concrete call and a check"))
-    (let ([previous (call-action-check action)])
-      (make-call-action (call-action-procedure action) (call-action-arguments action) #f
-        (if previous (lambda () (previous) (check)) check) (call-action-reason action))))
-
-  (edoc "The public procedure an action invokes or declares, including derived and unavailable calls."
-        (action any "key or mouse action") (returns (or procedure #f)))
-  (define (action-procedure action)
-    (cond [(procedure? action) action] [(call-action? action) (call-action-procedure action)]
-      [(prefill-action? action) (prefill-action-procedure action)] [else #f]))
-
-  (edoc "Why a resolved action is unavailable, or false. An unresolved declaration needs a receiver before execution."
-        (action any "key or mouse action") (returns (or string #f)))
-  (define (action-reason action)
-    (and (call-action? action) (or (call-action-reason action) (and (call-action-resolver action) "Choose a receiver"))))
+    (make-call-action procedure producers))
 
   (edoc "Execute a structured key call, evaluating procedure producers and nested calls only now. Describing a call never evaluates it."
         (action (record call-action) "call to execute") (returns any))
   (define (run! action)
-    (when (action-reason action) (error 'run! (action-reason action)))
-    (when (call-action-check action) ((call-action-check action)))
     (apply (call-action-procedure action)
       (map (lambda (p) (cond [(call-action? p) (run! p)] [(procedure? p) (p)] [else p]))
         (call-action-arguments action))))
@@ -431,7 +387,6 @@
     (define (describe action)
       (cond [(not action) "unbound"]
         [(symbol? action) (symbol->string action)]
-        [(and (call-action? action) (action-reason action)) (describe (call-action-procedure action))]
         [(call-action? action)
          (string-append "(" (describe (call-action-procedure action))
                         (apply string-append

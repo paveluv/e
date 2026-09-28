@@ -99,11 +99,10 @@ row and its result basis without separate rank and range requests.
 `table:emphasize!` supplies a host's current document key without changing
 selection or sending interaction updates. `table:activate!` invokes the
 composition's `activate` command (or an explicitly supplied command name).
-For concrete domain bindings, `table:target` reads the cached hovered or
-selected `(selection basis row)` without fetching or adopting it, and returns
-false when unavailable. `table:accept!` validates and adopts that captured
-target at execution. Domain commands must also validate authoritative object
-versions; accepting a selection is not a transaction with its later mutation.
+The control validates and adopts its hovered or selected row before supplying
+the selection and result basis to the connected action. Domain actions must
+also validate authoritative object versions; selection validation is not a
+transaction with a later mutation.
 
 Without a rule, string cells retain their raw text and match spans, and other
 values print as Scheme data. Logical depth indents the identity cell in the
@@ -134,17 +133,13 @@ The listing follows internal focus changes. `widget:key-scopes` exposes that
 routing without moving focus or touching a chord; dispatch uses `key-scopes!`
 to reconcile focus first.
 
-When a key operates on the selected domain object, use `keymap:derive` to
-resolve the canonical command and concrete arguments from the receiving
-view. Buffet's kill/delete keys use the ordinary `edit:` commands this way;
-no forwarding app API or extra symbolic dispatch is needed. Derivation is
-pure and head-local, with no requests or selection publication. Keys and
-dispatch use the same resolver, including unavailable reasons. Use
-`keymap:checked` for execution-only selection validation and adoption; the
-concrete command still carries any required version guard to the base.
-See [derived key bindings](KEY_BINDING.md) for the full contract.
+Buffet's kill/delete keys activate the table's `trash` and `delete` command
+connections, targeting `buffet:kill!` and `buffet:delete!`. The keyboard
+section describes the control operation, while **Widget commands** exposes
+the app action and its documentation. The same explicit connection serves
+keys, mouse actions and programmatic activation.
 
-The first Keys section follows the mouse independently of keyboard focus.
+The first Bindings section follows the mouse independently of keyboard focus.
 Widget definitions can provide `pointer-bindings`: a procedure receiving a
 shown frame and local x/y coordinates and returning `(gesture action)` pairs.
 Use `(click primary ())`, `(click secondary ())`, `(click primary (shift))`

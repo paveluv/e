@@ -19,7 +19,6 @@
      (define path (format "/tmp/e-trash-~a-~a.txt" (get-process-id) (random 1000000)))
      (call-with-output-file path (lambda (p) (display "on disk\n" p)))
      (define (text b) (vector->list (head:buffer-lines b)))
-     (define (version b) (cdr (assq 'version (cadar (cadr (store:metadata (list (head:buffer-store-id b))))))))
 
      ;; issue #7: open, kill, open again
      (visit-file! path)
@@ -38,10 +37,7 @@
      (check 'the-store-stays-saveable-with-a-trashed-namesake
        (let-values ([(next states) (store:export)]) (store:valid-import? next states)) #t)
      ;; a second kill of the same name: the trash lists the newest first
-     (define reviewed (version fresh))
      (insert-text! "second ")
-     (check 'reviewed-kill-refuses-new-edits
-       (list (test:raises? (lambda () (kill-buffer! fresh reviewed))) (and (memq fresh (head:buffers)) #t)) '(#t #t))
      (kill-buffer! fresh)
      (check 'the-trash-holds-both-kills-under-distinct-names (map car (trash)) (list name (string-append name "<2>")))
 
@@ -58,11 +54,7 @@
        (map (lambda (name) (test:raises? (lambda () (delete-trashed! name))))
          (list (head:buffer-name older) "not-in-trash")) '(#t #t))
      (kill-buffer! older)
-     (let ([witness (cons first-id (version older))])
-       (check 'exact-delete-refuses-wrong-name-or-version
-         (list (test:raises? (lambda () (delete-trashed! name witness)))
-           (test:raises? (lambda () (delete-trashed! (head:buffer-name older) (cons first-id (- (cdr witness) 1)))))) '(#t #t))
-       (delete-trashed! (head:buffer-name older) witness))
+     (delete-trashed! (head:buffer-name older))
      (check 'permanent-deletion-removes-history-but-keeps-the-file-and-live-namesake
        (list (store:exists? first-id) (trash) (text newest)
              (call-with-input-file path get-string-all)

@@ -258,8 +258,8 @@
             (echo:set-text! msg)))
         (reverse
           (kernel:load-modules!
-            '("blame" "buffet" "c-mode" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
-              "glyph" "head" "keymap" "keys" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
+            '("bindings" "blame" "buffet" "c-mode" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
+              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
               "scheme-mode" "search" "style" "table" "terminal" "tty" "window"))))
       (load-config!)

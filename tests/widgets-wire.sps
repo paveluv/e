@@ -92,9 +92,9 @@
   (let* ([app (head-read a '(cadr (assq 'app (view:children (interaction:snapshot (head:buffer-fact (head:current-buffer) 'widget-id #f))))))]
          [table (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',app)))))]
          [query (head-read a `(view:source (interaction:snapshot ',table)))])
-    (head-wait 'buffet-concrete-binding-ready a
-      (lambda () (head-read a `(not (keymap:action-reason
-                                      (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("C-k"))) ',app))))))
+    (head-wait 'buffet-command-bindings-ready a
+      (lambda () (head-read a `(and (assq 'trash (widget:commands ',table))
+                                 (assq 'delete (widget:commands ',table)) #t))))
     (test:check 'live-model-completion-uses-base-metadata
       (head-read a
         `(list (assoc ',app (model:metadata))
@@ -116,7 +116,7 @@
                                                                    (if (eq? k 'wchar:) v (loop)))))))])
                    (let ([before (io)] [binding (cdr (keymap:resolved-binding 'buffet '("C-k")))])
                      (do ([i 0 (+ i 1)]) ((= i 100))
-                       (keymap:action-text (keymap:binding-action binding ',app))
+                       (keymap:action-text (keymap:binding-action binding) (list (cons widget:target ',app)))
                        (widget:command-bindings ',app)
                        (head:buffer-status (head:window-buffer (head:popup)) (head:popup)))
                      (set! completion-status-bytes (- (io) before)))))))) #t))

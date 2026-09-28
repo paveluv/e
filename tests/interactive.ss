@@ -367,7 +367,7 @@
      (send! "\x7;")                     ; C-g leaves the prompt
      (send! "\x18;\t")
      (wait-for! 'the-listing-returns-to-the-buffers-keys
-       (lambda () (and (find-cell "<keys>") (not (find-cell "prompt keys")))) 5000)
+       (lambda () (and (find-cell "<bindings>") (not (find-cell "prompt keys")))) 5000)
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

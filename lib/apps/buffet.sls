@@ -1,10 +1,9 @@
 ;; Buffer catalogue composition. Hosts place documents; the base owns queries.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffet)
-  (export choose! create! init! next! open! previous!)
+  (export choose! create! delete! init! kill! next! open! previous!)
   (import (chezscheme) (prefix (foundation string) string:)
           (prefix (head control) control:) (prefix (head document) document:)
-          (prefix (head edit) edit:)
           (prefix (head entry) entry:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head table) table:)
@@ -40,7 +39,7 @@
         (view:arrange! head:ui-actor
           (list (list table 1 (cons (list 'filter filter 'fit) (view:children d))
                   (cons* '(empty-text . "No matching buffers")
-                    (list 'commands (list 'activate root 'choose '())) (view:options d)))
+                    (list 'commands (list 'activate root 'choose '()) (list 'trash root 'kill '()) (list 'delete root 'delete '())) (view:options d)))
             (list root 0 (list (list 'table table '(grow 1)))
               (list (cons 'commands (cons (list 'current table 'emphasize '()) commands))))) '())
         root)))
@@ -71,29 +70,25 @@
       (unless (eq? (caddr row) 'live) (archive! row 'restore))
       (widget:invoke! id 'open (car row))))
 
-  (define (archive-binding id command live?)
-    (let* ([table (child id 'table)] [target (table:target table)] [row (and target (caddr target))]
-           [cells (and row (caddr row))] [version (and cells (ready-value cells 'version))]
-           [archive (and cells (ready-value cells 'archive))] [name (and cells (ready-value cells 'name))])
-      (cond [(not target) "Selection is pending or unavailable"]
-        [(not (and version archive name)) "Document metadata is pending"]
-        [(not (eq? live? (eq? archive 'live))) (if live? "Choose a live buffer" "Choose a Trash or Backups item")]
-        [else
-         (let* ([ref (cadr row)]
-                [b (and live? (find (lambda (b) (equal? ref (document:reference b))) (head:buffers)))])
-           (if (and live? (not b)) "Buffer is unavailable in this head"
-             (keymap:checked
-               (if live? (keymap:call command b version) (keymap:call command name (cons (cadr ref) version)))
-               (lambda ()
-                 ;; Query freshness and object version guard distinct races.
-                 ;; The concrete command carries the version into mutation.
-                 (selected-row id (car target) (cadr target))
-                 (table:accept! table target)))))])))
+  (edoc "Trash a selected live shared document, delete disposable output, or retire an attachment-local app; stale versions refuse. Every displaying window gets the ordinary fallback."
+        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+  (define (kill! id selection basis)
+    (let* ([row (selected-row id selection basis)] [ref (car row)])
+      (unless (eq? (caddr row) 'live) (error 'kill! "choose a live document"))
+      (if (eq? (car ref) 'buffer)
+        (let ([b (document:resolve! ref)])
+          (archive! row 'trash)
+          (when b (head:forget-buffer! b)))
+        (unless (document:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
+
+  (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
+        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+  (define (delete! id selection basis)
+    (let ([row (selected-row id selection basis)])
+      (when (eq? (caddr row) 'live) (error 'delete! "choose a Trash or Backups item"))
+      (archive! row 'delete)))
 
   (define (default!) (window:tool! "buffet" create!))
-
-  (define (kill-binding id) (archive-binding id edit:kill-buffer! #t))
-  (define (delete-binding id) (archive-binding id edit:delete-trashed! #f))
 
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
         (returns model "Buffet view"))
@@ -158,10 +153,10 @@
     (widget:register! 'buffet 1
       (append (layout:container 'y)
         (list (cons 'capture-contexts '(buffet)) (cons 'event event!)
-          (cons 'actions (list (cons 'choose choose!))))))
+          (cons 'actions (list (cons 'choose choose!) (cons 'kill kill!) (cons 'delete delete!))))))
     (table:register-presentation! 'buffet 1
       (list (list 'modified 10 'text '(archived-at) clock) (list 'flags 7 'text '() (present flags))
-        (list 'name 9 'text '(version archive) (present (lambda (v a) (list v))))
+        (list 'name 9 'text '() (present (lambda (v a) (list v))))
         (list 'lines 8 'right '() (present (lambda (v a) (list (number->string v)))))
         (list 'mode 7 'text '(archive)
           (lambda (cell cells attrs)
@@ -173,11 +168,8 @@
       '(("DOWN" . next) ("C-n" . next) ("TAB" . next) ("UP" . previous) ("C-p" . previous) ("S-TAB" . previous)
         ("HOME" . first) ("C-a" . first) ("M-<" . first) ("END" . last) ("C-e" . last) ("M->" . last)
         ("PGDN" . page-next) ("C-v" . page-next) ("PGUP" . page-previous) ("M-v" . page-previous)))
-    (keymap:bind-default! 'buffet "RET" (keymap:call table:activate! target-table))
-    (keymap:bind-default! 'buffet "C-k"
-      (keymap:derive edit:kill-buffer! kill-binding))
-    (keymap:bind-default! 'buffet "C-x D"
-      (keymap:derive edit:delete-trashed! delete-binding))
+    (for-each (lambda (p) (keymap:bind-default! 'buffet (car p) (keymap:call table:activate! target-table (cdr p))))
+      '(("RET" . activate) ("C-k" . trash) ("C-x D" . delete)))
     (keymap:bind-default! 'buffet "C-u" (keymap:call entry:delete! target-entry 'all))
     (for-each (lambda (n column) (keymap:bind-default! 'buffet (format "F~a" n) (keymap:call table:toggle-sort! target-table column)))
       '(1 2 3 4 5 6) '(modified flags name lines mode file))

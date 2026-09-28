@@ -53,7 +53,6 @@
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head dispatch) dispatch:)
-          (prefix (head document) document:)
           (prefix (head echo) echo:)
           (prefix (head expression) expression:)
           (prefix (head head) head:)
@@ -1410,27 +1409,21 @@
       (unless (eq? status 'applied) (error 'archive-entry! "the entry changed; choose it again" (cadr entry)))))
 
   (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
-        (b buffer "the buffer to kill") (expected (list-of integer) "optional reviewed metadata version; refuse changes since that snapshot"))
-  (define (kill-buffer! b . expected)
-    (unless (or (null? expected) (and (= (length expected) 1) (integer? (car expected)) (exact? (car expected)) (>= (car expected) 0)))
-      (error 'kill-buffer! "expected an optional metadata version"))
+        (b buffer "the buffer to kill"))
+  (define (kill-buffer! b)
     (let* ([b (edoc:type-value 'buffer b)] [id (head:buffer-store-id b)] [name (head:buffer-name b)])
       (unless (memq b (head:buffers)) (error 'kill-buffer! "the buffer no longer exists" name))
-      (let ([retained #f])
-        (cond [id
-               (let ([version (if (pair? expected) (car expected)
-                                (let ([m (cadar (cadr (store:metadata (list id))))])
-                                  (unless m (error 'kill-buffer! "the buffer no longer exists" name))
-                                  (cdr (assq 'version m))))])
-                 (let-values ([(status current) (store:archive! head:ui-actor id version 'trash)])
-                   (unless (eq? status 'applied) (error 'kill-buffer! "the buffer changed; choose it again" name))
-                   (set! retained current)))]
-          [(pair? expected)
-           (unless (document:retire! (document:reference b) (car expected)) (error 'kill-buffer! "the buffer changed; choose it again" name))])
-        (unless (and (not id) (pair? expected)) (head:forget-buffer! b))
+      (let* ([m (and id (cadar (cadr (store:metadata (list id)))))]
+             [unsaved? (and m (cdr (assq 'modified m)))]
+             [disposable? (and m (cdr (assq 'disposable m)))])
+        (when id
+          (unless m (error 'kill-buffer! "the buffer no longer exists" name))
+          (let-values ([(status current) (store:archive! head:ui-actor id (cdr (assq 'version m)) 'trash)])
+            (unless (eq? status 'applied) (error 'kill-buffer! "the buffer changed; choose it again" name))))
+        (head:forget-buffer! b)
         (log:add! 'edit:kill-buffer!
-          (cond [(not retained) (format "Killed ~a" name)]
-                [(cdr (assq 'modified retained)) (format "Killed ~a; its unsaved work is in the trash" name)]
+          (cond [(or (not id) disposable?) (format "Killed ~a" name)]
+                [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
                 [else (format "Killed ~a; it is in the trash" name)])))))
 
   (edoc "The trashed buffers, the backups aside, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
@@ -1475,25 +1468,12 @@
           b))))
 
   (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
-        (name trashed "the buffer's name in Trash or Backups")
-        (expected (list-of pair) "optional (ID . metadata-version), selecting an exact archive among duplicate names"))
-  (define (delete-trashed! name . expected)
-    (unless (or (null? expected)
-              (and (= (length expected) 1) (pair? (car expected))
-                (integer? (caar expected)) (exact? (caar expected)) (> (caar expected) 0)
-                (integer? (cdar expected)) (exact? (cdar expected)) (>= (cdar expected) 0)))
-      (error 'delete-trashed! "expected an optional (ID . metadata-version)"))
-    (if (null? expected)
-      (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
-        (unless entry (error 'delete-trashed! "no such buffer in the trash" name))
-        (archive-entry! entry 'delete))
-      (let ([id (caar expected)] [version (cdar expected)])
-        (let ([metadata (cadar (cadr (store:metadata (list id))))])
-          (unless (and metadata (equal? name (cdr (assq 'name metadata))))
-            (error 'delete-trashed! "the archive no longer has that name" name)))
-        (let-values ([(status current) (store:archive! head:ui-actor id version 'delete)])
-          (unless (eq? status 'applied) (error 'delete-trashed! "the archive changed; choose it again" name)))))
-    (log:add! 'edit:delete-trashed! (format "Permanently deleted ~a" name)))
+        (name trashed "the buffer's name in Trash or Backups"))
+  (define (delete-trashed! name)
+    (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
+      (unless entry (error 'delete-trashed! "no such buffer in the trash" name))
+      (archive-entry! entry 'delete)
+      (log:add! 'edit:delete-trashed! (format "Permanently deleted ~a" name))))
 
   (edoc "Delete every trashed buffer for good, the backups kept; how many went."
         (returns integer))
