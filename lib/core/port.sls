@@ -98,27 +98,26 @@
         (ids list "endpoint IDs") (edges list "(owner consumer input producer) rows")
         (read procedure "captured model lookup") (returns list))
   (define (dependencies ids edges read)
-    (let ([seen '()] [texts '()])
-      (define (visit id)
-        (unless (member id seen)
-          (set! seen (cons id seen))
-          (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))])
+    (let ([seen '()] [ids-read '()] [texts '()])
+      (define (visit id name)
+        (unless (member (list id name) seen)
+          (set! seen (cons (list id name) seen))
+          (unless (member id ids-read) (set! ids-read (cons id ids-read)))
+          (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))]
+                 [ds (and ds (if name (filter (lambda (d) (eq? name (cadr d))) ds) ds))])
             (when ds
               (for-each
                 (lambda (d)
                   (let ([edge (find (lambda (e) (and (equal? id (cadr e)) (eq? (cadr d) (caddr e)))) edges)])
-                    (cond [(and (eq? (car d) 'input) edge) (visit (car (cadddr edge)))]
+                    (cond [(and (eq? (car d) 'input) edge) (visit (car (cadddr edge)) (cadr (cadddr edge)))]
                       [(or (equal? (cadddr d) '(source-text)) (equal? (cadddr d) '(source))
                          (and (eq? (car k) 'view) (eq? (car (cadddr d)) 'state)))
                        (let ([source (get (cdr (get r 'value)) 'source)])
                          (when (and source (cdr source))
-                           (if (eq? (cadr source) 'model) (visit (cdr source))
+                           (if (eq? (cadr source) 'model) (visit (cdr source) #f)
                              (unless (member (cdr source) texts) (set! texts (cons (cdr source) texts))))))]
-                      [(eq? (car d) 'input)
-                       (let ([v (project r (cadr d) #f)])
-                         (when (and (eq? (car v) 'ready) (list? (cadr v)) (= (length (cadr v)) 2)
-                                 (eq? (caadr v) 'model)) (visit (cadr v))))]))) ds)))))
-      (for-each visit ids) (list (reverse seen) (reverse texts))))
+                      [else (void)]))) ds)))))
+      (for-each (lambda (id) (visit id #f)) ids) (list (reverse ids-read) (reverse texts))))
 
   (edoc "Resolve one port against captured model/text lookups. Return (ready value basis), (pending reason basis), or (unavailable reason basis); false is a value."
         (id list "endpoint") (name symbol "port") (edges list "owned binding rows")

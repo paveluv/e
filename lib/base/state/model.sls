@@ -3,7 +3,7 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! export ids import! register-kind! retire! snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! export ids import! register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void gensym)
           (prefix (core identity) identity:)
@@ -220,6 +220,11 @@
         (id list "the tagged model id") (returns (or list #f)))
   (define (snapshot id)
     (datum:copy (car (read-records (list id)))))
+
+  (edoc "Read a record's revision without copying its payload; #f denotes an absent record. Capture a snapshot when that revision changes."
+        (id list "tagged model ID") (returns (or integer #f)))
+  (define (revision id)
+    (let ([r (car (read-records (list id)))]) (and r (field r 'revision))))
 
   (edoc "Whether a live model's current kind definition accepts its saved payload."
         (id list "the tagged model id") (returns boolean))

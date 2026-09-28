@@ -16,6 +16,7 @@
              (prefix (state store) store:)
              (prefix (state model) model:)
              (prefix (state connection) connection:) (prefix (core port) port:)
+             (prefix (state collection) collection:) (prefix (head range) range:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
@@ -840,4 +841,5 @@
          '(() #f "future descriptor"))
        (head:forget-buffer! b) (head:show-buffer! previous))
 
+     (include "tests/range.sps")
      (test:finish! 'app)))

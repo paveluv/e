@@ -120,6 +120,47 @@ before local `connection:read` calls, and `connection:unsubscribe!` to release
 them. All consumers share the model mirror reader. Mounts acquire demand
 before preparation, whose reads never start wire requests.
 
+## Indexed rows
+
+Use a collection for data larger than a small model value. The base owns
+the row source, filter/sort recipe and prepared indexes. Rows have the form
+`(stable-key ((column . raw-value) ...) attributes)`; columns are
+`(column-id label type)`. Omit a cell to represent missing data; `#f` is a
+present boolean value.
+
+```scheme
+(define source
+  (collection:create-source! (actor:current)
+    '((name "Name" string) (size "Size" integer))
+    '#((first ((name . "alpha") (size . 20)) ())
+       (second ((name . "beta") (size . 10)) ()))
+    'persistent))
+(define rows
+  (collection:create! (actor:current) source ""
+    '((size ascending) (name ascending)) 'persistent))
+```
+
+`collection:summary` reads compact authoritative metadata. Once its status
+is `ready`, `collection:range` and `collection:rank` accept that result's
+generation. An old generation returns `stale`. `collection:configure!`
+changes filter/sort fields against the query model revision; filters use
+case-insensitive literal substring matching. Connect an entry's `text`
+output to the query's `filter` input to reuse ordinary text editing and undo.
+Rows from another collection can themselves be an indexed source.
+
+Base providers register an immutable capture containing column contracts,
+count, row-at-ordinal and key-to-ordinal procedures. The supplied vector
+provider indexes a source revision once across queries. Filtering and sorting
+run in cancellable base jobs. Only metadata and requested ranges reach heads;
+queries do not embed another copy of their dataset in recovery snapshots.
+
+Head controls use `range:acquire!`, `request!` and `release!` to own bounded
+viewport demand. `range:summary`, `read` and `locate` read local state;
+`range:pump!` adopts replies and fetches missing demand outside rendering.
+One scheduler serves all views, with up to four operations per batch and a
+cache bounded by both entries and bytes. Row replies distinguish absent,
+ready and unavailable cells, including an explicit oversized-cell diagnostic.
+
 ## Editable children
 
 An `entry` view (schema 1) references an existing `(buffer n)` text source.
