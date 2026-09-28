@@ -2,12 +2,13 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export arrange! claim! flush! focus! init! publish! release! set-state! snapshot)
+  (export arrange! bind! claim! flush! focus! init! publish! release! set-state! snapshot)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:)
           (prefix (core publication) publication:)
           (prefix (foundation datum) datum:)
           (prefix (head head) head:)
+          (prefix (state connection) connection:)
           (prefix (state view) view:))
 
   (define owned (make-hashtable equal-hash equal?))
@@ -44,6 +45,17 @@
     (flush!)
     (let-values ([(status rows) (view:arrange! actor changes leases)])
       (when (eq? status 'applied) (adopt! rows)) (values status rows)))
+
+  (edoc "Fence owned interaction before rewiring a composition and adopt its new input generations."
+        (actor actor "owner") (owner list "containing view") (changes list "connection input changes"))
+  (define (bind! actor owner changes)
+    (flush!)
+    (let* ([leases (filter values (map (lambda (c)
+                                         (let ([d (snapshot (car c))])
+                                           (and d (list (car c) (view:generation d) (view:sequence d))))) changes))]
+           [result (call-with-values (lambda () (connection:bind! actor owner changes leases)) list)])
+      (when (eq? (car result) 'applied) (adopt! (view:tree owner)))
+      (apply values result)))
 
   (edoc "Set the owned root's logical focus target locally."
         (id list "root") (target any "descendant or #f"))

@@ -55,7 +55,8 @@ and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
 `layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
 
-`prepare` derives an index once per source/definition change; its result is
+`prepare` receives `(source inputs)` and derives display data once per source,
+input or definition change; its result is
 borrowed immutable input to measurement and rendering. Without it, that input
 is the source envelope. A renderer receives
 `(data descriptor width height visible-range)`; the range is
@@ -71,9 +72,9 @@ have zero extent. `anchor` maps `(data position width)` to a logical anchor;
 `locate` maps `(data anchor width)` back to a backend position.
 
 An action receives `(view-id . args)`. Register the public operation itself;
-it obtains two values, source envelope and provisional descriptor, from
+it obtains three values, source envelope, provisional descriptor and resolved inputs, from
 `(widget:context view-id)`. This is a local read. During an action the source
-basis is pinned; pointer actions use the source that was actually displayed.
+basis is pinned; pointer actions use the source and inputs that were actually displayed.
 An optional `event` callback receives `(view-id source descriptor event)`
 and returns whether it handled the event. Events are normalized key, text,
 pointer, focus/blur or cancel data. Keyboard and mouse handlers call the same
@@ -87,6 +88,37 @@ the head and survive definition reloads.
 The host clips and composes both with the text. Only the active root's focused
 descendant supplies the displayed caret. These are head presentation callbacks;
 cell coordinates never enter a base model or view state.
+
+## Connected state
+
+Declare portable input and output ports with `port:register!` in a shared
+module loaded by both the base and heads. A host connects them atomically:
+
+```scheme
+(connection:bind! (actor:current) owner
+  (list (list consumer 'files #f (list producer 'files))))
+```
+
+Each change names the consumer, input, expected producer and replacement.
+Use `#f` to disconnect. The owner must contain the consumer. Types, direction,
+ownership and the complete dependency graph are validated; a cycle or stale
+replacement leaves the batch unchanged. Retiring an endpoint removes its
+bindings, while losing a definition keeps them inert for later reload.
+Forking a composition remaps its internal bindings and shares borrowed data.
+For an actively mounted composition use `interaction:bind!` with the same
+arguments; it fences pending state and supplies the required ownership guards.
+
+The `inputs` alist maps port names to `(ready value basis)`,
+`(pending reason basis)` or `(unavailable reason basis)`. False and empty
+values are distinct from unavailable inputs. Connected inputs never silently
+use a fallback when their producer is unavailable. Same-head interaction is
+immediate; another head sees published state. A notification never invokes
+an action or edits a consumer's saved fallback.
+
+Outside a mounted widget, use `connection:subscribe!` to acquire dependencies
+before local `connection:read` calls, and `connection:unsubscribe!` to release
+them. All consumers share the model mirror reader. Mounts acquire demand
+before preparation, whose reads never start wire requests.
 
 ## Editable children
 

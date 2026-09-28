@@ -15,6 +15,7 @@
              (prefix (head head) head:)
              (prefix (state store) store:)
              (prefix (state model) model:)
+             (prefix (state connection) connection:) (prefix (core port) port:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
@@ -574,7 +575,7 @@
             [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -801,6 +802,32 @@
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
          (list (widget:caret (widget:prepared root)) (head:buffer-read-only (head:buffer-of-store-id source))
                (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
+       (widget:unmount! root) (widget:invalidate!))
+
+     (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [producer (view:create! head:ui-actor #f 'connected-producer 1 '() '((choice . "first")))]
+            [consumer (view:create! head:ui-actor #f 'connected-consumer 1 '((choice . "default")) '())])
+       (port:register! '(view connected-producer 1) '((output choice string (state choice))))
+       (port:register! '(view connected-consumer 1) '((input choice string (options choice))))
+       (widget:register! 'connected-producer 1 '())
+       (widget:register! 'connected-consumer 1
+         (list (cons 'prepare (lambda (source inputs) (caddr (assq 'choice inputs))))
+           (cons 'render (lambda (data descriptor width height range) (list data)))
+           (cons 'actions (list (cons 'inspect (lambda (id)
+                                                 (let-values ([(source descriptor inputs) (widget:context id)])
+                                                   (caddr (assq 'choice inputs)))))))))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'producer producer 'fit) (list 'consumer consumer '(grow 1))) '())) '())
+       (connection:bind! head:ui-actor root (list (list consumer 'choice #f (list producer 'choice))))
+       (widget:mount! root 'connection-fixture)
+       (let* ([frame (widget:prepare! root 30 2)] [shown (cadr (widget:frame-children frame))])
+         (interaction:set-state! head:ui-actor producer #f '((choice . "next")))
+         (check 'widget-connected-input-uses-provisional-state-and-pins-shown-bundle
+           (list (widget:act! consumer 'inspect)
+             (parameterize ([widget:event-frame shown]) (widget:act! consumer 'inspect))
+             (cadr (connection:read consumer 'choice)))
+           '("next" "first" "first"))
+         (interaction:flush!)
+         (check 'widget-published-input-is-visible-at-base (cadr (connection:read consumer 'choice)) "next"))
        (widget:unmount! root) (widget:invalidate!))
 
      (model:register-kind! 'widget-view 3 string?)

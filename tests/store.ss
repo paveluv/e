@@ -13,6 +13,7 @@
   '(begin
      (import (prefix (state store) store:)
              (prefix (state model) model:)
+             (prefix (state connection) connection:)
              (prefix (state view) view:)
              (prefix (core publication) publication:)
              (prefix (core property) property:)
@@ -35,6 +36,7 @@
      ;; Canonical model state shares this base API fixture and process.
      (file:absolute "/tmp") ; initialize the concrete filename type
      (include "tests/model.sps")
+     (include "tests/connection.sps")
 
      (define (span sl sc el ec) (text:make-span sl sc el ec))
      (define (edit! actor id basis sl sc el ec replacement)

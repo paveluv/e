@@ -1,7 +1,7 @@
 ;; Portable endpoint contracts, shared by base resolution and head mirrors.
 (import (only (foundation edoc) elibrary))
 (elibrary (core port)
-  (export describe key observe! project register! unobserve!)
+  (export dependencies describe key observe! project register! resolve unobserve!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:) (prefix (foundation edoc) edoc:))
   (define definitions (kernel:make-registry car))
@@ -93,6 +93,71 @@
 
   (edoc "Release both owned contract observers, including queued callbacks." (token list "observation handle"))
   (define (unobserve! token) (for-each kernel:registry-unobserve! token))
+
+  (edoc "Collect effective model/text dependencies of endpoints from owned binding rows. Read must return locally captured envelopes; no provider callbacks are invoked."
+        (ids list "endpoint IDs") (edges list "(owner consumer input producer) rows")
+        (read procedure "captured model lookup") (returns list))
+  (define (dependencies ids edges read)
+    (let ([seen '()] [texts '()])
+      (define (visit id)
+        (unless (member id seen)
+          (set! seen (cons id seen))
+          (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))])
+            (when ds
+              (for-each
+                (lambda (d)
+                  (let ([edge (find (lambda (e) (and (equal? id (cadr e)) (eq? (cadr d) (caddr e)))) edges)])
+                    (cond [(and (eq? (car d) 'input) edge) (visit (car (cadddr edge)))]
+                      [(or (equal? (cadddr d) '(source-text)) (equal? (cadddr d) '(source))
+                         (and (eq? (car k) 'view) (eq? (car (cadddr d)) 'state)))
+                       (let ([source (get (cdr (get r 'value)) 'source)])
+                         (when (and source (cdr source))
+                           (if (eq? (cadr source) 'model) (visit (cdr source))
+                             (unless (member (cdr source) texts) (set! texts (cons (cdr source) texts))))))]
+                      [(eq? (car d) 'input)
+                       (let ([v (project r (cadr d) #f)])
+                         (when (and (eq? (car v) 'ready) (list? (cadr v)) (= (length (cadr v)) 2)
+                                 (eq? (caadr v) 'model)) (visit (cadr v))))]))) ds)))))
+      (for-each visit ids) (list (reverse seen) (reverse texts))))
+
+  (edoc "Resolve one port against captured model/text lookups. Return (ready value basis), (pending reason basis), or (unavailable reason basis); false is a value."
+        (id list "endpoint") (name symbol "port") (edges list "owned binding rows")
+        (read procedure "captured available model lookup") (text procedure "captured text lookup") (returns list))
+  (define (resolve id name edges read text)
+    (let ([basis '()] [seen '()])
+      (define (remember r)
+        (when r
+          (let ([id (cdr (get r 'id))])
+            (unless (assoc id basis)
+              (set! basis (cons (list id (cdr (get r 'revision))
+                                  (and (eq? (cdr (get r 'kind)) 'widget-view) (cdr (get r 'value)))) basis))))))
+      (define (lookup id name)
+        (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))]
+               [d (and ds (find (lambda (d) (eq? name (cadr d))) ds))])
+          (remember r)
+          (cond [(or (not r) (not d)) '(unavailable contract)]
+            [(member (list id name) seen) '(unavailable cycle)]
+            [else
+             (set! seen (cons (list id name) seen))
+             (let ([edge (and (eq? (car d) 'input)
+                              (find (lambda (e) (and (equal? id (cadr e)) (eq? name (caddr e)))) edges))])
+               (if edge
+                   (let* ([p (cadddr edge)] [producer (read (car p))]
+                          [contracts (and producer (describe (key producer)))]
+                          [out (and contracts (find (lambda (d) (eq? (cadr p) (cadr d))) contracts))])
+                     (if (and out (eq? (car out) 'output) (edoc:type-compatible? (caddr out) (caddr d)))
+                       (lookup (car p) (cadr p)) '(unavailable incompatible-contract)))
+                   (let* ([v (cdr (get r 'value))] [source (and (eq? (car k) 'view) (get v 'source))]
+                          [source (and source (cdr source))]
+                          [s (and source (if (eq? (car source) 'buffer) (text source) (read source)))])
+                     (when s
+                       (if (eq? (car source) 'buffer)
+                         (set! basis (cons (list source (cdr (get s 'revision))) basis)) (remember s)))
+                     (if (and (eq? (car k) 'view) (eq? (car (cadddr d)) 'state)
+                           (get v 'basis) (cdr (get v 'basis))
+                           (or (not s) (not (equal? (cdr (get v 'basis)) (cdr (get s 'revision))))))
+                       '(pending source-basis) (project r name s)))))])))
+      (let ([result (lookup id name)]) (append result (list (reverse basis))))))
 
   (define builtin
     (kernel:call-with-runtime-registrations

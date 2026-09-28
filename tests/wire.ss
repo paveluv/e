@@ -62,6 +62,9 @@
                             (map (lambda (c) (if (char=? c #\') "'\\''" (string c))) (string->list text))) "'"))
      (define (write-text path text)
        (call-with-output-file path (lambda (port) (display text port)) 'replace))
+     (define (write-control! text)
+       (let ([pending (string-append automatic-control ".next")])
+         (write-text pending text) (rename-file pending automatic-control)))
      (define (copy-text source target) (write-text target (call-with-input-file source get-string-all)))
      (define (copy-libraries source target)
        (for-each
@@ -1108,7 +1111,7 @@
              (when (file-exists? hold) (delete-file hold))
              (write-text source-path source)
              (write-text wire-path wire-source)
-             (write-text automatic-control "stop")
+             (write-control! "stop")
              (test:await 'restart-fixture-releases-ownership
                (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
                             (and lock (begin (sys:release-file-lock! lock) #t)))))
@@ -1396,7 +1399,7 @@
                            (sys:close-connection! head))
                          (fixture:stop! replacement))))))
                (lambda ()
-                 (write-text automatic-control "stop")
+                 (write-control! "stop")
                  (sys:close-process! process)
                  (test:await 'force-fixture-releases-ownership
                    (lambda () (let ([lock (sys:acquire-file-lock (string-append base-directory "/lock"))])
@@ -1419,7 +1422,7 @@
            (lambda () (body base pid signal! stop!))
            (lambda ()
              (write-text edit-release "continue")
-             (write-text automatic-control "stop")
+             (write-control! "stop")
              (guard (ex [else (void)]) (stop!))
              (for-each sys:close-connection! clients)
              (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
@@ -1436,7 +1439,7 @@
        (fixture:stop! test-base)
        (dynamic-wind void body
          (lambda ()
-           (write-text automatic-control "stop")
+           (write-control! "stop")
            (for-each sys:close-connection! clients)
            (for-each (lambda (head) (sys:close-terminal-process! (vector-ref head 0))) heads)
            (test:await 'automatic-fixture-releases-ownership
@@ -2991,7 +2994,7 @@
                            (cdr (assq 'heads (rpc inspector 'status))))
                      (list (list (- before 2) (- before 1)) (- before 2))))
                  (for-each sys:close-connection! (cons inspector leavers))
-                 (write-text automatic-control "crash")
+                 (write-control! "crash")
                  (head-wait 'unexpected-base-death again (lambda () (head-sees? again "e: the base is gone")))
                  (sys:reap-terminal-process! (vector-ref again 0))
                  (test:check 'crash-leaves-recoverable-endpoints
@@ -3002,7 +3005,7 @@
                    (test:check 'stale-cleanup-starts-a-fresh-in-memory-session
                      (list (not (equal? record (call-with-input-file pid-path read)))
                            (head-read fresh '(head:buffer-line (head:current-buffer) 0))) '(#t ""))
-                   (write-text automatic-control "stop")
+                   (write-control! "stop")
                    (head-wait 'announced-base-stop fresh (lambda () (head-sees? fresh "e: the base stopped (signal)")))
                    (sys:reap-terminal-process! (vector-ref fresh 0))
                    (test:await 'automatic-base-cleans-up (lambda () (not (file-exists? pid-path))))

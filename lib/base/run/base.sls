@@ -22,6 +22,7 @@
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
+          (prefix (state connection) connection:)
           (prefix (state journal) journal:)
           (prefix (state model) model:)
           (prefix (state store) store:)
@@ -32,7 +33,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy"
+    '("activity" "actor" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -113,6 +114,11 @@
     (define (head!)
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
+    (define (generic-kind! kind)
+      (when (memq kind '(widget-view connection-topology connection-bindings))
+        (error 'wire "use the owning service to change this model kind" kind)))
+    (define (generic-model! id)
+      (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
     (case operation
       [(view-create) (control!) (arity 5) (apply view:create! actor args)]
       [(view-read) (arity 1) (view:snapshot (car args))]
@@ -123,11 +129,23 @@
       [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
       [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]
       [(view-release) (control!) (arity 2) (call-with-values (lambda () (apply view:release! actor args)) list)]
+      [(connection-topology) (arity 0) (connection:topology)]
+      [(connection-bind) (control!)
+       (unless (memv (length args) '(2 3)) (error 'wire "connection-bind expects owner, changes and optional leases"))
+       (call-with-values (lambda () (apply connection:bind! actor args)) list)]
+      [(connection-bindings) (arity 1) (connection:bindings (car args))]
       [(model-ids) (apply model:ids args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
-      [(model-create) (control!) (arity 6) (apply model:create! actor args)]
-      [(model-commit) (control!) (arity 1) (call-with-values (lambda () (model:commit! actor (car args))) list)]
-      [(model-retire) (control!) (arity 2) (call-with-values (lambda () (apply model:retire! actor args)) list)]
+      [(model-create) (control!) (arity 6) (generic-kind! (car args)) (apply model:create! actor args)]
+      [(model-commit) (control!) (arity 1) (for-each (lambda (change) (generic-model! (car change))) (car args))
+       (call-with-values (lambda () (model:commit! actor (car args))) list)]
+      [(model-retire) (control!) (arity 2)
+       (let ([r (model:snapshot (car args))])
+         (when r
+           (case (cdr (assq 'kind r))
+             [(connection-topology connection-bindings) (generic-kind! (cdr (assq 'kind r)))]
+             [(widget-view) (when (view:owner (cdr (assq 'value r))) (error 'wire "unmount a view before retiring it"))])))
+       (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)

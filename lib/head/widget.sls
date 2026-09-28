@@ -2,10 +2,11 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret context event-frame focus! focus-next!
-          frame-children frame-clip frame-descriptor frame-id frame-lines frame-rect frame-source frame-styles
+          frame-children frame-clip frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
           init! input! invalidate! key-scopes! mount! pointer! prepare! prepared present! register! reveal! shown target unmount!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
+          (prefix (core port) port:)
           (prefix (foundation datum) datum:)
           (prefix (foundation string) string:)
           (prefix (head echo) echo:)
@@ -13,7 +14,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (state model) model:)
+          (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
@@ -25,10 +26,10 @@
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
         (id list "view id") (descriptor any "interaction basis") (definition any "definition identity")
-        (source any "source basis") (rect list "absolute allocation within the root") (clip list "visible intersection")
+        (source any "source basis") (inputs list "resolved input values and dependency bases") (rect list "absolute allocation within the root") (clip list "visible intersection")
         (children list "back-to-front child frames") (lines list "clipped backend output")
         (cells vector "backend style cells") (caret any "root-relative caret point or #f"))
-  (define-record-type frame (fields id descriptor definition source rect clip children lines cells caret))
+  (define-record-type frame (fields id descriptor definition source inputs rect clip children lines cells caret))
   (define preparations (make-hashtable equal-hash equal?))
   (define presentations '())
   (define frame-reads (make-parameter #f))
@@ -77,8 +78,15 @@
       (error 'register! "invalid widget definition" kind schema definition))
     (kernel:registry-add! definitions (cons (list kind schema) (map (lambda (p) (cons (car p) (cdr p))) definition))))
 
+  (define (source-id id d)
+    (and d (view:source d)
+      (let* ([ds (port:describe (list 'view (view:kind d) (view:schema d)))]
+             [input (and ds (find (lambda (p) (and (eq? (car p) 'input) (equal? (cadddr p) '(source)))) ds))])
+        (and (not (and input (exists (lambda (e) (and (equal? id (cadr e)) (eq? (cadr input) (caddr e))))
+                                     (cadr (connection:snapshot (list id))))))
+          (view:source d)))))
   (define (source! n d)
-    (let ([id (and d (view:source d))])
+    (let ([id (source-id (node-id n) d)])
       (cond
         [(not d) (values #f #f)]
         [(not id) (values #t #f)]
@@ -104,16 +112,37 @@
         (if available? (map car (field entry 'actions '())) '()))))
 
   (define invocation (make-parameter #f))
+  (define input-reads (make-parameter #f))
+  (define (inputs! id)
+    (let ([cache (input-reads)])
+      (if (and cache (hashtable-contains? cache id)) (hashtable-ref cache id #f)
+        (let* ([bundle (connection:snapshot (list id))] [rows (caddr bundle)])
+          (define (get id)
+            (let* ([row (assoc id rows)] [r (and row (cadr row) (caddr row))]
+                   [d (and r (interaction:snapshot id))])
+              (if d (map (lambda (p) (if (eq? (car p) 'value) (cons 'value d) p)) r) r)))
+          (define (text id)
+            (let ([b (head:buffer-of-store-id (cadr id))])
+              (and b (list (cons 'id id) (cons 'revision (head:content-revision b)) (cons 'value (head:buffer-lines b))))))
+          (let* ([r (get id)] [ds (and r (port:describe (port:key r)))]
+                 [inputs (if ds
+                           (map (lambda (d)
+                                  (let ([resolved (port:resolve id (cadr d) (cadr bundle) get text)])
+                                    (cons (cadr d) (list (car resolved) (cadr resolved) (cons (car bundle) (caddr resolved))))))
+                             (filter (lambda (d) (eq? (car d) 'input)) ds)) '())])
+            (when cache (hashtable-set! cache id inputs)) inputs)))))
 
-  (edoc "Read a mounted view's borrowed source snapshot and provisional descriptor as two values, without remote reads. During an action this retains its exact invocation basis."
+  (edoc "Read a mounted view's borrowed source, provisional descriptor and resolved inputs as three values, without remote reads. Actions retain their exact invocation basis."
         (id list "view") (effects internal))
   (define (context id)
     (let ([current (invocation)])
-      (if (and current (equal? id (car current))) (values (cadr current) (caddr current))
+      (if (and current (equal? id (car current))) (apply values (cdr current))
         (let* ([n (mounted id)] [d (read-view id)] [f (event-frame)])
           (let-values ([(available? source) (source! n d)])
             (unless available? (error 'context "widget source is unavailable" id))
-            (values (if (and f (equal? id (frame-id f))) (frame-source f) source) d))))))
+            (if (and f (equal? id (frame-id f)))
+              (values (frame-source f) (frame-descriptor f) (frame-inputs f))
+              (values source d (inputs! id))))))))
 
   (edoc "Invoke a named action with an explicit view, coherent source and provisional interaction."
         (id list "view id") (action symbol "action") (arguments (list-of any) "action arguments") (returns any))
@@ -123,33 +152,44 @@
       (let-values ([(available? source) (source! n d)])
         (unless (and available? proc) (error 'act! "widget action is unavailable" id action))
         (call-with-values (lambda ()
-                            (parameterize ([invocation (list id (let ([f (event-frame)]) (if (and f (equal? id (frame-id f))) (frame-source f) source)) d)])
+                            (parameterize ([invocation (let ([f (event-frame)])
+                                                         (if (and f (equal? id (frame-id f)))
+                                                           (list id (frame-source f) (frame-descriptor f) (frame-inputs f))
+                                                           (list id source d (inputs! id))))])
                               (apply (cdr proc) id arguments)))
           (lambda result (head:wake-main!) (apply values result))))))
 
   (define (subscribe! mount tree)
-    (let ([texts (fold-left
-                   (lambda (out row)
-                     (let* ([d (cdr row)] [source (and d (view:source d))])
-                       (if (and source (eq? (car source) 'buffer))
-                         (let* ([id (cadr source)] [old (assv id out)] [basis (view:basis d)])
-                           (cons (cons id (if (and old (cdr old) basis) (min (cdr old) basis) (or basis (and old (cdr old)))))
-                             (if old (remq old out) out))) out))) '() tree)])
-      (for-each (lambda (p)
-                  (let ([b (head:adopt-store-buffer! (car p))])
-                    (when (and b (cdr p))
-                      (let-values ([(text revision changes) (head:snapshot-since b (cdr p))])
-                        (unless changes (head:resume-source! (car p) (cdr p) '())))))) texts))
-    (let ([ids (fold-left
-                 (lambda (out row)
-                   (let ([source (if (cdr row) (view:source (cdr row)) (car row))])
-                     (cond [(not source) out]
-                           [(eq? (car source) 'buffer) out]
-                           [(member source out) out] [else (cons source out)]))) '() tree)])
-      (model:subscribe! ids
-        (lambda (notice)
-          (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
-          (head:wake-main!)))))
+    (let ([tokens (list #f #f)] [demand #f] [endpoints (map car tree)])
+      (define (changed)
+        (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
+        (head:wake-main!))
+      (define (acquire)
+        (let ([texts '()] [ids '()])
+          (for-each
+            (lambda (row)
+              (let* ([d (cdr row)] [source (source-id (car row) d)])
+                (cond [(not source) (unless d (set! ids (cons (car row) ids)))]
+                  [(eq? (car source) 'buffer)
+                   (let* ([id (cadr source)] [old (assv id texts)] [basis (view:basis d)])
+                     (set! texts (cons (cons id (if (and old (cdr old) basis) (min (cdr old) basis) (or basis (and old (cdr old)))))
+                                   (if old (remq old texts) texts))))]
+                  [(not (member source ids)) (set! ids (cons source ids))]))) tree)
+          (unless (equal? demand ids)
+            (let ([fresh (model:subscribe! ids (lambda (notice) (changed)))] [old (car tokens)])
+              (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
+          (for-each (lambda (p)
+                      (let ([b (head:adopt-store-buffer! (car p))])
+                        (when (and b (cdr p))
+                          (let-values ([(text revision changes) (head:snapshot-since b (cdr p))])
+                            (unless changes (head:resume-source! (car p) (cdr p) '())))))) texts)
+          (for-each (lambda (id) (head:adopt-store-buffer! (cadr id))) (cadddr (connection:snapshot endpoints)))))
+      (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
+                       (when (cadr tokens) (connection:unsubscribe! (cadr tokens))) (raise ex)])
+        (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (acquire) (changed))))
+        (acquire) tokens)))
+  (define (unsubscribe! token)
+    (model:unsubscribe! (car token)) (connection:unsubscribe! (cadr token)))
   (define (reconcile! mount tree)
     (let ([ids (map car tree)])
       (for-each (lambda (id)
@@ -176,7 +216,7 @@
                (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
                (let* ([m (make-mount (datum:copy id) slot #f '())] [tree (rows id)])
                  (guard (ex [else
-                             (when (mount-subscription m) (model:unsubscribe! (mount-subscription m)))
+                             (when (mount-subscription m) (unsubscribe! (mount-subscription m)))
                              (when d (interaction:release! head:ui-actor id (view:generation d)))
                              (raise ex)])
                    (mount-subscription-set! m (subscribe! m tree))
@@ -195,7 +235,7 @@
         (hashtable-delete! last-focus id)
         (set! presentations (filter (lambda (p) (not (equal? id (frame-id (car p))))) presentations))
         (for-each (lambda (id) (hashtable-delete! nodes id) (hashtable-delete! failures id)) (mount-ids m))
-        (model:unsubscribe! (mount-subscription m)))))
+        (unsubscribe! (mount-subscription m)))))
 
   (edoc "Arrange owned trees, staging source demand before the guarded structural commit."
         (changes list "(parent revision children options) entries"))
@@ -219,18 +259,18 @@
                                                         (for-each (lambda (m) (cancel! (mount-id m) 'arrange)) affected)
                                                         (for-each (lambda (m)
                                                                     (let* ([tree (rows (mount-id m))] [token (subscribe! m tree)] [old (mount-subscription m)])
-                                                                      (reconcile! m tree) (mount-subscription-set! m token) (model:unsubscribe! old))) affected)
+                                                                      (reconcile! m tree) (mount-subscription-set! m token) (unsubscribe! old))) affected)
                                                         (head:wake-main!))
                                                       (values status changed)))
-                                                  (lambda () (for-each (lambda (p) (model:unsubscribe! (cdr p))) staged)))))))
+                                                  (lambda () (for-each (lambda (p) (unsubscribe! (cdr p))) staged)))))))
 
   (define failures (make-hashtable equal-hash equal?))
   (define (option d name fallback)
     (cond [(and d (assq name (view:options d))) => cdr] [else fallback]))
   (define (projection! n entry source)
-    (let ([key (list entry source)])
+    (let* ([inputs (inputs! (node-id n))] [key (list entry source inputs)])
       (unless (equal? key (node-data-key n))
-        (node-data-set! n ((field entry 'prepare values) source))
+        (node-data-set! n ((field entry 'prepare (lambda (source inputs) source)) source inputs))
         (node-data-key-set! n key))
       (node-data n)))
   (define measurement-cache (make-parameter #f))
@@ -308,7 +348,7 @@
     (or (exists (lambda (p) (find-frame (car p) id)) presentations)
       (find-frame (prepared (mount-id (node-root (mounted id)))) id)))
   (define (scroll-action! id delta)
-    (let-values ([(source d) (context id)])
+    (let-values ([(source d inputs) (context id)])
       (let* ([frame (allocation id)]
              [child (and (= 1 (length (view:children d)))
                          (cadar (view:children d)))])
@@ -390,7 +430,7 @@
     (let* ([n (mounted id)] [d (read-view id)] [entry (definition d)] [clip (layout:intersect rect parent-clip)])
       (let-values ([(available? source) (source! n d)])
         (define (placeholder text)
-          (make-frame id d #f source rect clip '()
+          (make-frame id d #f source (inputs! id) rect clip '()
             (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip)))) (make-vector 0) #f))
         (guard (ex [else
                     (let ([basis (list entry source)])
@@ -398,12 +438,12 @@
                         (hashtable-set! failures id basis) (echo:set-text! (kernel:condition-text ex))))
                     (placeholder (format "[Widget failed ~s]" id))])
           (cond
-            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source rect clip '() '() (make-vector 0) #f)]
+            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) rect clip '() '() (make-vector 0) #f)]
             [(not (and entry available?)) (placeholder (format "[Unavailable widget ~s]" id))]
             [else
              (let* ([data (projection! n entry source)] [width (caddr rect)] [height (cadddr rect)]
                     [range (cons (- (cadr clip) (cadr rect)) (cadddr clip))]
-                    [key (list entry source d width height range (- (car clip) (car rect)) (caddr clip))]
+                    [key (list entry source (inputs! id) d width height range (- (car clip) (car rect)) (caddr clip))]
                     [render (field entry 'render #f)] [layout (field entry 'layout #f)]
                     [placements (if layout (layout d width height measure! locate!) '())])
                (unless (and (list? placements)
@@ -423,7 +463,7 @@
                    (node-caret-set! n ((field entry 'caret (lambda args #f)) data d width height))
                    (node-key-set! n key)))
                (let ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)])
-                 (make-frame id d entry source rect clip children
+                 (make-frame id d entry source (inputs! id) rect clip children
                    (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))
                    (composite-styles clip (node-styles n) children)
                    (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p))))))))])))))
@@ -434,7 +474,7 @@
     (let ([rect (list 0 0 width height)])
       (define (build)
         (parameterize ([frame-reads (make-hashtable equal-hash equal?)]
-                       [measurement-cache (make-hashtable equal-hash equal?)])
+                       [input-reads (make-hashtable equal-hash equal?)] [measurement-cache (make-hashtable equal-hash equal?)])
           (build-frame! id rect rect)))
       (unless (rectangle? rect) (error 'prepare! "invalid allocation" rect))
       (let* ([frame (build)] [d (read-view id)] [before (and d (view:focus d))])
@@ -685,7 +725,7 @@
 
   ;; The minimal text widget deliberately consumes arbitrary model values.
   ;; It needs no extra base dataset service or evaluator allocation.
-  (define (text-data model)
+  (define (text-data model inputs)
     (let ([value (cdr (assq 'value model))])
       (cons (cdr (assq 'revision model)) (list->vector (string:lines (if (string? value) value (format "~s" value)))))))
   (define (text-source! id source descriptor)
@@ -698,7 +738,7 @@
       (map (lambda (i) (let ([row (+ top i)])
                          (string-append (if (= row selected) "> " "  ") (vector-ref data row)))) (iota (min (cdr range) (- count top))))))
   (define (text-move! id offset)
-    (let-values ([(source d) (context id)])
+    (let-values ([(source d inputs) (context id)])
       (let* ([data (text-source! id source d)]
              [count (vector-length data)]
              [row (text-state
@@ -711,7 +751,7 @@
           row)
         (reveal! id (list (cdr (assq 'revision source)) row)))))
   (define (text-select! id row)
-    (let-values ([(source d) (context id)])
+    (let-values ([(source d inputs) (context id)])
       (interaction:set-state!
         head:ui-actor
         id
@@ -720,7 +760,7 @@
           row
           (vector-length (text-source! id source d))))))
   (define (text-choose! id)
-    (let-values ([(source d) (context id)])
+    (let-values ([(source d inputs) (context id)])
       (let* ([data (text-source! id source d)]
              [row (text-state (view:state d) (vector-length data))]
              [text (vector-ref data row)])
