@@ -6,7 +6,7 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (head render) render:) (prefix (state surface) surface:)
+     (import (prefix (head render) render:) (prefix (head layout) layout:) (prefix (state surface) surface:)
              (prefix (head head) head:) (prefix (state store) store:) (prefix (foundation text) text:)
              (prefix (head paint) paint:) (prefix (service vt) vt:)
              (prefix (head edit) edit:)
@@ -358,4 +358,17 @@
            (head:window-line (head:current-window) 9999990) (< calls 2000))
          '(10000000 "Header" "界row" #t))
        (head:forget-buffer! view))
+     (test:check 'linear-allocation-collapses-gaps-and-shares-remainders
+       (map (lambda (c) (apply layout:linear c))
+         '((9 1 ((1 2 fit) (1 3 (grow 1)) (1 3 (grow 2))))
+           (1 2 ((4 4 (grow 1)) (2 2 (grow 1))))
+           (0 1 ((1 1 fit) (1 1 (grow 1))))
+           (5 3 ((2 2 fit) (2 2 fit)))
+           (11 1 ((0 0 (grow 1)) (0 0 (grow 3))))))
+       '(((0 2) (3 2) (6 3)) ((0 1) (1 0)) ((0 0) (0 0)) ((0 2) (3 2)) ((0 3) (4 7))))
+     (test:check 'half-open-clipping-and-composition-preserve-whole-clusters
+       (list (layout:intersect '(0 0 2 2) '(2 1 3 3))
+         (layout:contains? '(0 0 2 2) 2 1) (layout:contains? '(0 0 0 2) 0 1)
+         (map (lambda (c) (apply glyph:slice c)) '(("界éZ" 1 2) ("界éZ" 0 1) ("界éZ" 2 3))))
+       '((2 1 0 1) #f #f (" é" " " "éZ ")))
      (test:finish! 'render)))

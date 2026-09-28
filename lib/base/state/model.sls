@@ -3,7 +3,7 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export available? commit! create! export ids import! register-kind! retire! snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! export ids import! register-kind! retire! snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void gensym)
           (prefix (core identity) identity:)
@@ -155,21 +155,37 @@
         (value datum "the initial payload")
         (returns list))
   (define (create! actor kind schema scope persistence references value)
+    (car (allocate! actor 1 (lambda (ids) (list (list kind schema scope persistence references value))))))
+
+  (edoc "Atomically allocate related records. The pure builder receives prospective IDs and returns (kind schema scope persistence references value) specifications; it may be retried."
+        (actor actor "creator") (count integer "positive record count") (build procedure "pure specification builder") (returns list))
+  (define (allocate! actor count build)
+    (unless (and (positive-integer? count) (procedure? build)) (error 'allocate! "expected positive count and builder"))
     (mutate!
       (lambda ()
-        (let ([entry (datum:copy (map cons keys
-                                   (list '(model 1) kind schema scope persistence 0 (own-actor actor) references value)))])
-          (unless (envelope? entry) (error 'create! "invalid model envelope" entry))
-          (let ([definition (definition-of entry)])
-            (unless (accepts? definition entry) (error 'create! "unknown kind/schema or invalid payload" kind schema))
-            (with-mutex (state-lock data)
-              (unless (eq? definition (definition-of entry)) (error 'create! "kind changed during validation" kind schema))
-              (let* ([n (state-next-id data)] [id (list 'model n)]
-                     [entry (cons (cons 'id id) (cdr entry))])
-                (hashtable-set! (state-records data) n entry)
-                (state-next-id-set! data (+ n 1))
-                (changed! (list id))
-                (datum:copy id))))))))
+        (let ([actor (own-actor actor)])
+          (let loop ()
+            (let* ([start (with-mutex (state-lock data) (state-next-id data))]
+                   [ids (let collect ([i 0]) (if (= i count) '() (cons (list 'model (+ start i)) (collect (+ i 1)))))]
+                   [specs (datum:copy (build (datum:copy ids)))])
+              (unless (and (list? specs) (= (length specs) count)
+                           (for-all (lambda (s) (and (list? s) (= (length s) 6))) specs))
+                (error 'allocate! "builder returned invalid specifications"))
+              (let* ([entries (map (lambda (id spec)
+                                     (map cons keys (append (list id (car spec) (cadr spec) (caddr spec) (cadddr spec) 0 actor)
+                                                      (cddddr spec)))) ids specs)]
+                     [definitions (map definition-of entries)])
+                (unless (and (for-all envelope? entries) (for-all accepts? definitions entries))
+                  (error 'allocate! "unknown kind/schema or invalid payload"))
+                (let ([done
+                       (with-mutex (state-lock data)
+                         (and (= start (state-next-id data))
+                              (begin
+                                (unless (for-all (lambda (d e) (eq? d (definition-of e))) definitions entries)
+                                  (error 'allocate! "kind changed during validation"))
+                                (for-each (lambda (e) (hashtable-set! (state-records data) (cadr (field e 'id)) e)) entries)
+                                (state-next-id-set! data (+ start count)) (changed! ids) #t)))])
+                  (if done (datum:copy ids) (loop))))))))))
 
   (edoc "Live model ids in allocation order, optionally restricted to a kind without reading payloads."
         (kinds (list-of symbol) "at most one kind")

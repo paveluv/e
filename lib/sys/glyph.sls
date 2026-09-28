@@ -1,7 +1,7 @@
 ;; glyph.sls -- shared terminal-cell widths and cluster boundaries.
 (import (only (foundation edoc) elibrary))
 (elibrary (sys glyph)
-  (export cells clusters extends? fit width)
+  (export cells clusters extends? fit slice width)
   (import (chezscheme) (prefix (sys sys) sys:))
 
   (edoc "The terminal cells one grapheme cluster takes: the widest character, 2 for emoji and flags."
@@ -49,6 +49,22 @@
   (define (cells text)
     (if (plain? text) (string-length text)
         (fold-left (lambda (n cluster) (+ n (cdr cluster))) 0 (clusters text))))
+
+  (edoc "Clip a cell interval, padding cut grapheme clusters with spaces instead of splitting them."
+        (text string "display text") (start integer "first cell") (count integer "number of cells") (returns string))
+  (define (slice text start count)
+    (unless (and (integer? start) (exact? start) (>= start 0)
+                 (integer? count) (exact? count) (>= count 0))
+      (error 'slice "invalid cell interval" start count))
+    (let ([end (+ start count)])
+      (let loop ([parts (clusters text)] [char 0] [cell 0] [used 0] [out '()])
+        (if (or (null? parts) (>= cell end))
+          (apply string-append (reverse (cons (make-string (- count used) #\space) out)))
+          (let* ([n (caar parts)] [width (cdar parts)] [next (+ cell width)]
+                 [visible (max 0 (- (min end next) (max start cell)))])
+            (loop (cdr parts) (+ char n) next (+ used visible)
+              (if (zero? visible) out
+                (cons (if (= visible width) (substring text char (+ char n)) (make-string visible #\space)) out))))))))
 
   (edoc "A text fitted to exactly a width in cells, padded on the right or cut at whole clusters with an ellipsis, on the left when asked."
         (text string "the text")

@@ -49,6 +49,7 @@
           (prefix (head mode) mode:)
           (prefix (head render) render:)
           (prefix (head style) style:)
+          (prefix (head widget) widget:)
           (prefix (sys glyph) glyph:)
           (prefix (only (sys sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:))
 
@@ -316,8 +317,8 @@
   ;; A frame draws against a private shadow. Only completed terminal output
   ;; becomes the next diff baseline; failed or superseded preparations do not.
   (define-record-type shadow
-    (fields (mutable rows) (mutable view) (mutable cursor) (mutable title)))
-  (define shown-shadow (make-shadow '#() #f "\x1b;[0 q" #f))
+    (fields (mutable rows) (mutable view) (mutable cursor) (mutable title) (mutable widgets)))
+  (define shown-shadow (make-shadow '#() #f "\x1b;[0 q" #f '()))
   (define preparing-shadow (make-parameter #f))
   (define frame-terminal (make-parameter #f))
 
@@ -1864,21 +1865,27 @@
     ;; rules take effect without a repaint.
     (let* ([cursor (echo-cursor-now)]
            [a (head:app-of (head:window-buffer (head:current-window)))]
-           [visible? (or cursor (head:app-cursor-visible-in? (head:current-window)))])
+           [root (head:buffer-fact (head:current-buffer) 'widget-id #f)]
+           [placement (and root (find (lambda (p) (equal? root (widget:frame-id (car p)))) (shadow-widgets (current-shadow))))]
+           [widget-caret (and placement (widget:caret (car placement)))]
+           [visible? (or cursor widget-caret (and (not root) (head:app-cursor-visible-in? (head:current-window))))])
       (if cursor
           (let ([p (echo-position cursor)])
             (goto! (+ (- rows (echo:live-height)) (- (car p) (echo:scroll)) 1)
               (min (+ (echo-box-offset) 1 (cdr p) 1) cols)))
-          (when visible?
-            (let ([p (window-screen-position (head:current-window)
-                                             (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
-              (goto! (min (car p) rows) (min (cdr p) cols)))))
+          (if widget-caret
+              (goto! (+ 1 (caddr placement) (cdr widget-caret)) (+ 1 (cadr placement) (car widget-caret)))
+              (when visible?
+                (let ([p (window-screen-position (head:current-window)
+                                                 (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
+                  (goto! (min (car p) rows) (min (cdr p) cols))))))
       (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current-window)))]
              [style (cond
                       [(cursor-in-echo) "\x1b;[3 q"]
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [(echo:cursor) "\x1b;[0 q"]
+                      [widget-caret "\x1b;[6 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(text) "\x1b;[0 q"]
@@ -1961,6 +1968,11 @@
         (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
                   layout)
         (begin-frame! view rows)
+        (shadow-widgets-set! (current-shadow)
+          (filter values (map (lambda (entry)
+                                (let* ([w (car entry)] [id (head:buffer-fact (head:window-buffer w) 'widget-id #f)]
+                                       [frame (and id (widget:prepared id))])
+                                  (and frame (list frame (head:window-xoff w) (- (cadr entry) 1))))) layout)))
         (paint-dividers! layout)
         (let ([ranges (highlight-ranges)])
           (for-each (lambda (entry)
@@ -1983,11 +1995,13 @@
           (ansi! "\x1b;[?2026l")
           (flush-output-port (sys:terminal-output-port))
           (set! shown-shadow shadow)
+          (widget:present! (shadow-widgets shadow))
           (head:frame-presented!)
           (set! complete? #t))
         (lambda ()
           (unless complete?
-            (set! shown-shadow (make-shadow (make-vector rows #f) #f #f #f))
+            (widget:invalidate!)
+            (set! shown-shadow (make-shadow (make-vector rows #f) #f #f #f '()))
             (ansi! "\x1b;[?2026l")
             (flush-output-port (sys:terminal-output-port)))))))
 
@@ -2006,7 +2020,7 @@
           (prepare)
           (let* ([basis shown-shadow]
                  [shadow (make-shadow (vector-map (lambda (row) row) (shadow-rows basis))
-                           (shadow-view basis) (shadow-cursor basis) (shadow-title basis))]
+                           (shadow-view basis) (shadow-cursor basis) (shadow-title basis) (shadow-widgets basis))]
                  [output (call-with-string-output-port
                            (lambda (port)
                              (parameterize ([frame-terminal (sys:terminal-output-port)]

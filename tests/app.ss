@@ -17,7 +17,8 @@
              (prefix (state model) model:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
-             (prefix (head widget) widget:)
+             (prefix (head widget) widget:) (prefix (head window) window:)
+             (prefix (head entry) entry:) (prefix (foundation text) text:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -561,24 +562,19 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (interaction:init!) (widget:init!)
+     (interaction:init!) (widget:init!) (window:init!) (entry:init!)
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
             [owner (string-copy "widget-test-renderer")] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
-            [first (view:create! head:ui-actor data 'probe 1 0)]
-            [second (view:create! head:ui-actor data 'probe 1 0)]
-            [a (widget:mount! first)] [b (widget:mount! second)]
-            [other (head:make-window b 0 0 0 0 0 2 7 24 'default)])
+            [first (view:create! head:ui-actor data 'probe 1 '() 0)]
+            [second (view:create! head:ui-actor data 'probe 1 '() 0)]
+            [other (head:make-window was 0 0 0 0 0 2 7 24 'default)]
+            [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! 'probe 1
-             (lambda (model state width height)
-               (set! calls (+ calls 1))
-               (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq 'value model)) state)))
-             (list (cons 'choose (lambda (id model descriptor)
-                                   (values (cdr (assq 'revision model)) (list-ref descriptor 7))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -595,9 +591,9 @@
        (interaction:set-state! head:ui-actor first 0 9)
        (check 'widget-action-uses-provisional-target-before-ack
          (list (call-with-values (lambda () (widget:act! first 'choose)) list)
-               (list-ref (view:snapshot first) 7) (list-ref (interaction:snapshot second) 7)) '((0 9) 0 0))
+               (view:state (view:snapshot first)) (view:state (interaction:snapshot second))) '((0 9) 0 0))
        (head:checkpoint!)
-       (check 'widget-lifecycle-checkpoint-fences-state (list-ref (view:snapshot first) 7) 9)
+       (check 'widget-lifecycle-checkpoint-fences-state (view:state (view:snapshot first)) 9)
        (model:commit! '(base test) (list (list data 0 '() "new")))
        (refresh!)
        (let ([before calls])
@@ -608,21 +604,213 @@
          (list (widget:actions first) (head:app-refresh-error (head:app-of a))) '(() #f))
        (install!) (refresh!)
        (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
-       (widget:unmount! first) (head:forget-buffer! b)
+       (head:forget-buffer! a) (head:forget-buffer! b)
        (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
-         (list (map (lambda (id) (list-ref (view:snapshot id) 4)) (list first second))
+         (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
                (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
        (head:set-layout-root! root) (head:show-buffer! was)
        (kernel:retract-module! owner))
 
-     (model:register-kind! 'widget-view 2 string?)
-     (let* ([id (model:create! head:ui-actor 'widget-view 2 'session 'persistent '() "future descriptor")]
-            [b (widget:mount! id)] [previous (head:current-buffer)])
+     ;; Tree mounts allocate no buffers. Reorder retains identity and state;
+     ;; failed ownership changes and duplicate hosts cannot release the tree.
+     (let* ([data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "one\ntwo")]
+            [parent (view:create! head:ui-actor #f 'column 1 '() '())]
+            [a (view:create! head:ui-actor data 'text 2 '() 0)]
+            [b (view:create! head:ui-actor data 'text 2 '() 0)]
+            [count (length (head:buffers))])
+       (view:arrange! head:ui-actor (list (list parent 0 (list (list 'a a 'fit) (list 'b b '(grow 1))) '())) '())
+       (let ([m (widget:mount! parent 'slot)])
+         (check 'recursive-mount-idempotent-with-no-adapter-buffers
+           (list (eq? m (widget:mount! parent 'slot)) (= count (length (head:buffers)))
+             (refused? (lambda () (widget:mount! parent 'another)))
+             (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
+         (widget:act! a 'move 1)
+         (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent)))
+                                                              (list (list 'b b '(grow 1)) (list 'a a 'fit)) '())))])
+           (check 'reordered-child-keeps-local-state-and-parent
+             (list status (view:state (interaction:snapshot a)) (view:parent (interaction:snapshot a)))
+             (list 'applied 1 parent)))
+         (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent))) (list (list 'a a 'fit)) '())))])
+           (check 'removed-child-releases-runtime-and-owner
+             (list status (refused? (lambda () (widget:actions b))) (view:owner (view:snapshot b))) '(applied #t #f)))
+         (widget:unmount! parent)
+         (check 'recursive-release (map (lambda (id) (view:owner (view:snapshot id))) (list parent a)) '(#f #f))))
+
+     ;; Additional window placement forks descriptors; reopening hidden roots
+     ;; reuses their adapter and remembered interaction.
+     (let* ([w (head:current-window)] [was (head:current-buffer)]
+            [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
+            [id (view:create! head:ui-actor data 'text 2 '() 0)]
+            [b (window:show-widget! w id)]
+            [other (head:make-window b 0 0 0 0 0 2 0 12 'default)]
+            [copy (head:window-buffer other)] [fork (head:buffer-fact copy 'widget-id #f)])
+       (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
+       (head:show-buffer! was)
+       (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
+       (widget:unmount! id)
+       (check 'explicitly-unmounted-adapter-remounts-on-show
+         (begin (window:show-widget! w id) (widget:actions id)) '(move select choose))
+       (actor:checkpoint! head:ui-actor
+         `(screen 4 1 (split right 1 1 (window 1 0 0 0 default #t #f default) (window 2 0 0 0 default #t #f default))
+            (((widget ,id) #f ()))))
+       (head:resume!)
+       (let* ([windows (filter (lambda (w) (not (head:popup? w))) (head:windows))]
+              [ids (map (lambda (w) (head:buffer-fact (head:window-buffer w) 'widget-id #f)) windows)])
+         (check 'resume-resolves-duplicate-widget-placements-before-installing-layout
+           (list (length ids) (equal? (car ids) (cadr ids))
+                 (map (lambda (id) (view:source (view:snapshot id))) ids))
+           (list 2 #f (list data data))))
+       (window:delete-others!) (head:show-buffer! was)
+       (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
+
+     ;; A bare composition exercises the same routing used by window hosts.
+     (let* ([events '()] [owner 'routing-fixture]
+            [a (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
+            [b (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
+            [row (view:create! head:ui-actor #f 'route-row 1 '() '())]
+            [root (view:create! head:ui-actor #f 'overlay 1 '() '())]
+            [barrier (view:create! head:ui-actor #f 'overlay 1 '((modal . #t)) '())])
+       (define (record! id tag) (set! events (cons (list tag id) events)))
+       (define (install-leaf! full?)
+         (parameterize ([kernel:registering-module owner])
+           (widget:register! 'route-leaf 1
+             (list (cons 'focus #t) (cons 'contexts '(route-leaf)) (cons 'capture (if full? 'full 'partial))
+               (cons 'actions (list (cons 'record record!)))
+               (cons 'event (lambda (id source d event)
+                              (case (car event)
+                                [(text) (record! id (cadr event)) #t]
+                                [(pointer) (and (not (eq? (caddr event) 'middle))
+                                             (begin (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id (cadr event)) #t))]
+                                [(cancel) (record! id 'cancel) #t]
+                                [else #f])))))))
+       (define (show!) (widget:present! (list (list (widget:prepare! root 10 2) 0 0))))
+       (define (key! key) (dispatch:input! root (list 'key key (and (= 1 (string-length key)) key))))
+       (define (take) (let ([out (reverse events)]) (set! events '()) out))
+       (install-leaf! #f)
+       (widget:register! 'route-row 1
+         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
+           (cons 'actions (list (cons 'record record!)))
+           (cons 'event (lambda (id source d event) (and (eq? (car event) 'pointer) (begin (record! id 'bubbled) #t))))
+           (cons 'layout (lambda (d width height measure locate)
+                           (map (lambda (child x) (list (cadr child) (list x 0 5 height))) (view:children d) '(0 5))))))
+       (for-each (lambda (entry)
+                   (keymap:bind-default! (car entry) (cadr entry) (keymap:call widget:act! widget:target 'record (caddr entry))))
+         '((route-leaf "C-x a" leaf) (route-leaf "F2" shadowed) (route-leaf "z" shortcut)
+           (route-parent "F1" parent) (route-capture "F2" capture)))
+       (view:arrange! head:ui-actor
+         (list (list root 0 (list (list 'body row '(grow 1))) '())
+               (list row 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+       (widget:mount! root 'routing-test) (show!) (widget:focus! root a)
+       (key! "C-x")
+       (check 'chord-start-returns-without-reading-input (dispatch:pending?) #t)
+       (key! "a") (key! "F1") (key! "F2") (key! "z")
+       (dispatch:input! root '(text "z z" paste))
+       (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
+         (list (list 'leaf a) (list 'parent row) (list 'capture row) (list 'shortcut a) (list "z z" a)))
+       (key! "C-x") (widget:focus! root b) (key! "a")
+       (key! "C-x") (keymap:bind-default! 'unrelated "F9" void) (key! "a")
+       (check 'focus-and-binding-change-do-not-replay-chord-suffix (take) '())
+       (widget:focus! root a) (show!)
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(pointer move primary ()) 99 99)
+       (widget:pointer! '(pointer release primary ()) 99 99)
+       (widget:pointer! '(pointer move none ()) 99 99)
+       (check 'pointer-capture-survives-outside-and-ends-on-release (take)
+         (list (list 'press a) (list 'move a) (list 'release a) (list 'leave a)))
+       (widget:pointer! '(pointer press middle ()) 1 0)
+       (check 'unhandled-pointer-bubbles-to-its-own-parent (take) (list (list 'bubbled row)))
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:present! (list (list (widget:prepare! root 0 0) 0 0)))
+       (widget:pointer! '(pointer release primary ()) 1 0)
+       (check 'hidden-capture-cancels-without-retargeting-or-forgetting-focus
+         (list (take) (view:focus (interaction:snapshot root)))
+         (list (list (list 'press a) (list 'cancel a)) a))
+       (show!)
+       (key! "C-x") (kernel:retract-module! owner) (install-leaf! #t) (show!) (key! "a")
+       (key! "F1") (key! "x") (key! "F2")
+       (check 'reload-cancels-chord-full-capture-still-types-and-ancestor-capture-wins (take)
+         (list (list "x" a) (list 'capture row)))
+       (interaction:flush!)
+       (let-values ([(status rows) (widget:arrange! (list (list root (cdr (assq 'revision (model:snapshot root)))
+                                                            (list (list 'body row '(grow 1)) (list 'modal barrier '(grow 1))) '())))
+                    ])
+         (check 'modal-attachment-commits status 'applied))
+       (show!) (key! "x") (widget:pointer! '(pointer press primary ()) 1 0)
+       (check 'empty-modal-has-no-key-or-pointer-click-through (take) '())
+       (widget:unmount! root) (kernel:retract-module! owner)
+       (widget:invalidate!))
+
+     ;; Entries share authored text and its journal, but never cursor state.
+     (let* ([source (store:create! head:ui-actor "widget entry" '("a界éz"))]
+            [a (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [b (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [ambient (head:current-buffer)])
+       (define (line) (let-values ([(text rev) (store:snapshot source)]) (vector-ref text 0)))
+       (define (show!) (widget:present! (list (list (widget:prepare! root 20 1) 0 0))))
+       (define (foreign! start end replacement)
+         (let-values ([(text rev) (store:snapshot source)])
+           (store:edit! '(agent "entry-test") source rev (text:make-span 0 start 0 end) replacement))
+         (head:sync-foreign-edits! source))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+       (widget:mount! root 'entry-test) (show!)
+       (entry:move! a 'right) (entry:move! a 'right) (entry:move! a 'right)
+       (check 'entry-moves-by-graphemes-and-keeps-independent-selection
+         (list (view:state (interaction:snapshot a)) (view:state (interaction:snapshot b)))
+         '(((0 . 4) (0 . 4)) ((0 . 0) (0 . 0))))
+       (entry:move! a 'left #t) (show!)
+       (check 'entry-caret-and-selection-share-cell-geometry
+         (list (widget:caret (widget:prepared root))
+               (vector-ref (widget:frame-styles (widget:prepared root) 0 (car (widget:frame-lines (widget:prepared root)))) 2))
+         '((3 . 0) selection))
+       (widget:focus! root b) (show!)
+       (check 'entry-caret-translates-into-the-second-child (widget:caret (widget:prepared root)) '(10 . 0))
+       (widget:pointer! '(pointer move primary ()) 14 0)
+       (check 'entry-does-not-start-a-drag-from-another-widget (view:state (interaction:snapshot b)) '((0 . 0) (0 . 0)))
+       (widget:pointer! '(pointer press primary ()) 11 0)
+       (widget:pointer! '(pointer move primary ()) 14 0)
+       (widget:pointer! '(pointer release primary ()) 14 0)
+       (check 'entry-drag-selects-whole-wide-and-combining-graphemes
+         (view:state (interaction:snapshot b)) '((0 . 4) (0 . 1)))
+       (widget:focus! root a) (show!)
+       (dispatch:input! root '(key "TAB" #f))
+       (check 'entry-tab-uses-host-traversal (view:focus (interaction:snapshot root)) b)
+       (dispatch:input! root '(key "S-TAB" #f))
+       (dispatch:input! root '(text "Q" paste))
+       (check 'entry-paste-replaces-selection-once (line) "a界Qz")
+       (entry:undo! a) (entry:redo! a)
+       (check 'entry-uses-existing-undo-redo (line) "a界Qz")
+       (widget:act! a 'delete 'backward)
+       (check 'entry-delete-action-keeps-the-original-edit-basis (line) "a界z")
+       (entry:undo! a)
+       (check 'entry-refuses-multiline-paste-without-mutation
+         (list (refused? (lambda () (entry:insert! a "bad\npaste"))) (line)) '(#t "a界Qz"))
+       (entry:select! a 1 1) (show!)
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(pointer release primary ()) 1 0)
+       (foreign! 0 0 '("R"))
+       (entry:insert! a "X")
+       (check 'entry-click-intent-rebases-through-remote-insertion
+         (list (line) (view:state (interaction:snapshot a))) '("RaX界Qz" ((0 . 3) (0 . 3))))
+       (entry:select! a 5 3)
+       (foreign! 4 4 '("remote"))
+       (let ([before (line)])
+         (check 'entry-overlap-refuses-without-losing-foreign-text
+           (list (refused? (lambda () (entry:insert! a "lost"))) (string=? before (line))) '(#t #t)))
+       (foreign! 0 0 '("first" "second")) (show!)
+       (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
+         (list (widget:caret (widget:prepared root)) (head:buffer-read-only (head:buffer-of-store-id source))
+               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
+       (widget:unmount! root) (widget:invalidate!))
+
+     (model:register-kind! 'widget-view 3 string?)
+     (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
+            [previous (head:current-buffer)] [b (window:show-widget! (head:current-window) id)])
        (head:show-buffer! b)
        ((head:app-refresh! (head:app-of b)))
        (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
          (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
          '(() #f "future descriptor"))
-       (widget:unmount! id) (head:show-buffer! previous))
+       (head:forget-buffer! b) (head:show-buffer! previous))
 
      (test:finish! 'app)))

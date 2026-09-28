@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head dispatch)
-  (export global-key! (rename (handle-key! key!)) set-prompt-opener!)
+  (export cancel! global-key! input! (rename (handle-key! key!)) pending? resolve! set-prompt-opener!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head echo) echo:)
@@ -18,6 +18,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head widget) widget:)
           (prefix (sys tty) tty:))
 
   ;;; Key dispatch ---------------------------------------------------------------------
@@ -38,12 +39,12 @@
     ;; other arguments stand as given.
     (cond [(procedure? action)
            (unless (and capture (eq? action (cadr capture)))
-             (head:follow-app! (head:current-window) #f))
+             (unless (widget:target) (head:follow-app! (head:current-window) #f)))
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
           [(keymap:call-action? action)
            ;; a call built with keymap:call: the producers run at the press
-           (head:follow-app! (head:current-window) #f)
+           (unless (widget:target) (head:follow-app! (head:current-window) #f))
            (dynamic-wind void
              (lambda ()
                (apply (keymap:call-action-procedure action)
@@ -52,7 +53,7 @@
              (lambda () (head:set-last-command! action)))]
           [(keymap:prefill-action? action)
            ;; a pre-filled M-x built with keymap:prefill
-           (head:follow-app! (head:current-window) #f)
+           (unless (widget:target) (head:follow-app! (head:current-window) #f))
            (dynamic-wind void
              (lambda ()
                (let ([name (keymap:prefill-name action)])
@@ -77,48 +78,77 @@
              (run-key-action! (keymap:binding-action (cdr hit)) #f)
              #t))))
 
+  ;; One chord for this pump, shared by ordinary dispatch and prompt readers.
+  ;; Its receiver owns every suffix; stale/invalid suffixes are never replayed.
+  (define chord #f)
+
+  (edoc "Discard a pending key chord when an interaction begins, ends or loses its input device.")
+  (define (cancel!) (set! chord #f))
+
+  (edoc "Whether a key prefix is waiting for one more event, without reading input." (returns boolean))
+  (define (pending?) (and chord #t))
+
+  (edoc "Advance one key through ordered receiver contexts. Return (status receiver action sequence); no input is read here."
+        (owner any "stable routing basis; changes cancel the pending chord")
+        (scopes list "(receiver contexts stop-on-unhandled?) entries") (key string "canonical key token") (returns list))
+  (define (resolve! owner scopes key)
+    (let* ([old chord] [sequence (append (if old (list-ref old 2) '()) (list key))]
+           [stale? (and old (or (not (equal? owner (car old))) (not (= (keymap:generation) (cadr old)))))] )
+      (set! chord #f)
+      (if stale? (list 'cancelled #f #f sequence)
+        (let loop ([rest (if old (list (list-ref old 3)) scopes)])
+          (if (null? rest) (list (if old 'invalid 'unhandled) #f #f sequence)
+            (let* ([scope (car rest)] [receiver (car scope)] [contexts (cadr scope)]
+                   [match (exists (lambda (context)
+                                    (let ([hit (keymap:resolved-binding context sequence)] [prefix? (keymap:binding-prefix? context sequence)])
+                                      (and (or hit prefix?) (list hit prefix?)))) contexts)])
+              (cond
+                [(and match (cadr match))
+                 (set! chord (list owner (keymap:generation) sequence scope))
+                 (list 'prefix receiver #f sequence)]
+                [match (list 'command receiver (keymap:binding-action (cdar match)) sequence)]
+                [(and (not old) (caddr scope)) (list 'blocked receiver #f sequence)]
+                [else (loop (cdr rest))])))))))
+
   (define (dispatch-sequence! first)
-    ;; Resolve a key sequence: the buffer's mode contexts first, nearest first, then the
-    ;; global map. Once a prefix reaches e, the whole command stays here,
-    ;; including synchronous prompts; an app cannot consume its suffix.
-    (let* ([buffer (head:window-buffer (head:current-window))]
-           [contexts (mode:key-contexts buffer)]
-           [capture (exists keymap:context-capture contexts)])
-      (let loop ([sequence (list first)])
-        (let* ([in-context (exists (lambda (context) (keymap:resolved-binding context sequence)) contexts)]
-               [context-prefix? (exists (lambda (context) (keymap:binding-prefix? context sequence)) contexts)]
-               [hit (or in-context (keymap:resolved-binding 'global sequence))]
-               [prefix? (or context-prefix?
-                            (keymap:binding-prefix? 'global sequence))])
-          (cond
-            [prefix?
-             (echo:set-text! (string-append (keymap:sequence-text sequence) "-"))
-             (echo:set-pending! '())
-             (paint:redraw!)
-             (let ([next (head:read-key-event)])
-               (if (eof-object? next)
-                   (head:quit!)
-                   (loop (append sequence (list next)))))]
-            [hit
-             ;; A prefix is only a waiting indicator. Once its complete binding
-             ;; is known, remove it before the command runs; commands that have
-             ;; something useful to report will publish their own message.
-             (when (> (length sequence) 1) (echo:settle!))
-             (head:set-current-keys! sequence)
-             (run-key-action! (keymap:binding-action (cdr hit)) capture)]
-            [(and (= (length sequence) 1)
-                  (tty:key-event-character first)
-                  (or (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts)
-                      (keymap:resolved-binding 'global '("SELF-INSERT"))))
-             ;; an unbound character goes to SELF-INSERT, the mode's context
-             ;; first: its command receives the key through head:typed-text
-             => (lambda (hit)
-                  (head:set-current-keys! sequence)
-                  (run-key-action! (keymap:binding-action (cdr hit)) capture))]
-            [else
-             (head:set-last-command! #f)
-             (echo:set-text!
-               (format "~a is undefined" (keymap:sequence-text sequence)))])))))
+    (let* ([w (head:current-window)] [buffer (head:window-buffer w)] [contexts (mode:key-contexts buffer)]
+           [capture (exists keymap:context-capture contexts)]
+           [result (resolve! (list w buffer contexts) (list (list 'editor (append contexts '(global)) #f)) first)]
+           [status (car result)] [sequence (list-ref result 3)])
+      (case status
+        [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) (echo:set-pending! '())]
+        [(command)
+         (head:set-current-keys! sequence) (run-key-action! (caddr result) capture)]
+        [(unhandled)
+         (let ([hit (and (tty:key-event-character first)
+                      (or (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts)
+                        (keymap:resolved-binding 'global '("SELF-INSERT"))))])
+           (if hit (begin (head:set-current-keys! sequence) (run-key-action! (keymap:binding-action (cdr hit)) capture))
+             (begin (head:set-last-command! #f) (echo:set-text! (format "~a is undefined" (keymap:sequence-text sequence))))))]
+        [else (head:set-last-command! #f) (echo:set-text! "Key sequence cancelled")])) )
+
+  (edoc "Dispatch normalized key or committed text to an explicit widget root. Optional contexts belong to its outer host."
+        (root list "active root") (event list "(key token text-fallback) or (text string source)")
+        (contexts (list-of symbol) "outer host keymaps") (returns boolean))
+  (define (input! root event . contexts)
+    (widget:cancel! root 'keyboard)
+    (case (car event)
+      [(text) (set! chord #f) (widget:input! root event)]
+      [(key)
+       (let* ([key (cadr event)] [routing (widget:key-scopes! root key)]
+              [reply (resolve! (car routing) (append (cadr routing) (if (null? contexts) '() (list (list 'editor contexts #f)))) key)]
+              [receiver (cadr reply)] [sequence (list-ref reply 3)])
+         (case (car reply)
+           [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) #t]
+           [(command)
+            (head:set-current-keys! sequence)
+            (if (eq? receiver 'editor) (run-key-action! (caddr reply) #f)
+              (parameterize ([widget:target receiver])
+                (if (symbol? (caddr reply)) (widget:act! receiver (caddr reply)) (run-key-action! (caddr reply) #f)))) #t]
+           [(cancelled invalid) (echo:set-text! "Key sequence cancelled") #t]
+           [else
+            (or (widget:input! root event) (eq? (car reply) 'blocked))]))]
+      [else (error 'input! "expected key or text input" event)]))
 
   (define (context-claims? event)
     ;; Whether the current buffer's mode context binds event, starts a
@@ -140,7 +170,7 @@
 
   (edoc "Dispatch one key from the pump: the current buffer's app has first refusal of keys its mode context leaves unbound, the rest go through the keymaps; eof quits."
         (input (or char string any) "a character, an event string, or eof")
-        (prompts))
+  )
   (define (handle-key! input)
     ;; One key from the pump: a character or an event string, eof
     ;; when the terminal is gone.  The current buffer's app has first
@@ -150,13 +180,19 @@
                        [(char? input) (tty:character-event input)]
                        [else input])])
       (cond
-        [(eof-object? event) (head:quit!)]
+        [(eof-object? event) (cancel!) (head:quit!)]
         [(string=? event "MOUSE-HANDLED")
+         (cancel!)
          (echo:settle!)
          (void)]
+        [(head:buffer-fact (head:current-buffer) 'widget-id #f)
+         => (lambda (root)
+              (echo:settle!)
+              (input! root (if (string=? event "PASTE") (list 'text (head:read-paste) 'paste)
+                             (list 'key event (let ([c (tty:key-event-character event)]) (and c (string c))))) 'global))]
         [else
          (echo:settle!)
-         (if (and (not (context-claims? event))
+         (if (and (not (pending?)) (not (context-claims? event))
                   (head:dispatch-app-event! event))
              (head:set-last-command! #f)
              (dispatch-sequence! event))])))

@@ -253,6 +253,7 @@
                           (keymap:event-binding 'isearch event))])
         (cond
           [(eof-object? event) (dispatch:key! event)]
+          [(dispatch:pending?) (dispatch:key! event) (loop needle match failed?)]
           [(eq? action 'accept)
            (set! needle-now "")
            (set! current-match #f)

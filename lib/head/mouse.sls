@@ -21,6 +21,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head widget) widget:)
           (prefix (head window) window:)
           (prefix (sys tty) tty:))
 
@@ -313,13 +314,28 @@
         (tell-app! (car target) "MOUSE-MOVE" target x y)
         (set! hover-window (car target)))))
 
+  (define (widget-mouse! c b x y)
+    (let* ([motion? (not (zero? (bitwise-and b 32)))] [wheel? (not (zero? (bitwise-and b 64)))]
+           [button (case (bitwise-and b 3) [(0) 'primary] [(1) 'middle] [(2) 'secondary] [else 'none])]
+           [mods (filter values (map (lambda (p) (and (not (zero? (bitwise-and b (car p)))) (cdr p))) '((4 . shift) (8 . meta) (16 . control))))]
+           [event (if wheel? (case (bitwise-and b 3) [(0) '(scroll 0 -3 cells)] [(1) '(scroll 0 3 cells)] [(2) '(scroll -3 0 cells)] [else '(scroll 3 0 cells)])
+                    (list 'pointer (cond [(char=? c #\m) 'release] [motion? 'move] [else 'press]) button mods))]
+           [result (widget:pointer! event (- x 1) (- y 1))])
+      (and result
+        (begin
+          (when (cadr result)
+            (let ([w (find (lambda (w) (equal? (car result) (head:buffer-fact (head:window-buffer w) 'widget-id #f))) (head:windows))])
+              (when w (window:focus! w))))
+          (if (and motion? (eq? button 'none)) 'ignore "MOUSE-HANDLED")))))
+
   (define (apply-mouse-event! handle? c b x y)
     ;; Wheel is button 64/65; releases are ignored.  Pointer motion
     ;; without a button only moves hover state and is never an event
     ;; for the loop, so it settles nothing.  A context that must not
     ;; change editor focus passes handle? #f: the report is consumed
     ;; without being applied.
-    (cond [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
+    (cond [(and handle? (widget-mouse! c b x y)) => values]
+          [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
                 (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
            (when handle? (mouse-move! x y))
            'ignore]

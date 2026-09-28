@@ -16,65 +16,97 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export add-buffer! add-buffer-kill-hook! add-color-scheme-hook! add-pre-redraw-hook! add-publication-hook!
-          add-shutdown-hook! adopt-store! adopt-store-buffer! after-key! app-buffer app-buffer?
-          app-cursor-style app-cursor-visible-in? app-cursor-visible? app-cursor-visible?-set!
-          app-event-buffer-position app-event-button app-event-focus app-event-position
-          app-facts app-following? app-handle-event! app-manages-window-viewport? app-of
-          app-refresh! app-refresh-error app-refresh-error-set! app-status
-          app? before-frame! buffer buffer-append! buffer-base
-          buffer-base-set! buffer-conflicted buffer-fact buffer-fact-set! buffer-facts-set! buffer-file
-          buffer-file-set! buffer-flags buffer-line buffer-line-count
-          buffer-lines buffer-lines-raw-set! buffer-lines-set! buffer-mark-col
-          buffer-mark-col-set! buffer-mark-row buffer-mark-row-set! buffer-marked
-          buffer-marked-set! buffer-mode-auto buffer-mode-auto-set! buffer-modified
-          buffer-modified-at buffer-modified-set! buffer-name buffer-name-set! buffer-named
-          buffer-narrowest-width buffer-of-store-id buffer-placements buffer-point
-          buffer-read-only buffer-read-only-set! buffer-rendition buffer-revision
-          buffer-revision-set! buffer-selectable? buffer-spot-col buffer-spot-col-set!
-          buffer-spot-row buffer-spot-row-set! buffer-spot-top buffer-spot-top-set! buffer-stamp buffer-stamp-set! buffer-state buffer-status buffer-sticky-lines
-          buffer-store-id buffer-store-rev buffer-store-rev-set! buffer-trailing
-          buffer-trailing-set! buffer-window-size buffer-wrap-set! buffer? buffers
-          bump-buffer-revision! buttons-width call-uninterrupted call-with-display-update call-with-interrupt
-          checkpoint! clamp-buffer-positions! copy-buffer copy-text current-buffer current-keys
-          (rename (current current-window)) default-directory defer-frame! depart! detach-app!
-          dispatch-app-event! divider-at dividers double-click? drag edit-basis find-tool-buffer finish-frame!
-          fit-layout! flush-ui-audit! follow-app! forget-buffer! frame-presented! fresh-buffer!
-          (rename (window-full-capture? full-capture?)) goto! hide-popup! host-color-scheme
-          in-main-pump input-live? interrupted? last-command layout layout-leaves
-          layout-min-height layout-min-width layout-node! layout-parent layout-replace!
-          layout-split-first layout-split-first-set! layout-split-first-weight
-          layout-split-first-weight-set! layout-split-orientation layout-split-second
-          layout-split-second-set! layout-split-second-weight layout-split-second-weight-set!
-          layout-split? line-numbers make-app make-buffer make-interrupted make-layout-split
-          make-window mark min-window-lines mouse-position new-buffer! new-local-buffer!
-          open-directory! open-file! point popup popup-buttons popup-default-rows popup-limit popup-rows popup? prepare-quit
-          previous-window quit!
-          quit-command! quitting?
-          read-key-event read-paste read-rendition refresh-renditions! refresh-visible-views!
-          register-app! register-resume! register-view! registered-apps replace-layout-window!
-          request-app-size! request-frame-at! resize-popup! resume! resume-source! root run-deferred!
-          run-on-main! run-shutdown-hooks! scrollbar scrollbar-position set-adopt-hook!
-          set-after-key! set-app-cursor-visible! set-app-manages-viewport! set-app-presentation!
-          set-app-selectable! set-app-status-position! set-buffer-status! set-buffers! set-copy-text! set-current!
-          set-current-keys! set-departure! set-directory-opener! set-dividers! set-drag! set-file-opener!
-          set-frame-hook! set-full-capture! set-last-command! set-layout-root!
-          set-mouse-handler! set-mouse-position! set-pending-paste! set-quit-command!
-          set-repaint-hook! set-review-viewer! set-root! set-window-buffer! set-windows!
-          show-buffer! show-popup! snapshot-since start-input-reader! store-edit! store-history!
-          store-reload! store-reread! store-reset! store-resolve! store-resolve-picks! store-rewrite! sync-foreign-edits! tile! tool-buffer! transfer-split!
-          typed-text
-          ui-actor view-append! view-buffer? view-replace! view-review! visit-file! wait-for-frame! wake-main!
-          weighted-first window window-at window-auto-scrollbar-set! window-buffer
-          window-buffer-set! window-button-at window-buttons window-buttons-width
-          window-content-width window-goal window-goal-set! window-index window-left
-          window-left-set! window-line window-line-number-width window-line-numbers window-line-numbers-set!
-          window-line-numbers? window-lines window-numbered window-pcol window-pcol-set!
-          window-prow window-prow-set! window-rendition window-scrollbar-column
-          window-scrollbar? window-size window-size-set! window-status-actions-set! window-text window-top
-          window-top-set! window-topseg window-topseg-set! window-width window-width-set!
-          window-wrap window-wrap-set! window-xoff window-xoff-set! window? windows with-buffer
-          with-window)
+  (export add-buffer! add-buffer-kill-hook!
+    add-buffer-placement-hook! add-color-scheme-hook!
+    add-pre-redraw-hook! add-publication-hook!
+    add-shutdown-hook! adopt-store! adopt-store-buffer!
+    after-key! app-buffer app-buffer? app-cursor-style
+    app-cursor-visible-in? app-cursor-visible?
+    app-cursor-visible?-set! app-event-buffer-position
+    app-event-button app-event-focus app-event-position
+    app-facts app-following? app-handle-event!
+    app-manages-window-viewport? app-of app-refresh!
+    app-refresh-error app-refresh-error-set! app-status app?
+    before-frame! buffer buffer-append! buffer-base
+    buffer-base-set! buffer-conflicted buffer-fact
+    buffer-fact-set! buffer-facts-set! buffer-file
+    buffer-file-set! buffer-flags buffer-line buffer-line-count
+    buffer-lines buffer-lines-raw-set! buffer-lines-set!
+    buffer-mark-col buffer-mark-col-set! buffer-mark-row
+    buffer-mark-row-set! buffer-marked buffer-marked-set!
+    buffer-mode-auto buffer-mode-auto-set! buffer-modified
+    buffer-modified-at buffer-modified-set! buffer-name
+    buffer-name-set! buffer-named buffer-narrowest-width
+    buffer-of-store-id buffer-placements buffer-point
+    buffer-read-only buffer-read-only-set! buffer-rendition
+    buffer-revision buffer-revision-set! buffer-selectable?
+    buffer-spot-col buffer-spot-col-set! buffer-spot-row
+    buffer-spot-row-set! buffer-spot-top buffer-spot-top-set!
+    buffer-stamp buffer-stamp-set! buffer-state buffer-status
+    buffer-sticky-lines buffer-store-id buffer-store-rev
+    buffer-store-rev-set! buffer-trailing buffer-trailing-set!
+    buffer-window-size buffer-wrap-set! buffer? buffers
+    bump-buffer-revision! buttons-width call-uninterrupted
+    call-with-display-update call-with-interrupt checkpoint!
+    clamp-buffer-positions! content-revision copy-buffer
+    copy-text current-buffer current-keys
+    (rename (current current-window)) default-directory
+    defer-frame! depart! detach-app! dispatch-app-event!
+    divider-at dividers double-click? drag edit-basis
+    find-tool-buffer finish-frame! fit-layout! flush-ui-audit!
+    follow-app! forget-buffer! frame-presented! fresh-buffer!
+    (rename (window-full-capture? full-capture?)) goto!
+    hide-popup! host-color-scheme in-main-pump input-live?
+    interrupted? last-command layout layout-leaves
+    layout-min-height layout-min-width layout-node!
+    layout-parent layout-replace! layout-split-first
+    layout-split-first-set! layout-split-first-weight
+    layout-split-first-weight-set! layout-split-orientation
+    layout-split-second layout-split-second-set!
+    layout-split-second-weight layout-split-second-weight-set!
+    layout-split? line-numbers make-app make-buffer
+    make-interrupted make-layout-split make-window mark
+    min-window-lines mouse-position new-buffer!
+    new-local-buffer! open-directory! open-file! point popup
+    popup-buttons popup-default-rows popup-limit popup-rows
+    popup? prepare-quit previous-window quit! quit-command!
+    quitting? read-key-event read-paste read-rendition
+    refresh-renditions! refresh-visible-views! register-app!
+    register-resume! register-view! registered-apps
+    replace-layout-window! request-app-size! request-frame-at!
+    resize-popup! resume! resume-source! root run-deferred!
+    run-on-main! run-shutdown-hooks! scrollbar
+    scrollbar-position set-adopt-hook! set-after-key!
+    set-app-cursor-visible! set-app-manages-viewport!
+    set-app-presentation! set-app-selectable!
+    set-app-status-position! set-buffer-status! set-buffers!
+    set-copy-text! set-current! set-current-keys! set-departure!
+    set-directory-opener! set-dividers! set-drag!
+    set-file-opener! set-frame-hook! set-full-capture!
+    set-last-command! set-layout-root! set-mouse-handler!
+    set-mouse-position! set-pending-paste! set-quit-command!
+    set-repaint-hook! set-review-viewer! set-root!
+    set-window-buffer! set-windows! show-buffer! show-popup!
+    snapshot-since start-input-reader! store-edit!
+    store-history! store-reload! store-reread! store-reset!
+    store-resolve! store-resolve-picks! store-rewrite!
+    sync-foreign-edits! tile! tool-buffer! transfer-split!
+    typed-text ui-actor view-append! view-buffer? view-replace!
+    view-review! visit-file! wait-for-frame! wake-main!
+    weighted-first window window-at window-auto-scrollbar-set!
+    window-buffer window-buffer-set! window-button-at
+    window-buttons window-buttons-width window-content-width
+    window-goal window-goal-set! window-index window-left
+    window-left-set! window-line window-line-number-width
+    window-line-numbers window-line-numbers-set!
+    window-line-numbers? window-lines window-numbered
+    window-pcol window-pcol-set! window-prow window-prow-set!
+    window-rendition window-scrollbar-column window-scrollbar?
+    window-size window-size-set! window-status-actions-set!
+    window-text window-top window-top-set! window-topseg
+    window-topseg-set! window-width window-width-set!
+    window-wrap window-wrap-set! window-xoff window-xoff-set!
+    window? windows with-buffer with-window)
   (import (rnrs)
           (rnrs r5rs)
           (only (chezscheme) current-directory keyboard-interrupt-handler getenv eval interaction-environment open-input-string
@@ -397,8 +429,9 @@
         (returns window))
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
-    (%make-window (free-window-index) buffer top topseg left prow pcol
-                  size xoff width wrap 'default #f #t #f #f '()))
+    (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
+               size xoff width wrap 'default #f #t #f #f '())])
+      (window-buffer-set! w (placed-buffer! w buffer the-windows)) w))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -1687,6 +1720,8 @@
 
   (define initial-buffer-facts '((trailing . #t) (mode-auto . #t) (wrap . default)))
 
+  (edoc "The revision of this head's adopted text source, independent of its display rendition."
+        (b buffer "text source") (returns integer))
   (define (content-revision b)
     (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
 
@@ -1902,7 +1937,8 @@
     ;; Errors also propagate: no shared edit can fall back to a local
     ;; fork, including an error after the transaction has committed.
     ;; Optional head placements are (place . desired) entries: place is
-    ;; a window, 'mark, 'spot, (top . window), or 'spot-top; desired is
+    ;; a window, 'mark, 'spot, (top . window), 'spot-top, or a head-local
+    ;; procedure receiving (position revision); desired is
     ;; 'start, 'end, or a position in the proposed result.  A third option
     ;; is a retained edit-basis.
     ;; Placements are installed during adoption, before
@@ -1987,7 +2023,7 @@
            (for-all
              (lambda (entry)
                (and (pair? entry)
-                    (or (memq (car entry) '(mark spot spot-top))
+                    (or (procedure? (car entry)) (memq (car entry) '(mark spot spot-top))
                         (let ([w (placement-window (car entry))])
                           (and w (eq? (window-buffer w) b))))
                     (or (memq (cdr entry) '(start end))
@@ -2001,16 +2037,17 @@
     (for-each
       (lambda (entry)
         (let ([place (car entry)] [p (cdr entry)])
-          (case place
-            [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
-            [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
-            [(spot-top) (buffer-spot-top-set! b (car p))]
-            [else
-             (let ([w (placement-window place)])
-               (when (eq? (window-buffer w) b)
-                 (if (window? place)
+          (if (procedure? place) (place p (content-revision b))
+            (case place
+              [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
+              [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
+              [(spot-top) (buffer-spot-top-set! b (car p))]
+              [else
+               (let ([w (placement-window place)])
+                 (when (eq? (window-buffer w) b)
+                   (if (window? place)
                      (begin (window-prow-set! w (car p)) (window-pcol-set! w (cdr p)))
-                     (begin (window-top-set! w (car p)) (window-topseg-set! w 0)))))])))
+                     (begin (window-top-set! w (car p)) (window-topseg-set! w 0)))))]))))
       placements))
 
   (define (clamp-text-position text p)
@@ -2794,6 +2831,22 @@
           (let-values ([(lines revision changes) (store:snapshot-since id basis)])
             (let ([positions (project-resume-positions positions lines changes)])
               (adopt-snapshot! b basis lines revision changes '())
+              ;; A newly adopted source already has current text, but views
+              ;; may retain older logical selections. Keep their actual
+              ;; provenance locally without replaying edits over that text.
+              (when (and basis changes)
+                (let-values ([(text now retained) (snapshot-since b basis)]
+                             [(unused to after) (snapshot-since b revision)])
+                  (when (and (not retained) after)
+                    (let loop ([from basis] [rest (append changes after)] [out '()])
+                      (if (null? rest)
+                        (let ([out (if (< from now) (cons (list from now) out) out)])
+                          (buffer-changes-set! b (if (> (length out) delta-log-limit) (list-head out delta-log-limit) out)))
+                        (let ([revision (caar rest)])
+                          (let group ([rest rest] [steps '()])
+                            (if (and (pair? rest) (= revision (caar rest)))
+                              (group (cdr rest) (cons (car rest) steps))
+                              (loop revision rest (cons (cons* from revision (reverse steps)) out))))))))))
               (let-values ([(lines revision changes) (snapshot-since b revision)])
                 (values b (project-resume-positions positions lines changes))))))))
 
@@ -2885,6 +2938,11 @@
                [windows (layout-leaves root)]
                [current (find (lambda (w) (eqv? (window-index w) selected)) windows)])
           (unless current (error 'resume! "selected window is missing"))
+          ;; Resolve placements against the staged layout, not the screen
+          ;; being replaced. Hosts may fork a multiply placed logical view.
+          (fold-left (lambda (placed w)
+                       (window-buffer-set! w (placed-buffer! w (window-buffer w) placed))
+                       (cons w placed)) '() windows)
           ;; Validate and translate every placement before installing the tree.
           (vector-for-each
             (lambda (entry)
@@ -2900,7 +2958,7 @@
                                          [w (and (natural? index)
                                                  (find (lambda (w) (= (window-index w) (remap index))) windows))])
                                     (cond [(memq place '(mark spot spot-top)) entry]
-                                          [w (cons (if top? (cons 'top w) w) (cdr entry))]
+                                          [(and w (eq? (window-buffer w) b)) (cons (if top? (cons 'top w) w) (cdr entry))]
                                           [else #f])))
                              (vector-ref entry 4)))])
                     (check-placements! b positions)
@@ -2969,6 +3027,16 @@
 
   (define app-registry (kernel:make-registry))
   (define buffer-kill-hook-registry (kernel:make-registry))
+  (define buffer-placement-hook-registry (kernel:make-registry))
+
+  (edoc "Register an outer-host adapter that resolves a buffer before placement in a window."
+        (proc procedure "(procedure window buffer peer-windows) returns the placed buffer; peers can be a staged resume layout"))
+  (define (add-buffer-placement-hook! proc)
+    (unless (procedure? proc) (error 'add-buffer-placement-hook! "expected a procedure"))
+    (kernel:registry-add! buffer-placement-hook-registry proc))
+  (define (placed-buffer! w b peers)
+    (fold-left (lambda (b hook) (hook w b peers)) b (kernel:registry-items buffer-placement-hook-registry)))
+
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
 
@@ -3651,6 +3719,7 @@
     ;; Display b in w, remembering where point was in the old buffer and
     ;; restoring where it last was in the new one. Redisplaying the same
     ;; buffer preserves the live window; saved spots belong to hidden ones.
+    (set! b (placed-buffer! w b the-windows))
     (ensure-buffer-visible! b)
     (let ([old (window-buffer w)])
       (unless (eq? old b)

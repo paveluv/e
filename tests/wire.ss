@@ -1221,8 +1221,10 @@
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
            (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
                   [saved-widget (head-read head
-                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '(4 2))])
-                                     (widget:mount! id) (head:checkpoint!) id))]
+                                  '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))]
+                                         [was (head:current-buffer)])
+                                     (window:show-widget! (head:current-window) id)
+                                     (head:show-buffer! was) (head:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1262,12 +1264,12 @@
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
                  (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
-               (head-read launcher `(begin (head:show-buffer! (widget:mount! ',saved-widget)) #t))
+               (head-read launcher `(begin (window:show-widget! (head:current-window) (quote (unquote saved-widget))) #t))
                (head-wait 'restarted-widget-placeholder launcher (lambda () (head-sees? launcher "[Unavailable widget")))
                (test:check 'restart-reclaims-view-generation-without-losing-unavailable-data-state
                  (head-read launcher
                    `(let ([descriptor (interaction:snapshot ',saved-widget)])
-                      (list (cadddr descriptor) (list-ref descriptor 7) (widget:actions ',saved-widget))))
+                      (list (view:generation descriptor) (view:state descriptor) (widget:actions ',saved-widget))))
                  '(2 (4 2) ()))
                (head-wait 'old-screen-gets-restart-farewell head
                  (lambda () (> (occurrences (vector-ref head 3) "base is restarting") 0)))
@@ -1809,7 +1811,7 @@
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
-                   (let ([view (rpc head 'view-create model 'value 1 0)])
+                   (let ([view (rpc head 'view-create model 'value 1 '() 0)])
                      (for-each (lambda (ui) (head-read ui '(begin (kernel:load-module! "interaction") #t))) (list a b))
                      (test:check 'view-single-mount-owner
                        (map (lambda (ui) (head-read ui `(car (call-with-values (lambda () (interaction:claim! head:ui-actor ',view)) list))))
@@ -1817,14 +1819,14 @@
                      (test:check 'view-provisional-interaction-is-immediate
                        (head-read a `(begin
                                        (do ([n 1 (+ n 1)]) ((= n 101)) (interaction:set-state! head:ui-actor ',view 0 n))
-                                       (list (list-tail (interaction:snapshot ',view) 5)
-                                             (list-ref (view:snapshot ',view) 7)))) '((100 0 100) 0))
+                                       (list (let ([d (interaction:snapshot ',view)]) (list (view:sequence d) (view:basis d) (view:state d)))
+                                             (view:state (view:snapshot ',view))))) '((100 0 100) 0))
                      (test:check 'view-publication-ack-does-not-roll-back-owner
-                       (head-read a `(begin (interaction:flush!) (list-tail (interaction:snapshot ',view) 5))) '(100 0 100))
+                       (head-read a `(begin (interaction:flush!) (let ([d (interaction:snapshot ',view)]) (list (view:sequence d) (view:basis d) (view:state d))))) '(100 0 100))
                      (head-read a `(begin (interaction:release! head:ui-actor ',view 1) #t))
                      (test:check 'view-new-owner-restores-saved-state
                        (head-read b `(begin (interaction:claim! head:ui-actor ',view) (interaction:publish!)
-                                            (list-tail (interaction:snapshot ',view) 5))) '(0 0 100))
+                                            (let ([d (interaction:snapshot ',view)]) (list (view:sequence d) (view:basis d) (view:state d))))) '(0 0 100))
                      (head-read b `(begin (interaction:release! head:ui-actor ',view 2) #t)))
                    (for-each (lambda (ui)
                                (head-read ui
@@ -1858,41 +1860,81 @@
                                  (head-read ui `(begin (model:unsubscribe! model-reader)
                                                        (guard (ex [else #t]) (model:snapshot ',model) #f))) #t)) (list a b)))
                  (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
-                        [first (rpc head 'view-create data 'text 1 '(0 0))]
-                        [second (rpc head 'view-create data 'text 1 '(0 0))]
-                        [missing (rpc head 'view-create data 'not-installed 1 '(0 0))])
-                   (head-read a `(begin (head:show-buffer! (widget:mount! ',first))
-                                        (head:set-window-buffer! (window:split-right!) (widget:mount! ',missing)) #t))
-                   (head-read b `(begin (head:show-buffer! (widget:mount! ',second)) #t))
+                        [first (rpc head 'view-create data 'text 2 '() 0)]
+                        [second (rpc head 'view-create data 'text 2 '() 0)]
+                        [missing (rpc head 'view-create data 'not-installed 1 '() '(0 0))]
+                        [composition
+                         (head-read a
+                           `(let* ([who head:ui-actor] [source (store:create! who "entry across heads" '("seed"))]
+                                   [left (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [right (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [row (view:create! who #f 'row 1 '() '())]
+                                   [column (view:create! who #f 'column 1 '() '())]
+                                   [overlay (view:create! who #f 'overlay 1 '() '())]
+                                   [root (view:create! who #f 'scroll 1 '() #f)])
+                              (view:arrange! who
+                                (list (list row 0 (list (list 'left left '(grow 1)) (list 'right right '(grow 1))) '())
+                                      (list column 0 (list (list 'value ',first 'fit) (list 'fields row 'fit)) '())
+                                      (list overlay 0 (list (list 'body column '(grow 1))) '())
+                                      (list root 0 (list (list 'body overlay '(grow 1))) '())) '())
+                              (list root left right source)))]
+                        [root-view (car composition)] [left (cadr composition)] [right (caddr composition)] [source (cadddr composition)])
+                   (head-read a `(begin (window:show-widget! (head:current-window) ',root-view)
+                                        (window:show-widget! (window:split-right!) (quote (unquote missing))) #t))
+                   (head-read b `(begin (window:show-widget! (head:current-window) (quote (unquote second))) #t))
                    (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
                    (head-send! a "\x1b;[B")
                    (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
                    (test:check 'widget-selections-are-independent-across-heads
-                     (list (head-read a `(list-ref (interaction:snapshot ',first) 7))
-                           (head-read b `(list-ref (interaction:snapshot ',second) 7))) '((1 0) (0 0)))
+                     (list (head-read a `(view:state (interaction:snapshot ',first)))
+                           (head-read b `(view:state (interaction:snapshot ',second)))) '(1 0))
                    (rpc head 'model-commit (list (list data 0 '() "alpha\nREMOTE beta\ngamma")))
                    (for-each (lambda (ui) (head-wait 'widget-remote-update ui (lambda () (head-sees? ui "REMOTE beta")))) (list a b))
                    (test:check 'widget-activation-carries-current-target-and-basis
                      (head-read a `(widget:act! ',first 'choose)) (list data 1 1 "REMOTE beta"))
-                   (test:check 'widget-wheel-scrolls-without-selection-and-click-uses-visible-row
+                   (test:check 'widget-wheel-does-not-select-and-pointer-uses-shown-row
                      (head-read b
-                       `(begin
-                          (head:dispatch-app-event! "WHEEL-DOWN")
-                          (let ([scrolled (list-ref (interaction:snapshot ',second) 7)])
-                            (parameterize ([head:app-event-buffer-position '(0 . 0)])
-                              (head:dispatch-app-event! "MOUSE-CLICK"))
-                            (list scrolled (list-ref (interaction:snapshot ',second) 7))))) '((0 2) (2 2)))
+                       `(let* ([p (car (widget:shown))] [x (cadr p)] [y (caddr p)])
+                          (widget:pointer! '(scroll 0 3 cells) x y)
+                          (let ([before (view:state (interaction:snapshot ',second))])
+                            (widget:pointer! '(pointer press primary ()) x (+ y 2))
+                            (list before (view:state (interaction:snapshot ',second)))))) '(0 2))
+                   (head-read a `(begin (widget:focus! ',root-view ',left) #t))
+                   (head-send! a "\x1b;[200~local \x1b;[201~")
+                   (head-wait 'nested-entry-paste a (lambda () (head-sees? a "local seed")))
+                   (head-read b `(begin (head:store-edit! (head:adopt-store-buffer! ,source) (text:make-span 0 0 0 0) '("remote ")) #t))
+                   (head-wait 'nested-entry-foreign-text a (lambda () (head-sees? a "remote local seed")))
+                   (head-read a `(begin (entry:undo! ',left) (entry:select! ',right 3 1) (widget:focus! ',root-view ',right) #t))
+                   (head-wait 'nested-entry-shared-undo a (lambda () (head-sees? a "remote seed")))
+                   (test:check 'nested-entry-keeps-shared-text-and-independent-selection
+                     (head-read a `(list (head:buffer-lines (head:buffer-of-store-id ,source))
+                                         (view:state (interaction:snapshot ',right))
+                                         (equal? (view:state (interaction:snapshot ',left)) (view:state (interaction:snapshot ',right)))))
+                     '(#("remote seed") ((0 . 3) (0 . 1)) #f))
+                   (let ([before (call-with-input-file (string-append root "/model-checks") read)])
+                     (head-read a `(begin
+                                     (do ([i 0 (+ i 1)]) ((= i 100)) (widget:prepare! ',root-view (+ 10 (mod i 7)) (+ 4 (mod i 3)))) #t))
+                     (test:check 'warm-composition-resize-does-not-refetch-its-model
+                       (call-with-input-file (string-append root "/model-checks") read) before))
                    (head-send! a "\x18;\x03;")
                    (head-wait 'widget-head-detached a (lambda () (pump-head! a)))
-                   (test:await 'widget-owner-released (lambda () (not (list-ref (rpc head 'view-read first) 4))))
+                   (test:await 'widget-owner-released (lambda () (not (cdr (assq 'owner (rpc head 'view-read first))))))
+                   (rpc head 'edit source (cadr (rpc head 'snapshot source)) '(0 0 0 0) '("off "))
                    (set! a (start-head "screen A"))
                    (head-wait 'widget-resumed a
                      (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
                    (test:check 'widget-resume-preserves-state-and-missing-renderer
-                     (head-read a `(list (list-ref (interaction:snapshot ',first) 7) (widget:actions ',missing))) '((1 0) ()))
-                   (head-read a `(begin (widget:unmount! ',first) (widget:unmount! ',missing)
+                     (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
+                   (test:check 'nested-resume-restores-focus-and-logical-selection
+                     (head-read a `(list (view:focus (interaction:snapshot ',root-view)) (view:state (interaction:snapshot ',right))
+                                         (head:buffer-lines (head:buffer-of-store-id ,source))))
+                     (list right '((0 . 3) (0 . 1)) '#("off remote seed")))
+                   (test:check 'resumed-entry-retains-its-selection-basis-through-detached-edits
+                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (head:buffer-lines (head:buffer-of-store-id ,source)) 0)))
+                     "off rXote seed")
+                   (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (head:buffer-fact b 'widget-id #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
                                         (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                   (head-read b `(begin (widget:unmount! ',second) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                   (head-read b `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote second)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client

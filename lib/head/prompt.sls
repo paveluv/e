@@ -42,6 +42,7 @@
                 current-time add-duration make-time time<?)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
+          (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -76,13 +77,15 @@
 
   (edoc "Run an interaction that owns C-g and the cursor: uninterrupted, the cursor following its rules rather than a parked evaluation's."
         (thunk thunk "the interaction")
-        (returns any "what the thunk returns"))
+        (returns any "what the thunk returns") (effects internal))
   (define (interaction thunk)
     ;; An interaction owns C-g (head:call-uninterrupted) and the cursor:
     ;; while it runs, the cursor follows the interaction's rules, not a
     ;; parked evaluation's.
     (head:call-uninterrupted
-      (lambda () (parameterize ([paint:cursor-in-echo #f]) (thunk)))))
+      (lambda ()
+        (parameterize ([paint:cursor-in-echo #f])
+          (dynamic-wind dispatch:cancel! thunk dispatch:cancel!)))))
 
   ;;; Commands a prompt may run ------------------------------------------------------
 
@@ -609,26 +612,16 @@
                  (string->list (substring label 0 end)))))))
 
   (define (prompt-window-command event)
-    ;; Resolve entire chords so their tail cannot leak into the input.
-    (define (action-thunk action)
-      (let ([allowed (assq action (kernel:registry-items allowed-commands))])
-        (and allowed
-             (lambda ()
-               (guard (ex [else (string-append "  " (kernel:condition-text ex))])
-                 (if (cdr allowed) ((cdr allowed)) (begin (action) "")))))))
-    (and (not (tty:key-event-character event))
-         (let loop ([sequence (list event)])
-           (cond
-             [(keymap:binding-prefix? 'global sequence)
-              (let ([next (head:read-key-event #f)])
-                (if (eof-object? next) (lambda () "")
-                    (loop (append sequence (list next)))))]
-             [(keymap:resolved-binding 'global sequence)
-              => (lambda (hit)
-                   (or (action-thunk (keymap:binding-action (cdr hit)))
-                       (and (> (length sequence) 1) (lambda () ""))))]
-             [(> (length sequence) 1) (lambda () "")]
-             [else #f]))))
+    (and (or (dispatch:pending?) (not (tty:key-event-character event)))
+      (let* ([reply (dispatch:resolve! (list 'prompt (head:current-window)) '((prompt (global) #f)) event)]
+             [status (car reply)] [action (caddr reply)]
+             [allowed (and (eq? status 'command) (assq action (kernel:registry-items allowed-commands)))])
+        (cond
+          [allowed (lambda () (guard (ex [else (string-append "  " (kernel:condition-text ex))])
+                                (if (cdr allowed) ((cdr allowed)) (begin (action) ""))))]
+          [(eq? status 'prefix) (lambda () (string-append "  " (keymap:sequence-text (list-ref reply 3)) "-"))]
+          [(or (memq status '(cancelled invalid)) (> (length (list-ref reply 3)) 1)) (lambda () "")]
+          [else #f]))))
 
   (edoc "Read a line of input in the echo area with editing, history and completion; #f when cancelled."
         (label string "the prompt text")
@@ -1099,6 +1092,7 @@
                 (set! last-edge #f)
                 (cond
                   [(or (eof-object? event) (window-lost?)) #f]
+                  [(and (dispatch:pending?) (prompt-window-command event)) => (lambda (run) (loop s pos (run)))]
                   [clicked
                    (let ([change clicked])
                      (set! clicked #f)

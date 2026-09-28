@@ -11,6 +11,7 @@
           (prefix (state actor) actor:)
           (prefix (state model) model:)
           (prefix (state store) store:)
+          (prefix (state view) view:)
           (prefix (sys activity) activity:)
           (prefix (sys sys) sys:))
 
@@ -36,7 +37,10 @@
                          ;; Export owns valid envelopes. Do not invoke kind
                          ;; code while paused or let an unavailable payload
                          ;; prevent saving the rest of the session.
-                         (or (not restoring?) (model:valid-import? (cadr models) (cddr models)))))))
+                         (or (not restoring?)
+                             (and (model:valid-import? (cadr models) (cddr models))
+                                  (guard (ex [else #f])
+                                    (model:valid-import? (cadr models) (map view:upgrade (cddr models))))))))))
          (integer? (caddr value)) (exact? (caddr value)) (>= (caddr value) 0)
          (list? (list-ref value 4)) (pair? (list-ref value 4))
          (eq? (car (list-ref value 4)) 'buffers)
@@ -79,7 +83,7 @@
          ;; unexpected import error aborts this startup with session intact.
          (store:import! (cadddr value) (cdr (list-ref value 4)))
          (if (= (length value) 7)
-             (let ([models (list-ref value 6)]) (model:import! (cadr models) (cddr models)))
+             (let ([models (list-ref value 6)]) (model:import! (cadr models) (map view:upgrade (cddr models))))
              (model:import! 1 '()))
          (actor:import! (cdr (list-ref value 5)))]
         [bytes
