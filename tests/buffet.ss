@@ -6,6 +6,7 @@
 (eval
   '(begin
      (import (prefix (apps buffet) buffet:) (prefix (head head) head:)
+             (prefix (apps keys) keys:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
@@ -15,7 +16,7 @@
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!)
+     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (keys:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
@@ -55,6 +56,20 @@
      (define filter-id (cadr (view:source (interaction:snapshot (entry)))))
      (test:check 'internal-filter-is-not-a-switchable-document
        (exists (lambda (b) (equal? filter-id (head:buffer-store-id b))) (head:buffers)) #f)
+     (let ([focus (widget:focused (root))])
+       (press! "C-x" "TAB")
+       (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+         (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
+           (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
+                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys"))
+             (equal? focus (widget:focused (root)))) '(#t #t)))
+       (widget:focus! (root) (child (child (table) 'body) 'rows))
+       (head:before-frame!)
+       (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+         (test:check 'keys-follows-widget-focus
+           (and (string:search text "buffet keys" 0 (string-length text))
+             (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
+       (keys:hide!) (widget:focus! (root) focus) (settle!))
      (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
      (test:check 'typing-from-entry-filters-in-base
        (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection)))

@@ -145,7 +145,7 @@
     (kernel:registry-add! presentations (cons (list name schema) columns)))
   (define-record-type session
     (fields id query token (mutable generation) (mutable pending) (mutable ordinal)
-      (mutable hovered) (mutable signature) (mutable neighbors) (mutable previous)))
+      (mutable hovered) (mutable signature) (mutable neighbors) (mutable previous) (mutable display)))
   (define (get xs key fallback) (cond [(and xs (assq key xs)) => cdr] [else fallback]))
   (define (root id)
     (let ([d (interaction:snapshot id)])
@@ -189,6 +189,26 @@
       (when s (range:release! (session-token s)) (hashtable-delete! sessions id))))
   (define (find-frame f id)
     (and f (if (equal? id (widget:frame-id f)) f (exists (lambda (f) (find-frame f id)) (widget:frame-children f)))))
+  (define (viewport-demand s v)
+    (let* ([f (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
+           [count (if f (min 256 (cadddr (widget:frame-clip f))) 1)]
+           [start (if f (- (cadr (widget:frame-clip f)) (cadr (widget:frame-rect f))) 0)])
+      (values (max 0 (min start (- (get v 'count 0) count))) count)))
+  (define (display-metadata s)
+    (let ([display (and s (session-display s))]) (if display (car display) (and s (metadata s)))))
+  (define (refresh-display! s v)
+    ;; Keep one bounded viewport until its replacement is complete. It is
+    ;; presentation only: selection and actions always validate current data.
+    (let ([old (session-display s)])
+      (cond [(or (not v) (eq? (get v 'status #f) 'unavailable)) (session-display-set! s #f)]
+        [(ready? v)
+         (let-values ([(start count) (viewport-demand s v)])
+           (let ([r (range:read (session-query s) (get v 'generation 0) start count (requested-columns s v))])
+             (case (car r)
+               [(ready) (session-display-set! s (list v start (list-ref r 4) (selected s)))]
+               [(unavailable)
+                (session-display-set! s (list (cons '(status . unavailable) (filter (lambda (p) (not (eq? (car p) 'status))) v)) start #f #f))])))])
+      (unless (equal? old (session-display s)) (repaint! s))))
   (define (save-selection! s generation key basis ordinal)
     (let* ([selection (and ordinal (list (session-query s) generation key))]
            [state (list (cons 'selection selection) (cons 'basis basis))])
@@ -241,8 +261,9 @@
                  (if navigation (error 'table "provider selected an ineligible row" (cadr row)) (seek! s '(ordinal 0) v))))
              (begin (mark-pending! s) (range:request! (session-token s) generation ordinal 1 names '()))))]
         [else (mark-pending! s)
-          (range:request! (session-token s) generation 0 0 names
-            (if navigation '() (list (cadr intent))) (if navigation (list navigation) '()))])))
+          (let-values ([(start count) (viewport-demand s v)])
+            (range:request! (session-token s) generation start count names
+              (if navigation '() (list (cadr intent))) (if navigation (list navigation) '())))])))
   (define (service! id frame)
     (let-values ([(source d inputs) (widget:context id 'current)])
       (let* ([rows (assq 'rows inputs)] [query (and rows (eq? (cadr rows) 'ready) (caddr rows))]
@@ -250,7 +271,7 @@
         (when (and old (not (equal? query (session-query old)))) (release! id) (set! old #f))
         (when query
           (let* ([s (or old (let ([s (make-session id query (range:acquire! query (lambda ()
-                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f 0 #f #f '() (view:state d))])
+                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f 0 #f #f '() (view:state d) #f)])
                               (hashtable-set! sessions id s) s))]
                  [v (metadata s)] [g (get v 'generation 0)] [selection (selected s)])
             (when (and (ready? v) (not (equal? (session-generation s) g)))
@@ -267,17 +288,16 @@
                 (session-pending-set! s (if selection (list 'key (caddr selection)) '(ordinal 0))))
               (when (session-pending s) (seek! s (session-pending s) v))
               (unless (session-pending s)
-                (let* ([f (find-frame frame (body s))]
-                       [start (if f (max 0 (- (cadr (widget:frame-clip f)) (cadr (widget:frame-rect f)))) 0)]
-                       [count (if f (min 256 (cadddr (widget:frame-clip f))) 1)]
-                       [scroll (interaction:snapshot (child s 'body))]
-                       [anchor (and scroll (view:state scroll))])
-                  (range:request! (session-token s) g start count (requested-columns s v)
-                    (fold-left (lambda (keys ref)
-                                 (if (and (row:selection? ref) (equal? query (car ref))
-                                       (not (member (caddr ref) keys))
-                                       (not (eq? (car (range:locate query g (caddr ref))) 'ready)))
-                                   (cons (caddr ref) keys) keys)) '() (list anchor (selected s)))))))
+                (let-values ([(start count) (viewport-demand s v)])
+                  (let* ([scroll (interaction:snapshot (child s 'body))]
+                         [anchor (and scroll (view:state scroll))])
+                    (range:request! (session-token s) g start count (requested-columns s v)
+                      (fold-left (lambda (keys ref)
+                                   (if (and (row:selection? ref) (equal? query (car ref))
+                                         (not (member (caddr ref) keys))
+                                         (not (eq? (car (range:locate query g (caddr ref))) 'ready)))
+                                     (cons (caddr ref) keys) keys)) '() (list anchor (selected s))))))))
+            (refresh-display! s v)
             (let ([signature (list v (view:state d) (view:options d) (session-pending s))])
               (unless (equal? signature (session-signature s)) (session-signature-set! s signature) (repaint! s))))))))
 
@@ -480,17 +500,28 @@
         (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))))
   (define-record-type visible (fields session metadata rows status spans format styles selection hover focus emphasis))
   (define (viewport id d width height clip)
-    (let* ([s (hashtable-ref sessions (root id) #f)] [v (and s (metadata s))]
-           [heading? (eq? (view:kind d) 'table-heading)]
-           [reply (and s (ready? v) (not heading?) (range:read (session-query s) (get v 'generation 0) (car clip) (min 256 (cdr clip)) (requested-columns s v)))]
-           [selection (and s (selected s))])
+    (let* ([s (hashtable-ref sessions (root id) #f)] [current (and s (metadata s))]
+           [display (and s (session-display s))] [v (if display (car display) current)]
+           [pending? (or (not (ready? current)) (not display) (not (= (get v 'generation -1) (get current 'generation 0))))]
+           [rows (and display (list? (caddr display)) (<= (cadr display) (car clip))
+                   (<= (min (get v 'count 0) (+ (car clip) (min 256 (cdr clip)))) (+ (cadr display) (length (caddr display))))
+                   (filter (lambda (r) (<= (car clip) (car r) (- (+ (car clip) (cdr clip)) 1))) (caddr display)))]
+           [selection (and s (if (and pending? display) (cadddr display) (selected s)))])
       (let-values ([(format spans styles) (if (and s (pair? (columns s v))) (fit s v width) (values (lambda (row) "") '() (lambda args '())))])
-        (make-visible s v (and reply (eq? (car reply) 'ready) (list-ref reply 4)) (and reply (car reply)) spans format styles
+        (make-visible s v rows (if pending? 'pending 'ready) spans format styles
           selection (and s (or (hovered-row s)
                              (let ([h (session-hovered s)]) (and (pair? h) (eq? (car h) 'column) h))))
           (and s (focused? s)) (and s (hashtable-ref emphasis (session-id s) #f))))))
+  (define (updating v width)
+    (and (eq? (visible-status v) 'pending) (> width 0)
+      (let* ([text ((visible-format v) #f)] [at (string:search text "           " 0 (string-length text))])
+        (if at (list (+ 1 (glyph:cells (substring text 0 at))) "[Updating]") (list (- width 1) "…")))))
   (define (render v d width height clip)
-    (cond [(eq? (view:kind d) 'table-heading) (list ((visible-format v) #f))]
+    (cond [(eq? (view:kind d) 'table-heading)
+           (let* ([text ((visible-format v) #f)] [marker (updating v width)])
+             (list (if marker
+                     (let ([end (+ (car marker) (glyph:cells (cadr marker)))])
+                       (string-append (glyph:slice text 0 (car marker)) (cadr marker) (glyph:slice text end (- width end)))) text)))]
       [(not (visible-rows v)) (list (glyph:fit (if (or (eq? (visible-status v) 'unavailable) (not (visible-metadata v)) (eq? (get (visible-metadata v) 'status #f) 'unavailable))
                                                    "[Unavailable rows]" "[Pending rows]") width))]
       [(null? (visible-rows v))
@@ -499,13 +530,15 @@
   (define (measure id d axis cross child)
     (if (eq? axis 'x) '(1 1)
       (if (eq? (view:kind d) 'table-heading) '(1 1)
-        (let* ([s (hashtable-ref sessions (root id) #f)] [v (and s (metadata s))]) (list 0 (max 1 (get v 'count 1)))))))
+        (let* ([s (hashtable-ref sessions (root id) #f)] [v (display-metadata s)]) (list 0 (max 1 (get v 'count 1)))))))
   (define (decorate v d width height clip)
     (cond [(eq? (view:kind d) 'table-heading)
-           (cons (list (list 0 0 width 1) 'header)
+           (append (list (list (list 0 0 width 1) 'header))
              (if (and (pair? (visible-hover v)) (eq? (car (visible-hover v)) 'column))
                (let ([span (assv (cadr (visible-hover v)) (visible-spans v))])
-                 (if span (list (list (list (cadr span) 0 (- (caddr span) (cadr span)) 1) '(header hover))) '())) '()))]
+                 (if span (list (list (list (cadr span) 0 (- (caddr span) (cadr span)) 1) '(header hover))) '())) '())
+             (let ([marker (updating v width)])
+               (if marker (list (list (list (car marker) 0 (glyph:cells (cadr marker)) 1) '(header ghost))) '())))]
       [(or (not (visible-rows v)) (null? (visible-rows v))) (list (list (list 0 (car clip) width 1) 'ghost))]
       [else
        (apply append
@@ -541,7 +574,9 @@
         [(pointer)
          (let* ([f (widget:event-frame)] [v (widget:frame-data f)] [phase (cadr event)]
                 [heading? (eq? (view:kind d) 'table-heading)]
+                [marker (and v heading? (updating v (caddr (widget:frame-rect f))))]
                 [hit (and v (not (eq? phase 'leave))
+                       (not (and marker (<= (car marker) (list-ref event 4) (- (+ (car marker) (glyph:cells (cadr marker))) 1))))
                        (if heading?
                          (find (lambda (p) (and (memq (car (list-ref (columns s (visible-metadata v)) (car p))) (get (visible-metadata v) 'sortable '()))
                                              (<= (cadr p) (list-ref event 4) (- (caddr p) 1)))) (visible-spans v))

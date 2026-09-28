@@ -49,6 +49,13 @@ Pending navigation cannot activate the previous row. A domain action should
 validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
 
+While a query or its next row page is pending, the table retains one bounded
+viewport, replacing it when the new rows arrive. The heading shows an italic
+`[Updating]` in spare space, or `…` in a narrow pane. Retained rows preserve
+their presentation but cannot activate an obsolete result. Initial loading
+and unavailable sources still have explicit placeholders. Viewport and
+selection lookups share a batch rather than waiting for each other.
+
 `table:register-presentation!` registers a head-local name, schema version
 and column rules `(column minimum alignment dependencies formatter)`. Alignment is `text`,
 `tail` or `right`. Select it with a table option such as
@@ -93,6 +100,11 @@ Embedded compositions supply their own command bindings. They do not use an
 implicit current window. `widget:host` returns the opaque mounting slot;
 `widget:keep-host-focus!` lets a pointer action retain the outer host's focus
 when it opens a document elsewhere.
+
+`C-x TAB` lists the focused widget path's keys, including app capture contexts
+and unshadowed entry, table and global bindings. The listing follows internal
+focus changes. `widget:key-scopes` exposes that routing without moving focus
+or touching a chord; dispatch uses `key-scopes!` to reconcile focus first.
 
 ## Buffer catalogue
 

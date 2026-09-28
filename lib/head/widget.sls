@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next! focused
           frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -695,7 +695,13 @@
         (root list "active root") (key string "first key token") (returns list "(basis scopes focused-view)"))
   (define (key-scopes! root key)
     (drain-cancels!)
-    (let* ([focus (ensure-focus! root)] [scope (focus-frame root)]
+    (ensure-focus! root)
+    (key-scopes root key))
+
+  (edoc "Read the remembered focus's key routing without changing focus or consuming a pending chord. Includes capture, yield and modal boundaries; hosts can append their contexts."
+        (root list "mounted root") (key string "first key token, or empty for all contexts") (returns list "(basis scopes focused-view)") (effects internal))
+  (define (key-scopes root key)
+    (let* ([d (read-view root)] [focus (and d (view:focus d))] [scope (focus-frame root)]
            [path (if focus (path focus) (if scope (path (frame-id scope)) (list root)))] [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))]
            [normal (let loop ([rest (reverse path)] [out '()])
                      (if (null? rest) (reverse out)
