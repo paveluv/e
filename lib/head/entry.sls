@@ -143,11 +143,11 @@
     (let-values ([(source d) (context id)]) (replace! id source d (state d) text)))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
-        (id list "entry view") (direction (one-of backward forward) "adjacent grapheme"))
+        (id list "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
   (define (delete! id direction)
-    (unless (memq direction '(backward forward)) (error 'delete! "invalid direction" direction))
+    (unless (memq direction '(backward forward all)) (error 'delete! "invalid direction" direction))
     (let-values ([(source d) (context id)])
-      (if (equal? (car (state d)) (cadr (state d)))
+      (if (or (eq? direction 'all) (equal? (car (state d)) (cadr (state d))))
         (let* ([old (basis-text source d)]
                [line (and (single-line? old) (vector-ref old 0))])
           (unless line (refuse "Entry selection refers to a multiline source"))
@@ -156,7 +156,8 @@
                  [next (if (eq? direction 'backward)
                          (or (find (lambda (n) (< n at)) edges) 0)
                          (or (find (lambda (n) (> n at)) (reverse edges)) at))])
-            (replace! id source d (list (cons 0 at) (cons 0 next)) "")))
+            (replace! id source d (if (eq? direction 'all) (list '(0 . 0) (cons 0 (string-length line)))
+                                    (list (cons 0 at) (cons 0 next))) "")))
         (replace! id source d (state d) ""))))
 
   (define (history! id direction scope)

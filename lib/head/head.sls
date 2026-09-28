@@ -382,7 +382,7 @@
   (define (buffers)
     ;; collections the head hands out are snapshots: callers keep them
     ;; without seeing later changes, and cannot disturb the seat's own
-    (append the-buffers '()))
+    (filter (lambda (b) (not (hashtable-ref (buffer-local-facts b) 'internal #f))) the-buffers))
 
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
@@ -1481,7 +1481,7 @@
                (begin
                  ;; Subscribers can rename, hide, delete or readmit this id.
                  ;; Reconcile current truth instead of installing a stale ack.
-                 (when name (sync-foreign-edits! id))
+                 (when (or name (assq 'internal updates)) (sync-foreign-edits! id))
                  #t))
           (let ([name (and name (unique-local-name (string-copy name) b))]
                 [trailing? (buffer-trailing b)])
@@ -2328,6 +2328,7 @@
                           (let ([b (make-buffer (shown-name (store:buffer-name id) (cond [(assq 'audience facts) => cdr] [else 'all]) #f) text 0
                                                 0 0 #f 0 0 0
                                                 id revision)])
+                            (hashtable-set! (buffer-local-facts b) 'internal (cond [(assq 'internal facts) => cdr] [else #f]))
                             (add-buffer! b)
                             (refresh-buffer-rendition! b)
                             (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
@@ -2543,6 +2544,7 @@
                   (if (store:visible? ui-actor id)
                     (let ([b (or b (adopt-store-buffer! id))])
                       (when b
+                        (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
                         (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
                           (unless (string=? name (buffer-name b))
                             (buffer-name-raw-set! b name)
@@ -3829,7 +3831,7 @@
           (notify-local-buffer! b)
           (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
-          (let ([fallback (or (find buffer-visible? the-buffers)
+          (let ([fallback (or (find (lambda (b) (and (buffer-visible? b) (not (hashtable-ref (buffer-local-facts b) 'internal #f)))) the-buffers)
                             (new-buffer! "*scratch*"))])
             (for-each (lambda (w)
                         (when (eq? (window-buffer w) b)

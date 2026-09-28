@@ -59,12 +59,14 @@
         '((#f candidate-hover) #f candidate 2))))
   (table:select! table 1)
   (table:select! table 199)
-  (check 'table-pending-navigation-cannot-expose-or-activate-old-row
-    (list (selection table) (refused? (lambda () (table:activate! table)))) '(#f #t))
+  (check 'table-pending-selection-cannot-expose-or-destructively-activate-old-row
+    (list (selection table) (refused? (lambda () (table:activate! table 'trash)))) '(#f #t))
   (table:move! table 'previous)
   (await-key table 0)
-  (table:select! table 199) (await-key table 199)
+  (table:select! table 199)
   (table:activate! table)
+  (test:await 'table-explicit-selection-reveals-uncached-row
+    (lambda () (pump!) (contains? (string:join (widget:frame-lines (widget:prepared root)) "\n") "199")))
   (check 'table-activation-delivers-stable-row-reference (cadar activated) (get (get (collection:summary query) 'value) 'generation))
   (table:sort-by! table '((size ascending)))
   (test:await 'table-sort (lambda () (pump!)

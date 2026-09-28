@@ -1,12 +1,12 @@
 ;; One subscribed buffer inventory; collection providers own derived indexes.
 (import (only (foundation edoc) elibrary))
 (elibrary (state catalogue)
-  (export attach! contribute! create-source!)
+  (export attach! contribute! create-query! create-source! neighbor)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core property) property:) (prefix (core row) row:)
           (prefix (foundation datum) datum:) (prefix (foundation string) string:)
           (prefix (foundation wire) wire:) (prefix (state actor) actor:)
-          (prefix (state collection) collection:) (prefix (state model) model:)
+          (prefix (state collection) collection:) (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state store) store:))
 
   (define (get row key default) (cond [(assq key row) => cdr] [else default]))
@@ -24,6 +24,7 @@
   (define watched-models (make-hashtable equal-hash equal?))
   (define inventory (make-eqv-hashtable)) ; worker-owned, metadata only
   (define orders (make-hashtable equal-hash equal?)) ; worker-owned, shared across filters
+  (define rings (make-eq-hashtable)) ; ordered live list -> vector and key indexes
   (define local-rows (make-hashtable equal-hash equal?)) ; semantic contribution snapshots
   (define (wake!) (with-mutex lock (set! changed? #t) (condition-signal ready)))
   (define (attachment actor)
@@ -106,10 +107,56 @@
     (let ([id (model:create! actor 'buffer-catalogue 1 'session persistence '()
                 (list (cons 'owner actor) (cons 'home home) '(epoch . 0)))]) (wake!) id))
 
+  (edoc "Create a catalogue query with its own internal editable filter. The query owns the supplied source and filter; views borrow them. Returns the query and filter reference."
+        (actor actor "owner/head") (source row-source "unshared persistent catalogue source")
+        (returns list "(query (buffer id))"))
+  (define (create-query! actor source)
+    (let ([r (model:snapshot source)])
+      (unless (and r (eq? (get r 'kind #f) 'buffer-catalogue) (eq? (get r 'persistence #f) 'persistent)
+                (equal? actor (get (get r 'value '()) 'owner #f)))
+        (error 'create-query! "expected this head's persistent catalogue source" source))
+      (let* ([filter (list 'buffer (store:create! actor "Buffet filter" '("")
+                                     (list '(internal . #t) (cons 'audience (list actor)))))]
+             [query (collection:create! actor source "" '() (get r 'persistence 'persistent) (list source filter))])
+        (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))
+        (list query filter))))
+
+  (edoc "The next or previous live catalogue key in a query's unfiltered sort order, wrapping at the ends. Uses the provider's cached index; archives never participate."
+        (actor actor "owner/head") (query row-source "catalogue query") (key datum "current row key")
+        (direction (one-of next previous) "ring direction") (returns any) (effects internal))
+  (define (neighbor actor query key direction)
+    (unless (memq direction '(next previous)) (error 'neighbor "invalid direction" direction))
+    (start!)
+    (let ([mutex (make-mutex)] [done (make-condition)] [answer #f] [complete? #f])
+      (with-mutex lock
+        (let ([ticket (gensym "neighbor")])
+          (hashtable-set! jobs ticket
+            (lambda ()
+              (let ([result
+                     (guard (ex [else (cons 'error ex)])
+                       (let* ([q (collection:summary query)] [v (and q (get q 'value '()))]
+                              [source (and v (model:snapshot (get v 'source #f)))])
+                         (unless (and source (eq? (get source 'kind #f) 'buffer-catalogue)
+                                   (equal? actor (get (get source 'value '()) 'owner #f)))
+                           (error 'neighbor "unavailable catalogue query" query))
+                         (let* ([rows (car (ordered source (get v 'sort '()) (lambda () #f)))]
+                                [ring (or (hashtable-ref rings rows #f)
+                                        (let ([keys (list->vector (map car rows))] [positions (make-hashtable equal-hash equal?)])
+                                          (vector-for-each (lambda (i k) (hashtable-set! positions k i)) (list->vector (iota (vector-length keys))) keys)
+                                          (let ([ring (cons keys positions)]) (hashtable-set! rings rows ring) ring)))]
+                                [at (hashtable-ref (cdr ring) key #f)] [n (vector-length (car ring))])
+                           (cons 'ready (and (> n 0) (vector-ref (car ring)
+                                                       (if at (mod (+ at (if (eq? direction 'next) 1 -1)) n) 0)))))))])
+                (with-mutex mutex (set! answer result) (set! complete? #t) (condition-signal done)))))
+          (set! job-order (append job-order (list ticket))) (condition-signal ready)))
+      (with-mutex mutex (let wait () (unless complete? (condition-wait done mutex) (wait))))
+      (if (eq? (car answer) 'error) (raise (cdr answer)) (cdr answer))))
+
   (define columns
     '((modified "Modified" integer) (flags "Flags" (list-of buffer-flag)) (name "Buffer" string)
       (lines "Lines" integer) (mode "Mode" string) (file "File" string)
-      (version "Version" integer) (archive "Archive" (one-of live backup trash)) (archived-at "Archived" integer)))
+      (version "Version" integer) (archive "Archive" (one-of live backup trash)) (archived-at "Archived" integer)
+      (expires-at "Expires" integer)))
   (define (document m)
     (let ([trashed (get m 'trashed #f)] [backup (get m 'backup #f)])
       (list (list 'buffer (get m 'id #f))
@@ -117,6 +164,7 @@
                   (cons 'lines (get m 'lines 0)) (cons 'archive (if trashed (if backup 'backup 'trash) 'live)))
           (if (and (get m 'modified #f) (get m 'modified-at #f)) (list (cons 'modified (get m 'modified-at #f))) '())
           (if trashed (list (cons 'archived-at (car trashed))) '())
+          (if (and trashed (not backup)) (list (cons 'expires-at (+ (car trashed) (* 86400 (store:trash-retention))))) '())
           (filter values (map (lambda (k) (let ([v (if (and (eq? k 'file) backup) (car backup) (get m k #f))])
                                             (and (string? v) (cons k v)))) '(mode file))))
         (cond [trashed '((roles ghost))] [(get m 'modified #f) '((roles italic))] [else '()]))))
@@ -134,7 +182,8 @@
                                                            (if (string? name) name (format "<widget ~a>" (cadar p)))))
                                          (cons 'version (descriptor:generation d)) '(flags) '(mode . "widget") '(archive . live)) '())))
                      (list (list 'local actor (cadr a) (car p))
-                       (cons '(archive . live) (map (lambda (f) (if (eq? (car f) 'modified-at) (cons 'modified (cdr f)) f)) (cdr p))) '()))) entries))))))
+                       (cons '(archive . live) (map (lambda (f) (if (eq? (car f) 'modified-at) (cons 'modified (cdr f)) f)) (cdr p)))
+                       (if (assq 'modified-at (cdr p)) '((roles italic)) '())))) entries))))))
   (define (cell r name) (assq name (cadr r)))
   (define (order-key r) (format "~s" (car r)))
   (define (ordered source sort cancelled?)
@@ -221,7 +270,7 @@
         (let* ([source-ids (sources)] [sources? (pair? source-ids)] [events (take-events)] [ids (and events (map car events))]
                [packet (and sources? (or initial? (not events) (pair? ids)) (if (or initial? (not events)) (store:metadata) (store:metadata ids)))]
                [updated? initial?] [actors '()])
-          (unless sources? (hashtable-clear! inventory) (hashtable-clear! orders) (hashtable-clear! local-rows))
+          (unless sources? (hashtable-clear! inventory) (hashtable-clear! orders) (hashtable-clear! rings) (hashtable-clear! local-rows))
           (when packet
             (when (or initial? (not events)) (hashtable-clear! inventory) (set! updated? #t))
             (for-each (lambda (p)
@@ -245,12 +294,13 @@
                               (set! actors (cons actor actors))
                               (if (null? rows) (hashtable-delete! local-rows actor) (hashtable-set! local-rows actor rows))))) owners)))
           (when (or updated? (pair? actors))
-            (hashtable-clear! orders) (touch-sources! updated? actors))
+            (hashtable-clear! orders) (hashtable-clear! rings) (touch-sources! updated? actors))
           (when job
-            (let ([cancelled? (caddr job)] [publish! (cadddr job)])
-              (unless (cancelled?)
-                (guard (ex [else (unless (cancelled?) (publish! #f (kernel:condition-text ex)))])
-                  (publish! (prepare (car job) (cadr job) cancelled?) #f)))))
+            (if (procedure? job) (job)
+              (let ([cancelled? (caddr job)] [publish! (cadddr job)])
+                (unless (cancelled?)
+                  (guard (ex [else (unless (cancelled?) (publish! #f (kernel:condition-text ex)))])
+                    (publish! (prepare (car job) (cadr job) cancelled?) #f))))))
           (loop (not sources?))))))
   (define provider
     (collection:register! 'buffer-catalogue 1

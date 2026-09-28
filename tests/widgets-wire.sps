@@ -83,6 +83,27 @@
                        (for-each head:forget-buffer! (filter (lambda (b) (equal? ',root (head:buffer-fact b 'widget-id #f))) (head:buffers)))
                        (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b) (list root-a root-b)))
 
+;; Buffet uses the same controls through the actual client/base split. Reopen
+;; from an empty result and immediately accept the previous document.
+(let* ([previous (head-read a '(head:buffer-store-id (head:current-buffer)))]
+       [origin (head-read a '(let ([b (head:new-buffer! "buffet wire origin")]) (head:show-buffer! b) (head:buffer-store-id b)))])
+  (head-send! a "\x18;b")
+  (head-wait 'buffet-wire-open a (lambda () (head-sees? a "Filter:")))
+  (let* ([app (head-read a '(cadr (assq 'app (view:children (interaction:snapshot (head:buffer-fact (head:current-buffer) 'widget-id #f))))))]
+         [table (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',app)))))]
+         [query (head-read a `(view:source (interaction:snapshot ',table)))])
+    (head-send! a "__buffet-absent__")
+    (head-wait 'buffet-wire-empty a (lambda () (head-sees? a "No matching buffers")))
+    (head-send! a "\x07;\x18;b\r")
+    (head-wait 'buffet-wire-immediate-previous a
+      (lambda () (equal? (head-read a '(head:buffer-store-id (head:current-buffer))) previous)))
+    (test:check 'buffet-client-reopen-clears-filter-and-keeps-previous
+      (head-read a `(let-values ([(lines revision) (store:snapshot
+                                                     (cadr (find (lambda (r) (eq? (car r) 'buffer))
+                                                             (cdr (assq 'owned (cdr (assq 'value (collection:summary ',query))))))))])
+                      lines)) '#("")))
+  (head-read a `(begin (store:delete! head:ui-actor ,origin) (head:sync-foreign-edits!) #t)))
+
 ;; Exercise the real head bridge and connection-owned cleanup without another
 ;; terminal process. The provider sees raw local metadata, never fitted text.
 (let* ([source (head-read a '(begin (kernel:load-modules! '("document")) (document:create-source! 'transient)))]

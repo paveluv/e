@@ -320,7 +320,8 @@
            [mods (filter values (map (lambda (p) (and (not (zero? (bitwise-and b (car p)))) (cdr p))) '((4 . shift) (8 . meta) (16 . control))))]
            [event (if wheel? (case (bitwise-and b 3) [(0) '(scroll 0 -3 cells)] [(1) '(scroll 0 3 cells)] [(2) '(scroll -3 0 cells)] [else '(scroll 3 0 cells)])
                     (list 'pointer (cond [(char=? c #\m) 'release] [motion? 'move] [else 'press]) button mods))]
-           [result (widget:pointer! event (- x 1) (- y 1))])
+           [result (parameterize ([head:app-event-focus (head:current-window)])
+                     (widget:pointer! event (- x 1) (- y 1)))])
       (and result
         (begin
           (when (cadr result)

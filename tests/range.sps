@@ -44,8 +44,9 @@
       (test:check 'range-overlapping-views-share-a-page-and-warm-reads-do-no-work
         (list before reads (list-ref (range:locate query g 30) 3)) '(64 64 30)))
     (table:register-presentation! 'range-fixture 1
-      (list (list 'name 1 'text
-              (lambda (value attributes)
+      (list (list 'name 1 'text '()
+              (lambda (cell cells attributes)
+                (define value (cadr cell))
                 ;; Quotes are presentation only; matches refer to raw text.
                 (cons (string-append "\"" value "\"")
                   (map (lambda (span) (list (+ 1 (cadr span)) (+ 1 (caddr span)) 'mark))

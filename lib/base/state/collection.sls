@@ -1,7 +1,7 @@
 ;; Provider-owned preparation, compact query recipes and bounded indexed reads.
 (import (only (foundation edoc) elibrary))
 (elibrary (state collection)
-  (export configure! create! create-source! fetch init! make-result range rank register! seek summary)
+  (export configure! create! create-source! fetch init! lookup make-result range rank register! seek summary)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core port) port:)
           (prefix (core row) row:) (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:) (prefix (foundation string) string:)
@@ -15,6 +15,7 @@
   (define ready (make-condition))
   (define worker? #f)
   (define serial 0)
+  (define owned (make-hashtable equal-hash equal?))
   (define contract-generation 0)
   (define (field r k) (cdr (assq k r)))
   (define (get r k default) (cond [(assq k r) => cdr] [else default]))
@@ -28,7 +29,10 @@
   (define result-fields '(complete default details sortable))
   (define (recipe? v)
     (and (list? v) (for-all pair? v)
-      (or (equal? (map car v) recipe-fields) (equal? (map car v) (append recipe-fields result-fields)))
+      (or (equal? (map car v) recipe-fields) (equal? (map car v) (append recipe-fields result-fields))
+        (and (equal? (map car v) (append recipe-fields result-fields '(owned)))
+          (list? (get v 'owned '())) (for-all (lambda (ref) (or (row:source? ref)
+                                                              (and (list? ref) (= (length ref) 2) (eq? (car ref) 'buffer) (natural? (cadr ref))))) (get v 'owned '()))))
       (row:source? (field v 'source)) (string? (field v 'filter)) (list? (field v 'sort))
       (memq (field v 'status) '(pending ready unavailable))
       (natural? (field v 'generation)) (natural? (field v 'count)) (list? (field v 'columns))))
@@ -159,10 +163,19 @@
   (define (schedule! id)
     (let ([r (query-record id)])
       (if (not r)
-        (with-mutex lock
-          (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id))
+        (let* ([deleted? (not (model:snapshot id))]
+               [resources (with-mutex lock
+                            (let ([refs (hashtable-ref owned id '())])
+                              (when deleted? (hashtable-delete! owned id))
+                              (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id) refs))])
+          (when deleted?
+            (for-each (lambda (ref)
+                        (if (eq? (car ref) 'buffer)
+                          (when (store:exists? (cadr ref)) (store:delete! '(base collection) (cadr ref)))
+                          (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)))
         (let* ([key (input-key r)]
                [job (with-mutex lock
+                      (hashtable-set! owned id (get (field r 'value) 'owned '()))
                       (let ([old (hashtable-ref desired id #f)])
                         (and (or (not old) (not (equal? key (job-key old))))
                           (begin (set! serial (+ serial 1))
@@ -180,7 +193,7 @@
                 (condition-signal ready))))))))
   (define (rescan!)
     (for-each schedule! (model:ids 'collection))
-    (let ([ids (with-mutex lock (vector->list (hashtable-keys desired)))])
+    (let ([ids (with-mutex lock (vector->list (hashtable-keys owned)))])
       (for-each (lambda (id) (unless (query-record id) (schedule! id))) ids))
     (prune-envelopes!))
   (define (prune-envelopes!)
@@ -191,6 +204,9 @@
   (define (invalidate! ids)
     (if (not ids) (rescan!)
       (let ([jobs (with-mutex lock (vector->list (hashtable-values desired)))])
+        (for-each (lambda (id)
+                    (when (with-mutex lock (and (hashtable-contains? owned id) (not (hashtable-contains? desired id))))
+                      (schedule! id))) ids)
         (for-each
           (lambda (job)
             (let* ([key (job-key job)] [id (job-id job)]
@@ -216,12 +232,17 @@
 
   (edoc "Create a query whose provider owns filtering and ordering; result work runs at the base."
         (actor actor "creator") (source row-source "source model") (filter string "provider filter")
-        (sort list "compound keys") (persistence (one-of transient persistent) "restart policy") (returns list))
-  (define (create! actor source filter sort persistence)
-    (let ([id (model:create! actor 'collection 1 'session persistence (list source)
-                (map cons (append recipe-fields result-fields)
-                  (list source filter sort 'pending 0 0 '() #f #f #f '() '() '())))])
-      (schedule! id) id))
+        (sort list "compound keys") (persistence (one-of transient persistent) "restart policy")
+        (resources (list-of list) "optional owned resource references, retired with a persistent query") (returns list))
+  (define (create! actor source filter sort persistence . resources)
+    (unless (<= (length resources) 1) (error 'create! "expected optional owned resources"))
+    (let ([refs (if (null? resources) '() (car resources))])
+      (unless (and (list? refs) (or (null? refs) (eq? persistence 'persistent)))
+        (error 'create! "owned resources require a persistent query" refs))
+      (let ([id (model:create! actor 'collection 1 'session persistence (cons source (remove source refs))
+                  (map cons (append recipe-fields result-fields '(owned))
+                    (list source filter sort 'pending 0 0 '() #f #f #f '() '() '() refs)))])
+        (schedule! id) id)))
 
   (edoc "Change a query recipe against its revision. A connected filter is edited through its producer."
         (actor actor "caller") (id row-source "query") (revision integer "expected revision") (changes list "filter/sort fields"))
@@ -389,6 +410,16 @@
         (id row-source "query") (generation integer "result generation") (key datum "row key") (returns list) (effects internal))
   (define (rank id generation key)
     (let ([p (prepared id generation)]) (if p (ordinal-reply p ((result-locate (publication-result p)) key)) '(stale))))
+
+  (edoc "Read one stable key at an explicit generation, without separate rank and range requests. An absent key returns a ready range with no rows; changed preparation returns stale."
+        (id row-source "query") (generation integer "result generation") (key datum "stable row key")
+        (columns list "requested columns") (returns list) (effects internal))
+  (define (lookup id generation key columns)
+    (let ([p (prepared id generation)])
+      (if (not p) '(stale)
+        (let ([ordinal ((result-locate (publication-result p)) key)])
+          (ordinal-reply p ordinal)
+          (range id generation (or ordinal 0) (if ordinal 1 0) columns)))))
 
   (edoc "Navigate a prepared selectable index from an inclusive ordinal origin, clamping at its ends. Zero offset finds the first eligible row in the direction."
         (id row-source "query") (generation integer "result generation") (ordinal integer "display origin")

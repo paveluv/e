@@ -1,11 +1,11 @@
 ;; Temporary host bridge for shared documents and legacy local buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head document)
-  (export create-source! reference resolve!)
+  (export create-source! reference resolve! retire!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:)
           (prefix (foundation datum) datum:) (prefix (foundation wire) wire:)
           (prefix (head head) head:) (prefix (service file) file:)
-          (prefix (service log) log:) (prefix (state catalogue) catalogue:))
+          (prefix (service log) log:) (prefix (state catalogue) catalogue:) (prefix (state view) view:))
 
   (define token #f)
   (define serial 0)
@@ -96,5 +96,15 @@
            (and (= (length ref) 4) (eq? (car ref) 'local) (equal? (cadr ref) head:ui-actor) (equal? (caddr ref) token)))
          (find (lambda (b) (equal? ref (reference b))) (head:buffers))]
         [else #f])))
+
+  (edoc "Retire an attachment-local document only if its displayed metadata version still matches. Shared text must use store:archive!; every affected window follows ordinary buffer retirement."
+        (ref datum "local or widget reference") (version integer "shown metadata version") (returns boolean))
+  (define (retire! ref version)
+    (let* ([b (resolve! ref)]
+           [current (and b (not (head:buffer-store-id b))
+                      (if (row:source? ref)
+                        (let ([d (view:snapshot ref)]) (and d (view:generation d)))
+                        (let ([e (hashtable-ref entries b #f)]) (and e (cadr e)))))])
+      (and current (equal? current version) (begin (head:forget-buffer! b) #t))))
 
   (define local-hook (head:add-local-buffer-hook! changed!)))

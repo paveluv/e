@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next! focused
           frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          init! input! invalidate! invoke! key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -22,6 +22,15 @@
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
   (define-record-type mount (fields id slot (mutable subscription) (mutable ids)))
+
+  (edoc "The opaque host slot supplied when this tree was mounted."
+        (id list "mounted view or descendant") (returns any) (effects internal))
+  (define (host id) (mount-slot (node-root (mounted id))))
+
+  (define retain-focus? (make-parameter #f))
+
+  (edoc "Keep the outer host's focus after this pointer action; embedded actions can open into another host without focusing their panel.")
+  (define (keep-host-focus!) (retain-focus? #t))
   (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
@@ -756,6 +765,7 @@
        '(#f #f)]
       [else (route-pointer! event x y)]))
   (define (route-pointer! event x y)
+    (retain-focus? #f)
     (let* ([captured (and pointer-capture (live-frame? pointer-capture) (not (eq? (car event) 'scroll)))]
            [placement (if captured
                         (find (lambda (p) (find-frame (car p) (frame-id pointer-capture))) presentations)
@@ -791,7 +801,7 @@
                               (loop (cdr ids))))))))))))
           (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'release) (eq? (caddr event) capture-button))
             (set! pointer-capture #f) (set! capture-button #f))
-          (list (frame-id root) (and f (eq? (car event) 'pointer) (eq? (cadr event) 'press)
+          (list (frame-id root) (and (not (retain-focus?)) f (eq? (car event) 'pointer) (eq? (cadr event) 'press)
                                      (field (frame-definition f) 'focus #f)))))))
 
   ;; The minimal text widget deliberately consumes arbitrary model values.

@@ -138,12 +138,17 @@
       [(connection-bindings) (arity 1) (connection:bindings (car args))]
       [(collection-source) (control!) (arity 3) (apply collection:create-source! actor args)]
       [(catalogue-source) (control!) (head!) (arity 2) (apply catalogue:create-source! actor args)]
+      [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
+      [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
       [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
-      [(collection-create) (control!) (arity 4) (apply collection:create! actor args)]
+      [(collection-create) (control!)
+       (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
+       (apply collection:create! actor args)]
       [(collection-configure) (control!) (arity 3) (call-with-values (lambda () (apply collection:configure! actor args)) list)]
       [(collection-summary) (arity 1) (collection:summary (car args))]
       [(collection-range) (arity 5) (apply collection:range args)]
       [(collection-rank) (arity 3) (apply collection:rank args)]
+      [(collection-lookup) (arity 4) (apply collection:lookup args)]
       [(collection-seek) (arity 5) (apply collection:seek args)]
       [(collection-fetch) (arity 1) (collection:fetch (car args))]
       [(model-ids) (apply model:ids args)]

@@ -50,10 +50,13 @@ validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
 
 `table:register-presentation!` registers a head-local name, schema version
-and column rules `(column minimum alignment formatter)`. Alignment is `text`,
+and column rules `(column minimum alignment dependencies formatter)`. Alignment is `text`,
 `tail` or `right`. Select it with a table option such as
-`(presentation file-labels 1)`. The pure formatter receives the raw cell value
-and row attributes. It returns `(text (start end roles) ...)`, where spans
+`(presentation file-labels 1)`. Dependencies list additional raw columns needed
+to present this cell; only the selected columns and their dependencies are
+requested. The formatter receives the cell state (`(ready value)`, `(absent)`,
+`(pending)` or `(unavailable reason)`), the requested row cells and row attributes.
+It returns `(text (start end roles) ...)`, where spans
 use character offsets in that formatted text. Map raw match spans through
 escaping or abbreviation in this function. Table fitting handles grapheme
 clipping and padding, keeping matches off ellipses and neighboring columns.
@@ -61,11 +64,35 @@ Rules format only visible cells, and registration replacement invalidates
 local presentation without changing the query. A missing named presentation
 produces an explicit unavailable view.
 
+An explicit `table:select!` synchronizes the compact query before choosing a
+key. Immediate normal activation can resolve that exact key with one bounded
+`collection:lookup` while its page is still arriving. Pending movement,
+destructive commands and still-preparing queries refuse; nothing is retried
+or queued for later execution. `lookup` also lets domain actions validate a
+row and its result basis without separate rank and range requests.
+
+`table:emphasize!` supplies a host's current document key without changing
+selection or sending interaction updates. `table:activate!` accepts an optional
+command name (default `activate`), allowing domain actions such as trash and
+delete to share the same hover, selection and pending-state validation.
+
 Without a rule, string cells retain their raw text and match spans, and other
 values print as Scheme data. Logical depth indents the identity cell in the
 TUI. Creation rows show italic names and an italic `[create]` suffix;
 pending cells show `[Pending]`. Semantic row roles compose with the normal
 choice/hover styles. Providers supply facts, never terminal widths or ANSI.
+
+`window:tool!` retains a named composition for this head. Its builder receives
+explicit `open` and `return` command bindings and returns an unmounted app
+view. Show the returned host with `window:show-widget!`; simultaneous placements
+fork views over shared sources. The host owns origin, MRU and inactive-panel
+click routing. An optional app `current` binding receives the focused document
+key (or false while the tool has focus), for local emphasis.
+
+Embedded compositions supply their own command bindings. They do not use an
+implicit current window. `widget:host` returns the opaque mounting slot;
+`widget:keep-host-focus!` lets a pointer action retain the outer host's focus
+when it opens a document elsewhere.
 
 ## Buffer catalogue
 
@@ -78,6 +105,16 @@ sections. The sortable columns are `modified`, `flags`, `name`, `lines`,
 `mode` and `file`. Timestamps are raw nanoseconds, flags are `buffer-flag`
 enumerations, and paths keep their absolute identity. Format them in the head.
 Generated apps and widgets have no Lines value.
+
+For an editable shared filter, use a persistent source and
+`(catalogue:create-query! actor source)`, which returns `(query filter-reference)`.
+The query owns the source and internal filter buffer; views borrow both.
+Retiring the query releases those resources, while unmounting a view leaves
+other borrowers intact. More generally, the optional final argument to
+`collection:create!` declares owned resource references. Ownership requires a
+persistent query so restart cannot leave saved resources without their owner.
+`catalogue:neighbor` uses the same cached, unfiltered live ordering for buffer
+switching, without fetching archive rows or maintaining a head-side comparator.
 
 Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
 for widget hosts, and `(local actor attachment token)` for remaining local
