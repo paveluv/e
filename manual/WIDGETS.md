@@ -1,9 +1,9 @@
 # Widgets and views
 
-The first widget adapter mounts a base-owned view in an ordinary editor
+The widget adapter mounts a base-owned view tree in an ordinary editor
 window. Models hold data; views hold independent interaction state; the head
 owns rendering and geometry. Multiple views can share one model and its
-head mirror. Recursive layout and input routing will build on this boundary;
+head mirror. Layout and input routing follow the same recursive tree;
 existing apps continue to work.
 
 For a small experiment, register a derived text kind in `base-config.e`:
@@ -42,7 +42,7 @@ The built-in `text` renderer accepts any model: strings become lines and other
 values are printed as Scheme data. Its schema-2 interaction state is the
 selected row number. `move`, `select` and `choose` are its public actions.
 The scroll container owns the viewport; the text leaf has no second offset. Actions
-receive the current mirrored model and provisional descriptor, so activation
+read the current mirrored model and provisional descriptor, so activation
 does not depend on an older acknowledged selection. An authored domain must
 validate the actual target and revision before committing an effect.
 
@@ -52,13 +52,13 @@ validate the actual target and revision before committing an effect.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
 and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
-`layout`, `anchor`, `locate` and `event` fields accept procedures.
+`layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
 
 `prepare` derives an index once per source/definition change; its result is
 borrowed immutable input to measurement and rendering. Without it, that input
 is the source envelope. A renderer receives
-`(data interaction-state width height visible-range)`; the range is
+`(data descriptor width height visible-range)`; the range is
 `(first-row . row-count)`. It returns only those text lines. The host clips
 rows and cell widths without splitting grapheme clusters. These callbacks
 must be bounded and free of remote requests or domain mutations.
@@ -70,13 +70,67 @@ returns `(minimum preferred)`. `layout` receives
 have zero extent. `anchor` maps `(data position width)` to a logical anchor;
 `locate` maps `(data anchor width)` back to a backend position.
 
-An action receives `(view-id model-envelope provisional-descriptor . args)`.
+An action receives `(view-id . args)`. Register the public operation itself;
+it obtains two values, source envelope and provisional descriptor, from
+`(widget:context view-id)`. This is a local read. During an action the source
+basis is pinned; pointer actions use the source that was actually displayed.
 An optional `event` callback receives `(view-id source descriptor event)`
 and returns whether it handled the event. Events are normalized key, text,
 pointer, focus/blur or cancel data. Keyboard and mouse handlers call the same
 public actions used by programmatic hosts. No separate command API
 is needed. Renderer definitions are module-owned; runtime mounts belong to
 the head and survive definition reloads.
+
+`decorate` receives the same arguments as `render` and returns
+`((rectangle face-symbol) ...)` in local backend coordinates. `caret` receives
+`(data descriptor width height)` and returns a local `(x . y)` or `#f`.
+The host clips and composes both with the text. Only the active root's focused
+descendant supplies the displayed caret. These are head presentation callbacks;
+cell coordinates never enter a base model or view state.
+
+## Editable children
+
+An `entry` view (schema 1) references an existing `(buffer n)` text source.
+Its state is `(caret anchor)`, each a `(row . character-index)` source position;
+the descriptor's basis identifies their revision. For an initial empty
+selection use `'((0 . 0) (0 . 0))`. Multiple entries share text and undo history
+while keeping independent selection. `entry:insert!`, `delete!`, `move!`,
+`select!`, `undo!` and `redo!` all take an explicit view ID. They are also the
+registered actions, reached by normal keys, committed paste and click/drag.
+Undo follows `edit:undo-scope`, or an explicit scope supplied to `entry:undo!`.
+
+The field accepts one line. Multiline paste is refused whole; an external
+multiline edit displays an explanatory ghost without changing the source or
+its read-only flag. Undo is still available. Selections retain their actual
+edit basis: a concurrent disjoint edit rebases, and overlap refuses rather
+than overwriting unseen text. No operation switches the current editor buffer.
+
+This example runs in a head without any base configuration. It builds a row
+inside a column, inside an overlay and a scroll viewport. Make the host narrow
+or short to exercise clipping; click either entry to edit their common source.
+
+```scheme
+(define who (actor:current))
+(define source (list 'buffer (store:create! who "widget example" '("edit me"))))
+(define left (view:create! who source 'entry 1 '() '((0 . 0) (0 . 0))))
+(define right (view:create! who source 'entry 1 '() '((0 . 0) (0 . 0))))
+(define row (view:create! who #f 'row 1 '((spacing . normal)) '()))
+(define column (view:create! who #f 'column 1 '() '()))
+(define overlay (view:create! who #f 'overlay 1 '() '()))
+(define scroll (view:create! who #f 'scroll 1 '() #f))
+(view:arrange! who
+  (list (list row 0 (list (list 'left left '(grow 1))
+                        (list 'right right '(grow 1))) '((spacing . normal)))
+        (list column 0 (list (list 'fields row 'fit)) '())
+        (list overlay 0 (list (list 'content column '(grow 1))) '())
+        (list scroll 0 (list (list 'content overlay '(grow 1))) '()))
+  '())
+(window:show-widget! (head:current-window) scroll)
+```
+
+The caller creates the source. Mounting, splitting or closing views never
+creates, copies or deletes that authored text. A GUI head can present the same
+logical source and selection with its own metrics and input adapter.
 
 `widget:mount!` takes a root ID and an opaque host slot, claims the entire
 tree and returns a head-local runtime handle. Repeating that attachment is

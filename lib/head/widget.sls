@@ -1,7 +1,9 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! event-frame focus! frame-children frame-clip frame-descriptor frame-id frame-lines frame-rect frame-source init! input! invalidate! key-scopes! mount! pointer! prepare! prepared present! register! reveal! shown target unmount!)
+  (export act! actions arrange! cancel! capture! caret context event-frame focus!
+          frame-children frame-clip frame-descriptor frame-id frame-lines frame-rect frame-source frame-styles
+          init! input! invalidate! key-scopes! mount! pointer! prepare! prepared present! register! reveal! shown target unmount!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
@@ -19,13 +21,14 @@
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
   (define-record-type mount (fields id slot (mutable subscription) (mutable ids)))
-  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key)))
+  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable styles) (mutable caret)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
         (id list "view id") (descriptor any "interaction basis") (definition any "definition identity")
         (source any "source basis") (rect list "absolute allocation within the root") (clip list "visible intersection")
-        (children list "back-to-front child frames") (lines list "clipped backend output"))
-  (define-record-type frame (fields id descriptor definition source rect clip children lines))
+        (children list "back-to-front child frames") (lines list "clipped backend output")
+        (cells vector "backend style cells") (caret any "root-relative caret point or #f"))
+  (define-record-type frame (fields id descriptor definition source rect clip children lines cells caret))
   (define preparations (make-hashtable equal-hash equal?))
   (define presentations '())
   (define (definition d)
@@ -59,7 +62,7 @@
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
-                        [(prepare render measure layout event anchor locate) (procedure? (cdr p))]
+                        [(prepare render measure layout event anchor locate decorate caret) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -91,6 +94,18 @@
       (let-values ([(available? source) (source! n d)])
         (if available? (map car (field entry 'actions '())) '()))))
 
+  (define invocation (make-parameter #f))
+
+  (edoc "Read a mounted view's borrowed source snapshot and provisional descriptor as two values, without remote reads. During an action this retains its exact invocation basis."
+        (id list "view") (effects internal))
+  (define (context id)
+    (let ([current (invocation)])
+      (if (and current (equal? id (car current))) (values (cadr current) (caddr current))
+        (let* ([n (mounted id)] [d (interaction:snapshot id)] [f (event-frame)])
+          (let-values ([(available? source) (source! n d)])
+            (unless available? (error 'context "widget source is unavailable" id))
+            (values (if (and f (equal? id (frame-id f))) (frame-source f) source) d))))))
+
   (edoc "Invoke a named action with an explicit view, coherent source and provisional interaction."
         (id list "view id") (action symbol "action") (arguments (list-of any) "action arguments") (returns any))
   (define (act! id action . arguments)
@@ -98,7 +113,9 @@
            [proc (assq action (field entry 'actions '()))])
       (let-values ([(available? source) (source! n d)])
         (unless (and available? proc) (error 'act! "widget action is unavailable" id action))
-        (call-with-values (lambda () (apply (cdr proc) id (let ([f (event-frame)]) (if (and f (equal? id (frame-id f))) (frame-source f) source)) d arguments))
+        (call-with-values (lambda ()
+                            (parameterize ([invocation (list id (let ([f (event-frame)]) (if (and f (equal? id (frame-id f))) (frame-source f) source)) d)])
+                              (apply (cdr proc) id arguments)))
           (lambda result (head:wake-main!) (apply values result))))))
 
   (define (subscribe! mount tree)
@@ -122,7 +139,7 @@
           (let* ([id (car row)] [old (hashtable-ref nodes id #f)])
             (if (and old (eq? (node-root old) mount))
               (begin (node-mirrored-set! old #f) (node-key-set! old #f))
-              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f))))) tree)
+              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f))))) tree)
       (mount-ids-set! mount ids)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
@@ -266,15 +283,7 @@
   (define (allocation id)
     (or (exists (lambda (p) (find-frame (car p) id)) presentations)
       (find-frame (prepared (mount-id (node-root (mounted id)))) id)))
-  (define (scroll-action! id source d delta)
-    (let* ([frame (allocation id)] [child (and (= 1 (length (view:children d))) (cadar (view:children d)))])
-      (unless (and frame child (integer? delta) (exact? delta)) (error 'scroll "expected an allocated viewport and integer delta"))
-      (let* ([width (caddr (frame-rect frame))] [height (cadddr (frame-rect frame))]
-             [limit (max 0 (- (cadr (measure! child 'y width)) height))]
-             [old (min limit (max 0 (locate! child (view:state d) width)))]
-             [next (min limit (max 0 (+ old delta)))])
-        (interaction:set-state! head:ui-actor id #f (anchor! child next width))
-        (- delta (- next old)))))
+  (define (scroll-action! id delta) (let-values ([(source d) (context id)]) (let* ([frame (allocation id)] [child (and (= 1 (length (view:children d))) (cadar (view:children d)))]) (unless (and frame child (integer? delta) (exact? delta)) (error (quote scroll) "expected an allocated viewport and integer delta")) (let* ([width (caddr (frame-rect frame))] [height (cadddr (frame-rect frame))] [limit (max 0 (- (cadr (measure! child (quote y) width)) height))] [old (min limit (max 0 (locate! child (view:state d) width)))] [next (min limit (max 0 (+ old delta)))]) (interaction:set-state! head:ui-actor id #f (anchor! child next width)) (- delta (- next old))))))
 
   (define (rectangle? r)
     (and (list? r) (= (length r) 4) (for-all (lambda (n) (and (integer? n) (exact? n))) r)
@@ -293,24 +302,64 @@
                       (glyph:slice old (+ x (caddr area)) (- width x (caddr area)))))))
               (frame-lines child) (iota (length (frame-lines child)))))) children)
       (vector->list canvas)))
+  (define (style-cells clip rect decorations)
+    (let ([rows (list->vector (map (lambda (i) (make-vector (caddr clip) #f)) (iota (cadddr clip))))])
+      (for-each (lambda (p)
+                  (unless (and (list? p) (= (length p) 2) (rectangle? (car p)) (symbol? (cadr p))) (error 'prepare! "invalid decoration" p))
+                  (let ([r (layout:intersect clip (layout:translate (car p) (car rect) (cadr rect)))])
+                    (do ([y (cadr r) (+ y 1)]) ((= y (+ (cadr r) (cadddr r))))
+                      (do ([x (car r) (+ x 1)]) ((= x (+ (car r) (caddr r))))
+                        (vector-set! (vector-ref rows (- y (cadr clip))) (- x (car clip)) (cadr p)))))) decorations)
+      rows))
+  (define (composite-styles clip cells children)
+    (let ([rows (vector-map vector-copy cells)])
+      (for-each (lambda (child)
+                  (let* ([c (frame-clip child)] [x (- (car c) (car clip))] [y (- (cadr c) (cadr clip))])
+                    (do ([row 0 (+ row 1)]) ((= row (length (frame-lines child))))
+                      (let ([from (and (< row (vector-length (frame-cells child))) (vector-ref (frame-cells child) row))]
+                            [to (vector-ref rows (+ row y))])
+                        (do ([col 0 (+ col 1)]) ((= col (caddr c)))
+                          (vector-set! to (+ col x) (and from (vector-ref from col)))))))) children)
+      rows))
+
+  (edoc "Read a prepared row's styles as source-character styles for the TUI window adapter."
+        (frame any "widget frame") (row integer "row index") (returns any))
+  (define (frame-styles frame row)
+    (and (< row (length (frame-lines frame))) (< row (vector-length (frame-cells frame)))
+      (let* ([line (list-ref (frame-lines frame) row)] [cells (vector-ref (frame-cells frame) row)]
+             [styles (make-vector (string-length line) #f)])
+        (let loop ([parts (glyph:clusters line)] [char 0] [cell 0])
+          (unless (null? parts)
+            (do ([i char (+ i 1)]) ((= i (+ char (caar parts))))
+              (vector-set! styles i (and (< cell (vector-length cells)) (vector-ref cells cell))))
+            (loop (cdr parts) (+ char (caar parts)) (+ cell (cdar parts)))))
+        styles)))
+
+  (edoc "The focused view's caret within this frame, in root backend coordinates, or #f when clipped or unavailable."
+        (frame any "root frame") (returns any))
+  (define (caret frame)
+    (let* ([d (frame-descriptor frame)] [f (and d (view:focus d) (find-frame frame (view:focus d)))]
+           [p (and f (frame-caret f))])
+      (and p (layout:contains? (frame-clip f) (car p) (cdr p)) p)))
+
   (define (build-frame! id rect parent-clip)
     (let* ([n (mounted id)] [d (interaction:snapshot id)] [entry (definition d)] [clip (layout:intersect rect parent-clip)])
       (let-values ([(available? source) (source! n d)])
         (define (placeholder text)
           (make-frame id d #f source rect clip '()
-            (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip))))))
+            (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip)))) (make-vector 0) #f))
         (guard (ex [else
                     (let ([basis (list entry source)])
                       (unless (equal? basis (hashtable-ref failures id #f))
                         (hashtable-set! failures id basis) (echo:set-text! (kernel:condition-text ex))))
                     (placeholder (format "[Widget failed ~s]" id))])
           (cond
-            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source rect clip '() '())]
+            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source rect clip '() '() (make-vector 0) #f)]
             [(not (and entry available?)) (placeholder (format "[Unavailable widget ~s]" id))]
             [else
              (let* ([data (projection! n entry source)] [width (caddr rect)] [height (cadddr rect)]
                     [range (cons (- (cadr clip) (cadr rect)) (cadddr clip))]
-                    [key (list entry source (view:state d) width height range (- (car clip) (car rect)) (caddr clip))]
+                    [key (list entry source d width height range (- (car clip) (car rect)) (caddr clip))]
                     [render (field entry 'render #f)] [layout (field entry 'layout #f)]
                     [placements (if layout (layout d width height measure! locate!) '())])
                (unless (and (list? placements)
@@ -320,15 +369,20 @@
                                                 (not (member (car p) seen)) (rectangle? (cadr p)) (check (cdr rest) (cons (car p) seen)))))))
                  (error 'prepare! "invalid child placements" id placements))
                (unless (equal? key (node-key n))
-                 (let ([lines (if render (render data (view:state d) width height range) '())])
+                 (let ([lines (if render (render data d width height range) '())])
                    (unless (and (list? lines) (for-all string? lines)) (error 'prepare! "expected display lines"))
                    (node-lines-set! n
                      (map (lambda (line) (glyph:slice line (- (car clip) (car rect)) (caddr clip)))
                        (list-head lines (min (cdr range) (length lines)))))
+                   (node-styles-set! n (style-cells clip rect
+                                         ((field entry 'decorate (lambda args '())) data d width height range)))
+                   (node-caret-set! n ((field entry 'caret (lambda args #f)) data d width height))
                    (node-key-set! n key)))
                (let ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)])
                  (make-frame id d entry source rect clip children
-                   (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children)))))])))))
+                   (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))
+                   (composite-styles clip (node-styles n) children)
+                   (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p))))))))])))))
 
   (edoc "Prepare a recursive frame for a root allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live."
         (id list "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
@@ -336,7 +390,13 @@
     (let ([rect (list 0 0 width height)])
       (unless (rectangle? rect) (error 'prepare! "invalid allocation" rect))
       (parameterize ([measurement-cache (make-hashtable equal-hash equal?)])
-        (let ([frame (build-frame! id rect rect)]) (hashtable-set! preparations id frame) frame))))
+        (let* ([frame (build-frame! id rect rect)] [d (interaction:snapshot id)] [before (and d (view:focus d))])
+          (hashtable-set! preparations id frame)
+          (ensure-focus! id)
+          (let ([d (interaction:snapshot id)])
+            (unless (equal? before (and d (view:focus d)))
+              (set! frame (build-frame! id rect rect)) (hashtable-set! preparations id frame)))
+          frame))))
 
   (edoc "Read the latest prepared frame, which may not have been displayed."
         (id list "root view") (returns any))
@@ -523,19 +583,14 @@
     (cdr (projection! (mounted id) (definition descriptor) source)))
   (define (text-state state count)
     (if (and (integer? state) (exact? state)) (max 0 (min (- count 1) state)) 0))
-  (define (text-render data state width height range)
+  (define (text-render data descriptor width height range)
+    (define state (view:state descriptor))
     (let* ([data (cdr data)] [count (vector-length data)] [selected (text-state state count)] [top (min count (car range))])
       (map (lambda (i) (let ([row (+ top i)])
                          (string-append (if (= row selected) "> " "  ") (vector-ref data row)))) (iota (min (cdr range) (- count top))))))
-  (define (text-move! id source d offset)
-    (let* ([data (text-source! id source d)] [count (vector-length data)] [row (text-state (+ (text-state (view:state d) count) offset) count)])
-      (interaction:set-state! head:ui-actor id (cdr (assq 'revision source)) row)
-      (reveal! id (list (cdr (assq 'revision source)) row))))
-  (define (text-select! id source d row)
-    (interaction:set-state! head:ui-actor id (cdr (assq 'revision source)) (text-state row (vector-length (text-source! id source d)))))
-  (define (text-choose! id source d)
-    (let* ([data (text-source! id source d)] [row (text-state (view:state d) (vector-length data))] [text (vector-ref data row)])
-      (echo:set-text! text) (list (view:source d) (cdr (assq 'revision source)) row text)))
+  (define (text-move! id offset) (let-values ([(source d) (context id)]) (let* ([data (text-source! id source d)] [count (vector-length data)] [row (text-state (+ (text-state (view:state d) count) offset) count)]) (interaction:set-state! head:ui-actor id (cdr (assq (quote revision) source)) row) (reveal! id (list (cdr (assq (quote revision) source)) row)))))
+  (define (text-select! id row) (let-values ([(source d) (context id)]) (interaction:set-state! head:ui-actor id (cdr (assq (quote revision) source)) (text-state row (vector-length (text-source! id source d))))))
+  (define (text-choose! id) (let-values ([(source d) (context id)]) (let* ([data (text-source! id source d)] [row (text-state (view:state d) (vector-length data))] [text (vector-ref data row)]) (echo:set-text! text) (list (view:source d) (cdr (assq (quote revision) source)) row text))))
   (define (text-event! id source d event)
     (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
       (begin (act! id 'select (list-ref event 5)) #t)))

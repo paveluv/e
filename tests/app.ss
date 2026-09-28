@@ -18,6 +18,7 @@
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
+             (prefix (head entry) entry:) (prefix (foundation text) text:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -561,7 +562,7 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (interaction:init!) (widget:init!) (window:init!)
+     (interaction:init!) (widget:init!) (window:init!) (entry:init!)
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
@@ -573,7 +574,7 @@
             [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model state width height range) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id model descriptor) (values (cdr (assq (quote revision) model)) (view:state descriptor))))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)
@@ -655,7 +656,7 @@
             [row (view:create! head:ui-actor #f 'route-row 1 '() '())]
             [root (view:create! head:ui-actor #f 'overlay 1 '() '())]
             [barrier (view:create! head:ui-actor #f 'overlay 1 '((modal . #t)) '())])
-       (define (record! id source d tag) (set! events (cons (list tag id) events)))
+       (define (record! id tag) (set! events (cons (list tag id) events)))
        (define (install-leaf! full?)
          (parameterize ([kernel:registering-module owner])
            (widget:register! 'route-leaf 1
@@ -663,8 +664,8 @@
                (cons 'actions (list (cons 'record record!)))
                (cons 'event (lambda (id source d event)
                               (case (car event)
-                                [(text) (record! id source d (cadr event)) #t]
-                                [(pointer) (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id source d (cadr event)) #t]
+                                [(text) (record! id (cadr event)) #t]
+                                [(pointer) (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id (cadr event)) #t]
                                 [else #f])))))))
        (define (show!) (widget:present! (list (list (widget:prepare! root 10 2) 0 0))))
        (define (key! key) (dispatch:input! root (list 'key key (and (= 1 (string-length key)) key))))
@@ -712,6 +713,63 @@
        (check 'empty-modal-has-no-key-or-pointer-click-through (take) '())
        (widget:unmount! root) (kernel:retract-module! owner)
        (widget:invalidate!))
+
+     ;; Entries share authored text and its journal, but never cursor state.
+     (let* ([source (store:create! head:ui-actor "widget entry" '("a界éz"))]
+            [a (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [b (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [ambient (head:current-buffer)])
+       (define (line) (let-values ([(text rev) (store:snapshot source)]) (vector-ref text 0)))
+       (define (show!) (widget:present! (list (list (widget:prepare! root 20 1) 0 0))))
+       (define (foreign! start end replacement)
+         (let-values ([(text rev) (store:snapshot source)])
+           (store:edit! '(agent "entry-test") source rev (text:make-span 0 start 0 end) replacement))
+         (head:sync-foreign-edits! (list source)))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+       (widget:mount! root 'entry-test) (show!)
+       (entry:move! a 'right) (entry:move! a 'right) (entry:move! a 'right)
+       (check 'entry-moves-by-graphemes-and-keeps-independent-selection
+         (list (view:state (interaction:snapshot a)) (view:state (interaction:snapshot b)))
+         '(((0 . 4) (0 . 4)) ((0 . 0) (0 . 0))))
+       (entry:move! a 'left #t) (show!)
+       (check 'entry-caret-and-selection-share-cell-geometry
+         (list (widget:caret (widget:prepared root)) (vector-ref (widget:frame-styles (widget:prepared root) 0) 2))
+         '((3 . 0) selection))
+       (widget:focus! root b) (show!)
+       (check 'entry-caret-translates-into-the-second-child (widget:caret (widget:prepared root)) '(10 . 0))
+       (widget:pointer! '(pointer press primary ()) 11 0)
+       (widget:pointer! '(pointer move primary ()) 14 0)
+       (widget:pointer! '(pointer release primary ()) 14 0)
+       (check 'entry-drag-selects-whole-wide-and-combining-graphemes
+         (view:state (interaction:snapshot b)) '((0 . 4) (0 . 1)))
+       (widget:focus! root a) (show!)
+       (dispatch:input! root '(text "Q" paste))
+       (check 'entry-paste-replaces-selection-once (line) "a界Qz")
+       (entry:undo! a) (entry:redo! a)
+       (check 'entry-uses-existing-undo-redo (line) "a界Qz")
+       (widget:act! a 'delete 'backward)
+       (check 'entry-delete-action-keeps-the-original-edit-basis (line) "a界z")
+       (entry:undo! a)
+       (check 'entry-refuses-multiline-paste-without-mutation
+         (list (refused? (lambda () (entry:insert! a "bad\npaste"))) (line)) '(#t "a界Qz"))
+       (entry:select! a 1 1) (show!)
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(pointer release primary ()) 1 0)
+       (foreign! 0 0 '("R"))
+       (entry:insert! a "X")
+       (check 'entry-click-intent-rebases-through-remote-insertion
+         (list (line) (view:state (interaction:snapshot a))) '("RaX界Qz" ((0 . 3) (0 . 3))))
+       (entry:select! a 5 3)
+       (foreign! 4 4 '("remote"))
+       (let ([before (line)])
+         (check 'entry-overlap-refuses-without-losing-foreign-text
+           (list (refused? (lambda () (entry:insert! a "lost"))) (string=? before (line))) '(#t #t)))
+       (foreign! 0 0 '("first" "second")) (show!)
+       (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
+         (list (widget:caret (widget:prepared root)) (head:buffer-read-only (head:buffer-of-store-id source))
+               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
+       (widget:unmount! root) (widget:invalidate!))
 
      (model:register-kind! 'widget-view 3 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]

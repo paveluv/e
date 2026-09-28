@@ -18,6 +18,7 @@
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
+          (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head widget) widget:)
@@ -44,6 +45,7 @@
                         [else #f])))
               (head:buffer-fact-set! b 'resume-kind 'widget)
               (head:buffer-fact-set! b 'widget-id id)
+              (head:buffer-fact-set! b 'mode "widget")
               (head:set-app-presentation! b 0 #f #f)
               (head:set-app-cursor-visible! b #f)
               (head:set-app-selectable! b #f)
@@ -57,6 +59,10 @@
     (head:window-buffer w))
 
   (define (init-widget-host!)
+    (mode:register! "widget" '() '() #f #f
+      (lambda (buffer row line)
+        (let* ([id (head:buffer-fact buffer 'widget-id #f)] [f (and id (widget:prepared id))])
+          (and f (widget:frame-styles f row)))))
     (head:add-buffer-placement-hook!
       (lambda (w b)
         (let ([id (head:buffer-fact b 'widget-id #f)])

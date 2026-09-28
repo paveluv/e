@@ -1847,7 +1847,8 @@
     ;; Errors also propagate: no shared edit can fall back to a local
     ;; fork, including an error after the transaction has committed.
     ;; Optional head placements are (place . desired) entries: place is
-    ;; a window, 'mark, 'spot, (top . window), or 'spot-top; desired is
+    ;; a window, 'mark, 'spot, (top . window), 'spot-top, or a head-local
+    ;; procedure receiving (position revision); desired is
     ;; 'start, 'end, or a position in the proposed result.  A third option
     ;; is a retained edit-basis.
     ;; Placements are installed during adoption, before
@@ -1932,7 +1933,7 @@
            (for-all
              (lambda (entry)
                (and (pair? entry)
-                    (or (memq (car entry) '(mark spot spot-top))
+                    (or (procedure? (car entry)) (memq (car entry) '(mark spot spot-top))
                         (let ([w (placement-window (car entry))])
                           (and w (eq? (window-buffer w) b))))
                     (or (memq (cdr entry) '(start end))
@@ -1946,16 +1947,17 @@
     (for-each
       (lambda (entry)
         (let ([place (car entry)] [p (cdr entry)])
-          (case place
-            [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
-            [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
-            [(spot-top) (buffer-spot-top-set! b (car p))]
-            [else
-             (let ([w (placement-window place)])
-               (when (eq? (window-buffer w) b)
-                 (if (window? place)
+          (if (procedure? place) (place p (content-revision b))
+            (case place
+              [(mark) (buffer-mark-row-set! b (car p)) (buffer-mark-col-set! b (cdr p))]
+              [(spot) (buffer-spot-row-set! b (car p)) (buffer-spot-col-set! b (cdr p))]
+              [(spot-top) (buffer-spot-top-set! b (car p))]
+              [else
+               (let ([w (placement-window place)])
+                 (when (eq? (window-buffer w) b)
+                   (if (window? place)
                      (begin (window-prow-set! w (car p)) (window-pcol-set! w (cdr p)))
-                     (begin (window-top-set! w (car p)) (window-topseg-set! w 0)))))])))
+                     (begin (window-top-set! w (car p)) (window-topseg-set! w 0)))))]))))
       placements))
 
   (define (clamp-text-position text p)
