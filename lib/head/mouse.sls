@@ -103,7 +103,6 @@
     ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
-    (head:set-drag! #f)
     (let ([double? (head:double-click? x y (real-time))])
       (cond
         [(head:window-button-at (- x 1) (- y 1)) =>
@@ -340,7 +339,16 @@
     ;; change editor focus passes handle? #f: the report is consumed
     ;; without being applied.
     (set! last-position (and handle? (cons x y)))
-    (cond [(and handle? (widget-mouse! c b x y)) => values]
+    ;; A new press replaces any preceding host gesture, including when a
+    ;; widget receives it. Motion and release instead belong to the original
+    ;; owner: entering a widget must not steal a divider or text drag.
+    (when (and handle? (char=? c #\M) (< (bitwise-and b 3) 3)
+               (zero? (bitwise-and b 96)))
+      (head:set-drag! #f))
+    (cond [(and handle?
+                (not (and (head:drag) (zero? (bitwise-and b 64))
+                          (or (char=? c #\m) (not (zero? (bitwise-and b 32))))))
+                (widget-mouse! c b x y)) => values]
           [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
                 (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
            (when handle? (mouse-move! x y))

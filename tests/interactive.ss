@@ -174,6 +174,39 @@
                   (window:delete-others!)
                   (head:show-buffer! (head:buffer-named "*scratch*")) #t))
 
+     ;; A divider owns its drag across widget contents, on either axis.
+     ;; Release inside the widget must also retire the host's gesture.
+     (for-each
+       (lambda (split)
+         (evaluate `(begin
+                      (window:delete-others!) (buffet:open!) (,split)
+                      (let ([step 0])
+                        (keymap:bind! 'buffet "F12" (lambda ()
+                                                      (set! step (+ step 1))
+                                                      (echo:set-text! (format "Divider ~a step ~a" ',split step))))) #t))
+         (for-each
+           (lambda (delta step)
+             (send! "\x1b;[24~")
+             (wait-for! 'divider-frame-published
+               (lambda () (find-cell (format "Divider ~a step ~a" split step))) 3000)
+             (let* ([before (evaluate '(let ([d (car (head:dividers))]) (list (car d) (caddr d) (cadddr d))))]
+                    [horizontal? (eq? (car before) 'right)]
+                    [x (if horizontal? (+ 1 (cadr before)) 2)]
+                    [y (if horizontal? 3 (+ 1 (caddr before)))]
+                    [to-x (+ x (if horizontal? delta 0))] [to-y (+ y (if horizontal? 0 delta))])
+               (send! (format "\x1b;[<0;~a;~aM\x1b;[<32;~a;~aM\x1b;[<0;~a;~am\x1b;[24~~"
+                        x y to-x to-y (- to-x (if horizontal? 1 0)) (- to-y (if horizontal? 0 1))))
+               (wait-for! 'divider-gesture-applied
+                 (lambda () (find-cell (format "Divider ~a step ~a" split (+ step 1)))) 3000)
+               (check (list 'divider-crosses-widgets-and-releases split delta)
+                 (equal? (evaluate '(let ([d (car (head:dividers))]) (list (caddr d) (cadddr d) (and (head:drag) #t))))
+                   (list (+ (cadr before) (if horizontal? delta 0)) (+ (caddr before) (if horizontal? 0 delta)) #f)))))
+           '(-2 3) '(1 3)))
+       '(window:split-below! window:split-right!))
+     (evaluate '(begin
+                  (keymap:unbind! 'buffet "F12") (window:delete-others!)
+                  (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+
      ;; -- a nested terminal: default partial capture lets whole editor
      ;; commands through while other keys reach the child; full capture
      ;; forwards the editor prefixes too -------------------------------------
