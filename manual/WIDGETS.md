@@ -18,14 +18,23 @@ connections never execute commands.
 hover or cached geometry to the base. Shared row/column allocation is exposed
 as `layout:container` for compound controls.
 
-`table:create!` takes an actor, collection and ordered column symbols. Pass
-`'list` as the fourth argument for the same selection engine with one column
-and no heading. The table composes sticky headings and a normal scroll view;
+`table:create!` takes an actor, collection and ordered column symbols. Its
+optional fourth argument is an options alist. Use `((kind . list))` for one
+column without a heading; use `((identity . name))` to keep `name` when fitting
+a narrow pane, independently of its position among the columns. The default
+identity is the first column. `set-columns!` retains that identity.
+The table composes sticky headings and a normal scroll view;
 it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
 `sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
 keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
+
+Section rows remain scrollable but cannot be selected or activated. Up/Down,
+Home/End and Page Up/Down use the provider's selectable index; a large run of
+sections never makes the head walk the result. Page movement uses the shown
+viewport height. A result's suggested default is used for the initial choice;
+subsequent results retain a surviving stable key.
 
 Rows use the same theme-aware `candidate` and `candidate-hover` faces as
 Buffet. A hovered row takes precedence over the keyboard choice without
@@ -39,6 +48,92 @@ key)` row reference and its result basis after the binding's fixed arguments.
 Pending navigation cannot activate the previous row. A domain action should
 validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
+
+`table:register-presentation!` registers a head-local name, schema version
+and column rules `(column minimum alignment formatter)`. Alignment is `text`,
+`tail` or `right`. Select it with a table option such as
+`(presentation file-labels 1)`. The pure formatter receives the raw cell value
+and row attributes. It returns `(text (start end roles) ...)`, where spans
+use character offsets in that formatted text. Map raw match spans through
+escaping or abbreviation in this function. Table fitting handles grapheme
+clipping and padding, keeping matches off ellipses and neighboring columns.
+Rules format only visible cells, and registration replacement invalidates
+local presentation without changing the query. A missing named presentation
+produces an explicit unavailable view.
+
+Without a rule, string cells retain their raw text and match spans, and other
+values print as Scheme data. Logical depth indents the identity cell in the
+TUI. Creation rows show italic names and an italic `[create]` suffix;
+pending cells show `[Pending]`. Semantic row roles compose with the normal
+choice/hover styles. Providers supply facts, never terminal widths or ANSI.
+
+## Prepared collections
+
+`collection:create!` creates a query over a source model, filter and compound
+sort. A vector source uses case-insensitive substring filtering and typed
+scalar sorting. Other providers own their domain filtering and ordering.
+The compact summary includes `status`, `generation`, `basis`, raw `columns`,
+display-row `count`, `complete`, `default`, `details` and `sortable`. `default`
+is an empty or single-key list, so a false key is unambiguous. `details` holds
+domain facts such as a match count distinct from the number of display rows.
+Supported sorts are validated when configuring a prepared query.
+
+Register a provider in the base with `collection:register!`:
+
+```scheme
+(collection:register! 'my-source 1
+  (lambda (source query cancelled? publish!)
+    ;; Queue work in the domain service; return promptly.
+    ...))
+```
+
+`source` is a borrowed immutable model envelope. `query` contains `id`,
+`filter` and `sort`. The provider owns its queue and cancellation checkpoints;
+the vector provider uses its own computation worker. Preparation must never
+block the collection dispatcher. Use `(publish! result #f)` for an immutable
+snapshot or `(publish! #f diagnostic-string)` for failure. Several snapshots
+may be published in order; a partial readable result has `complete` false.
+Publish completion promptly and coalesce intermediate updates. A repeated
+publication of the same result object is a no-op. The callback returns false
+after its request is superseded, including an input change away and back.
+
+`collection:make-result` takes columns, count, `row-at`, `locate`, `seek` and
+an options alist with `complete`, `default`, `details` and `sortable`.
+`row-at` reads `(key cells attributes)` at an ordinal. `locate` maps a key to
+an ordinal or false. `seek` takes `(ordinal forward|backward offset)` and
+returns a selectable ordinal or false for an entirely ineligible result.
+It starts inclusively, skips sections and clamps at selectable ends. Offset
+zero finds the eligible row at or beyond the origin in the chosen direction.
+Callbacks read prepared indexes only: no scanning, waiting, filesystem I/O
+or formatting. Results must remain immutable after publication.
+
+Raw row attributes are a validated alist: `selectable` (boolean), `depth`
+(nonnegative logical level), `roles` (semantic symbols), `matches`
+(`(column start end)` spans in raw strings), `creation` (`file` or `directory`),
+and `pending` (column symbols). Attributes and spans belong to the range's
+generation and basis. Missing cells are absent; pending and unavailable cells
+are distinct from zero, false and an empty string. Custom non-scalar sorting
+belongs to the provider and is declared through `sortable`.
+
+`collection:range`, `rank` and `seek` are guarded by the result generation;
+`fetch` batches at most four requests. Rows, keys, attributes and diagnostics
+share the reply budget. A range contains at most 256 rows and 512 KiB; cells
+over 64 KiB become unavailable, while an oversized key/attribute row makes
+the range unavailable. Heads use the shared `range:` cache, queuing misses
+on the pump. Painting, hover and cached navigation perform no remote work.
+
+Connect a shared query's filter to its text buffer, not to a particular entry
+view. For example, with `filter-source` a `(buffer id)` reference:
+
+```scheme
+(connection:bind! (actor:current) query
+  (list (list query 'filter #f (list filter-source 'text))))
+```
+
+The query owns this connection. Closing the original entry leaves other
+views and the query connected to the same authored text. A multiline source
+is unavailable; deleting the source removes the edge and restores the input
+default. Source edits use the text store's normal revision and undo behavior.
 
 Paged controls use a `service` callback `(id latest-frame)` on the head pump
 and a `release` callback `(id)` on unmount or definition replacement. They

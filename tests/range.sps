@@ -16,14 +16,23 @@
     (range:read id g start count '(name)))
   (model:register-kind! 'range-fixture 1 integer?)
   (collection:register! 'range-fixture 1
-    (lambda (r cancel!)
+    (lambda (r query cancelled? publish!)
       (let ([count (field r 'value)] [revision (field r 'revision)])
-        (list '((name "Name" string)) count
-          (lambda (i)
-            (set! reads (+ 1 reads))
-            (when hold? (set! hold? #f) (entered #t) (test:await 'release-range release))
-            (list i (list (cons 'name (if (< count 1000) wide (format "~a:~a" revision i)))) '()))
-          (lambda (key) (and (integer? key) (<= 0 key) (< key count) key))))))
+        (publish! (collection:make-result '((name "Name" string) (size "Size" integer)) count
+                    (lambda (i)
+                      (set! reads (+ 1 reads))
+                      (when hold? (set! hold? #f) (entered #t) (test:await 'release-range release))
+                      (list i (list (cons 'name (if (< count 1000) wide (if (= i 1) "a界bc" (format "~a:~a" revision i)))) (cons 'size i))
+                        (if (< count 1000) '()
+                          (append (list (cons 'selectable (odd? i)) '(depth . 1))
+                            (if (= i 1) '((matches (name 0 2)) (creation . file)) '())))))
+                    (lambda (key) (and (integer? key) (<= 0 key) (< key count) key))
+                    (lambda (at direction offset)
+                      (and (> count 0)
+                        (let* ([sign (if (eq? direction 'forward) 1 -1)]
+                               [step (if (< count 1000) 1 2)] [first (if (or (< count 1000) (odd? at)) at (+ at sign))])
+                          (min (- count (if (or (< count 1000) (even? count)) 1 2)) (max (if (< count 1000) 0 1) (+ first (* step sign offset)))))))
+                    (if (< count 1000) '() '((default 3)))) #f))))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 10000000)]
          [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
          [a (range:acquire! query void)] [b (range:acquire! query void)])
@@ -34,11 +43,43 @@
       (range:read query g 3 20 '(name)) (range:read query g 18 4 '(name)) (range:pump!)
       (test:check 'range-overlapping-views-share-a-page-and-warm-reads-do-no-work
         (list before reads (list-ref (range:locate query g 30) 3)) '(64 64 30)))
-    (let* ([table (table:create! actor query '(name))] [before reads])
+    (table:register-presentation! 'range-fixture 1
+      (list (list 'name 1 'text
+              (lambda (value attributes)
+                ;; Quotes are presentation only; matches refer to raw text.
+                (cons (string-append "\"" value "\"")
+                  (map (lambda (span) (list (+ 1 (cadr span)) (+ 1 (caddr span)) 'mark))
+                    (cond [(assq 'matches attributes) => cdr] [else '()])))))))
+    (let* ([table (table:create! actor query '(size name) '((identity . name) (presentation range-fixture 1)))] [before reads])
+      (define (show width)
+        (let ([frame (widget:prepare! table width 10)]) (widget:present! (list (list frame 0 0))) frame))
+      (define (selection) (field (view:state (interaction:snapshot table)) 'selection))
+      (define (await-key key)
+        (test:await (list 'indexed-table key)
+          (lambda () (show 300) (widget:pump!) (range:pump!) (let ([s (selection)]) (and s (equal? (caddr s) key))))))
+      (define (body frame) (car (widget:frame-children (cadr (widget:frame-children frame)))))
+      (define (face frame row char) (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) char))
       (widget:mount! table 'ten-million-rows)
-      (for-each (lambda (width) (widget:prepare! table width 10) (widget:pump!) (range:pump!)) '(80 10 300))
-      (test:check 'table-ten-million-rows-reuse-pages-and-constant-view-count
-        (list reads (length (view:tree table))) (list before 4))
+      (await-key 3)
+      (table:move! table 'first) (await-key 1)
+      (let* ([frame (show 5)] [line (cadr (widget:frame-lines (body frame)))])
+        (test:check 'table-identity-is-not-first-and-clipped-matches-avoid-quotes-and-ellipsis
+          (list line (map (lambda (i) (face frame 2 i)) '(0 1 2 3))
+            (car (widget:frame-lines (car (widget:frame-children frame)))))
+          '(" \"a… " (candidate (candidate italic) (candidate mark italic) candidate) "Name ")))
+      (let* ([frame (show 300)] [line (cadr (widget:frame-lines (body frame)))] [fresh reads])
+        (for-each show '(5 300 80 300))
+        (test:check 'table-wide-reopen-restores-metadata-with-bounded-formatting-and-view-count
+          (list (substring line 0 12) (length (view:tree table)) (= reads fresh) (< (- reads before) 300))
+          '("           1" 4 #t #t)))
+      (let ([before (selection)])
+        (widget:pointer! '(pointer press primary ()) 2 1)
+        (test:check 'table-sections-cannot-be-selected-by-pointer (selection) before))
+      (table:move! table 'next) (await-key 3)
+      (table:move! table 'page-next) (await-key 13)
+      (let ([before reads])
+        (table:move! table 'last) (await-key 9999999)
+        (test:check 'table-indexed-section-navigation-does-not-walk-to-the-end (< (- reads before) 300) #t))
       (widget:unmount! table))
     (set! hold? #t)
     (range:request! a g 64 32 '(name) '())

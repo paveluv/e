@@ -62,12 +62,18 @@
   (head-read b '(begin (kernel:retract-module! 'row)
                        ((eval 'restore-types! (environment '(foundation edoc))) "(core row)") (row:init!) #t))
   (head-wait 'collection-contract-restored b (lambda () (equal? (key b table-b) "beta.ss")))
+  (test:check 'collection-direct-buffer-demand-uses-contract-headers-and-text-mirrors
+    (head-read b
+      `(let* ([source (view:source (view:snapshot ',entry-a))] [token (connection:subscribe! (list source) void)]
+              [bundle (connection:snapshot (list source))])
+         (connection:unsubscribe! token)
+         (list (cadar (caddr bundle)) (equal? (cadddr bundle) (list source))))) '(#t #t))
   ;; Release and remount the same descriptor, preserving the canonical recipe
   ;; and selection while disposing all head-only range/cache resources.
   (head-read b `(begin (widget:unmount! ',root-b) (widget:mount! ',root-b 'remounted-collection) #t))
   (head-wait 'collection-remount b (lambda () (equal? (key b table-b) "beta.ss")))
   (test:check 'collection-disconnect-restores-filter-default
-    (rpc head 'connection-bind query (list (list query 'filter (list filter-a 'text) #f)))
+    (rpc head 'connection-bind query (list (list query 'filter (list (head-read a `(view:source (interaction:snapshot ',entry-a))) 'text) #f)))
     (list 'applied '()))
   (head-wait 'collection-default-restored a
     (lambda () (= (head-read a `(cdr (assq 'count (cdr (assq 'value (range:summary ',query)))))) 3)))

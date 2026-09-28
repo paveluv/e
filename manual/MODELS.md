@@ -175,7 +175,8 @@ descriptors once, while keeping unknown schemas opaque and inspectable.
 
 ## Portable ports
 
-`port:register!` declares `(model kind schema)` or `(view kind schema)`
+`port:register!` declares `(model kind schema)`, `(view kind schema)` or
+`(buffer kind schema)`
 contracts as `(input|output name type selector)` entries. For example:
 
 ```scheme
@@ -185,8 +186,11 @@ contracts as `(input|output name type selector)` entries. For example:
 
 Selectors read `value`, view `state`/`options`, `id`, or a view's `source`.
 Trailing symbols select alist fields and integers select sequence elements.
-The built-in entry's `text` output uses `(source-text)` and becomes unavailable
-for a multiline source. `port:project` returns `(ready value)` or
+The built-in entry and `(buffer text 1)` contracts expose `text` through
+`(source-text)` and become unavailable for a multiline source. Bind directly
+to `((buffer id) text)` when a consumer should outlive a particular entry.
+Dependency bundles carry buffer contract headers and text IDs; mounted hosts
+provide their existing text mirrors. `port:project` returns `(ready value)` or
 `(unavailable reason)`; `#f` and an empty list can be ordinary ready values.
 Declarations and returned values are owned copies. Definitions follow module
 registration/retraction, while saved data stays intact.

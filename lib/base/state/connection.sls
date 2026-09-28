@@ -10,7 +10,14 @@
   (define (field r k) (cdr (assq k r)))
   (define (id? x) (and (list? x) (= (length x) 2) (eq? (car x) 'model)
                     (integer? (cadr x)) (exact? (cadr x)) (> (cadr x) 0)))
-  (define (producer? p) (and (list? p) (= (length p) 2) (id? (car p)) (symbol? (cadr p))))
+  (define (buffer? id)
+    (and (list? id) (= (length id) 2) (eq? (car id) 'buffer)
+      (integer? (cadr id)) (exact? (cadr id)) (> (cadr id) 0)))
+  (define (endpoint id)
+    (if (buffer? id)
+      (and (store:exists? (cadr id)) (list (cons 'id id)))
+      (model:snapshot id)))
+  (define (producer? p) (and (list? p) (= (length p) 2) (or (id? (car p)) (buffer? (car p))) (symbol? (cadr p))))
   (define (edges? xs)
     (and (list? xs) (for-all (lambda (e) (and (list? e) (= (length e) 3)
                                            (id? (car e)) (symbol? (cadr e)) (producer? (caddr e)))) xs)
@@ -59,7 +66,7 @@
   (define (port r name direction)
     (let ([ds (and r (port:describe (port:key r)))])
       (and ds (find (lambda (d) (and (eq? name (cadr d)) (eq? direction (car d)))) ds))))
-  (define (view? r) (and r (eq? (field r 'kind) 'widget-view) (descriptor:valid? (field r 'value))))
+  (define (view? r) (and r (assq 'kind r) (eq? (field r 'kind) 'widget-view) (descriptor:valid? (field r 'value))))
   (define (belongs? get owner id)
     (let loop ([id id] [seen '()])
       (and (not (member id seen))
@@ -105,11 +112,11 @@
                  (let-values ([(top records edges) (capture)])
                    (let ([seen (make-hashtable equal-hash equal?)] [next edges])
                      (define (get id)
-                       (unless (hashtable-contains? seen id) (hashtable-set! seen id (model:snapshot id)))
+                       (unless (hashtable-contains? seen id) (hashtable-set! seen id (endpoint id)))
                        (hashtable-ref seen id #f))
                      (define (need id)
                        (let ([r (get id)])
-                         (unless (and r (model:available? id)) (fail 'unavailable)) r))
+                         (unless (and r (or (buffer? id) (model:available? id))) (fail 'unavailable)) r))
                      (define (owned r)
                        (when (and (view? r) (descriptor:owner (field r 'value))
                                (not (equal? actor (descriptor:owner (field r 'value))))) (fail 'owned)))
@@ -147,7 +154,7 @@
                                         (change r (field r 'references)
                                           (descriptor:with d (list (cons 'generation (+ 1 (descriptor:generation d))) '(sequence . 0))))
                                         (witness r))))
-                               (filter values (vector->list (hashtable-values seen))))]
+                               (filter (lambda (r) (and r (id? (field r 'id)))) (vector->list (hashtable-values seen))))]
                             [witnesses (append witnesses (map witness (if old (remq old records) records)))])
                        (cond
                          [(and old (equal? (field old 'value) mine)) 'applied]
@@ -160,6 +167,9 @@
                                 (lambda (ids) (list (list 'connection-bindings 1 owner (field (get owner) 'persistence) refs mine)))
                                 (lambda (ids) (cons (advance top (cons (cons owner (car ids)) (owners top))) witnesses)))
                             'applied 'stale)]))))))])
+        ;; Buffer and model writers are independent. Reconcile a producer
+        ;; deleted during binding; later deletions use the store observer.
+        (clean!)
         (values result (bindings owner)))))
 
   (edoc "Read this owner's current (consumer input producer) bindings without resolving values."
@@ -177,7 +187,7 @@
                 (filter values
                   (map (lambda (r)
                          (let* ([es (field r 'value)]
-                                [next (filter (lambda (e) (and (model:snapshot (car e)) (model:snapshot (caaddr e))
+                                [next (filter (lambda (e) (and (model:snapshot (car e)) (endpoint (caaddr e))
                                                             (belongs? model:snapshot (field r 'scope) (car e)))) es)])
                            (and (not (equal? es next))
                              (change r (unique (cons (field r 'scope)
@@ -188,6 +198,8 @@
                 (for-each (lambda (r) (unless (memq r kept)
                                         (model:retire! '(base connection) (field r 'id) (field r 'revision)))) records))))))))
   (define parents (make-hashtable equal-hash equal?))
+  (define buffer-retirement
+    (store:subscribe! #f (lambda (event) (when (eq? (car event) 'delete) (clean!)))))
   (define retirement
     (model:subscribe! #f
       (lambda (notice)
@@ -200,7 +212,7 @@
                       (or changed? (not r) (not (equal? old parent))))) #f (cadr notice)))
           (clean!)))))
 
-  (edoc "Capture a coherent dependency bundle: (graph-basis edges model-rows text-ids). Text and provisional state are supplied by the host."
+  (edoc "Capture a dependency bundle: (graph-basis edges endpoint-rows text-ids). Model rows are coherent snapshots; buffer rows are contract headers, with text and provisional state supplied by the host."
         (ids list "endpoints") (returns list) (effects internal))
   (define (snapshot ids)
     (let loop ([attempt 0])
@@ -214,7 +226,9 @@
                  [rows (map (lambda (id) (hashtable-ref seen id #f)) (car closure))]
                  [all (append (map (lambda (r) (list (field r 'id) #t r)) (cons top records)) rows)]
                  [now (cadr (model:snapshots (map car all)))])
-            (cond [(equal? all now) (list (list (field top 'id) (field top 'revision)) edges rows (cadr closure))]
+            (cond [(equal? all now)
+                   (list (list (field top 'id) (field top 'revision)) edges
+                     (append rows (map (lambda (id) (let ([r (endpoint id)]) (list id (and r #t) r))) (cadr closure))) (cadr closure))]
               [(< attempt 2) (loop (+ attempt 1))]
               [else (list #f edges (map (lambda (id) (list id #f #f)) (car closure)) (cadr closure))]))))))
 
@@ -226,9 +240,11 @@
         (let-values ([(top records edges) (capture)])
           (let ([seen (make-hashtable equal-hash equal?)] [texts (make-hashtable equal-hash equal?)])
             (define (get id)
-              (unless (hashtable-contains? seen id)
-                (hashtable-set! seen id (car (cadr (model:snapshots (list id))))))
-              (let ([row (hashtable-ref seen id #f)]) (and (cadr row) (caddr row))))
+              (if (buffer? id) (endpoint id)
+                (begin
+                  (unless (hashtable-contains? seen id)
+                    (hashtable-set! seen id (car (cadr (model:snapshots (list id))))))
+                  (let ([row (hashtable-ref seen id #f)]) (and (cadr row) (caddr row))))))
             (define (text id)
               (unless (hashtable-contains? texts id)
                 (hashtable-set! texts id

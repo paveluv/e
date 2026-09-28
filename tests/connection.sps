@@ -57,6 +57,21 @@
       (list (connection:bindings owner) (list-head (connection:read b 'in) 2)) '(() (ready "b")))
     (bind owner b (list a 'out) #f)
     (test:check 'connection-disconnect-restores-default (list-head (connection:read b 'in) 2) '(ready "b")))
+  (let* ([text (list 'buffer (store:create! author "filter source" '("needle")))]
+         [consumer (model:create! author 'connection-fixture 1 'session 'persistent '() '((fallback . "default") (text . "")))]
+         [entry (view:create! author text 'entry 1 '() '((0 . 0) (0 . 0)))]
+         [copy (view:fork! author entry)])
+    (bind consumer consumer #f (list text 'text))
+    (model:retire! author entry (field (model:snapshot entry) 'revision))
+    (test:check 'connection-buffer-producer-survives-original-view-retirement
+      (list (list-head (connection:read consumer 'in) 2) (list-head (connection:read copy 'text) 2)
+        (cadddr (connection:snapshot (list consumer))))
+      (list '(ready "needle") '(ready "needle") (list text)))
+    (store:reset! author (cadr text) '("two" "lines"))
+    (test:check 'connection-buffer-text-requires-one-line (car (connection:read consumer 'in)) 'unavailable)
+    (store:delete! author (cadr text))
+    (test:check 'connection-buffer-retirement-removes-the-edge
+      (list (connection:bindings consumer) (list-head (connection:read consumer 'in) 2)) '(() (ready "default"))))
   (port:register! '(view connected-fixture 1)
     '((input in string (options fallback)) (output out string (state text))))
   (let* ([root (view:create! author #f 'row 1 '() '())]

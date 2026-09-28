@@ -1,7 +1,7 @@
 ;; Indexed collection operations; head/range owns local viewport demand.
 (import (only (foundation edoc) elibrary))
 (elibrary (state collection)
-  (export configure! create! create-source! fetch range rank summary)
+  (export configure! create! create-source! fetch range rank seek summary)
   (import (chezscheme) (prefix (core client) client:))
 
   (edoc "Create a canonical vector-backed row source at the base."
@@ -11,7 +11,7 @@
     (client:request 'collection-source columns rows persistence))
 
   (edoc "Create a shared filter/sort query over an indexed source."
-        (actor actor "connection supplies attribution") (source row-source "row provider") (filter string "substring")
+        (actor actor "connection supplies attribution") (source row-source "row provider") (filter string "provider filter")
         (sort list "compound keys") (persistence (one-of transient persistent) "restart policy") (returns list))
   (define (create! actor source filter sort persistence)
     (client:request 'collection-create source filter sort persistence))
@@ -35,6 +35,12 @@
         (id row-source "query") (generation integer "result generation") (key datum "stable row key") (returns list) (effects remote))
   (define (rank id generation key) (client:request 'collection-rank id generation key))
 
-  (edoc "Read a bounded batch of prepared range/rank requests."
+  (edoc "Navigate the provider's selectable index, including the origin and clamping at its ends."
+        (id row-source "query") (generation integer "result generation") (ordinal integer "display origin")
+        (direction (one-of forward backward) "direction") (offset integer "selectable steps") (returns list) (effects remote))
+  (define (seek id generation ordinal direction offset)
+    (client:request 'collection-seek id generation ordinal direction offset))
+
+  (edoc "Read a bounded batch of prepared range/rank/seek requests."
         (requests list "at most four requests") (returns list) (effects remote))
   (define (fetch requests) (client:request 'collection-fetch requests)))

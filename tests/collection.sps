@@ -50,34 +50,68 @@
     (test:check 'collection-oversized-scalar-is-an-explicit-cell-diagnostic
       (caddr (car (list-ref (collection:range query (generation s) 0 1 '(name)) 4)))
       '((name unavailable oversized-cell))))
-  (let ([reads 0] [captures 0] [entered (test:gate)] [release (test:gate)] [hold? #t])
+  (let ([reads 0] [started (test:gate)])
+    (define (register-provider!)
+      (kernel:call-with-registration-update
+        (lambda ()
+          (kernel:retract-module! 'indexed-fixture-provider)
+          (parameterize ([kernel:registering-module 'indexed-fixture-provider])
+            (collection:register! 'indexed-fixture 1
+              (lambda (r query cancelled? publish!) (started (list (field query 'id) cancelled? publish!))))))))
+    (define (request query)
+      (test:await 'provider-dispatched (lambda () (and (started) (equal? (car (started)) query))))
+      (let ([job (cdr (started))]) (started #f) job))
+    (define (index n complete?)
+      ;; Even ordinals are section rows: navigation stays O(1) at ten million.
+      (collection:make-result '((name "Name" string)) n
+        (lambda (i) (set! reads (+ reads 1))
+          (list i (list (cons 'name (number->string i))) (list (cons 'selectable (odd? i)) '(depth . 1))))
+        (lambda (key) (and (integer? key) (<= 0 key) (< key n) key))
+        (lambda (at direction offset)
+          (and (> n 1)
+            (let* ([forward? (eq? direction 'forward)]
+                   [first (if (odd? at) at (+ at (if forward? 1 -1)))])
+              (max 1 (min (- n (if (even? n) 1 2)) (+ first (* 2 (if forward? offset (- offset)))))))))
+        (list (cons 'complete complete?) '(default 1) (list 'details (cons 'matches (div n 2))))))
     (model:register-kind! 'indexed-fixture 1 (lambda (v) (and (integer? v) (> v 0))))
-    (collection:register! 'indexed-fixture 1
-      (lambda (r checkpoint!)
-        (set! captures (+ captures 1))
-        (let ([n (field r 'value)])
-          (list '((name "Name" string)) n
-            (lambda (i)
-              (set! reads (+ reads 1))
-              (when (and (= n 256) (= i 0) hold?)
-                (set! hold? #f) (entered #t) (test:await 'release-query release))
-              (list i (list (cons 'name (number->string i))) '()))
-            (lambda (key) (and (integer? key) (<= 0 key) (< key n) key))))))
+    (register-provider!)
     (let* ([source (model:create! actor 'indexed-fixture 1 'session 'transient '() 10000000)]
-           [a (collection:create! actor source "" '() 'transient)] [sa (ready a)]
-           [b (collection:create! actor source "" '() 'transient)] [sb (ready b)])
-      (test:check 'collection-ten-million-identity-query-does-not-enumerate-or-recopy
-        (list reads captures (field (field sa 'value) 'count)
-          (list-ref (collection:rank a (generation sa) 9999999) 3)) '(0 1 10000000 9999999))
-      (let ([p (collection:range b (generation sb) 9999990 100 '(name))])
-        (test:check 'collection-only-requested-tail-rows-are-read (list (length (list-ref p 4)) reads) '(10 10))))
-    (let* ([source (model:create! actor 'indexed-fixture 1 'session 'transient '() 256)]
-           [query (collection:create! actor source "never" '() 'transient)])
-      (test:await 'query-entered entered)
-      (let ([s (collection:summary query)])
-        (collection:configure! actor query (field s 'revision) '((filter . ""))))
-      (release #t)
-      (let ([s (ready query)])
-        (test:check 'collection-cancelled-scan-cannot-publish-over-replacement
-          (list (field (field s 'value) 'filter) (field (field s 'value) 'count)
-            (<= reads 138) captures) '("" 256 #t 2))))))
+           [query (collection:create! actor source "A" '() 'transient)] [job (request query)])
+      ((cadr job) (index 100 #f) #f)
+      (let* ([partial (ready query)] [g (generation partial)])
+        ((cadr job) (index 10000000 #t) #f)
+        (let* ([full (ready query)] [next (generation full)])
+          (test:check 'collection-partial-index-and-ten-million-section-navigation
+            (list (field (field partial 'value) 'complete) (field (field full 'value) 'complete)
+              (collection:range query g 0 1 '(name))
+              (list-ref (collection:seek query next 0 'forward 0) 3)
+              (list-ref (collection:seek query next 0 'forward 4999999) 3) reads)
+            '(#f #t (stale) 1 9999999 0))
+          (let ([p (collection:range query next 9999990 100 '(name))])
+            (test:check 'collection-only-requested-tail-rows-are-read (list (length (list-ref p 4)) reads) '(10 10)))))
+      (collection:configure! actor query (field (collection:summary query) 'revision) '((filter . "B")))
+      (let ([middle (request query)])
+        (collection:configure! actor query (field (collection:summary query) 'revision) '((filter . "A")))
+        (let ([latest (request query)])
+          (test:check 'collection-cancellation-fences-input-round-trips-and-late-publications
+            (list ((car job)) ((car middle)) ((car latest))
+              ((cadr job) (index 6 #t) #f) ((cadr middle) (index 8 #t) #f)
+              ((cadr latest) (index 10 #t) #f)
+              (field (field (ready query) 'value) 'count)) '(#t #t #f #f #f #t 10))
+          (let ([snapshot (index 1 #t)])
+            ((cadr latest) snapshot #f)
+            (let ([s (ready query)])
+              ((cadr latest) snapshot #f)
+              (test:check 'collection-sections-only-identical-publication-and-unsupported-sort
+                (list (list-ref (collection:seek query (generation s) 0 'forward 0) 3)
+                  (equal? s (ready query))
+                  (test:raises? (lambda () (collection:configure! actor query (field s 'revision) '((sort (absent ascending)))))))
+                '(#f #t #t))))
+          (register-provider!)
+          (let ([replacement (request query)])
+            ((cadr replacement) (index 2 #t) #f)
+            (test:check 'collection-redefinition-cancels-old-definition-publishers
+              (list ((car latest)) ((cadr latest) (index 4 #t) #f) (field (field (ready query) 'value) 'count)) '(#t #f 2))
+            (model:retire! actor source (field (model:snapshot source) 'revision))
+            (test:check 'collection-source-retirement-invalidates-result-and-publisher
+              (list (field (field (ready query) 'value) 'status) ((cadr replacement) (index 6 #t) #f)) '(unavailable #f))))))))

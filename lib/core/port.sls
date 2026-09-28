@@ -7,7 +7,7 @@
   (define definitions (kernel:make-registry car))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
   (define (key? k)
-    (and (list? k) (= (length k) 3) (memq (car k) '(model view))
+    (and (list? k) (= (length k) 3) (memq (car k) '(model view buffer))
       (symbol? (cadr k)) (natural? (caddr k)) (> (caddr k) 0)))
   (define (get value name)
     (and (list? value) (for-all pair? value)
@@ -19,7 +19,7 @@
         [(value) (and (eq? kind 'model) (for-all (lambda (x) (or (symbol? x) (natural? x))) (cdr s)))]
         [(state options) (and (eq? kind 'view) (for-all (lambda (x) (or (symbol? x) (natural? x))) (cdr s)))]
         [(source) (and (eq? kind 'view) (null? (cdr s)))]
-        [(source-text) (and (eq? kind 'view) (eq? direction 'output) (null? (cdr s)))]
+        [(source-text) (and (memq kind '(view buffer)) (eq? direction 'output) (null? (cdr s)))]
         [(id) (and (eq? direction 'output) (null? (cdr s)))]
         [else #f])))
   (define (declarations? k ds)
@@ -32,7 +32,7 @@
               (edoc:type-portable? (caddr d)) (selector? (car k) (car d) (cadddr d))
               (walk (cdr rest) (cons (cadr d) seen))))))))
 
-  (edoc "Register data-only (direction name type selector) ports for (model|view kind schema), owned by the current module."
+  (edoc "Register data-only (direction name type selector) ports for (model|view|buffer kind schema), owned by the current module."
         (contract list "versioned endpoint kind") (declarations list "concrete portable ports"))
   (define (register! contract declarations)
     (let ([k (datum:copy contract)] [ds (datum:copy declarations)])
@@ -40,7 +40,7 @@
       (kernel:registry-add! definitions (cons k ds))))
 
   (edoc "Read a current endpoint contract, or #f when its definition/types are unavailable."
-        (contract list "(model|view kind schema)") (returns any))
+        (contract list "(model|view|buffer kind schema)") (returns any))
   (define (describe contract)
     (let ([d (kernel:registry-find definitions (lambda (d) (equal? (car d) contract)))])
       (and d (declarations? (car d) (cdr d)) (datum:copy (cdr d)))))
@@ -50,15 +50,18 @@
     (list-sort (lambda (a b) (string<? (format "~s" (car a)) (format "~s" (car b))))
       (filter values (map (lambda (d) (let ([ds (describe (car d))]) (and ds (cons (car d) ds)))) (kernel:registry-items definitions)))))
 
-  (edoc "The port-contract key of a model envelope, interpreting a widget-view's declared kind."
+  (define (buffer? id) (and (pair? id) (eq? (car id) 'buffer)))
+
+  (edoc "The port-contract key of a resource envelope, interpreting a widget-view's declared kind."
         (envelope any "model envelope") (returns any))
   (define (key envelope)
     (let ([k (get envelope 'kind)] [s (get envelope 'schema)] [v (get envelope 'value)])
-      (and k s
-        (if (eq? (cdr k) 'widget-view)
-          (let ([k (and v (get (cdr v) 'kind))] [s (and v (get (cdr v) 'schema))])
-            (and k s (list 'view (cdr k) (cdr s))))
-          (list 'model (cdr k) (cdr s))))))
+      (if (and (get envelope 'id) (buffer? (cdr (get envelope 'id)))) '(buffer text 1)
+        (and k s
+          (if (eq? (cdr k) 'widget-view)
+            (let ([k (and v (get (cdr v) 'kind))] [s (and v (get (cdr v) 'schema))])
+              (and k s (list 'view (cdr k) (cdr s))))
+            (list 'model (cdr k) (cdr s)))))))
 
   (edoc "Project a declared port without I/O: (ready value) or (unavailable reason). Source is an optional text envelope."
         (envelope any "owned endpoint snapshot") (name symbol "input or output name")
@@ -78,7 +81,7 @@
                             [(value) (field envelope 'value)]
                             [(state options source) (field (field envelope 'value) (car s))]
                             [(source-text)
-                             (let ([lines (field source 'value)])
+                             (let ([lines (field (if (eq? (car k) 'buffer) envelope source) 'value)])
                                (unless (and (vector? lines) (= (vector-length lines) 1)) (missing))
                                (vector-ref lines 0))])]
                    [value (fold-left
@@ -107,21 +110,24 @@
       (define (visit id name)
         (unless (member (list id name) seen)
           (set! seen (cons (list id name) seen))
-          (unless (member id ids-read) (set! ids-read (cons id ids-read)))
-          (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))]
-                 [ds (and ds (if name (filter (lambda (d) (eq? name (cadr d))) ds) ds))])
-            (when ds
-              (for-each
-                (lambda (d)
-                  (let ([edge (find (lambda (e) (and (equal? id (cadr e)) (eq? (cadr d) (caddr e)))) edges)])
-                    (cond [(and (eq? (car d) 'input) edge) (visit (car (cadddr edge)) (cadr (cadddr edge)))]
-                      [(or (equal? (cadddr d) '(source-text)) (equal? (cadddr d) '(source))
-                         (and (eq? (car k) 'view) (eq? (car (cadddr d)) 'state)))
-                       (let ([source (get (cdr (get r 'value)) 'source)])
-                         (when (and source (cdr source))
-                           (if (eq? (cadr source) 'model) (visit (cdr source) #f)
-                             (unless (member (cdr source) texts) (set! texts (cons (cdr source) texts))))))]
-                      [else (void)]))) ds)))))
+          (if (buffer? id)
+            (unless (member id texts) (set! texts (cons id texts)))
+            (begin
+              (unless (member id ids-read) (set! ids-read (cons id ids-read)))
+              (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))]
+                     [ds (and ds (if name (filter (lambda (d) (eq? name (cadr d))) ds) ds))])
+                (when ds
+                  (for-each
+                    (lambda (d)
+                      (let ([edge (find (lambda (e) (and (equal? id (cadr e)) (eq? (cadr d) (caddr e)))) edges)])
+                        (cond [(and (eq? (car d) 'input) edge) (visit (car (cadddr edge)) (cadr (cadddr edge)))]
+                          [(or (equal? (cadddr d) '(source-text)) (equal? (cadddr d) '(source))
+                             (and (eq? (car k) 'view) (eq? (car (cadddr d)) 'state)))
+                           (let ([source (get (cdr (get r 'value)) 'source)])
+                             (when (and source (cdr source))
+                               (if (eq? (cadr source) 'model) (visit (cdr source) #f)
+                                 (unless (member (cdr source) texts) (set! texts (cons (cdr source) texts))))))]
+                          [else (void)]))) ds)))))))
       (for-each (lambda (id) (visit id #f)) ids) (list (reverse ids-read) (reverse texts))))
 
   (edoc "Resolve one port against captured model/text lookups. Return (ready value basis), (pending reason basis), or (unavailable reason basis); false is a value."
@@ -129,14 +135,16 @@
         (read procedure "captured available model lookup") (text procedure "captured text lookup") (returns list))
   (define (resolve id name edges read text)
     (let ([basis '()] [seen '()])
+      ;; The endpoint header fences its contract; the host owns text mirrors.
+      (define (endpoint id) (if (buffer? id) (and (read id) (text id)) (read id)))
       (define (remember r)
         (when r
           (let ([id (cdr (get r 'id))])
             (unless (assoc id basis)
               (set! basis (cons (list id (cdr (get r 'revision))
-                                  (and (eq? (cdr (get r 'kind)) 'widget-view) (cdr (get r 'value)))) basis))))))
+                                  (and (get r 'kind) (eq? (cdr (get r 'kind)) 'widget-view) (cdr (get r 'value)))) basis))))))
       (define (lookup id name)
-        (let* ([r (read id)] [k (and r (key r))] [ds (and k (describe k))]
+        (let* ([r (endpoint id)] [k (and r (key r))] [ds (and k (describe k))]
                [d (and ds (find (lambda (d) (eq? name (cadr d))) ds))])
           (remember r)
           (cond [(or (not r) (not d)) '(unavailable contract)]
@@ -146,7 +154,7 @@
              (let ([edge (and (eq? (car d) 'input)
                               (find (lambda (e) (and (equal? id (cadr e)) (eq? name (caddr e)))) edges))])
                (if edge
-                   (let* ([p (cadddr edge)] [producer (read (car p))]
+                   (let* ([p (cadddr edge)] [producer (endpoint (car p))]
                           [contracts (and producer (describe (key producer)))]
                           [out (and contracts (find (lambda (d) (eq? (cadr p) (cadr d))) contracts))])
                      (if (and out (eq? (car out) 'output) (edoc:type-compatible? (caddr out) (caddr d)))
@@ -166,6 +174,7 @@
   (define builtin
     (kernel:call-with-runtime-registrations
       (lambda ()
+        (register! '(buffer text 1) '((output text string (source-text))))
         (register! '(view entry 1) '((output text string (source-text))))
         (register! '(view filter 1) '((output text string (source-text))))
         (register! '(view label 1) '((input text string (options text))))

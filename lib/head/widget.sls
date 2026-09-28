@@ -188,7 +188,7 @@
         (let* ([bundle (connection:snapshot (list id))] [rows (caddr bundle)])
           (define (get id)
             (let* ([row (assoc id rows)] [r (and row (cadr row) (caddr row))]
-                   [d (and r (interaction:snapshot id))])
+                   [d (and r (eq? (field r 'kind #f) 'widget-view) (interaction:snapshot id))])
               (if d (map (lambda (p) (if (eq? (car p) 'value) (cons 'value d) p)) r) r)))
           (define (text id)
             (let ([b (head:buffer-of-store-id (cadr id))])
