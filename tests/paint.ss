@@ -11,7 +11,9 @@
 
 (eval
   '(begin
-     (import (prefix (head paint) paint:)
+     (import (prefix (head paint) paint:) (prefix (head widget) widget:)
+             (prefix (head interaction) interaction:) (prefix (head window) window:)
+             (prefix (state model) model:) (prefix (state view) view:)
              (prefix (head pacing) pacing:)
              (prefix (head style) style:)
              (prefix (head head) head:)
@@ -619,4 +621,35 @@
          '(inactive retired expired))
        (make-list 3 '("" #f (begin end) #t)))
 
+     ;; The visible frame owns hit geometry, including across partial output
+     ;; and uncertain terminal writes. No extra test process or timing wait.
+     (widget:init!) (interaction:init!) (window:init!)
+     (model:register-kind! 'frame-test 1 string?)
+     (let* ([w (head:current-window)] [was (head:current-buffer)]
+            [source (model:create! head:ui-actor 'frame-test 1 'session 'persistent '() "a\nb\nc\nd\ne")]
+            [text (view:create! head:ui-actor source 'text 1 '() '(0 0))]
+            [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f)])
+       (view:arrange! head:ui-actor (list (list scroll 0 (list (list 'text text 'fit)) '())) '())
+       (let* ([b (window:show-widget! w scroll)] [first (widget:prepare! scroll 6 2)])
+         (check 'scroll-renders-only-its-visible-range (widget:frame-lines first) '("> a   " "  b   "))
+         (widget:act! scroll 'scroll 2)
+         (check 'scroll-anchor-is-logical-and-selection-independent
+           (list (view:state (interaction:snapshot scroll)) (view:state (interaction:snapshot text))
+             (widget:frame-lines (widget:prepare! scroll 6 2)))
+           '((0 2) (0 0) ("  c   " "  d   ")))
+         (check 'zero-allocation-produces-no-output (widget:frame-lines (widget:prepare! scroll 0 0)) '())
+         (painted paint:redraw!)
+         (let ([shown (widget:shown)])
+           (widget:prepare! scroll 1 1) (painted paint:present-echo!)
+           (check 'partial-output-retains-exact-shown-widget-frame (eq? shown (widget:shown)) #t))
+         (let ([failed? #f])
+           (let ([port (make-custom-textual-output-port "widget failed output"
+                         (lambda (s start count) (unless failed? (set! failed? #t) (error 'test "write failed")) count) #f #f void)])
+             (test:raises? (lambda () (parameterize ([sys:terminal-output-port port]) (paint:redraw!)))))
+           (check 'uncertain-output-disables-widget-hits (widget:shown) '())
+           (painted paint:present-echo!)
+           (check 'partial-output-cannot-reenable-uncertain-hits (widget:shown) '())
+           (painted paint:redraw!)
+           (check 'full-output-reenables-widget-frame (widget:frame-id (caar (widget:shown))) scroll))
+         (head:show-buffer! was) (head:forget-buffer! b)))
      (test:finish! 'paint)))

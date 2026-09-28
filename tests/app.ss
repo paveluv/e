@@ -573,7 +573,7 @@
             [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model state width height) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id model descriptor) (values (cdr (assq (quote revision) model)) (view:state descriptor))))))))))
+           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model state width height range) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id model descriptor) (values (cdr (assq (quote revision) model)) (view:state descriptor))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
        (head:show-buffer! a)

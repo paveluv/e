@@ -49,13 +49,24 @@ validate the actual target and revision before committing an effect.
 `widget:register!` takes a kind, schema version and a definition alist.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
-and `capture` is `full` or `partial`. Optional `measure`, `layout` and
-`event` fields accept procedures. Unknown or duplicate fields are rejected.
-A renderer receives
-`(model-envelope interaction-state width height)` and returns a list of text
-lines. The host clips rows and terminal-cell widths, preserving whole glyph
-clusters. Rendering reads owned head snapshots and must be bounded and free
-of remote requests or mutations.
+and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
+`layout`, `anchor`, `locate` and `event` fields accept procedures.
+Unknown or duplicate fields are rejected.
+
+`prepare` derives an index once per source/definition change; its result is
+borrowed immutable input to measurement and rendering. Without it, that input
+is the source envelope. A renderer receives
+`(data interaction-state width height visible-range)`; the range is
+`(first-row . row-count)`. It returns only those text lines. The host clips
+rows and cell widths without splitting grapheme clusters. These callbacks
+must be bounded and free of remote requests or domain mutations.
+
+`measure` receives `(data descriptor axis cross-extent measure-child)` and
+returns `(minimum preferred)`. `layout` receives
+`(descriptor width height measure-child locate-anchor)` and returns
+`(child-id (x y width height))` placements. Rectangles are half-open and may
+have zero extent. `anchor` maps `(data position width)` to a logical anchor;
+`locate` maps `(data anchor width)` back to a backend position.
 
 An action receives `(view-id model-envelope provisional-descriptor . args)`.
 An optional `input` action receives an event string, a zero-based pointer
@@ -91,3 +102,19 @@ The [model API](MODELS.md) describes canonical envelopes, ownership, recovery
 and the distinction between remote `view:` reads and local `interaction:`
 reads. The head automatically queues interaction after presentation and
 fences it before lifecycle checkpoints. Geometry never crosses that seam.
+
+## Recursive layout and presentation
+
+The `row` and `column` kinds allocate children using their descriptor sizing,
+`fit` or `(grow weight)`. Their `spacing` option is `none`, `normal` or
+`wide`. Tiny allocations collapse gaps before compressing minima. The
+`overlay` kind paints children in their descriptor order, back to front.
+`scroll` hosts one child and stores its logical anchor; its `scroll` action
+returns any movement left over at the edge.
+
+`widget:prepare!` returns a head-local frame for a root and its allocation.
+The existing-window adapter supplies that allocation automatically.
+Preparation is separate from presentation: the painter adopts the exact
+frames included in successfully flushed output. Partial echo updates retain
+the previously shown geometry. Failed terminal output disables widget hits
+until a full repaint succeeds. No layout or frame data is sent to the base.

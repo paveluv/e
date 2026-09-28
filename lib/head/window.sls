@@ -35,7 +35,7 @@
                 (lambda ()
                   (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
                     (when w
-                      (let ([lines (widget:render! id (head:window-content-width w) (head:window-size w))])
+                      (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
                         (head:view-replace! b (if (null? lines) '("") lines) '()
                           (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
                 (lambda (event)
