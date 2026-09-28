@@ -144,6 +144,10 @@
   (define (body s)
     (let* ([scroll (child s 'body)] [d (and scroll (interaction:snapshot scroll))])
       (and d (pair? (view:children d)) (cadar (view:children d)))))
+  (define (focused? s)
+    (let loop ([id (widget:focused (session-id s))])
+      (and id (or (equal? id (session-id s))
+                (let ([d (interaction:snapshot id)]) (and d (loop (view:parent d))))))))
   (define (repaint! s)
     (for-each (lambda (id) (when id (widget:repaint! id #t))) (list (session-id s) (child s 'heading) (body s))))
   (define (release! id)
@@ -307,7 +311,7 @@
       (let-values ([(format spans) (if (and s (pair? (columns s v))) (fit s v width) (values (lambda (row) "") '()))])
         (make-visible s v (and reply (eq? (car reply) 'ready) (list-ref reply 4)) (and reply (car reply)) spans format
           selection (and s (session-hovered s))
-          (and s (equal? (widget:focused (session-id s)) (body s)))))))
+          (and s (focused? s))))))
   (define (render v d width height clip)
     (cond [(eq? (view:kind d) 'table-heading) (list ((visible-format v) #f))]
       [(not (visible-rows v)) (list (glyph:fit (if (or (eq? (visible-status v) 'unavailable) (not (visible-metadata v)) (eq? (get (visible-metadata v) 'status #f) 'unavailable))

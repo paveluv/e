@@ -56,9 +56,10 @@ connected filter, filename table, editable answer and Undo action:
 (widget-example:open! '("alpha.sls" "beta.ss" "gamma.e"))
 ```
 
-Tab traverses the controls. Type in the filter, choose a table row with the
-arrows/Return or mouse, and undo the inserted filename using the button or
-the entry's normal undo key. The example validates the selected query basis
+Tab traverses the controls. The filter is inside the table's keyboard scope:
+type to filter, use Up/Down and Return to choose a row, or click it. Undo the
+inserted filename using the button or the entry's normal undo key. The example
+validates the selected query basis
 before editing. Its data and views survive detach; load its action definition
 again in head configuration when using it across head restarts.
 

@@ -70,6 +70,11 @@
     (check 'table-wheel-scrolls-without-changing-selection (selection table) before))
   (let ([before (length activated)])
     (show! 80)
+    (widget:pointer! '(pointer move none ()) 2 2)
+    (let ([f (show! 80)])
+      (check 'table-hover-marks-the-shown-scrolled-row
+        (map (lambda (row) (vector-ref (widget:frame-styles f row (list-ref (widget:frame-lines f) row)) 0)) '(1 2 3))
+        '(#f hover #f)))
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-row-click-uses-shown-key-and-explicit-command
       (list (key table) (- (length activated) before)) '(71 1)))

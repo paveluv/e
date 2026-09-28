@@ -24,9 +24,11 @@
                  (list '(text . "Undo insertion") '(enabled . #t) (list 'commands (list 'activate output 'undo '()))) '())]
          [root (view:create! who #f 'column 1 '() '())])
     (view:arrange! who
-      (list (list table 1 (view:children (view:snapshot table))
+      ;; The filter belongs to the table's keyboard scope: its entry handles
+      ;; text editing, while Up/Down and Return reach the table's commands.
+      (list (list table 1 (cons (list 'filter filter 'fit) (view:children (view:snapshot table)))
               (list '(columns name) (list 'commands (list 'activate target 'pick '()))))
-        (list root 0 (list (list 'filter filter 'fit) (list 'table table '(grow 1))
+        (list root 0 (list (list 'table table '(grow 1))
                        (list 'answer output 'fit) (list 'undo undo 'fit) (list 'target target 'fit)) '())) '())
     (connection:bind! who query (list (list query 'filter #f (list filter 'text))))
     (window:show-widget! (head:current-window) root)

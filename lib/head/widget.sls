@@ -650,6 +650,9 @@
               (for-each (lambda (id) (send! id '(blur) #f)) (reverse before))
               (interaction:focus! root id)
               (for-each (lambda (id) (send! id '(focus) #f)) after))))
+        ;; Focus can affect sibling presentation too (for example, a table
+        ;; with its filter focused). Reuse projections, but rebuild faces.
+        (for-each repaint! (mount-ids (node-root (mounted root))))
         (hashtable-set! last-focus root id) (head:wake-main!))))
   (define (ensure-focus! root)
     (let* ([frame (focus-frame root)] [choices (if frame (focusable frame) '())]

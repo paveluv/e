@@ -2,7 +2,7 @@
 (let* ([example (string-append (current-directory) "/examples/widgets.e")]
        [root-a (head-read a `(begin (load ,example) (widget-example:open! '("alpha.sls" "beta.ss" "gamma.e"))))]
        [table-a (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',root-a)))))]
-       [filter-a (head-read a `(cadr (assq 'filter (view:children (interaction:snapshot ',root-a)))))]
+       [filter-a (head-read a `(cadr (assq 'filter (view:children (interaction:snapshot ',table-a)))))]
        [entry-a (head-read a `(cadr (assq 'entry (view:children (interaction:snapshot ',filter-a)))))]
        [answer-a (head-read a `(cadr (assq 'answer (view:children (interaction:snapshot ',root-a)))))]
        [query (head-read a `(view:source (interaction:snapshot ',table-a)))]
@@ -13,10 +13,20 @@
   (define (key ui table)
     (head-read ui `(let ([s (cdr (assq 'selection (view:state (interaction:snapshot ',table))))]) (and s (caddr s)))))
   (for-each (lambda (ui table) (head-wait 'collection-first-page ui (lambda () (equal? (key ui table) "alpha.sls")))) (list a b) (list table-a table-b))
-  (test:check 'collection-real-head-selection-and-immediate-activation
-    (head-read a `(begin (table:move! ',table-a 'next) (table:activate! ',table-a)
+  (test:check 'collection-real-head-keyboard-selection-and-immediate-activation
+    (head-read a `(begin
+                    (dispatch:input! ',root-a '(key "DOWN" #f))
+                    (dispatch:input! ',root-a '(key "UP" #f))
+                    (dispatch:input! ',root-a '(key "DOWN" #f))
+                    (dispatch:input! ',root-a '(key "RET" #f))
                     (let-values ([(source d inputs) (widget:context ',answer-a)])
-                      (vector-ref (cdr (assq 'value source)) 0)))) "beta.ss")
+                      (let ([focused (equal? (widget:focused ',root-a) ',entry-a)])
+                        (widget:focus! ',root-a ',answer-a) (widget:prepare! ',root-a 40 10)
+                        (widget:focus! ',root-a ',entry-a)
+                        (let ([f (widget:prepare! ',root-a 40 10)])
+                          (list (vector-ref (cdr (assq 'value source)) 0) focused
+                            (vector-ref (widget:frame-styles f 3 (list-ref (widget:frame-lines f) 3)) 0)))))))
+    '("beta.ss" #t selection))
   (test:check 'collection-fork-keeps-selection-independent (key b table-b) "alpha.sls")
   (test:check 'collection-example-action-uses-real-undo
     (head-read a `(begin (entry:undo! ',answer-a)
@@ -29,7 +39,7 @@
          (let ([before (io)])
            (do ([i 0 (+ i 1)]) ((= i 100)) (widget:prepare! ',root-a (+ 20 (modulo i 20)) 10))
            (- (io) before)))) 0)
-  (head-read a `(begin (entry:insert! ',entry-a "beta") #t))
+  (head-read a `(begin (dispatch:input! ',root-a '(text "beta" typed)) #t))
   (for-each (lambda (ui table) (head-wait 'connected-filter-across-heads ui
                                  (lambda () (and (equal? (key ui table) "beta.ss")
                                               (= (head-read ui `(cdr (assq 'count (cdr (assq 'value (range:summary ',query)))))) 1)))))
