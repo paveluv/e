@@ -34,6 +34,10 @@
       (test:check 'collection-case-insensitive-filter-and-page-boundaries
         (list (field (field s 'value) 'count) (keys (collection:range query (generation s) 1 20 '(name)))
           (keys (collection:range query (generation s) 50 20 '(name)))) '(2 (two) ())))
+    (let* ([nested (collection:create! actor query "" '() 'transient)] [s (ready nested)])
+      (test:check 'collection-can-index-a-prepared-query-without-a-row-copy
+        (list (keys (collection:range nested (generation s) 0 10 '(name)))
+          (list-ref (collection:rank nested (generation s) 'two) 3)) '((one two) 1)))
     (let* ([rows '#((one ((name . "renamed") (size . 0)) ()))]
            [r (model:snapshot source)])
       (model:commit! actor (list (list source (field r 'revision) '() (list (car (field r 'value)) rows))))

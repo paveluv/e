@@ -12,7 +12,11 @@
   (define refreshing? #f)
   (define (field r k) (cdr (assq k r)))
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
-  (define (get id) (and (member id demanded) (model:available? id) (model:snapshot id)))
+  (define (raw id) (and (member id demanded) (model:available? id) (model:snapshot id)))
+  (define (get id)
+    (let* ([r (raw id)] [t (and top (raw top))] [k (and r (port:key r))]
+           [declared (and t (assoc k (caddr (field t 'value))))])
+      (and r (equal? (and k (port:describe k)) (and declared (cdr declared))) r)))
   (define (edges)
     (let ([r (and top (get top))])
       (if r
@@ -44,20 +48,29 @@
                         (when old (model:unsubscribe! old)))
                       (loop))))))))
         (lambda () (set! refreshing? #f)))))
-  (define changes (kernel:registry-observe! readers (lambda (removed added) (refresh!))))
-  (define contracts (port:observe! (lambda () (refresh!) (notify!))))
+  ;; Registry observers run in a non-reentrant delivery queue. Acquiring a
+  ;; model subscription there cannot synchronously seed its nested observer.
+  ;; Explicit admission refreshes after publication; retraction/reload queues
+  ;; work on the existing client pump, outside that delivery queue.
+  (define queued? #f)
+  (define (defer-refresh!)
+    (unless queued?
+      (set! queued? #t)
+      (client:enqueue! (lambda () (set! queued? #f) (refresh!) (notify!)))))
+  (define changes (kernel:registry-observe! readers (lambda (removed added) (defer-refresh!))))
+  (define contracts (port:observe! defer-refresh!))
 
   (edoc "Acquire endpoint dependency mirrors before rendering; callbacks run after adoption on the existing client pump."
         (ids list "endpoints") (procedure procedure "zero-argument invalidation") (returns any))
   (define (subscribe! ids procedure)
     (unless (and (list? ids) (procedure? procedure)) (error 'subscribe! "expected endpoints and callback"))
     (let ([token (gensym "connection")])
-      (kernel:registry-add! readers (list token (datum:copy ids) procedure)) token))
+      (kernel:registry-add! readers (list token (datum:copy ids) procedure)) (refresh!) token))
 
   (edoc "Release endpoint demand; shared dependencies remain while another reader needs them."
         (token any "subscription"))
   (define (unsubscribe! token)
-    (kernel:registry-remove! readers (lambda (r) (eq? token (car r)))))
+    (kernel:registry-remove! readers (lambda (r) (eq? token (car r)))) (refresh!))
 
   (edoc "Read an acquired local dependency bundle: (graph-basis edges model-rows text-ids). No I/O; the host supplies mirrored text and provisional descriptors."
         (ids list "subscribed endpoints") (returns list))
@@ -65,7 +78,7 @@
     (unless (for-all (lambda (id) (member id demanded)) ids) (error 'snapshot "subscribe before reading connections" ids))
     (let* ([es (edges)] [closure (port:dependencies ids es get)] [r (get top)])
       (list (and r (list top (field r 'revision))) es
-        (map (lambda (id) (list id (model:available? id) (model:snapshot id))) (car closure)) (cadr closure))))
+        (map (lambda (id) (let ([r (get id)]) (list id (and r #t) (model:snapshot id)))) (car closure)) (cadr closure))))
 
   (edoc "Resolve an acquired model port locally; mounted hosts use snapshot to supply provisional descriptors and mirrored text."
         (id list "endpoint") (name symbol "port") (returns list))

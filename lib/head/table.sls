@@ -125,7 +125,7 @@
   (define sessions (make-hashtable equal-hash equal?))
   (define-record-type session
     (fields id query token (mutable generation) (mutable pending) (mutable ordinal)
-      (mutable hovered) (mutable signature) (mutable neighbors)))
+      (mutable hovered) (mutable signature) (mutable neighbors) (mutable previous)))
   (define (get xs key fallback) (cond [(and xs (assq key xs)) => cdr] [else fallback]))
   (define (root id)
     (let ([d (interaction:snapshot id)])
@@ -155,6 +155,7 @@
     (let* ([selection (and ordinal (list (session-query s) generation key))]
            [state (list (cons 'selection selection) (cons 'basis basis))])
       (session-pending-set! s #f) (session-ordinal-set! s (or ordinal 0))
+      (session-previous-set! s state)
       (when ordinal
         (session-neighbors-set! s
           (filter values
@@ -164,6 +165,12 @@
                        (not (equal? key (cadar (list-ref r 4)))) (list (cadar (list-ref r 4)))))) (list (+ ordinal 1) (- ordinal 1))))))
       (unless (equal? state (view:state (descriptor s)))
         (interaction:set-state! head:ui-actor (session-id s) #f state) (repaint! s))))
+  (define (mark-pending! s)
+    ;; A connected consumer must not mistake the preceding row for a new,
+    ;; unresolved choice. The last resolved state is only a cancellation aid.
+    (when (selected s)
+      (interaction:set-state! head:ui-actor (session-id s) #f '((selection . #f) (basis)))
+      (repaint! s)))
   (define (seek! s intent v)
     (session-pending-set! s intent)
     (let* ([generation (get v 'generation 0)] [count (get v 'count 0)] [names (map car (columns s v))]
@@ -182,8 +189,8 @@
            (if (and (eq? (car page) 'ready) (pair? (list-ref page 4)))
              (begin (save-selection! s generation (cadar (list-ref page 4)) (caddr page) ordinal)
                (widget:reveal! (body s) (list (session-query s) generation (cadar (list-ref page 4)))))
-             (range:request! (session-token s) generation ordinal 1 names '())))]
-        [else (range:request! (session-token s) generation 0 0 names (list (cadr intent)))])))
+             (begin (mark-pending! s) (range:request! (session-token s) generation ordinal 1 names '()))))]
+        [else (mark-pending! s) (range:request! (session-token s) generation 0 0 names (list (cadr intent)))])))
   (define (service! id frame)
     (let-values ([(source d inputs) (widget:context id 'current)])
       (let* ([rows (assq 'rows inputs)] [query (and rows (eq? (cadr rows) 'ready) (caddr rows))]
@@ -191,7 +198,7 @@
         (when (and old (not (equal? query (session-query old)))) (release! id) (set! old #f))
         (when query
           (let* ([s (or old (let ([s (make-session id query (range:acquire! query (lambda ()
-                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f 0 #f #f '())])
+                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f 0 #f #f '() (view:state d))])
                               (hashtable-set! sessions id s) s))]
                  [v (metadata s)] [g (get v 'generation 0)] [selection (selected s)])
             (unless (equal? (session-generation s) g)
@@ -291,19 +298,19 @@
         (layout t keys (list->vector (map (lambda (c) (if (eq? c (car cs)) width (max 12 (glyph:cells (cadr c))))) cs))
           (lambda (row i) (cell row (list-ref names i))) width))))
   ;; Frame data retains exact shown row keys and provenance for pointer hits.
-  (define-record-type visible (fields id session metadata rows start spans format selection hover focus))
+  (define-record-type visible (fields session metadata rows status spans format selection hover focus))
   (define (viewport id d width height clip)
     (let* ([s (hashtable-ref sessions (root id) #f)] [v (and s (metadata s))]
            [heading? (eq? (view:kind d) 'table-heading)]
            [reply (and s (ready? v) (not heading?) (range:read (session-query s) (get v 'generation 0) (car clip) (min 256 (cdr clip)) (map car (columns s v))))]
            [selection (and s (selected s))])
       (let-values ([(format spans) (if (and s (pair? (columns s v))) (fit s v width) (values (lambda (row) "") '()))])
-        (make-visible id s v (and reply (eq? (car reply) 'ready) (list-ref reply 4)) (car clip) spans format
+        (make-visible s v (and reply (eq? (car reply) 'ready) (list-ref reply 4)) (and reply (car reply)) spans format
           selection (and s (session-hovered s))
           (and s (equal? (widget:focused (session-id s)) (body s)))))))
   (define (render v d width height clip)
     (cond [(eq? (view:kind d) 'table-heading) (list ((visible-format v) #f))]
-      [(not (visible-rows v)) (list (glyph:fit (if (or (not (visible-metadata v)) (eq? (get (visible-metadata v) 'status #f) 'unavailable))
+      [(not (visible-rows v)) (list (glyph:fit (if (or (eq? (visible-status v) 'unavailable) (not (visible-metadata v)) (eq? (get (visible-metadata v) 'status #f) 'unavailable))
                                                    "[Unavailable rows]" "[Pending rows]") width))]
       [else (map (visible-format v) (visible-rows v))]))
   (define (measure id d axis cross child)
@@ -336,7 +343,12 @@
   (define (event! id source d event)
     (let ([s (runtime id)])
       (case (car event)
-        [(blur cancel) (session-hovered-set! s #f) (session-pending-set! s #f) (repaint! s)]
+        [(blur cancel)
+         (when (session-pending s)
+           (let* ([state (session-previous s)] [selection (get state 'selection #f)] [v (metadata s)])
+             (when (and selection (ready? v) (equal? (car selection) (session-query s)) (= (cadr selection) (get v 'generation 0)))
+               (interaction:set-state! head:ui-actor (session-id s) #f state))))
+         (session-hovered-set! s #f) (session-pending-set! s #f) (repaint! s)]
         [(pointer)
          (let* ([f (widget:event-frame)] [v (widget:frame-data f)] [phase (cadr event)]
                 [heading? (eq? (view:kind d) 'table-heading)]

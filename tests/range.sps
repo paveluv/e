@@ -22,7 +22,7 @@
           (lambda (i)
             (set! reads (+ 1 reads))
             (when hold? (set! hold? #f) (entered #t) (test:await 'release-range release))
-            (list i (list (cons 'name (if (= count 9) wide (format "~a:~a" revision i)))) '()))
+            (list i (list (cons 'name (if (< count 1000) wide (format "~a:~a" revision i)))) '()))
           (lambda (key) (and (integer? key) (<= 0 key) (< key count) key))))))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 10000000)]
          [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
@@ -34,6 +34,12 @@
       (range:read query g 3 20 '(name)) (range:read query g 18 4 '(name)) (range:pump!)
       (test:check 'range-overlapping-views-share-a-page-and-warm-reads-do-no-work
         (list before reads (list-ref (range:locate query g 30) 3)) '(64 64 30)))
+    (let* ([table (table:create! actor query '(name))] [before reads])
+      (widget:mount! table 'ten-million-rows)
+      (for-each (lambda (width) (widget:prepare! table width 10) (widget:pump!) (range:pump!)) '(80 10 300))
+      (test:check 'table-ten-million-rows-reuse-pages-and-constant-view-count
+        (list reads (length (view:tree table))) (list before 4))
+      (widget:unmount! table))
     (set! hold? #t)
     (range:request! a g 64 32 '(name) '())
     (range:pump!) (test:await 'range-held entered)
@@ -57,4 +63,17 @@
     (range:request! token g 0 9 '(name) '())
     (test:check 'range-short-byte-limited-page-fetches-its-remainder
       (length (list-ref (page query g 0 9) 4)) 9)
+    (range:release! token))
+  (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 160)]
+         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
+         [token (range:acquire! query void)])
+    (range:request! token g 0 160 '(name) '())
+    (test:await 'range-bounded-overload
+      (lambda () (range:pump!) (eq? (car (range:read query g 0 160 '(name))) 'unavailable)))
+    (let ([before reads])
+      (range:pump!) (range:pump!)
+      (test:check 'range-demand-over-budget-is-explicit-without-refetching
+        (list (range:read query g 0 160 '(name)) reads) (list '(unavailable cache-budget) before)))
+    (range:request! token g 0 1 '(name) '())
+    (page query g 0 1)
     (range:release! token)))

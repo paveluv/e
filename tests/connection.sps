@@ -12,6 +12,10 @@
         '((input in string (value fallback)) (output out string (value text))))))
   (model:register-kind! 'connection-fixture 1 (lambda (v) #t))
   (register!)
+  (let* ([id (connection:topology)] [r (model:snapshot id)])
+    (model:commit! author (list (list id (field r 'revision) (field r 'references) (list-head (field r 'value) 2))))
+    (test:check 'connection-rebuilds-absent-contract-catalogue
+      (caddr (field (model:snapshot (connection:topology)) 'value)) (port:catalogue)))
   (let* ([a (model:create! author 'connection-fixture 1 'session 'persistent '() '((fallback . "a") (text . "A")))]
          [b (model:create! author 'connection-fixture 1 'session 'persistent '() '((fallback . "b") (text . "B")))]
          [result (test:parallel 2 (lambda (n) (if (zero? n) (bind a a #f (list b 'out)) (bind b b #f (list a 'out)))))])

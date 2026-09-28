@@ -33,11 +33,12 @@
   (define preparations (make-hashtable equal-hash equal?))
   (define services (make-hashtable equal-hash equal?))
   (define pending-scroll (make-hashtable equal-hash equal?))
+  (define pending-reveal (make-hashtable equal-hash equal?))
   (define scroll-positions (make-hashtable equal-hash equal?))
   (define (release-service! id)
     (let ([entry (hashtable-ref services id #f)])
       (when entry ((field entry 'release (lambda (id) (void))) id) (hashtable-delete! services id)))
-    (hashtable-delete! pending-scroll id) (hashtable-delete! scroll-positions id))
+    (hashtable-delete! pending-scroll id) (hashtable-delete! pending-reveal id) (hashtable-delete! scroll-positions id))
 
   (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
   (define (pump!)
@@ -59,7 +60,8 @@
               (when anchor
                 (hashtable-delete! pending-scroll child)
                 (interaction:set-state! head:ui-actor parent #f anchor))))))
-      (hashtable-keys pending-scroll)))
+      (hashtable-keys pending-scroll))
+    (vector-for-each (lambda (id) (reveal! id (hashtable-ref pending-reveal id #f))) (hashtable-keys pending-reveal)))
   (define presentations '())
   (define inactive (make-hashtable equal-hash equal?))
 
@@ -405,6 +407,7 @@
     (or (exists (lambda (p) (find-frame (car p) id)) presentations)
       (find-frame (prepared (mount-id (node-root (mounted id)))) id)))
   (define (scroll-action! id delta)
+    (vector-for-each (lambda (child) (when (member id (path child)) (hashtable-delete! pending-reveal child))) (hashtable-keys pending-reveal))
     (let-values ([(source d inputs) (context id)])
       (let* ([frame (allocation id)]
              [child (and (= 1 (length (view:children d)))
@@ -488,7 +491,8 @@
       (let-values ([(available? source) (source! n d)])
         (define (placeholder text)
           (make-frame id d #f source (inputs! id) #f rect clip '()
-            (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip)))) (make-vector 0) #f))
+            (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip))))
+            (style-cells clip rect (list (list (list 0 0 (caddr rect) (cadddr rect)) 'ghost))) #f))
         (guard (ex [else
                     (let ([basis (list entry source)])
                       (unless (equal? basis (hashtable-ref failures id #f))
@@ -838,15 +842,17 @@
   (edoc "Reveal a logical source anchor in its nearest containing scroll viewport, without changing selection."
         (id list "descendant") (anchor datum "source anchor"))
   (define (reveal! id anchor)
-    (let loop ([child id] [rest (cdr (reverse (path id)))] [anchor anchor])
+    (hashtable-delete! pending-reveal id)
+    (let loop ([child id] [rest (cdr (reverse (path id)))] [place anchor])
       (unless (null? rest)
         (let* ([parent (car rest)] [d (read-view parent)] [f (allocation parent)])
           (if (and f (eq? (view:kind d) 'scroll))
             (let* ([width (caddr (frame-rect f))] [height (cadddr (frame-rect f))]
-                   [point (locate! child anchor width)] [top (locate! child (view:state d) width)]
+                   [point (locate! child place width)] [top (locate! child (view:state d) width)]
                    [delta (cond [(not (and point top)) 0] [(< point top) (- point top)] [(>= point (+ top height)) (+ 1 (- point top height))] [else 0])])
-              (unless (zero? delta) (act! parent 'scroll delta)))
-            (loop parent (cdr rest) (list 'child child anchor '() '())))))))
+              (if (not (and point top)) (hashtable-set! pending-reveal id anchor)
+                (unless (zero? delta) (act! parent 'scroll delta))))
+            (loop parent (cdr rest) (list 'child child place '() '())))))))
 
   (edoc "Install the text definition and renderer invalidation.")
   (define (init!)
@@ -870,6 +876,11 @@
     (head:add-pre-redraw-hook! pump!)
     (kernel:registry-observe! definitions
       (lambda (removed added)
-        (when (and pointer-capture (not (live-frame? pointer-capture))) (defer-cancel! 'reload))
+        (when (and pointer-capture
+                (or (not (live-frame? pointer-capture))
+                  (exists (lambda (command)
+                            (let ([d (read-view (cadr command))])
+                              (and d (assoc (list (view:kind d) (view:schema d)) removed))))
+                    (descriptor:commands (frame-descriptor pointer-capture))))) (defer-cancel! 'reload))
         (head:wake-main!))))
 )

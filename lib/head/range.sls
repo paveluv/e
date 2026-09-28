@@ -9,6 +9,7 @@
           (prefix (state model) model:))
   (define readers (kernel:make-registry car)) ; token query callback model-token demand
   (define cache '()) ; (request reply bytes serial)
+  (define exhausted (make-hashtable equal-hash equal?)) ; query -> generation
   (define serial 0)
   (define lock (make-mutex))
   (define completed #f)
@@ -25,7 +26,7 @@
     (fold-left
       (lambda (out r)
         (let* ([d (list-ref r 4)] [id (cadr r)] [s (model:snapshot id)])
-          (if (or (not d) (not (ready? s (car d)))) out
+          (if (or (not d) (not (ready? s (car d))) (equal? (car d) (hashtable-ref exhausted id #f))) out
             (let* ([generation (car d)] [start (cadr d)] [count (caddr d)] [columns (cadddr d)]
                    [keys (list-ref d 4)] [total (field (field s 'value) 'count)]
                    [end (min total (+ start count))]
@@ -55,11 +56,30 @@
                              (if (eq? (car reply) 'ready) (length (list-ref reply 4)) (list-ref request 4))))))) cache))
   (define (missing-request key)
     (if (eq? (car key) 'rank) (and (not (assoc key cache)) key)
-      (let ([end (+ (list-ref key 3) (list-ref key 4))])
-        (let loop ([i (list-ref key 3)])
+      (let* ([start (list-ref key 3)] [end (+ start (list-ref key 4))]
+             ;; After a byte-shortened page, fetch only still-visible gaps.
+             ;; Repeatedly filling speculative tails wastes wire on big cells.
+             [partial? (exists (lambda (e)
+                                 (and (same-range? key (car e)) (needed? (car e) (list key))
+                                   (eq? (caadr e) 'ready) (< (length (list-ref (cadr e) 4)) (list-ref (car e) 4)))) cache)]
+             [spans (if partial?
+                      (filter values
+                        (map (lambda (r)
+                               (let ([d (list-ref r 4)])
+                                 (and d (equal? (cadr r) (cadr key)) (= (car d) (caddr key)) (equal? (cadddr d) (list-ref key 5))
+                                   (< (cadr d) end) (> (+ (cadr d) (caddr d)) start)
+                                   (cons (max start (cadr d)) (min end (+ (cadr d) (caddr d))))))) (kernel:registry-items readers)))
+                      (list (cons start end)))]
+             [start (if (null? spans) end (apply min (map car spans)))]
+             [end (if (null? spans) end (apply max (map cdr spans)))])
+        (let loop ([i start])
           (cond [(>= i end) #f] [(cover key i) (loop (+ i 1))]
             [else (list 'range (cadr key) (caddr key) i (- end i) (list-ref key 5))])))))
   (define (prune! requested)
+    (vector-for-each (lambda (id)
+                       (unless (exists (lambda (r) (and (equal? id (cadr r))
+                                                     (ready? (model:snapshot id) (hashtable-ref exhausted id #f)))) (kernel:registry-items readers))
+                         (hashtable-delete! exhausted id))) (hashtable-keys exhausted))
     (set! cache
       (filter (lambda (entry)
                 (let* ([key (car entry)] [id (cadr key)] [generation (caddr key)])
@@ -69,7 +89,14 @@
       (when (or (> (length cache) 64) (> (apply + (map caddr cache)) #x800000))
         (let* ([undemanded (filter (lambda (e) (not (needed? (car e) requested))) cache)]
                [oldest (car (list-sort (lambda (a b) (< (cadddr a) (cadddr b))) (if (null? undemanded) cache undemanded)))])
-          (set! cache (remq oldest cache)) (loop)))))
+          (if (pair? undemanded) (set! cache (remq oldest cache))
+            ;; All retained payloads are still demanded: eviction alone
+            ;; would fetch them forever. Diagnose the oldest query until a
+            ;; consumer changes its demand, instead of an RPC retry storm.
+            (let ([id (cadar oldest)] [generation (caddar oldest)])
+              (hashtable-set! exhausted id generation)
+              (set! cache (filter (lambda (e) (not (equal? id (cadar e)))) cache))))
+          (loop)))))
 
   (edoc "Adopt one completed range batch and schedule missing current demand. Call on the head pump, outside painting.")
   (define (pump!)
@@ -124,7 +151,9 @@
               (<= count 256) (list? columns) (for-all symbol? columns) (list? keys) (<= (length keys) 4))
       (error 'request! "invalid bounded demand"))
     (let* ([r (reader token)] [d (list generation start count (list-sort column<? columns) keys)])
-      (unless (equal? d (list-ref r 4)) (set-car! (list-tail r 4) (datum:copy d)) (head:wake-main!))))
+      (unless (equal? d (list-ref r 4))
+        (hashtable-delete! exhausted (cadr r))
+        (set-car! (list-tail r 4) (datum:copy d)) (head:wake-main!))))
 
   (edoc "Read acquired compact metadata locally; no range or wire work is started."
         (id row-source "query") (returns any))
@@ -138,7 +167,8 @@
         (count integer "row count") (columns list "raw columns") (returns list))
   (define (read id generation start count columns)
     (let* ([s (summary id)] [columns (list-sort column<? columns)])
-      (cond [(not (ready? s generation)) '(pending)]
+      (cond [(equal? generation (hashtable-ref exhausted id #f)) '(unavailable cache-budget)]
+        [(not (ready? s generation)) '(pending)]
         [else
          (let* ([total (field (field s 'value) 'count)] [end (min total (+ start count))])
            (let loop ([i (min start total)] [rows '()] [basis #f])
@@ -154,15 +184,16 @@
   (edoc "Read a demanded stable-key rank locally; false in a ready reply means the key is absent."
         (id row-source "query") (generation integer "result generation") (key datum "stable key") (returns list))
   (define (locate id generation key)
-    (if (not (ready? (summary id) generation)) '(pending)
-      (let ([entry (assoc (list 'rank id generation key) cache)])
-        (if entry (datum:copy (cadr entry))
-          (let ([hit (exists (lambda (e)
-                               (and (eq? (caar e) 'range) (equal? (cadar e) id) (= (caddar e) generation)
-                                 (eq? (caadr e) 'ready)
-                                 (let ([row (find (lambda (r) (equal? (cadr r) key)) (list-ref (cadr e) 4))])
-                                   (and row (list 'ready generation (caddr (cadr e)) (car row) (list-ref (cadr e) 5)))))) cache)])
-            (or hit '(pending)))))))
+    (if (equal? generation (hashtable-ref exhausted id #f)) '(unavailable cache-budget)
+      (if (not (ready? (summary id) generation)) '(pending)
+        (let ([entry (assoc (list 'rank id generation key) cache)])
+          (if entry (datum:copy (cadr entry))
+            (let ([hit (exists (lambda (e)
+                                 (and (eq? (caar e) 'range) (equal? (cadar e) id) (= (caddar e) generation)
+                                   (eq? (caadr e) 'ready)
+                                   (let ([row (find (lambda (r) (equal? (cadr r) key)) (list-ref (cadr e) 4))])
+                                     (and row (list 'ready generation (caddr (cadr e)) (car row) (list-ref (cadr e) 5)))))) cache)])
+              (or hit '(pending))))))))
 
   (edoc "Integrate range adoption and demand with the existing head frame pump.")
   (define (init!) (head:add-pre-redraw-hook! pump!)))

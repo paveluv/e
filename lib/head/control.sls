@@ -10,10 +10,14 @@
   (define (release! id) (hashtable-delete! held id) (hashtable-delete! hover id))
   (define (input inputs name fallback)
     (let ([p (assq name inputs)]) (if (and p (eq? (cadr p) 'ready)) (caddr p) fallback)))
-  (define (data id source inputs) (list id (input inputs 'text "[Unavailable]") (input inputs 'enabled #f)))
+  (define (data id source inputs)
+    (list id (input inputs 'text "[Unavailable]") (input inputs 'enabled #f)
+      (let ([p (assq 'text inputs)]) (and p (eq? (cadr p) 'ready)))))
   (define (enabled? id)
     (let-values ([(source d inputs) (widget:context id 'current)])
       (and (input inputs 'enabled #f) (assq 'activate (widget:commands id)) #t)))
+  (define (service! id frame)
+    (when (and (hashtable-ref held id #f) (not (enabled? id))) (hashtable-delete! held id)))
 
   (edoc "Invoke an enabled action-text control's explicit command target." (id list "action view") (returns any))
   (define (activate! id)
@@ -26,7 +30,7 @@
     (if (eq? axis 'y) '(1 1) (list 0 (glyph:cells (cadr data)))))
   (define (decorate data d width height range)
     (let* ([id (car data)] [role (cond [(assq 'role (view:options d)) => cdr] [else #f])]
-           [face (if (and (hashtable-ref hover id #f) (caddr data)) 'hover role)])
+           [face (cond [(not (cadddr data)) 'ghost] [(and (hashtable-ref hover id #f) (caddr data)) 'hover] [else role])])
       (if (and face (zero? (car range))) (list (list (list 0 0 (min width (glyph:cells (cadr data))) 1) face)) '())))
   (define (inside? inputs event)
     (let* ([f (widget:event-frame)] [rect (widget:frame-rect f)] [clip (widget:frame-clip f)]
@@ -67,6 +71,6 @@
     (widget:register! 'label 1 (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)))
     (widget:register! 'action-text 1
       (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)
-        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'release release!) (cons 'actions (list (cons 'activate activate!)))))
+        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'service service!) (cons 'release release!) (cons 'actions (list (cons 'activate activate!)))))
     (keymap:bind-default! 'widget-action "RET" (keymap:call activate! widget:target))
     (keymap:bind-default! 'widget-action "SPC" (keymap:call activate! widget:target))))

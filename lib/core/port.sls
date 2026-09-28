@@ -1,7 +1,7 @@
 ;; Portable endpoint contracts, shared by base resolution and head mirrors.
 (import (only (foundation edoc) elibrary))
 (elibrary (core port)
-  (export dependencies describe key observe! project register! resolve unobserve!)
+  (export catalogue dependencies describe key observe! project register! resolve unobserve!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:) (prefix (foundation edoc) edoc:))
   (define definitions (kernel:make-registry car))
@@ -44,6 +44,11 @@
   (define (describe contract)
     (let ([d (kernel:registry-find definitions (lambda (d) (equal? (car d) contract)))])
       (and d (declarations? (car d) (cdr d)) (datum:copy (cdr d)))))
+
+  (edoc "Read the portable contract catalogue used to fence base/head declaration differences." (returns list))
+  (define (catalogue)
+    (list-sort (lambda (a b) (string<? (format "~s" (car a)) (format "~s" (car b))))
+      (filter values (map (lambda (d) (let ([ds (describe (car d))]) (and ds (cons (car d) ds)))) (kernel:registry-items definitions)))))
 
   (edoc "The port-contract key of a model envelope, interpreting a widget-view's declared kind."
         (envelope any "model envelope") (returns any))

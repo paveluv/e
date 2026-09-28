@@ -1,7 +1,7 @@
 ;; Prepared base indexes, compact query recipes, and bounded row/rank reads.
 (import (only (foundation edoc) elibrary))
 (elibrary (state collection)
-  (export configure! create! create-source! fetch range rank register! summary)
+  (export configure! create! create-source! fetch init! range rank register! summary)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core port) port:)
           (prefix (core row) row:) (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:) (prefix (foundation string) string:)
@@ -195,6 +195,9 @@
           (hashtable-keys desired))
         (let ([sources (map (lambda (key) (and (eq? (caar key) 'ready) (cadar key))) (vector->list (hashtable-values desired)))])
           (vector-for-each (lambda (id) (unless (member id sources) (hashtable-delete! cache id))) (hashtable-keys cache))))))
+
+  (edoc "Rebuild prepared query indexes after recovery; persisted records hold recipes, never live provider captures.")
+  (define (init!) (rescan!))
   (define (invalidate! ids)
     (if (not ids) (rescan!)
       (let-values ([(queries keys) (with-mutex lock (hashtable-entries desired))])

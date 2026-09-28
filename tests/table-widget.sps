@@ -28,7 +28,8 @@
   (check 'table-and-list-share-data-not-selection
     (begin (table:move! table 'next) (list (key table) (key list-view))) '(1 0))
   (table:select! table 199)
-  (check 'table-pending-navigation-cannot-activate-old-row (refused? (lambda () (table:activate! table))) #t)
+  (check 'table-pending-navigation-cannot-expose-or-activate-old-row
+    (list (selection table) (refused? (lambda () (table:activate! table)))) '(#f #t))
   (table:move! table 'previous)
   (await-key table 0)
   (table:select! table 199) (await-key table 199)
@@ -53,6 +54,11 @@
     (get (get (collection:summary query) 'value) 'sort) '((size descending) (name ascending)))
   (test:await 'table-resort (lambda () (pump!) (eq? (get (get (collection:summary query) 'value) 'status) 'ready)))
   (table:move! table 'first) (await-key table 0) (show! 80)
+  (test:await 'table-reveal-after-uncached-rank
+    (lambda () (pump!)
+      (let* ([scroll (cadr (assq 'body (view:children (interaction:snapshot table))))]
+             [anchor (view:state (interaction:snapshot scroll))])
+        (and (list? anchor) (= (length anchor) 3) (equal? (caddr anchor) 0)))))
   (let ([before (selection table)])
     (widget:pointer! '(scroll 0 70 line) 2 2)
     (show! 80)
@@ -67,8 +73,8 @@
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-row-click-uses-shown-key-and-explicit-command
       (list (key table) (- (length activated) before)) '(71 1)))
-  (let* ([f (show! 80)] [body-frame (car (widget:frame-children (cadr (widget:frame-children (car (widget:frame-children f))))))]
-         [before (length activated)] [r (collection:summary query)])
+  (show! 80)
+  (let ([before (length activated)] [r (collection:summary query)])
     (collection:configure! actor query (get r 'revision) '((sort (name descending))))
     (test:await 'table-stale-shown (lambda () (eq? (get (get (collection:summary query) 'value) 'status) 'ready)))
     (widget:pointer! '(pointer press primary ()) 2 2)

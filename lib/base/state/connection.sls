@@ -19,7 +19,7 @@
   (define registrations
     (begin
       (model:register-kind! 'connection-topology 1
-        (lambda (v) (and (list? v) (= (length v) 2) (integer? (car v)) (>= (car v) 0)
+        (lambda (v) (and (list? v) (or (= (length v) 2) (and (= (length v) 3) (list? (caddr v)))) (integer? (car v)) (>= (car v) 0)
                       (list? (cadr v)) (for-all (lambda (p) (and (pair? p) (id? (car p)) (id? (cdr p)))) (cadr v))
                       (= (length (cadr v)) (length (unique (map car (cadr v))))))))
       (model:register-kind! 'connection-bindings 1 edges?)))
@@ -27,15 +27,30 @@
   (define (change r refs value) (list (field r 'id) (field r 'revision) refs value))
   (define (witness r) (change r (field r 'references) (field r 'value)))
   (define (owners r) (cadr (field r 'value)))
-  (define (advance r owners) (change r (map cdr owners) (list (+ 1 (car (field r 'value))) owners)))
+  (define (advance r owners) (change r (map cdr owners) (list (+ 1 (car (field r 'value))) owners (caddr (field r 'value)))))
+  (define catalogue (port:catalogue))
+  (define (synchronize-contracts! id)
+    (let loop ()
+      (let ([r (model:snapshot id)] [ds catalogue])
+        ;; Earlier v3 recipes lack the derived catalogue. Rebuild it without
+        ;; changing their owner bindings or requiring a session reset.
+        (unless (and (pair? (cddr (field r 'value))) (equal? (caddr (field r 'value)) ds))
+          (let-values ([(status rows) (model:commit! '(base connection)
+                                        (list (change r (field r 'references) (list (+ 1 (car (field r 'value))) (owners r) ds))))])
+            (unless (eq? status 'applied) (loop)))))))
+  (define contracts
+    (port:observe! (lambda ()
+                     (set! catalogue (port:catalogue))
+                     (for-each synchronize-contracts! (model:ids 'connection-topology)))))
 
   (edoc "Locate the canonical connection topology, initializing it lazily after recovery."
         (returns list) (effects internal))
   (define (topology)
-    (with-mutex initialization-lock
-      (let ([ids (model:ids 'connection-topology)])
-        (cond [(null? ids) (model:create! '(base connection) 'connection-topology 1 'session 'persistent '() '(0 ()))]
-          [(null? (cdr ids)) (car ids)] [else (error 'topology "multiple topology records")]))))
+    (let ([id (with-mutex initialization-lock
+                (let ([ids (model:ids 'connection-topology)])
+                  (cond [(null? ids) (model:create! '(base connection) 'connection-topology 1 'session 'persistent '() (list 0 '() catalogue))]
+                    [(null? (cdr ids)) (car ids)] [else (error 'topology "multiple topology records")])) )])
+      (synchronize-contracts! id) id))
   (define (capture)
     (let* ([top (model:snapshot (topology))]
            [records (filter values (map (lambda (p) (model:snapshot (cdr p))) (owners top)))])

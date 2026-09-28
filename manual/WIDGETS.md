@@ -48,6 +48,26 @@ owns rendering and geometry. Multiple views can share one model and its
 head mirror. Layout and input routing follow the same recursive tree;
 existing apps continue to work.
 
+The executable [composition example](../examples/widgets.e) combines a
+connected filter, filename table, editable answer and Undo action:
+
+```scheme
+(load (string-append (kernel:installation-directory) "/examples/widgets.e"))
+(widget-example:open! '("alpha.sls" "beta.ss" "gamma.e"))
+```
+
+Tab traverses the controls. Type in the filter, choose a table row with the
+arrows/Return or mouse, and undo the inserted filename using the button or
+the entry's normal undo key. The example validates the selected query basis
+before editing. Its data and views survive detach; load its action definition
+again in head configuration when using it across head restarts.
+
+Base and head port declarations must agree. A differing or absent declaration
+makes its endpoint unavailable; restoring the matching declaration reacquires
+its dependencies. Change the contract schema when changing a nominal type's
+meaning, and load its implementation in both runtimes. Persistent collection
+recipes rebuild their indexes after a base restart.
+
 For a small experiment, register a derived text kind in `base-config.e`:
 
 ```scheme
@@ -202,6 +222,9 @@ viewport demand. `range:summary`, `read` and `locate` read local state;
 One scheduler serves all views, with up to four operations per batch and a
 cache bounded by both entries and bytes. Row replies distinguish absent,
 ready and unavailable cells, including an explicit oversized-cell diagnostic.
+If visible demand itself exceeds the cache budget, the affected query reports
+`(unavailable cache-budget)` until its demand changes. It does not repeatedly
+fetch and evict the same pages; reducing the requested range permits a retry.
 
 ## Editable children
 
