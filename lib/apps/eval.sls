@@ -109,13 +109,6 @@
             [(char=? (string-ref s i) #\") (loop (+ i 1) (if open #f i))]
             [else (loop (+ i 1) open)])))
 
-  (define (formal-at formals index)
-    ;; (name . rest?) of the formal taking a zero-based argument index, or #f
-    (let loop ([f formals] [i index])
-      (cond [(pair? f) (if (= i 0) (cons (car f) #f) (loop (cdr f) (- i 1)))]
-            [(symbol? f) (cons f #t)]
-            [else #f])))
-
   (define (callable-formals sig)
     ;; the lambda list of a documented callable: a procedure's own, a record
     ;; procedure's or a keyword's from its argument names, in order; #f for
@@ -155,25 +148,7 @@
       (if (procedure? value) (edoc:edoc-of value) (named-signatures sym))))
 
   (define (argument-type sym index)
-    ;; the type documented for argument index of the callable bound to sym,
-    ;; the union of its lambda lists' answers, or #f
-    (let ([signatures (operator-signatures sym)])
-      (and signatures
-           (let ([types
-                  (fold-left
-                    (lambda (types sig)
-                      (let* ([formals (callable-formals sig)]
-                             [formal (and formals (formal-at formals index))]
-                             [argument (and formal (find (lambda (a) (eq? (edoc:argument-name a) (car formal)))
-                                                         (edoc:signature-arguments sig)))])
-                        (if (not argument) types
-                            (let* ([type (edoc:argument-type argument)]
-                                   [type (if (and (cdr formal) (pair? type) (eq? (car type) 'list-of)) (cadr type) type)])
-                              (if (member type types) types (cons type types))))))
-                    '() signatures)])
-             (cond [(null? types) #f]
-                   [(null? (cdr types)) (car types)]
-                   [else (cons 'or (reverse types))])))))
+    (edoc:call-argument-type (operator-signatures sym) index))
 
   (define (argument-context s pos)
     ;; (type start end token where) for the cursor at a documented argument
@@ -615,6 +590,9 @@
       (prompt:make-candidate name label styles)))
 
   (define (symbol-completer keep? typed?)
+    ;; The status line describes the last lookup. It must not query a type's
+    ;; live directory again while painting (some directories live at the base).
+    (define kind (if typed? "symbol" "editor symbol"))
     (prompt:make-completer
       (lambda (s pos)
         (define (symbols)
@@ -632,20 +610,15 @@
         ;; every candidate allows and lists them
         (let* ([context (and typed? (argument-context s pos))]
                [options (and context (typed-options context))])
+          (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
           (if (not options) (symbols)
               (values (cadr context) (caddr context)
                 (lambda () (typed-inserts s context options))
                 (map (lambda (o) (typed-candidate (car context) o)) options)))))
-      ;; a closure: the completers are built while the module loads, before
-      ;; the settling procedures below are defined
-      (lambda (text pos) (settle-completion text pos))
+      settle-completion
       ;; what the list holds, for its status line: the argument's type at a
       ;; typed position, else the symbols offered
-      (lambda (s pos)
-        (let ([context (and typed? (argument-context s pos))])
-          (if (and context (typed-options context))
-              (type-text (car context))
-              (if typed? "symbol" "editor symbol"))))
+      (lambda (s pos) kind)
       ;; a live search in place of a list, where the argument's type asks
       ;; for one: a needle's matches highlight in the buffer as it is typed
       (lambda (s pos)
@@ -660,9 +633,6 @@
     (cond [(symbol? type) (symbol->string type)]
           [(and (pair? type) (eq? (car type) 'record) (pair? (cdr type))) (symbol->string (cadr type))]
           [else (format "~s" type)]))
-
-  (define complete-symbol (symbol-completer (lambda (sym) #t) #t))
-  (define complete-editor-symbol (symbol-completer kernel:editor-symbol? #f))
 
   ;;; Signatures ----------------------------------------------------------------
 
@@ -1212,7 +1182,7 @@
           (if (eof-object? form)
               (apply values last)
               (loop (call-with-values
-                      (lambda () (eval form (interaction-environment)))
+                      (lambda () (kernel:evaluate! form (interaction-environment)))
                       list)))))))
 
   (edoc "An evaluation's outcome, before reporting or copying it."
@@ -1318,17 +1288,14 @@
       (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
       (evaluate-span! start end "(eval:top-level-form!)")))
 
-  (define (spell value)
-    ;; a pre-filled argument as the expression denoting it
-    (if (symbol? value) (format "'~s" value) (format "~s" value)))
-
   (edoc "Open the M-x prompt with a call begun, the command's name and any arguments already given typed, so completion asks for the next: (eval:prompt-with! 'edit:answer!) reads (edit:answer! and a choice."
         (name symbol "the command's name at the top level")
         (arguments (list-of datum) "the arguments already given, spelled first")
         (prompts))
   (define (eval-prompt-with! name . arguments)
     (read-and-run! (string-append "(" (symbol->string name)
-                                  (apply string-append (map (lambda (v) (string-append " " (spell v))) arguments))
+                                  (apply string-append (map (lambda (v i) (string-append " " (edoc:type-spelling (argument-type name i) v)))
+                                                         arguments (iota (length arguments))))
                                   " ")))
 
   (define (read-and-run! initial)
@@ -1342,9 +1309,9 @@
                             [prompt:edge-motion mx-edge-motion]
                             [prompt:reindent reindent-scheme-input]
                             [paint:echo-highlight mx-echo-styles])
-               (prompt:read! mx-label complete-symbol initial
+               (prompt:read! mx-label (symbol-completer (lambda (sym) #t) #t) initial
                              (box (log:history 'eval:report! car))
-                             complete-editor-symbol normalize-input))])
+                             (symbol-completer kernel:editor-symbol? #f) normalize-input))])
       (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
         ;; Keep the prompt on screen while its expression evaluates --
         ;; forgiven parentheses included -- with the cursor parked at

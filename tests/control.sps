@@ -7,6 +7,14 @@
        [root (view:create! actor #f 'column 1 '() '())])
   (define (line) (vector-ref (head:buffer-lines (head:buffer-of-store-id source)) 0))
   (define (show!) (let ([f (widget:prepare! root 40 3)]) (widget:present! (list (list f 0 0))) f))
+  (define (rebind! action)
+    (interaction:flush!)
+    (let ([revision (cdr (assq 'revision (model:snapshot button)))]
+          [lease (view:generation (interaction:snapshot root))])
+      (interaction:arrange! actor
+        (list (list button revision '()
+                (list '(text . "Replace") '(enabled . #t) (list 'commands (list 'activate entry action '("new"))))))
+        (list (list root lease)))))
   (define enabled
     (begin (model:register-kind! 'control-enabled 1 boolean?)
       (model:create! actor 'control-enabled 1 'session 'transient '() #t)))
@@ -27,12 +35,21 @@
     (check 'control-fork-remaps-internal-command-target
       (cadar (descriptor:commands (view:snapshot new-button))) new-entry))
   (widget:mount! root 'control-fixture) (show!)
+  (let ([focus (widget:focused root)])
+    (check 'command-discovery-includes-descendants-and-fixed-arguments-without-invocation
+      (list (widget:command-bindings root) (widget:focused root) (line))
+      (list (list (list button '(button) 'action-text
+                    (list (list 'activate entry 'insert '("new") entry:insert! #t)))) focus "original")))
   (entry:select! entry 8 0)
   (control:activate! button)
   (check 'control-direct-command-edits-real-source (line) "new")
   (entry:undo! entry)
   (check 'control-command-is-undoable (line) "original")
   (entry:select! entry 8 0) (show!)
+  (let ([action (cadr (assoc '(click primary ()) (widget:pointer-bindings 2 1)))])
+    (check 'control-mouse-binding-is-its-public-command-without-activation
+      (list (keymap:call-action-procedure action) (keymap:call-action-arguments action) (line))
+      (list control:activate! (list button) "original")))
   (widget:pointer! '(pointer press primary ()) 2 1)
   (widget:pointer! '(pointer release primary ()) 2 1)
   (widget:pointer! '(pointer release primary ()) 2 1)
@@ -43,7 +60,9 @@
   (widget:pointer! '(pointer release primary ()) 2 1)
   (check 'control-cancel-prevents-activation (line) "original")
   (show!) (widget:pointer! '(pointer press primary ()) 2 1)
-  (enable! #f) (widget:pump!) (enable! #t) (widget:pump!)
+  (enable! #f) (widget:pump!)
+  (check 'disabled-control-has-no-mouse-binding (widget:pointer-bindings 2 1) '())
+  (enable! #t) (widget:pump!)
   (widget:pointer! '(pointer release primary ()) 2 1)
   (check 'control-disable-and-reenable-do-not-resurrect-a-held-press (line) "original")
   (let-values ([(text rev) (store:snapshot source)])
@@ -52,4 +71,13 @@
   (let ([before (line)])
     (check 'control-stale-overlap-refuses-without-losing-text
       (list (refused? (lambda () (control:activate! button))) (line)) (list #t before)))
+  ;; Rewiring to an absent action stays inspectable, but cannot execute.
+  (rebind! 'absent)
+  (check 'command-discovery-retains-unavailable-connections
+    (list (widget:command-bindings button) (widget:commands button))
+    (list (list (list button '() 'action-text
+                  (list (list 'activate entry 'absent '("new") #f #f)))) '()))
+  (rebind! 'insert)
+  (check 'command-discovery-follows-rewiring
+    (list-ref (car (cadddr (car (widget:command-bindings button)))) 4) entry:insert!)
   (widget:unmount! root) (widget:invalidate!))

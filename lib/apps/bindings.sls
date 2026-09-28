@@ -1,15 +1,11 @@
-;; keys.sls -- the key bindings helper: C-x TAB shows in the pop-up the
-;; keys that work in the active window's buffer, its mode contexts'
-;; bindings first, an app's own keys among them, then the global ones; keys running one command share a row,
-;; with the command and its description beside them, the description
-;; wrapped in its column.  The listing is a local read-only buffer,
-;; <keys>, browsed like any other; C-x TAB pages it down from anywhere,
-;; and back to the top past the end, and it follows the active window.
+;; bindings.sls -- inspect mouse, keyboard and widget command bindings.
+;; C-x TAB opens <bindings> in the pop-up and pages an existing listing.
+;; Mouse bindings follow the pointer; keyboard and widget commands follow
+;; the active window. Each binding shows its public API and documentation.
 
 (import (only (foundation edoc) elibrary))
-(elibrary (apps keys)
-  (export (rename (keys-hide! hide!)) init! (rename (keys-open! open!)) (rename (keys-page-up! page-up!)) (rename (keys-return! return!))
-          (rename (keys-show! show!)))
+(elibrary (apps bindings)
+  (export hide! init! open! page-up! return! show!)
   (import (rnrs)
           (only (chezscheme) format iota list-head make-weak-eq-hashtable quotient void)
           (prefix (foundation edoc) edoc:)
@@ -17,22 +13,44 @@
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
+          (prefix (head mouse) mouse:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head widget) widget:)
           (prefix (sys glyph) glyph:))
 
-  (define view #f) ; the <keys> buffer while it is shown
+  (define view #f) ; the <bindings> buffer while it is shown
   (define over '()) ; ((window . buffer) ...) what a window showed before the listing took it
   (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
+  (define keyboard-cache #f)
+  (define commands-cache #f)
+  (define listed-pointer '()) ; the last inspected target, retained while browsing this help
+  (define symbolic-spans (make-weak-eq-hashtable)) ; rendered text -> unresolved character spans
+
+  ;; Preserve semantic marks while fitting text into columns. Plain strings
+  ;; remain the display/cache keys; buffer facts publish the final row marks.
+  (define (spans text) (hashtable-ref symbolic-spans text '()))
+  (define (marked text ranges)
+    (unless (null? ranges) (hashtable-set! symbolic-spans text ranges))
+    text)
+  (define (join . parts)
+    (let loop ([parts parts] [offset 0] [ranges '()] [out '()])
+      (if (null? parts) (marked (apply string-append (reverse out)) (apply append (reverse ranges)))
+        (loop (cdr parts) (+ offset (string-length (car parts)))
+          (cons (map (lambda (r) (cons (+ offset (car r)) (+ offset (cdr r)))) (spans (car parts))) ranges)
+          (cons (car parts) out)))))
+  (define (slice text start end)
+    (marked (substring text start end)
+      (map (lambda (r) (cons (- (max start (car r)) start) (- (min end (cdr r)) start)))
+        (filter (lambda (r) (and (< (car r) end) (> (cdr r) start))) (spans text)))))
 
   (define (stale-listing? b)
-    ;; a <keys> or <keys 2> local buffer that is not the view: one an older
+    ;; a <bindings> or <bindings 2> local buffer that is not the view: one an older
     ;; checkpoint brought back as text
     (let ([name (head:buffer-name b)])
       (and (not (eq? b view)) (not (head:buffer-store-id b))
-           (string:prefix? "<keys" name) (string:suffix? ">" name))))
+           (string:prefix? "<bindings" name) (string:suffix? ">" name))))
 
   (define (sweep!)
     ;; the listings an older checkpoint restored go; the view is made fresh
@@ -59,6 +77,13 @@
     (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
       (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
 
+  (define (trace action . substitutions)
+    (map (lambda (row)
+           (list (join (if (= (car row) 0) "" (string-append (make-string (* 2 (min 8 (car row))) #\space) "→ "))
+                   (marked (cadr row) (list-ref row 4)) (if (cadddr row) (string-append " [" (cadddr row) "]") ""))
+             (if (caddr row) (summary-of (caddr row)) "")))
+      (apply keymap:action-trace action substitutions)))
+
   (define (shadowed? sequence nearer)
     ;; whether a nearer context binds the sequence, or a prefix of it, so
     ;; the key never reaches this binding
@@ -67,7 +92,7 @@
                       (map (lambda (i) (+ i 1)) (iota (length sequence)))))
             nearer))
 
-  (define (context-groups context nearer read-only? . keep)
+  (define (context-groups context nearer read-only? keep describe)
     ;; keep, when given, admits a binding: the commands allowed in a
     ;; prompt for the global section while one is open
     ;; (keys command description) for a context's bindings that work here:
@@ -76,7 +101,7 @@
     ;; first key; a lambda shows as the anonymous command it is, a name
     ;; being owed
     (define (add key command description groups)
-      (let ([hit (find (lambda (g) (string=? (cadr g) command)) groups)])
+      (let ([hit (find (lambda (g) (equal? (cadr g) command)) groups)])
         (if hit
             (map (lambda (g) (if (eq? g hit) (cons (cons key (car g)) (cdr g)) g)) groups)
             (cons (list (list key) command description) groups))))
@@ -85,12 +110,12 @@
           (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
                      (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
           (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
-                 [command (and action (keymap:action-text action))])
+                 [command (and action (if describe (describe b) (trace action)))])
             (loop (cdr owned)
                   (if (and command
                            (not (shadowed? (keymap:binding-sequence b) nearer))
                            (not (and read-only? (edits? action)))
-                           (or (null? keep) ((car keep) b)))
+                           (or (not keep) (keep b)))
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -99,7 +124,7 @@
   (define (cells s) (glyph:cells s))
 
   (define (pad s width)
-    (if (>= (cells s) width) s (string-append s (make-string (- width (cells s)) #\space))))
+    (if (>= (cells s) width) s (join s (make-string (- width (cells s)) #\space))))
 
   (define (wrap text width)
     ;; the text as lines of at most width cells, broken at spaces, a word
@@ -111,7 +136,7 @@
             (reverse (cons word out))
             (let cut ([n (string-length word)])
               (if (or (<= n 1) (<= (cells (substring word 0 n)) width))
-                  (loop (substring word n (string-length word)) (cons (substring word 0 n) out))
+                  (loop (slice word n (string-length word)) (cons (slice word 0 n) out))
                   (cut (- n 1)))))))
     (let loop ([words (apply append (map chop (filter (lambda (w) (> (string-length w) 0)) (split-words text))))]
                [line ""] [out '()])
@@ -119,14 +144,14 @@
         [(null? words) (reverse (if (string=? line "") out (cons line out)))]
         [(string=? line "") (loop (cdr words) (car words) out)]
         [(<= (+ (cells line) 1 (cells (car words))) width)
-         (loop (cdr words) (string-append line " " (car words)) out)]
+         (loop (cdr words) (join line " " (car words)) out)]
         [else (loop words "" (cons line out))])))
 
   (define (split-words s)
     (let loop ([i 0] [start 0] [out '()])
       (cond
-        [(= i (string-length s)) (reverse (cons (substring s start i) out))]
-        [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (substring s start i) out))]
+        [(= i (string-length s)) (reverse (cons (slice s start i) out))]
+        [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (slice s start i) out))]
         [else (loop (+ i 1) start out)])))
 
   (define (bracket keys i)
@@ -145,6 +170,13 @@
     ;; command, a long call wrapped at its spaces, and its description
     ;; wrapped in the last column, the keys of a group joined by a line in
     ;; the margin
+    (define (steps group)
+      (if (string? (cadr group)) (list (cdr group)) (cadr group)))
+    (define (step-lines step command-width text-width)
+      (let* ([command (wrap (car step) command-width)] [text (wrap (cadr step) text-width)]
+             [height (max (length command) (length text) 1)])
+        (map (lambda (i) (cons (if (< i (length command)) (list-ref command i) "")
+                           (if (< i (length text)) (list-ref text i) ""))) (iota height))))
     (if (null? groups)
         '()
         (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
@@ -154,21 +186,21 @@
                ;; keeps twenty-four cells, and shrinks to eight cells before
                ;; the description shrinks below that
                [room (- width key-width 6)]
-               [command-width (min (apply max (map (lambda (g) (cells (cadr g))) groups)) (max 8 (- room 24)))]
+               [command-width (min (apply max (apply append (map (lambda (g) (map (lambda (s) (cells (car s))) (steps g))) groups))) (max 8 (- room 24)))]
                [text-width (max 8 (- room command-width))])
           (cons title
                 (apply append
                   (map (lambda (g)
-                         (let* ([keys (car g)] [command (wrap (cadr g) command-width)]
-                                [text (wrap (caddr g) text-width)]
-                                [height (max (length keys) (length command) (length text) 1)])
+                         (let* ([keys (car g)]
+                                [lines (apply append (map (lambda (s) (step-lines s command-width text-width)) (steps g)))]
+                                [height (max (length keys) (length lines) 1)])
                            (let loop ([i 0] [out '()])
                              (if (= i height) (reverse out)
                                  (loop (+ i 1)
-                                       (cons (string-append
+                                       (cons (join
                                                (bracket keys i) (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
-                                               (pad (if (< i (length command)) (list-ref command i) "") command-width) "  "
-                                               (if (< i (length text)) (list-ref text i) ""))
+                                               (pad (if (< i (length lines)) (car (list-ref lines i)) "") command-width) "  "
+                                               (if (< i (length lines)) (cdr (list-ref lines i)) ""))
                                              out))))))
                        groups))))))
 
@@ -208,6 +240,15 @@
           (if (eq? (car path) context) (not (shadowed? sequence nearer))
             (loop (cdr path) (cons (car path) nearer)))))))
 
+  (define (describe-binding b context binding)
+    ;; Reify the known receiver; never run arbitrary argument producers to
+    ;; describe a key. The resulting Scheme call works outside key dispatch.
+    (let* ([root (head:buffer-fact b 'widget-id #f)]
+           [scope (find (lambda (scope) (memq context (cadr scope)))
+                    (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
+      (trace (keymap:binding-action binding)
+        (if scope (list (cons widget:target (car scope))) '()))))
+
   (define (listing b width)
     ;; the keys that work now: with a prompt open, its content view's
     ;; context, the prompt's keys and the global commands allowed in a
@@ -227,11 +268,12 @@
               (loop (cdr contexts) (cons context nearer)
                     (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
                                    (append (if (and prompting? (eq? context 'global))
-                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))))
+                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
                                                (if (and widget? (not prompting?))
                                                  (context-groups context '() (and (eq? context 'global) read-only?)
-                                                   (lambda (binding) (reachable? b context binding)))
-                                                 (context-groups context nearer (and (not prompting?) read-only?))))
+                                                   (lambda (binding) (reachable? b context binding))
+                                                   (lambda (binding) (describe-binding b context binding)))
+                                                 (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
                                            (capture-note context))
                                    width)
                           out)))))))
@@ -246,6 +288,16 @@
       (when (and (> (string-length line) 1) (memv (string-ref line 1) '(#\╷ #\│ #\╵)))
         (vector-set! v 1 'chrome))
       v))
+
+  (define (row-styles b row line)
+    (let* ([rows (head:buffer-fact b 'symbolic-spans '#())]
+           [ranges (if (< row (vector-length rows)) (vector-ref rows row) '())])
+      (and (pair? ranges)
+        (let ([v (styles line)])
+          (for-each (lambda (r)
+                      (do ([i (car r) (+ i 1)]) ((>= i (min (cdr r) (vector-length v))))
+                        (vector-set! v i 'italic))) ranges)
+          v))))
 
   ;;; The buffer in the pop-up ------------------------------------------------------------
 
@@ -284,44 +336,114 @@
       ;; the screen's width less the listing's scrollbar column
       (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
 
-  (define (situation b)
+  (define (pointer-bindings)
+    (let ([at (mouse:position)])
+      (if (and at (head:window-at (- (car at) 1) (- (cdr at) 1)
+                    (lambda (entry) (eq? (head:window-buffer (car entry)) view))))
+          listed-pointer
+          (mouse:bindings))))
+
+  (define (situation b pointer)
     ;; what the listing depends on: the buffer, its contexts, its text being
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
     ;; comes last, so the rest compares on its own
-    (list b (list (contexts b "") (keymap:generation)) (read-only-text? b) (prompt:active?) (prompt-context) (listing-width)))
+    (let ([root (head:buffer-fact b 'widget-id #f)])
+      (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
+        (read-only-text? b) (prompt:active?) (prompt-context)
+        (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
+        (if (and root (not (prompt:active?))) (widget:command-bindings root) '())
+        (listing-width))))
 
-  (define (fill! b)
+  (define (action-basis action)
+    (if (keymap:call-action? action)
+      (cons (keymap:call-action-procedure action) (map action-basis (keymap:call-action-arguments action))) action))
+
+  (define (command-template procedure arguments)
+    ;; Fixed arguments are expressions; remaining formal names are supplied
+    ;; by the invoking control, not invented values or a runnable nullary call.
+    (define (formal name)
+      (let ([text (string-copy (symbol->string name))]) (marked text (list (cons 0 (string-length text))))))
+    (let* ([text (keymap:action-text (keymap:call (apply procedure arguments)))]
+           [sigs (edoc:edoc-of procedure)] [sig (and sigs (find (lambda (s) (eq? (edoc:signature-kind s) 'procedure)) sigs))]
+           [remaining (if sig
+                        (let skip ([f (edoc:signature-formals sig)] [n (length arguments)])
+                          (if (and (> n 0) (pair? f)) (skip (cdr f) (- n 1)) f)) 'arguments)]
+           [tail (let spell ([f remaining])
+                   (cond [(null? f) ""] [(pair? f) (join " " (formal (car f)) (spell (cdr f)))]
+                     [else (join " . " (formal f))]))])
+      (join (substring text 0 (- (string-length text) 1)) tail ")")))
+
+  (define (command-sections bindings width)
+    (let ([basis (list bindings width)])
+      (unless (and commands-cache (equal? (car commands-cache) basis))
+        (set! commands-cache
+          (cons basis
+            (if (null? bindings) '()
+              (cons "Widget commands"
+                (apply append
+                  (map (lambda (row)
+                         (section
+                           (format "~a (~a): ~a"
+                             (if (null? (cadr row)) "root" (string:join (map symbol->string (cadr row)) "/"))
+                             (caddr row) (edoc:type-spelling 'model (car row)))
+                           (map (lambda (binding)
+                                  (let* ([proc (list-ref binding 4)]
+                                         [public? (and proc (not (string=? (keymap:action-text proc) "anonymous command")))])
+                                    (list (list (symbol->string (car binding)))
+                                      (if public? (command-template proc (cons (cadr binding) (cadddr binding)))
+                                        (command-template (keymap:call-action-procedure (keymap:call widget:act!))
+                                          (cons* (cadr binding) (caddr binding) (cadddr binding))))
+                                      (string-append (if (list-ref binding 5) "" "Unavailable target. ")
+                                        (if proc (summary-of proc) "Target action is not registered."))))) (cadddr row)) width)) bindings)))))))
+      (cdr commands-cache)))
+
+  (define (fill! b pointer now)
     ;; the listing for a buffer into the view: from the top for a new
-    ;; subject, in place when only the width changed, a resize say
-    (let* ([now (situation b)]
+    ;; keyboard context; keep the reader's place through pointer or width changes
+    (let* ([width (listing-width)]
            [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
-           [lines (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))])
+           [keyboard-key (append (list-head now 5) (list (list-ref now 6) width))]
+           [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
+           [lines (append (section "Mouse bindings"
+                            (map (lambda (binding)
+                                   (list (list (mouse:gesture-text (car binding))) (trace (cadr binding)) "")) pointer) width)
+                    keyboard (command-sections (list-ref now 6) width))]
+           [lines (if (null? lines) (list "no bindings") lines)])
+      (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
-      (head:buffer-read-only-set! view #f)
-      (head:buffer-lines-set! view (list->vector lines))
-      (head:buffer-read-only-set! view #t)
-      (for-each (lambda (w)
-                  (let ([top (if same? (min (head:window-top w) (- (length lines) 1)) 0)])
-                    (head:window-top-set! w top) (head:window-prow-set! w top) (head:window-pcol-set! w 0)))
-                (view-windows))))
+      (set! listed-pointer pointer)
+      (head:view-replace! view lines (list (cons 'symbolic-spans (list->vector (map spans lines)))))
+      (unless same?
+        (for-each (lambda (w)
+                    (head:window-top-set! w 0) (head:window-topseg-set! w 0)
+                    (head:window-prow-set! w 0) (head:window-pcol-set! w 0))
+                  (view-windows)))))
+
+  (define (refresh! b)
+    (let* ([pointer (pointer-bindings)] [now (situation b pointer)])
+      (and (not (equal? listed now))
+           (begin (fill! b pointer now) #t))))
 
   (define (ensure-view!)
-    ;; the <keys> buffer, made fresh when none is live
+    ;; the <bindings> buffer, made fresh when none is live
     (unless (and view (memq view (head:buffers)))
       (sweep!)
-      (set! view (head:new-local-buffer! "keys"))
+      (set! view (head:new-local-buffer! "bindings"))
       ;; transient: a checkpoint keeps no listing, so a restart brings none back
-      (head:buffer-fact-set! view 'resume-kind 'keys)
+      (head:buffer-fact-set! view 'resume-kind 'bindings)
       ;; long, and read by position: a scrollbar on the configured side
       (head:buffer-fact-set! view 'scrollbar #t)
       (head:set-buffer-status! view status)
-      (head:add-buffer! view)
-      (mode:choose! "keys" view)))
+      (head:register-view! view void)
+      (mode:choose! "bindings" view)))
 
   (define (drop-view!)
     (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
     (set! view #f)
+    (set! keyboard-cache #f)
+    (set! commands-cache #f)
+    (set! listed-pointer '())
     (set! listed #f))
 
   (define (follow!)
@@ -332,8 +454,7 @@
       (if (null? (view-windows))
           (drop-view!)
           (let ([b (subject)])
-            (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
-              (fill! b))))))
+            (when (and b (not (eq? b view))) (refresh! b))))))
 
   ;;; Pages -----------------------------------------------------------------------
 
@@ -405,68 +526,66 @@
     (let ([starts (page-starts w)])
       (format "page ~a of ~a" (+ 1 (page-index w starts)) (length starts))))
 
-  (edoc "Show the keys that work in the active window's buffer in the pop-up, window 0, as the read-only buffer <keys>: its mode contexts' bindings, an app's own keys among them, then the global ones, keys running one command sharing a row with the command and what it does; shown already, in the pop-up or a window, page it down there, and from the top again past the end. The listing follows the active window.")
-  (define (keys-show!)
+  (edoc "Inspect mouse, keyboard and widget command bindings in the read-only pop-up <bindings>, with their public APIs and documentation. Mouse bindings follow the pointer; keyboard and widget commands follow the active window. If already shown, page down, wrapping to the top past the end.")
+  (define (show!)
     (cond
       [(showing?)
        ;; the situation changed under the listing, a prompt opened say: it
        ;; refills; unchanged, or with nothing else to describe, it pages
        (let ([b (subject)])
-         (if (and b (not (eq? b view)) (not (equal? listed (situation b))))
-             (fill! b)
-             (page-down!)))]
+         (unless (and b (not (eq? b view)) (refresh! b)) (page-down!)))]
       [else
        (let ([b (or (subject) (head:window-buffer (head:current-window)))])
          (ensure-view!)
          (remember-over! (head:popup))
          (head:set-window-buffer! (head:popup) view)
-         (fill! b)
+         (refresh! b)
          (head:show-popup! (head:popup-default-rows)))]))
 
   (define (remember-over! w)
-    ;; what a window shows before the listing takes it, for keys:return!
+    ;; what a window shows before the listing takes it, for bindings:return!
     (unless (eq? (head:window-buffer w) view)
       (set! over (cons (cons w (head:window-buffer w)) (remp (lambda (e) (eq? (car e) w)) over)))))
 
-  (edoc "Page the keys listing up where it shows, from the last page again past the top; not shown, show it as C-x TAB does.")
-  (define (keys-page-up!)
-    (if (showing?) (page! -1) (keys-show!)))
+  (edoc "Page the bindings listing up where it shows, from the last page again past the top; not shown, show it as C-x TAB does.")
+  (define (page-up!)
+    (if (showing?) (page! -1) (show!)))
 
-  (edoc "Show the keys listing in the current window as the read-only buffer <keys>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there.")
-  (define (keys-open!)
+  (edoc "Show the bindings listing in the current window as the read-only buffer <bindings>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there.")
+  (define (open!)
     (let ([b (head:current-buffer)])
       (ensure-view!)
       (remember-over! (head:current-window))
       (head:show-buffer! view)
-      (unless (eq? b view) (fill! b))))
+      (unless (eq? b view) (refresh! b))))
 
-  (edoc "Put the listing away from the current window and show what the window showed before it, the pop-up hiding when it showed nothing else; ESC and C-g in <keys>.")
-  (define (keys-return!)
+  (edoc "Put the listing away from the current window and show what the window showed before it, the pop-up hiding when it showed nothing else; ESC and C-g in <bindings>.")
+  (define (return!)
     (let* ([w (head:current-window)] [back (cond [(assq w over) => cdr] [else #f])])
-      (unless (and view (eq? (head:window-buffer w) view)) (error 'keys:return! "the current window shows no keys listing"))
+      (unless (and view (eq? (head:window-buffer w) view)) (error 'bindings:return! "the current window shows no bindings listing"))
       (set! over (remp (lambda (e) (eq? (car e) w)) over))
       (cond
         [(and (head:popup? w) (or (not back) (not (memq back (head:buffers))) (eq? back (head:window-buffer (head:popup)))))
-         (keys-hide!)]
+         (hide!)]
         [(and back (memq back (head:buffers))) (head:set-window-buffer! w back)]
-        [else (keys-hide!)])
+        [else (hide!)])
       (when (and view (null? (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))) (drop-view!))))
 
-  (edoc "Put the key listing away: the pop-up shows its placeholder again and hides, and a window showing the listing shows another buffer.")
-  (define (keys-hide!)
+  (edoc "Put the bindings listing away: the pop-up shows its placeholder again and hides, and a window showing the listing shows another buffer.")
+  (define (hide!)
     (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
     (set! over '())
     (drop-view!))
 
-  (edoc "Install the keys helper: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
+  (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
-    (mode:register! "keys" '() '() styles #f #f)
-    (head:register-resume! 'keys (lambda (b positions) (values #f positions)) (lambda args #f))
-    (keymap:bind-default! "C-x TAB" keys-show!)
-    (keymap:bind-default! "C-x S-TAB" keys-page-up!)
-    (keymap:bind-default! 'keys "ESC" keys-return!)
-    (keymap:bind-default! 'keys "C-g" keys-return!)
+    (mode:register! "bindings" '() '() styles #f row-styles)
+    (head:register-resume! 'bindings (lambda (b positions) (values #f positions)) (lambda args #f))
+    (keymap:bind-default! "C-x TAB" show!)
+    (keymap:bind-default! "C-x S-TAB" page-up!)
+    (keymap:bind-default! 'bindings "ESC" return!)
+    (keymap:bind-default! 'bindings "C-g" return!)
     ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
-    (prompt:allow! keys-show!)
-    (prompt:allow! keys-page-up!)
+    (prompt:allow! show!)
+    (prompt:allow! page-up!)
     (head:add-pre-redraw-hook! follow!)))

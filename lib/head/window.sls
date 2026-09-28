@@ -65,7 +65,7 @@
                     (head:set-app-status-position! b (lambda (b) "")) b))))]))
 
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
-        (w window "outer host") (id list "root view id") (returns buffer))
+        (w window "outer host") (id model "root view id") (returns buffer))
   (define (show-widget! w id)
     (let ([origin (document:reference (head:window-buffer w))])
       (head:set-window-buffer! w (widget-buffer! id))
@@ -83,7 +83,7 @@
         (error 'window "tool has no visible window" id))))
 
   (edoc "Open a semantic document reference through an explicit window-tool host. Inactive panel clicks use the previously focused window and preserve its focus; keyboard actions use the tool's own window."
-        (id list "window-tool view") (ref datum "catalogue document reference"))
+        (id model "window-tool view") (ref datum "catalogue document reference"))
   (define (open-document! id ref)
     (let* ([own (tool-window id)] [event-target (head:app-event-focus)]
            [target (if (and event-target (memq event-target (head:windows))) event-target own)]
@@ -93,7 +93,7 @@
       (head:with-window target (head:show-buffer! b))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
-        (id list "window-tool view"))
+        (id model "window-tool view"))
   (define (return! id)
     (let* ([w (tool-window id)] [d (interaction:snapshot id)] [p (assq 'origin (view:state d))]
            [b (or (and p (document:resolve! (cdr p)))

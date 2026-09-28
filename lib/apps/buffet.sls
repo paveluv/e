@@ -14,8 +14,8 @@
 
   (define (get xs key fallback) (cond [(assq key xs) => cdr] [else fallback]))
   (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
-  (define (target-table) (child (widget:target) 'table))
-  (define (target-entry) (child (child (target-table) 'filter) 'entry))
+  (define target-table (keymap:call widget:descendant widget:target 'table))
+  (define target-entry (keymap:call widget:descendant widget:target 'table 'filter 'entry))
   (define (event! id source descriptor event)
     (and (eq? (car event) 'text)
       (let ([entry (child (child (child id 'table) 'filter) 'entry)]
@@ -24,7 +24,7 @@
         (widget:focus! root entry) (entry:insert! entry (cadr event)) #t)))
 
   (edoc "Create an unmounted Buffet composition. Commands explicitly bind open (document reference) and return; no current-window fallback is used. An optional existing query shares filter and sort; selection and geometry always belong to this view."
-        (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns list "app view"))
+        (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns model "app view"))
   (define (create! commands . shared)
     (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
     (let* ([query (if (pair? shared) (car shared)
@@ -63,7 +63,7 @@
       (unless (eq? status 'applied) (error 'buffet "document changed; choose it again" status))))
 
   (edoc "Open the exact selected document through the host; archive selections restore that ID against its shown version first."
-        (id list "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
+        (id model "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
   (define (choose! id selection basis)
     (unless (assq 'open (widget:commands id)) (error 'choose! "no open command is connected"))
     (let ([row (selected-row id selection basis)])
@@ -71,7 +71,7 @@
       (widget:invoke! id 'open (car row))))
 
   (edoc "Trash a selected live shared document, delete disposable output, or retire an attachment-local app; stale versions refuse. Every displaying window gets the ordinary fallback."
-        (id list "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (kill! id selection basis)
     (let* ([row (selected-row id selection basis)] [ref (car row)])
       (unless (eq? (caddr row) 'live) (error 'kill! "choose a live document"))
@@ -82,7 +82,7 @@
         (unless (document:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
 
   (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
-        (id list "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (delete! id selection basis)
     (let ([row (selected-row id selection basis)])
       (when (eq? (caddr row) 'live) (error 'delete! "choose a Trash or Backups item"))
@@ -91,7 +91,7 @@
   (define (default!) (window:tool! "buffet" create!))
 
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
-        (returns list "Buffet view"))
+        (returns model "Buffet view"))
   (define (open!)
     (let* ([was (head:current-buffer)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
@@ -168,7 +168,7 @@
       '(("DOWN" . next) ("C-n" . next) ("TAB" . next) ("UP" . previous) ("C-p" . previous) ("S-TAB" . previous)
         ("HOME" . first) ("C-a" . first) ("M-<" . first) ("END" . last) ("C-e" . last) ("M->" . last)
         ("PGDN" . page-next) ("C-v" . page-next) ("PGUP" . page-previous) ("M-v" . page-previous)))
-    (for-each (lambda (p) (keymap:bind-default! 'buffet (car p) (keymap:call table:activate! target-table (cdr p))))
+    (for-each (lambda (p) (keymap:bind-default! 'buffet (car p) (keymap:call table:invoke! target-table (cdr p))))
       '(("RET" . activate) ("C-k" . trash) ("C-x D" . delete)))
     (keymap:bind-default! 'buffet "C-u" (keymap:call entry:delete! target-entry 'all))
     (for-each (lambda (n column) (keymap:bind-default! 'buffet (format "F~a" n) (keymap:call table:toggle-sort! target-table column)))

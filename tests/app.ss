@@ -9,7 +9,9 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
-(eval
+(define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
+
+(evaluate!
   '(begin
      (import (except (head edit) init!)
              (prefix (head head) head:)
@@ -698,6 +700,8 @@
            (widget:register! 'route-leaf 1
              (list (cons 'focus #t) (cons 'contexts '(route-leaf)) (cons 'capture (if full? 'full 'partial))
                (cons 'actions (list (cons 'record record!)))
+               (cons 'pointer-bindings
+                 (lambda (f x y) (map (lambda (button) (list (list 'click button '()) (keymap:call widget:act! (widget:frame-id f) 'record 'press))) '(primary secondary))))
                (cons 'event (lambda (id source d event)
                               (case (car event)
                                 [(text) (record! id (cadr event)) #t]
@@ -712,6 +716,8 @@
        (widget:register! 'route-row 1
          (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
            (cons 'actions (list (cons 'record record!)))
+           (cons 'pointer-bindings
+             (lambda (f x y) (map (lambda (button) (list (list 'click button '()) (keymap:call widget:act! (widget:frame-id f) 'record 'bubbled))) '(primary middle secondary))))
            (cons 'event (lambda (id source d event) (and (eq? (car event) 'pointer) (begin (record! id 'bubbled) #t))))
            (cons 'layout (lambda (d width height measure locate)
                            (map (lambda (child x) (list (cadr child) (list x 0 5 height))) (view:children d) '(0 5))))))
@@ -723,6 +729,9 @@
          (list (list root 0 (list (list 'body row '(grow 1))) '())
                (list row 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
        (widget:mount! root 'routing-test) (show!) (widget:focus! root a)
+       (check 'mouse-discovery-shadows-per-gesture-and-is-read-only
+         (list (map (lambda (binding) (car (keymap:call-action-arguments (cadr binding)))) (widget:pointer-bindings 1 0)) (take))
+         (list (list a a row) '()))
        (key! "C-x")
        (check 'chord-start-returns-without-reading-input (dispatch:pending?) #t)
        (key! "a") (key! "C-x") (key! "b") (key! "F1") (key! "F2") (key! "z")
@@ -758,7 +767,8 @@
                     ])
          (check 'modal-attachment-commits status 'applied))
        (show!) (key! "x") (widget:pointer! '(pointer press primary ()) 1 0)
-       (check 'empty-modal-has-no-key-or-pointer-click-through (take) '())
+       (check 'empty-modal-has-no-key-or-pointer-click-through
+         (list (take) (widget:pointer-bindings 1 0)) '(() ()))
        (widget:unmount! root) (kernel:retract-module! owner)
        (widget:invalidate!))
 
@@ -787,6 +797,12 @@
          '((3 . 0) selection))
        (widget:focus! root b) (show!)
        (check 'entry-caret-translates-into-the-second-child (widget:caret (widget:prepared root)) '(10 . 0))
+       (let ([bindings (widget:pointer-bindings 14 0)])
+         (check 'entry-pointer-bindings-use-grapheme-positions-and-do-not-select
+           (list (keymap:call-action-arguments (cadr (assoc '(click primary ()) bindings)))
+             (keymap:call-action-arguments (cadr (assoc '(click primary (shift)) bindings)))
+             (view:state (interaction:snapshot b)))
+           (list (list b 4 4) (list b 4 0) '((0 . 0) (0 . 0)))))
        (widget:pointer! '(pointer move primary ()) 14 0)
        (check 'entry-does-not-start-a-drag-from-another-widget (view:state (interaction:snapshot b)) '((0 . 0) (0 . 0)))
        (widget:pointer! '(pointer press primary ()) 11 0)
@@ -865,4 +881,5 @@
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")
-     (test:finish! 'app)))
+     (test:finish! 'app))
+  (interaction-environment))

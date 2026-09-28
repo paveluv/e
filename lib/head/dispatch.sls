@@ -46,10 +46,7 @@
            ;; a call built with keymap:call: the producers run at the press
            (unless (widget:target) (head:follow-app! (head:current-window) #f))
            (dynamic-wind void
-             (lambda ()
-               (apply (keymap:call-action-procedure action)
-                      (map (lambda (produce) (if (procedure? produce) (produce) produce))
-                           (keymap:call-action-arguments action))))
+             (lambda () (keymap:run! action))
              (lambda () (head:set-last-command! action)))]
           [(keymap:prefill-action? action)
            ;; a pre-filled M-x built with keymap:prefill

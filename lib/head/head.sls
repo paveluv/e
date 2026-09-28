@@ -1655,7 +1655,7 @@
     ;; buffer that is this head's alone, its audience restricted, the stem
     ;; in square brackets, *copy* shown as [copy]: three shapes of one
     ;; label, *scratch* shared by every head, [copy] shared through the
-    ;; base but one head's, <keys> local to the head. The suffix the store
+    ;; base but one head's, <bindings> local to the head. The suffix the store
     ;; gives a name taken by another head's buffer is the store's business,
     ;; *copy*<2> showing as [copy] too, unless this head already shows a
     ;; buffer under that label; then the suffix stays, [copy<2>]
@@ -3919,7 +3919,7 @@
           (run-on-main!
             (lambda ()
               (let ([reply (guard (ex [else (list 'evaluated (cadr payload) 'error (kernel:condition-text ex))])
-                             (let ([value (eval (read (open-input-string (caddr payload))) (interaction-environment))])
+                             (let ([value (kernel:evaluate! (read (open-input-string (caddr payload))) (interaction-environment))])
                                (list 'evaluated (cadr payload) (format "~s" value))))])
                 (guard (ex [else (void)]) (frame!) (checkpoint!))
                 (actor:send! from reply))))))))

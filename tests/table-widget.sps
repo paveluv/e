@@ -42,7 +42,7 @@
       (check 'table-keys-continue-from-hover-and-restore-keyboard-style
         (list (key table) (face f 3 0) (face f 4 0)) '(3 #f candidate)))
     (widget:pointer! '(pointer move none ()) 2 3)
-    (table:activate! table)
+    (table:invoke! table)
     (check 'table-enter-adopts-the-hovered-row (list (key table) (caddar activated)) '(2 2)))
   (widget:pointer! '(pointer move none ()) 2 0)
   (let ([f (show! 80)])
@@ -60,11 +60,11 @@
   (table:select! table 1)
   (table:select! table 199)
   (check 'table-pending-selection-cannot-expose-or-destructively-activate-old-row
-    (list (selection table) (refused? (lambda () (table:activate! table 'trash)))) '(#f #t))
+    (list (selection table) (refused? (lambda () (table:invoke! table 'trash)))) '(#f #t))
   (table:move! table 'previous)
   (await-key table 0)
   (table:select! table 199)
-  (table:activate! table)
+  (table:invoke! table)
   (test:await 'table-explicit-selection-reveals-uncached-row
     (lambda () (pump!) (contains? (string:join (widget:frame-lines (widget:prepared root)) "\n") "199")))
   (check 'table-activation-delivers-stable-row-reference (cadar activated) (get (get (collection:summary query) 'value) 'generation))
@@ -129,11 +129,11 @@
     (model:commit! actor (list (list source (get r 'revision) '() (list (car value) rows)))))
   (test:await 'table-false-key
     (lambda () (pump!) (let ([s (selection table)]) (and s (eq? (caddr s) #f)))))
-  (table:activate! table)
+  (table:invoke! table)
   (check 'table-false-is-a-real-row-key (caddar activated) #f)
   (let ([r (collection:summary query)])
     (collection:configure! actor query (get r 'revision) '((filter . "absent"))))
   (test:await 'table-empty (lambda () (pump!) (not (selection table))))
-  (check 'table-empty-result-cannot-activate (refused? (lambda () (table:activate! table))) #t)
+  (check 'table-empty-result-cannot-activate (refused? (lambda () (table:invoke! table))) #t)
   (widget:prepare! root 0 0)
   (widget:unmount! root) (widget:invalidate!))

@@ -13,7 +13,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head keymap)
-  (export action-text (rename (bind-key! bind!))
+  (export action-text action-trace (rename (bind-key! bind!))
     (rename (bind-default-key! bind-default!))
     (rename (key-binding binding)) binding-action
     binding-context binding-kind binding-prefix?
@@ -24,7 +24,7 @@
     context-capture (rename (key-event-binding event-binding))
     generation prefill prefill-action-arguments
     prefill-action-procedure prefill-action? prefill-name
-    prefill-text resolved-binding same-sequence?
+    prefill-text resolved-binding run! same-sequence?
     sequence-bindings sequence-text set-context-capture!
     (rename (key-spec spec)) (rename (unbind-key! unbind!)))
   (import (rnrs)
@@ -32,6 +32,7 @@
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
                 procedure-arity-mask logbit?)
           (prefix (core kernel) kernel:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:))
 
   ;;; Key syntax --------------------------------------------------------------
@@ -172,9 +173,9 @@
   (define (binding-sequence b)
     (cadr b))
 
-  (edoc "What a binding runs: a procedure, a symbol for a keymap action, or #f when it unbinds."
+  (edoc "What a binding runs: a procedure, a structured call or prefill, a symbol for a keymap action, or #f when it unbinds."
         (b list "the binding")
-        (returns (or procedure symbol #f)))
+        (returns (or procedure (record call-action) (record prefill-action) symbol #f)))
   (define (binding-action b)
     (caddr b))
 
@@ -316,9 +317,9 @@
   ;; the procedures themselves, never from spelled names, and describe
   ;; themselves by the names the top level gives those procedures, so a
   ;; rename follows and C-h k shows the call as it runs.
-  (edoc "A key action calling a procedure with what other procedures produce when the key is pressed."
+  (edoc "A key action calling a procedure with constants and the results of producers or nested calls when the key is pressed."
         (procedure procedure "the command to call")
-        (arguments (list-of procedure) "the producers of its arguments, called in order"))
+        (arguments (list-of any) "constants, producer procedures or nested calls"))
   (define-record-type (call-action make-call-action call-action?)
     (fields (immutable procedure call-action-procedure) (immutable arguments call-action-arguments)))
 
@@ -328,14 +329,26 @@
   (define-record-type (prefill-action make-prefill-action prefill-action?)
     (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
 
-  (edoc "Bind a key to a call: the command applied, when the key is pressed, to what the producers return and to the other arguments as given, (keymap:call edit:kill-buffer! head:current-buffer) say, or (keymap:call finder:toggle-sort-column! 2)."
+  (edoc "Bind a key to a call: apply the command at the key press to the results of procedure producers or nested keymap:call expressions, and other arguments as given."
         (procedure procedure "the command to call")
-        (producers (list-of any) "its arguments in order: a procedure produces one at the press, any other value stands as it is")
+        (producers (list-of any) "arguments: procedures and nested calls are evaluated at the press; other values stand as they are")
         (returns (record call-action)))
-  (define (call procedure . producers)
+  (define-syntax call
+    (syntax-rules (apply)
+      [(_ (apply procedure arguments)) (apply make-call (edoc:forward-callee procedure) arguments)]
+      [(_ procedure producer ...) (make-call (edoc:forward-callee procedure) producer ...)]))
+
+  (define (make-call procedure . producers)
     (unless (procedure? procedure)
       (error 'call "expected a procedure" procedure))
     (make-call-action procedure producers))
+
+  (edoc "Execute a structured key call, evaluating procedure producers and nested calls only now. Describing a call never evaluates it."
+        (action (record call-action) "call to execute") (returns any))
+  (define (run! action)
+    (apply (call-action-procedure action)
+      (map (lambda (p) (cond [(call-action? p) (run! p)] [(procedure? p) (p)] [else p]))
+        (call-action-arguments action))))
 
   (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument, (keymap:prefill edit:answer!) say, the given arguments spelled first."
         (procedure procedure "the command the call names")
@@ -347,12 +360,13 @@
 
   (define (top-level-name procedure)
     ;; the symbol the editor's top level binds to a procedure, or #f
-    (let ([sym (find (lambda (s) (and (top-level-bound? s) (eq? (top-level-value s) procedure)))
-                     (environment-symbols (interaction-environment)))])
+    (let ([sym (or (edoc:forwarding-name procedure)
+                 (find (lambda (s) (and (top-level-bound? s) (eq? (top-level-value s) procedure)))
+                   (environment-symbols (interaction-environment))))])
       (and sym (symbol->string sym))))
 
-  (define (spell value)
-    (if (symbol? value) (format "'~s" value) (format "~s" value)))
+  (define (spell procedure index value)
+    (edoc:type-spelling (edoc:call-argument-type (edoc:edoc-of procedure) index) value))
 
   (edoc "The top-level name of the command a pre-filled M-x calls, or #f while it has none."
         (action (record prefill-action) "the pre-fill")
@@ -366,25 +380,91 @@
         (returns string))
   (define (prefill-text action)
     (string-append "(" (action-text (prefill-action-procedure action))
-                   (apply string-append (map (lambda (v) (string-append " " (spell v))) (prefill-action-arguments action)))
+                   (apply string-append (map (lambda (v i) (string-append " " (spell (prefill-action-procedure action) i v)))
+                                          (prefill-action-arguments action) (iota (length (prefill-action-arguments action)))))
                    " "))
 
   (edoc "How a key action reads: a procedure by its top-level name, a call as the expression it runs, a pre-filled M-x as M-x and its text, a keymap action by name; unbound and anonymous say so."
         (action any "the action")
+        (bindings (list-of list) "optional alist of producer procedures to known values; substitutes without invoking them")
         (returns string))
-  (define (action-text action)
-    (cond [(not action) "unbound"]
-          [(symbol? action) (symbol->string action)]
-          [(call-action? action)
-           (string-append "(" (action-text (call-action-procedure action))
-                          (apply string-append
-                            (map (lambda (p) (if (procedure? p) (string-append " (" (action-text p) ")") (string-append " " (spell p))))
-                                 (call-action-arguments action)))
-                          ")")]
-          ;; the M-x prompt's label, as eval draws it, then the text it opens with
-          [(prefill-action? action) (string-append "λ " (prefill-text action))]
-          [(procedure? action) (or (top-level-name action) "anonymous command")]
-          [else (format "~s" action)]))
+  (define (action-text action . bindings)
+    (define substitutions (if (null? bindings) '() (car bindings)))
+    (define (describe action)
+      (cond [(not action) "unbound"]
+        [(symbol? action) (symbol->string action)]
+        [(call-action? action)
+         (string-append "(" (describe (call-action-procedure action))
+                        (apply string-append
+                          (map (lambda (p i)
+                                 (string-append " "
+                                   (cond [(call-action? p) (describe p)]
+                                     [(procedure? p) (cond [(assq p substitutions) => (lambda (v) (spell (call-action-procedure action) i (cdr v)))]
+                                                       [else (string-append "(" (describe p) ")")])]
+                                     [else (spell (call-action-procedure action) i p)])))
+                               (call-action-arguments action) (iota (length (call-action-arguments action)))))
+                        ")")]
+        ;; the M-x prompt's label, as eval draws it, then the text it opens with
+        [(prefill-action? action) (string-append "λ " (prefill-text action))]
+        [(procedure? action) (or (top-level-name action) "anonymous command")]
+        [else (format "~s" action)]))
+    (unless (<= (length bindings) 1) (error 'action-text "expected optional producer values"))
+    (describe action))
+
+  (edoc "Describe a structured binding and its registered forwarding chain without running argument producers or commands. Rows are (depth text procedure-or-false note-or-false unresolved-spans), with half-open (start . end) character spans for unresolved arguments. Alternatives and cycles stay explicit; only declared local inspection queries may reduce arguments."
+        (action any "binding action") (bindings (list-of list) "optional producer-to-value substitutions") (returns list))
+  (define (action-trace action . bindings)
+    (define substitutions (if (null? bindings) '() (car bindings)))
+    (define (node argument)
+      (cond [(call-action? argument)
+             (let ([result (edoc:inspection-value (call-action-procedure argument) (map node (call-action-arguments argument)))])
+               (if (eq? (car result) 'value) result (list 'unknown (action-text argument substitutions))))]
+        [(procedure? argument)
+         (cond [(assq argument substitutions) => (lambda (p) (list 'value (cdr p)))]
+           [else (list 'unknown (string-append "(" (action-text argument) ")"))])]
+        [else (list 'value argument)]))
+    (define (node-text procedure index n)
+      (if (eq? (car n) 'value) (spell procedure index (cadr n)) (format "~a" (cadr n))))
+    (define (call-text procedure arguments tail)
+      (let ([prefix (string-append "(" (action-text procedure))])
+        (let loop ([nodes (append arguments (if tail (list tail) '()))] [i 0]
+                   [offset (string-length prefix)] [parts (list prefix)] [spans '()])
+          (if (null? nodes) (cons (apply string-append (reverse (cons ")" parts))) (reverse spans))
+            (let* ([separator (if (= i (length arguments)) " . " " ")]
+                   [text (node-text procedure i (car nodes))]
+                   [start (+ offset (string-length separator))] [end (+ start (string-length text))])
+              (loop (cdr nodes) (+ i 1) end (cons text (cons separator parts))
+                (if (eq? (caar nodes) 'unknown) (cons (cons start end) spans) spans)))))))
+    (define left 64)
+    (define (follow procedure arguments tail depth seen note)
+      (let* ([identity (list procedure arguments tail)] [cycle? (member identity seen)]
+             [stop? (or cycle? (>= depth 16) (<= left 1) tail note)]
+             [note (or note (and cycle? "cycle") (and (or (>= depth 16) (<= left 1)) "trace limit"))]
+             [text (call-text procedure arguments tail)]
+             [row (list depth (car text) procedure note (cdr text))])
+        (set! left (- left 1))
+        (cons row
+          (if stop? '()
+            (let ([steps (edoc:forwarding-steps procedure arguments)])
+              (let walk ([rest steps])
+                (if (or (null? rest) (<= left 0)) '()
+                  (let* ([step (car rest)]
+                         [rows (follow (car step) (cadr step) (caddr step) (+ depth 1) (cons identity seen) (cadddr step))])
+                    (append
+                      (if (> (length steps) 1)
+                        (cons (list (caar rows) (cadar rows) (caddar rows) (or (cadddr (car rows)) "possible")
+                                (list-ref (car rows) 4)) (cdr rows)) rows)
+                      (walk (cdr rest)))))))))))
+    (unless (<= (length bindings) 1) (error 'action-trace "expected optional producer values"))
+    (let ([procedure (cond [(call-action? action) (call-action-procedure action)] [(procedure? action) action] [else #f])])
+      (if (not procedure) (list (list 0 (action-text action substitutions) #f #f '()))
+        (let* ([arguments (if (call-action? action) (map node (call-action-arguments action)) '())]
+               [original (action-text action substitutions)] [chain (follow procedure arguments #f 0 '() #f)])
+          (if (string=? original (cadar chain)) chain
+            (cons (list 0 original procedure #f '())
+              (if (call-action? action)
+                (map (lambda (row) (cons (+ 1 (car row)) (cdr row))) chain)
+                (cdr chain))))))))
 
   ;; The command type: what a key or a binding names, spelled as the
   ;; call it makes.

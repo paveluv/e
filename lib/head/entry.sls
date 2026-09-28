@@ -83,7 +83,7 @@
       (values source d)))
 
   (edoc "Select a range in an entry's text source; caret and anchor are character indices, snapped to whole graphemes."
-        (id list "entry view") (caret integer "active end") (anchor integer "fixed end"))
+        (id model "entry view") (caret integer "active end") (anchor integer "fixed end"))
   (define (select! id caret anchor)
     (unless (and (integer? caret) (exact? caret) (>= caret 0) (integer? anchor) (exact? anchor) (>= anchor 0))
       (error 'select! "expected nonnegative character indices" caret anchor))
@@ -94,7 +94,7 @@
           (map (lambda (n) (cons 0 (car (edge edges n car)))) (list caret anchor))))))
 
   (edoc "Move an entry caret by grapheme or to an endpoint, optionally extending its selection."
-        (id list "entry view") (direction (one-of left right home end) "motion")
+        (id model "entry view") (direction (one-of left right home end) "motion")
         (extend (list-of boolean) "extend selection, at most one"))
   (define (move! id direction . extend)
     (unless (and (memq direction '(left right home end)) (<= (length extend) 1) (for-all boolean? extend))
@@ -136,14 +136,14 @@
           (list old (head:buffer-store-id b) basis)))))
 
   (edoc "Insert text once, replacing the entry selection through the shared edit journal. Multiline input is refused whole."
-        (id list "entry view") (text string "committed text"))
+        (id model "entry view") (text string "committed text"))
   (define (insert! id text)
     (unless (and (string? text) (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list text))))
       (refuse "Entry does not accept multiline text"))
     (let-values ([(source d) (context id)]) (replace! id source d (state d) text)))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
-        (id list "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
+        (id model "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
   (define (delete! id direction)
     (unless (memq direction '(backward forward all)) (error 'delete! "invalid direction" direction))
     (let-values ([(source d) (context id)])
@@ -172,17 +172,28 @@
           (values status detail)))))
 
   (edoc "Undo an entry's source using the editor's undo-scope, with an optional explicit mine, all or (actor identity) scope."
-        (id list "entry view") (scope (list-of any) "scope override, at most one"))
+        (id model "entry view") (scope (list-of any) "scope override, at most one"))
   (define (undo! id . scope)
     (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
     (history! id 'undo (if (pair? scope) (car scope) (edit:undo-scope))))
 
   (edoc "Redo an entry's source through the editor's shared undo journal."
-        (id list "entry view"))
+        (id model "entry view"))
   (define (redo! id)
     (history! id 'redo 'mine))
 
   (define dragging #f)
+  (define (pointer-bindings f x y)
+    (let* ([id (widget:frame-id f)] [data (widget:frame-data f)]
+           [points (project data (widget:frame-descriptor f))])
+      (if (not points) '()
+        (let* ([at (car (edge (caddr data) (+ x (offset points (caddr (widget:frame-rect f)))) cdr))]
+               [d (interaction:snapshot id)] [current (project data d)]
+               [steps (changes (car data) (or (view:basis d) (revision (car data))))]
+               [extend? (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))])
+          (append (list (list '(click primary ()) (keymap:call select! id at at)))
+            (if extend?
+              (map (lambda (gesture) (list gesture (keymap:call select! id at (caadr current)))) '((click primary (shift)) (drag primary ()))) '()))))))
   (define (event! id source d event)
     (case (car event)
       [(text) (insert! id (cadr event)) #t]
@@ -191,18 +202,12 @@
        (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
          [else (and (eq? (caddr event) 'primary)
                  (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
-                 (let* ([f (widget:event-frame)] [data (data id source '())]
-                        [points (project data (widget:frame-descriptor f))])
-                   (and points
-                     (let* ([x (+ (list-ref event 4) (offset points (caddr (widget:frame-rect f))))]
-                            [at (car (edge (caddr data) x cdr))]
-                            [extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
-                            [current (and extend? (project data d))])
-                       (when extend?
-                         (let ([steps (changes source (or (view:basis d) (revision source)))])
-                           (unless (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))
-                             (refuse "Entry selection changed during the gesture"))))
-                       (select! id at (if extend? (caadr current) at))
+                 (let* ([extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
+                        [binding (assoc (if extend? '(click primary (shift)) '(click primary ()))
+                                   (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5)))])
+                   (when (and extend? (not binding)) (refuse "Entry selection changed during the gesture"))
+                   (and binding
+                     (begin (keymap:run! (cadr binding))
                        (when (eq? (cadr event) 'press) (widget:capture! id) (set! dragging id)) #t))))])]
       [else #f]))
 
@@ -211,7 +216,7 @@
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (max 1 (cdr (car (reverse (caddr data)))))))))
-        (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!)
+        (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (list (cons 'insert insert!) (cons 'select select!) (cons 'move move!)
                          (cons 'delete delete!) (cons 'undo undo!) (cons 'redo redo!)))))
     (for-each (lambda (binding)

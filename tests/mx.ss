@@ -15,6 +15,7 @@
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:)
              (prefix (head window) window:) (prefix (foundation text) text:)
+             (prefix (state model) model:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
@@ -86,6 +87,28 @@
      ;; offers: the type's values as expressions, the procedures producing
      ;; one, and the variables holding one; symbols complete elsewhere.
      (define (labels text) (eval:completion-candidates text (string-length text)))
+     (model:register-kind! 'completion-fixture 1 string?)
+     (define model-ref (model:create! head:ui-actor 'completion-fixture 1 'session 'transient '() "payload"))
+     (define model-text (format "(model ~a)" (cadr model-ref)))
+     (check 'model-literal-completes-live-references-and-numbers
+       (list (equal? (model (cadr model-ref)) model-ref)
+         (and (member model-text (labels "(model:snapshot ")) #t)
+         (and (member model-text (labels "(table:move! ")) #t)
+         (and (member (number->string (cadr model-ref)) (labels "(model ")) #t)
+         (assoc model-ref (model:metadata)))
+       (list #t #t #t #t (list model-ref 'completion-fixture)))
+     (check 'model-spelling-is-type-driven-and-round-trips
+       (let ([text (keymap:action-text (keymap:call model:snapshot model-ref))])
+         (list text (equal? (eval (read (open-input-string text))) (model:snapshot model-ref))
+           (keymap:prefill-text (keymap:prefill model:snapshot model-ref))
+           (edoc:type-spelling 'list model-ref)))
+       (list (format "(model:snapshot ~a)" model-text) #t (format "(model:snapshot ~a " model-text) (format "'~s" model-ref)))
+     (model:retire! head:ui-actor model-ref 0)
+     (check 'retired-models-leave-completion-but-can-be-named
+       (list (member model-text (labels "(model:snapshot "))
+         (model (cadr model-ref))
+         (map (lambda (v) (test:raises? (lambda () (model v)))) '(0 -1 1.0 "1" (model 1))))
+       (list #f model-ref '(#t #t #t #t #t)))
      ;; a mode is named, not spelled as a literal: an argument of type mode
      ;; completes to the registered names, and no producer sneaks in
      (scheme-mode:init!)

@@ -2,16 +2,17 @@
 ;;
 ;; A buffer prints as (buffer "name"), a window as (window n), a region as
 ;; (region (buffer "name") '(row . col) '(row . col)), an actor's identity
-;; as (head "desk") or (agent "claude"): what *eval* shows can be pasted
+;; as (head "desk") or (agent "claude"), and a model reference as (model n).
+;; Typed command arguments use these spellings; what *eval* shows can be pasted
 ;; into the next expression, and M-x completes an argument of one of these
 ;; types to the same spelling. This library owns the constructors,
-;; the printers and the edoc types behind those spellings. The kernel
+;; and the printers; domain modules can own their edoc types. The kernel
 ;; imports it bare, so the names read as literals at the top level while
 ;; every other module arrives under its prefix.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head literal)
-  (export agent base buffer head region region-buffer region-end region-start region? window)
+  (export agent base buffer head model region region-buffer region-end region-start region? window)
   (import (chezscheme)
           (prefix (core identity) identity:)
           (prefix (foundation string) string:)
@@ -19,7 +20,8 @@
           (prefix (head head) head:)
           (prefix (head mode) mode:)
           (prefix (service file) file:)
-          (prefix (state actor) actor:))
+          (prefix (state actor) actor:)
+          (prefix (state model) model:))
 
   ;;; Buffers and windows -------------------------------------------------------
 
@@ -37,6 +39,17 @@
         (returns window))
   (define (window n)
     (or (head:window-numbered n) (error 'window "no window numbered" n)))
+
+  (edoc "A model reference from its allocation number. Completion offers live models; constructing a reference performs no lookup, so retired or unavailable models can still be named for inspection."
+        (number model-number "positive model number") (returns model))
+  (define (model number)
+    (unless (and (integer? number) (exact? number) (> number 0)) (error 'model "expected a positive exact integer" number))
+    (list 'model number))
+
+  (edoc-type model-number "a positive model allocation number"
+    (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
+    (complete (lambda (partial) (map (lambda (row) (cons (cadar row) (symbol->string (cadr row)))) (model:metadata))))
+    (within integer))
 
   (define buffer-printing
     (record-writer (record-type-descriptor head:buffer)

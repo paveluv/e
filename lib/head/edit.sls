@@ -1412,6 +1412,7 @@
         (b buffer "the buffer to kill"))
   (define (kill-buffer! b)
     (let* ([b (edoc:type-value 'buffer b)] [id (head:buffer-store-id b)] [name (head:buffer-name b)])
+      (unless (memq b (head:buffers)) (error 'kill-buffer! "the buffer no longer exists" name))
       (let* ([m (and id (cadar (cadr (store:metadata (list id)))))]
              [unsaved? (and m (cdr (assq 'modified m)))]
              [disposable? (and m (cdr (assq 'disposable m)))])

@@ -31,8 +31,8 @@
 ;; itself with the same helpers, through forms of its own.
 
 (library (foundation edoc)
-  (export argument-name argument-notes argument-type argument? edoc edoc-entry edoc-named edoc-of
-          edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
+  (export argument-name argument-notes argument-type argument? call-argument-type edoc edoc-entry edoc-named edoc-of
+          edoc-template edoc-type edoc-type? edoc-types elibrary expression first-sentence forward-callee forwarding-name forwarding-steps inspection-value
           install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
@@ -40,9 +40,9 @@
           type-searcher type-spelling
           type-text type-value type-within)
   (import (rnrs)
-          (only (chezscheme) library meta void make-weak-eq-hashtable make-eq-hashtable
+          (only (chezscheme) library import meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
-                procedure-arity-mask logbit?))
+                procedure-arity-mask logbit? make-compile-time-value fluid-let-syntax define-property iota list-tail delay force))
 
   ;;; The vocabulary, for the expander and for run time ---------------------------
 
@@ -98,12 +98,244 @@
 
   (define (attach! name object spec)
     (check-spec-types! spec name)
+    (when (and (procedure? object) (member '(inspect) (cddr spec)))
+      (eq-hashtable-set! inspection-queries object #t))
     (if (identity? object)
         (eq-hashtable-set! attached object spec)
         (eq-hashtable-set! named name spec))
     object)
 
   (define (attach-name! name spec) (check-spec-types! spec name) (eq-hashtable-set! named name spec) name)
+
+  ;; Forwarding is compiler metadata. Only the public syntax can enter the
+  ;; private dispatcher; each admitted call site belongs to a described body.
+  (define forward-property #f)
+  (define inspection-property #f)
+  (define-syntax forward-context (make-compile-time-value #f))
+  (define forwards (make-weak-eq-hashtable))
+  (define forward-names (make-weak-eq-hashtable))
+  (define forward-inspectors (make-weak-eq-hashtable))
+  (define inspection-queries (make-weak-eq-hashtable))
+
+  (define (attach-forwards! procedure descriptions)
+    (eq-hashtable-set! forwards procedure descriptions)
+    procedure)
+
+  (define (install-forward! procedure name inspect)
+    (eq-hashtable-set! forward-names procedure name)
+    (eq-hashtable-set! forward-inspectors procedure inspect))
+
+  (define-syntax admitted-forward
+    (syntax-rules ()
+      [(_ expression)
+       (fluid-let-syntax ((forward-context (make-compile-time-value #t))) expression)]))
+
+  (define-syntax forward-callee
+    (lambda (x)
+      (lambda (lookup)
+        (syntax-case x ()
+          [(_ name)
+           (let ([p (and (identifier? #'name) (lookup #'name #'forward-property))])
+             (if p (car p) #'name))]))))
+
+  (define-syntax attach-named-definition!
+    (lambda (x)
+      (lambda (lookup)
+        (syntax-case x ()
+          [(_ name spec)
+           (let ([p (lookup #'name #'forward-property)])
+             (if p #`(begin (attach-name! 'name spec) (attach! 'name #,(car p) spec))
+               #'(attach-name! 'name spec)))]))))
+
+  (define-syntax install-named-forward!
+    (lambda (x)
+      (lambda (lookup)
+        (syntax-case x ()
+          [(_ name)
+           (let ([p (lookup #'name #'forward-property)])
+             #`(install-forward! #,(car p) #,(cadr p) #,(caddr p)))]))))
+
+  (define-syntax forwarding-definition
+    (lambda (x)
+      (syntax-case x ()
+        [(_ name public-name procedure inspect)
+         #'(begin
+             (define-syntax name
+               (lambda (call)
+                 (lambda (lookup)
+                   (unless (lookup #'forward-context)
+                     (syntax-violation 'name "forwarding requires an elibrary procedure or edoc:expression" call))
+                   (syntax-case call (apply)
+                     [(_ (apply argument (... ...) tail))
+                      #'(fluid-let-syntax ((forward-context (make-compile-time-value #f)))
+                          (apply procedure argument (... ...) tail))]
+                     [(_ argument (... ...))
+                      #'(fluid-let-syntax ((forward-context (make-compile-time-value #f)))
+                          (procedure argument (... ...)))]
+                     [_ (syntax-violation 'name "forwarding syntax is not a procedure; use keymap:call for a binding" call)]))))
+             (define-property name forward-property (list #'procedure #'public-name #'inspect)))])))
+
+  ;; This pass handles lexical Scheme forms, not arbitrary macro expansion.
+  ;; A macro that hides a dispatch site must introduce edoc:expression itself;
+  ;; otherwise the dispatch syntax rejects it, rather than losing metadata.
+  (define-syntax described-procedure
+    (lambda (x)
+      (lambda (lookup)
+        (define (unknown e)
+          (with-syntax ([datum (datum->syntax #'described-procedure (list 'unknown (syntax->datum e)))]) #' 'datum))
+        (define (property id)
+          (guard (ex [else #f]) (lookup id #'forward-property)))
+        (define (query? id)
+          (and (identifier? id)
+            (or (exists (lambda (p) (free-identifier=? id p))
+                  (syntax->list #'(car cdr cadr caddr cadddr null? pair? list cons append not equal? eq?)))
+                (guard (ex [else #f]) (lookup id #'inspection-property)))))
+        (define (assigned form)
+          (syntax-case form (quote syntax quasiquote quasisyntax set!)
+            [(quote . _) '()] [(syntax . _) '()] [(quasiquote . _) '()] [(quasisyntax . _) '()]
+            [(set! id value) (cons #'id (assigned #'value))]
+            [(a . b) (append (assigned #'a) (assigned #'b))] [_ '()]))
+        (define written (assigned x))
+        (define (mutable? id) (exists (lambda (name) (bound-identifier=? id name)) written))
+        (define (binding id env)
+          (and (identifier? id) (find (lambda (p) (bound-identifier=? id (car p))) env)))
+        (define (shadow ids env)
+          (append (map (lambda (id) (cons id (unknown id))) ids) env))
+        (define (ids formals)
+          (syntax-case formals ()
+            [() '()] [(a . b) (cons #'a (ids #'b))] [a (list #'a)]))
+        (define (parameters formals)
+          (let loop ([f formals] [i 0])
+            (syntax-case f ()
+              [() '()]
+              [(a . b) (cons (cons #'a #`'(argument #,i a)) (loop #'b (+ i 1)))]
+              [a (list (cons #'a #`'(rest #,i a)))])))
+        (define (template e env)
+          (syntax-case e (quote if)
+            [(quote datum) #'(list 'value 'datum)]
+            [(if test yes no) #`(list 'if #,(template #'test env) #,(template #'yes env) #,(template #'no env))]
+            [id (identifier? #'id) (if (mutable? #'id) (unknown #'id) (cond [(binding #'id env) => cdr] [else (unknown #'id)]))]
+            [(proc argument ...)
+             (and (query? #'proc) (not (binding #'proc env)))
+             #`(list 'query proc (list #,@(map (lambda (arg) (template arg env)) (syntax->list #'(argument ...)))))]
+            [datum (not (pair? (syntax->datum #'datum))) #'(list 'value 'datum)]
+            [_ (unknown e)]))
+        (define collected '())
+        (define (walk e env)
+          (syntax-case e (quote syntax quasiquote quasisyntax lambda case-lambda let let* letrec letrec* let-values let*-values let-syntax letrec-syntax do define define-syntax set!)
+            [(quote . _) e] [(syntax . _) e]
+            ;; Quoted templates have their own evaluation rules. A hidden
+            ;; forwarding site in an unquote must use edoc:expression.
+            [(quasiquote . _) e] [(quasisyntax . _) e]
+            [(lambda formals body ...) #`(described-procedure (lambda formals body ...))]
+            [(case-lambda . _) #`(described-procedure #,e)]
+            [(define (name . formals) body ...)
+             #'(define name (described-procedure (lambda formals body ...)))]
+            [(define name value) #`(define name #,(walk #'value env))]
+            [(define-syntax . _) e]
+            [(kind bindings body ...)
+             (memq (syntax->datum #'kind) '(let-syntax letrec-syntax))
+             #`(kind bindings #,@(walk-body #'(body ...) env))]
+            [(do ([id initial step ...] ...) (test result ...) body ...)
+             (let ([next (shadow (syntax->list #'(id ...)) env)])
+               #`(do (#,@(map (lambda (id initial step)
+                                #`(#,id #,(walk initial env) #,@(map (lambda (e) (walk e next)) (syntax->list step))))
+                           (syntax->list #'(id ...)) (syntax->list #'(initial ...)) (syntax->list #'((step ...) ...))))
+                   (#,(walk #'test next) #,@(map (lambda (e) (walk e next)) (syntax->list #'(result ...))))
+                   #,@(walk-body #'(body ...) next)))]
+            [(let name ([id value] ...) body ...)
+             (identifier? #'name)
+             #`(let name (#,@(map (lambda (id value) #`(#,id #,(walk value env)))
+                               (syntax->list #'(id ...)) (syntax->list #'(value ...))))
+                 #,@(walk-body #'(body ...) (shadow (cons #'name (syntax->list #'(id ...))) env)))]
+            [(kind ((id value) ...) body ...)
+             (memq (syntax->datum #'kind) '(let let* letrec letrec*))
+             (let* ([names (syntax->list #'(id ...))] [values (syntax->list #'(value ...))]
+                    [recursive? (memq (syntax->datum #'kind) '(letrec letrec*))]
+                    [sequential? (eq? (syntax->datum #'kind) 'let*)]
+                    [next (if recursive? (shadow names env) env)]
+                    [bindings
+                     (map (lambda (id value)
+                            (let* ([scope (if (or recursive? sequential?) next env)]
+                                   [code (walk value scope)] [t (if recursive? (unknown id) (template value scope))])
+                              (set! next (cons (cons id #`(list 'bound '#,id #,t)) next)) #`(#,id #,code))) names values)])
+               #`(kind (#,@bindings) #,@(walk-body #'(body ...) next)))]
+            [(kind ((formals value) ...) body ...)
+             (memq (syntax->datum #'kind) '(let-values let*-values))
+             (let ([next env])
+               (with-syntax ([(entry ...)
+                              (map (lambda (f v)
+                                     (let ([code (walk v (if (eq? (syntax->datum #'kind) 'let*-values) next env))])
+                                       (set! next (shadow (ids f) next)) #`(#,f #,code)))
+                                (syntax->list #'(formals ...)) (syntax->list #'(value ...)))]
+                             [(rest ...) (walk-body #'(body ...) next)])
+                 #'(kind (entry ...) rest ...)))]
+            [(operator . rest)
+             (let ([p (and (identifier? #'operator) (not (binding #'operator env))
+                        (property #'operator))])
+               (if p
+                 (let-values ([(args tail)
+                               (syntax-case #'rest [apply]
+                                 [((apply a ... tail)) (values (syntax->list #'(a ...)) #'tail)]
+                                 [(a ...) (values (syntax->list #'(a ...)) #f)]
+                                 [_ (syntax-violation 'forwarding "invalid forwarding call" e)])])
+                   (set! collected
+                     (cons #`(list #,(car p) (list #,@(map (lambda (a) (template a env)) args))
+                               #,(if tail (template tail env) #'#f)) collected))
+                   #`(admitted-forward
+                       (operator #,@(if tail
+                                      (list #`(apply #,@(map (lambda (a) (walk a env)) args) #,(walk tail env)))
+                                      (map (lambda (a) (walk a env)) args)))))
+                 (syntax-case #'rest []
+                   [(argument ...) #`(#,(walk #'operator env) #,@(map (lambda (a) (walk a env)) (syntax->list #'(argument ...))))]
+                   [_ e])))]
+            [_ e]))
+        (define (walk-body forms env)
+          (define (flatten forms)
+            (apply append
+              (map (lambda (form)
+                     (syntax-case form (begin)
+                       [(begin body ...) (flatten (syntax->list #'(body ...)))]
+                       [_ (list form)])) forms)))
+          (let* ([forms (flatten (syntax->list forms))]
+                 [names (filter values
+                          (map (lambda (form)
+                                 (syntax-case form (define)
+                                   [(define (name . _) . _) #'name]
+                                   [(define name _) #'name] [_ #f])) forms))])
+            (map (lambda (form) (walk form (shadow names env))) forms)))
+        (define (clause formals forms)
+          (set! collected '())
+          (let* ([code (walk-body forms (parameters formals))] [descriptions (reverse collected)])
+            (values #`(#,formals #,@code) #`(cons '#,formals (list #,@descriptions)))))
+        (syntax-case x (lambda case-lambda)
+          [(_ (lambda formals expression ...))
+           (let-values ([(code description) (clause #'formals #'(expression ...))])
+             (if (null? collected) #`(lambda . #,code)
+               #`(attach-forwards! (lambda . #,code) (delay (list #,description)))))]
+          [(_ (case-lambda [formals expression ...] ...))
+           (let ([descriptions '()] [forwarding? #f])
+             (let ([clauses (map (lambda (f b)
+                                   (let-values ([(code description) (clause f b)])
+                                     (when (pair? collected) (set! forwarding? #t))
+                                     (set! descriptions (cons description descriptions)) code))
+                              (syntax->list #'(formals ...)) (syntax->list #'((expression ...) ...)))])
+               (if forwarding?
+                 #`(attach-forwards! (case-lambda #,@clauses) (delay (list #,@(reverse descriptions))))
+                 #`(case-lambda #,@clauses))))]
+          ;; At top level there is no owning procedure to attach to. Admit
+          ;; direct calls and describe nested procedures without introducing
+          ;; a lambda scope around definitions or other declaration macros.
+          [(_ form) (walk #'form '())]))))
+
+  (define-syntax expression
+    (syntax-rules (begin define define-syntax import library elibrary lambda case-lambda)
+      [(_ (begin form ...)) (begin (expression form) ...)]
+      [(_ (import spec ...)) (import spec ...)]
+      [(_ (library . body)) (library . body)]
+      [(_ (elibrary . body)) (elibrary . body)]
+      [(_ (define-syntax . body)) (define-syntax . body)]
+      [(_ form) (described-procedure form)]))
 
   ;;; Types ------------------------------------------------------------------------
 
@@ -159,7 +391,7 @@
         (lambda (clause)
           ;; a flag, (prompts), (edits) or (effects kind), names no type
           (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause))
-                     (not (memq (car clause) '(prompts effects edits)))
+                     (not (memq (car clause) '(prompts effects edits inspect)))
                      (not (known? (cadr clause))))
             (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
         (cddr spec))))
@@ -230,7 +462,19 @@
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
-         (clause list "(name type note ...) for a formal or field, (returns type note ...), or a flag the effects check reads: (prompts) for a command that waits for input, (edits) for one that edits the buffer's text, refused where it is read-only, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's")
+         (clause list "(name type note ...) for a formal or field, (returns type note ...), (prompts) for a command that waits for input, (edits) for a buffer edit refused when read-only, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's, (inspect) for a bounded local query safe to evaluate during binding inspection")
+         ("kind" syntax) ("library" "(foundation edoc)"))))
+
+  (define expression-documentation
+    (attach-name! 'expression
+      '(edoc "Register forwarding in a Scheme expression or definition. Elibrary handles procedure bodies automatically; editor evaluation uses this form for interactive Scheme. A macro introducing forwarding must introduce this context too."
+         (form any "expression, definition, import, library or begin")
+         ("kind" syntax) ("library" "(foundation edoc)"))))
+
+  (define forward-callee-documentation
+    (attach-name! 'forward-callee
+      '(edoc "Adapt a forwarding syntax identifier to its registered dispatcher for a structured call; ordinary procedure expressions pass through. Keymap:call uses this compiler adapter and keeps the dispatcher identity available to inspection."
+         (name any "forwarding identifier or procedure expression")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (meta define (kept-datum doc extra library)
@@ -264,7 +508,7 @@
     ;; (prompts), (effects internal) or (effects remote): what a procedure
     ;; does beyond its bang, named for the effects check; none names a formal
     (syntax-case clause ()
-      [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits)))]
+      [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits inspect)))]
       [(head kind) (and (identifier? #'head) (identifier? #'kind)
                         (eq? (syntax->datum #'head) 'effects) (memq (syntax->datum #'kind) '(internal remote)) #t)]
       [_ #f]))
@@ -555,7 +799,7 @@
     (map (lambda (a)
            (with-syntax ([object (car a)] [datum (datum->syntax #'edoc (cdr a))])
              (if (memp (lambda (id) (bound-identifier=? id (car a))) by-name)
-                 #'(attach-name! 'object 'datum)
+                 #'(attach-named-definition! object 'datum)
                  #'(attach! 'object object 'datum))))
          attachments))
 
@@ -626,6 +870,8 @@
              [origin (identifier? #'origin) (list 'alias (list #'name))]
              [_ (list 'value (list #'name))])]
           [(d name) (and (define? form) (identifier? #'name)) (list 'value (list #'name))]
+          [(df (name . formals) implementation inspector) (head-is? form 'define-forwarding)
+           (list 'forwarding (list #'name) (list #'formals))]
           [(ds name . _) (and (head-is? form 'define-syntax) (identifier? #'name)) (list 'syntax (list #'name))]
           [(drt spec clause ...) (head-is? form 'define-record-type)
            (list 'record (record-names who x #'spec (syntax->list #'(clause ...))) #'spec (syntax->list #'(clause ...)))]
@@ -639,7 +885,7 @@
         (let ([kind (car info)] [name (car (cadr info))])
           (define (own extra) (list (cons name (kept-datum doc extra library-name))))
           (case kind
-            [(procedure)
+            [(procedure forwarding)
              (check-formals! who x (caddr info) doc)
              (own (list (list "kind" 'procedure) (cons "formals" (map syntax->datum (caddr info)))))]
             [(parameter) (check-value-doc! who x doc) (own (list (list "kind" 'parameter)))]
@@ -653,7 +899,7 @@
       (syntax-case x ()
         [(_ name exports imports body ...)
          (and (head-is? #'exports 'export) (head-is? #'imports 'import))
-         (let ([library-name (format "~s" (syntax->datum #'name))]
+         (let ([library-id #'name] [library-name (format "~s" (syntax->datum #'name))]
                [exported (export-identifiers #'exports)])
            ;; pair every annotation with the definition that follows it
            (let walk ([forms (syntax->list #'(body ...))] [pending #f] [kept '()] [entries '()] [named '()] [registrations '()])
@@ -699,12 +945,38 @@
                             (map (lambda (entry)
                                    (let ([info (car entry)])
                                      (case (car info)
-                                       [(syntax) (list (car (cadr info)))]
+                                       [(syntax forwarding) (list (car (cadr info)))]
                                        [(record condition) (list (car (cadr info)))]
                                        [else '()])))
                                  documented))])
-                    (with-syntax ([(form ...) (reverse kept)]
+                    (with-syntax ([(query-registration ...)
+                                   (apply append
+                                     (map (lambda (entry)
+                                            (let ([doc (cadr entry)] [info (car entry)])
+                                              (if (and doc (eq? (car info) 'procedure)
+                                                    (member '(inspect) (syntax->datum doc)))
+                                                (list (with-syntax ([id (car (cadr info))])
+                                                        #'(define-property id inspection-property #t))) '()))) documented))]
+                                  [(form ...)
+                                   (map (lambda (form)
+                                          (syntax-case form ()
+                                            [(d (name . formals) body ...) (head-is? form 'define)
+                                             #'(define name (described-procedure (lambda formals body ...)))]
+                                            [(d name value) (and (head-is? form 'define)
+                                                                 (or (head-is? #'value 'lambda) (head-is? #'value 'case-lambda)))
+                                             #'(define name (described-procedure value))]
+                                            [(d (name . formals) implementation inspector) (head-is? form 'define-forwarding)
+                                             (with-syntax ([public-name (datum->syntax #'name
+                                                                          (string->symbol (format "~a:~a" (car (reverse (syntax->datum library-id))) (syntax->datum #'name))))])
+                                               #'(forwarding-definition name 'public-name implementation inspector))]
+                                            [_ form])) (reverse kept))]
                                   [(registration ...) (reverse registrations)]
+                                  [(forward-registration ...)
+                                   (apply append
+                                     (map (lambda (entry)
+                                            (let ([info (car entry)])
+                                              (if (eq? (car info) 'forwarding)
+                                                (list (with-syntax ([id (car (cadr info))]) #'(install-named-forward! id))) '()))) documented))]
                                   [(record-registration ...)
                                    ;; a documented record's predicate stands for (record name)
                                    (apply append
@@ -722,7 +994,8 @@
                                   [(tmp) (generate-temporaries '(edocs))])
                       #'(library name exports imports
                           form ...
-                          (define tmp (begin registration ... record-registration ... attachment ... (void)))))))]
+                          query-registration ...
+                          (define tmp (begin registration ... record-registration ... forward-registration ... attachment ... (void)))))))]
                [(edoc-form? (car forms))
                 (syntax-case (car forms) ()
                   [(_ summary clause ...) (string? (syntax->datum #'summary))
@@ -790,6 +1063,50 @@
 
   ;;; Reading it back -------------------------------------------------------------
 
+  (edefine (forwarding-name procedure)
+    (edoc "The public syntax name of a registered forwarding dispatcher, or false."
+          (procedure procedure "dispatcher") (returns (or symbol #f)))
+    (eq-hashtable-ref forward-names procedure #f))
+
+  (edefine (inspection-value procedure arguments)
+    (edoc "Reduce a call only when it is an explicitly inspectable query or a small structural primitive, with all arguments known. Nodes are (value datum) or (unknown expression); exceptions stay symbolic. Inspection never runs an ordinary command."
+          (procedure procedure "query") (arguments list "symbolic argument nodes") (returns list))
+    (if (and (or (eq-hashtable-ref inspection-queries procedure #f)
+                 (memq procedure (list car cdr cadr caddr cadddr null? pair? list cons append not equal? eq?)))
+             (for-all (lambda (a) (eq? (car a) 'value)) arguments))
+      (guard (ex [else '(unknown unavailable)])
+        (list 'value (apply procedure (map cadr arguments))))
+      '(unknown computed)))
+
+  (edefine (forwarding-steps procedure arguments)
+    (edoc "Inspect one forwarding step using compile-time call templates and local dispatch inspectors. Each result is (procedure argument-nodes rest-node-or-false reason-or-false). Multiple sites are alternatives, not an execution trace."
+          (procedure procedure "command") (arguments list "known or symbolic argument nodes") (returns list))
+    (define (reduce node)
+      (case (car node)
+        [(value unknown) node]
+        [(argument) (if (< (cadr node) (length arguments)) (list-ref arguments (cadr node)) (list 'unknown (caddr node)))]
+        [(rest) (let ([tail (list-tail arguments (min (cadr node) (length arguments)))])
+                  (if (for-all (lambda (a) (eq? (car a) 'value)) tail)
+                    (list 'value (map cadr tail)) (list 'unknown (caddr node))))]
+        [(bound) (let ([v (reduce (caddr node))]) (if (eq? (car v) 'value) v (list 'unknown (cadr node))))]
+        [(if) (let ([test (reduce (cadr node))])
+                (if (eq? (car test) 'value) (reduce (if (cadr test) (caddr node) (cadddr node))) '(unknown conditional)))]
+        [(query) (inspection-value (cadr node) (map reduce (caddr node)))]
+        [else '(unknown computed)]))
+    (define (accepts? formals count)
+      (cond [(null? formals) (= count 0)] [(symbol? formals) #t]
+        [(> count 0) (accepts? (cdr formals) (- count 1))] [else #f]))
+    (let ([inspect (eq-hashtable-ref forward-inspectors procedure #f)])
+      (if inspect (inspect arguments)
+        (let* ([saved (eq-hashtable-ref forwards procedure #f)]
+               [description (find (lambda (d) (accepts? (car d) (length arguments))) (if saved (force saved) '()))])
+          (if (not description) '()
+            (map (lambda (site)
+                   (let* ([args (map reduce (cadr site))] [tail (and (caddr site) (reduce (caddr site)))])
+                     (if (and tail (eq? (car tail) 'value) (list? (cadr tail)))
+                       (list (car site) (append args (map (lambda (v) (list 'value v)) (cadr tail))) #f #f)
+                       (list (car site) args tail #f)))) (cdr description)))))))
+
   (edefine edoc-types
     (edoc "The base type vocabulary: the editor's notions, then the language's; libraries add their own with edoc-type, and compounds are (one-of literal ...), (or type ...), (list-of type) and (record name)."
           (value (list-of symbol)))
@@ -811,7 +1128,7 @@
           (arguments (list-of (record argument)) "the typed arguments")
           (returns (or (record argument) #f) "the return, as an argument named returns")
           (library (or string #f) "the defining library, (edit) say")
-          (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote)"))
+          (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote), (inspect)"))
     (fields kind formals summary arguments returns library flags))
   (edefine-record-type argument
     (edoc "One typed clause of an edoc."
@@ -843,7 +1160,7 @@
                                (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library flags)))
                          lambda-lists)
                     (list (make-signature kind formals summary arguments returns library flags))))]
-             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects edits)))
+             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects edits inspect)))
               (loop (cdr clauses) arguments returns library kind lambda-lists (cons (car clauses) flags))]
              [(and (pair? (car clauses)) (pair? (cdar clauses)))
               (let ([c (car clauses)])
@@ -1059,6 +1376,28 @@
       [(symbol? t) (let ([type (type-named t)]) (and type (type-search-of type)))]
       [(and (pair? t) (list? t) (eq? (car t) 'or)) (exists type-searcher (cdr t))]
       [else #f]))
+
+  (edefine (call-argument-type signatures index)
+    (edoc "The documented type at a zero-based call argument, including rest elements and the union of overloaded signatures; false when undocumented."
+          (signatures (or list #f) "edoc signatures") (index integer "argument position") (returns datum))
+    (define (formal-at formals index)
+      (cond [(pair? formals) (if (= index 0) (cons (car formals) #f) (formal-at (cdr formals) (- index 1)))]
+        [(symbol? formals) (cons formals #t)] [else #f]))
+    (unless (and (integer? index) (exact? index) (>= index 0)) (error 'call-argument-type "expected a nonnegative argument position" index))
+    (let ([types
+           (fold-left
+             (lambda (types sig)
+               (let* ([formals (case (signature-kind sig)
+                                 [(procedure) (signature-formals sig)]
+                                 [(constructor accessor mutator predicate syntax) (map argument-name (signature-arguments sig))]
+                                 [else #f])]
+                      [formal (and formals (formal-at formals index))]
+                      [argument (and formal (find (lambda (a) (eq? (argument-name a) (car formal))) (signature-arguments sig)))])
+                 (if (not argument) types
+                   (let* ([type (argument-type argument)]
+                          [type (if (and (cdr formal) (pair? type) (eq? (car type) 'list-of)) (cadr type) type)])
+                     (if (member type types) types (cons type types)))))) '() (or signatures '()))])
+      (cond [(null? types) #f] [(null? (cdr types)) (car types)] [else (cons 'or (reverse types))])))
 
   (edefine (type-completions t partial)
     (edoc "The values a type offers for a partial text, as (value . hint) pairs: a completer's for a name, the literals of a one-of, every member's for an or, #f for #f."

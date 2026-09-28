@@ -322,7 +322,7 @@ state: it does not change the producer's capture facts or another head's input.
 `keymap:context-capture` returns `(toggle-key toggle-procedure editor-key ...)`
 or `#f`. Paint inserts the clickable `●` (full) or `◐` (partial) indicator after
 the first token of the producer's status. Status bars carry no key hints; the
-keys listing on `C-x TAB` is where a key is looked up, and only `<keys>`
+bindings listing on `C-x TAB` is where a key is looked up, and only `<bindings>`
 itself says so on its bar.
 
 Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
@@ -391,8 +391,8 @@ onto source text. A returned string follows the name in place of the state
 marker, coordinates and mode tag, the empty string leaving the name alone,
 while the window number and controls stay. Temporary prompts use this for
 completion counts and pages, the buffet and the finder show their names
-alone, the browsers the row of how many, and `<keys>` the page each window
-is on. No status line or echo message names a key: `<keys>` is the
+alone, the browsers the row of how many, and `<bindings>` the page each window
+is on. No status line or echo message names a key: `<bindings>` is the
 reference.
 Status text fits
 terminal cells, including wide characters, so window controls keep their

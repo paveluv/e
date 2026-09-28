@@ -1,10 +1,12 @@
 ;; Load this file in a head, then call (widget-example:open! '("a.sls" "b.ss")).
 ;; No filesystem walk or new authored-data store is hidden in the example.
-(define (widget-example:pick! id selection basis)
-  (let ([rank (collection:rank (car selection) (cadr selection) (caddr selection))])
-    (unless (and (eq? (car rank) 'ready) (list-ref rank 3) (equal? (caddr rank) basis))
-      (error 'widget-example:pick! "the selected result changed"))
-    (widget:invoke! id 'insert (caddr selection))))
+(import (prefix (only (foundation edoc) expression) edoc:))
+(edoc:expression
+  (define (widget-example:pick! id selection basis)
+    (let ([rank (collection:rank (car selection) (cadr selection) (caddr selection))])
+      (unless (and (eq? (car rank) 'ready) (list-ref rank 3) (equal? (caddr rank) basis))
+        (error 'widget-example:pick! "the selected result changed"))
+      (widget:invoke! id 'insert (caddr selection)))))
 (widget:register! 'example-file-choice 1
   (list (cons 'actions (list (cons 'pick widget-example:pick!)))))
 

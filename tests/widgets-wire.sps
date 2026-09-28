@@ -92,8 +92,42 @@
   (let* ([app (head-read a '(cadr (assq 'app (view:children (interaction:snapshot (head:buffer-fact (head:current-buffer) 'widget-id #f))))))]
          [table (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',app)))))]
          [query (head-read a `(view:source (interaction:snapshot ',table)))])
-    (head-send! a "__buffet-absent__")
+    (head-wait 'buffet-command-bindings-ready a
+      (lambda () (head-read a `(and (assq 'trash (widget:commands ',table))
+                                 (assq 'delete (widget:commands ',table)) #t))))
+    (test:check 'live-model-completion-uses-base-metadata
+      (head-read a
+        `(list (assoc ',app (model:metadata))
+           (and (member ,(format "(model ~a)" (cadr app))
+                  (eval:completion-candidates "(model:snapshot " 16)) #t)))
+      (list (list app 'widget-view) #t))
+    ;; Evaluation mail waits until a prompt closes. Observe painting through
+    ;; its hook, then retrieve the result after cancelling the prompt.
+    (head-read a
+      `(begin
+         (define completion-status-bytes #f)
+         (parameterize ([kernel:registering-module 'completion-wire])
+           (head:add-pre-redraw-hook!
+             (lambda ()
+               (when (and (not completion-status-bytes) (prompt:active?) (head:popup)
+                       (string:prefix? "<completions" (head:buffer-name (head:window-buffer (head:popup)))))
+                 ;; Exclude unrelated mirror workers: inspection itself runs
+                 ;; on this UI thread and must not write to the base.
+                 (let ([io (lambda () (call-with-input-file "/proc/thread-self/io"
+                                        (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
+                                                                   (if (eq? k 'wchar:) v (loop)))))))])
+                   (let ([before (io)] [binding (cdr (keymap:resolved-binding 'buffet '("C-k")))])
+                     (do ([i 0 (+ i 1)]) ((= i 100))
+                       (keymap:action-trace (keymap:binding-action binding) (list (cons widget:target ',app)))
+                       (widget:command-bindings ',app)
+                       (head:buffer-status (head:window-buffer (head:popup)) (head:popup)))
+                     (set! completion-status-bytes (- (io) before)))))))) #t))
+    (head-send! a "\x1b;xmodel:snapshot \t\t")
+    (head-wait 'model-completion-popup a (lambda () (head-sees? a "matches of model")))
+    (head-send! a "\x07;__buffet-absent__")
     (head-wait 'buffet-wire-empty a (lambda () (head-sees? a "No matching buffers")))
+    (test:check 'widget-discovery-and-completion-status-send-no-wire-data
+      (head-read a '(begin (kernel:retract-module! 'completion-wire) completion-status-bytes)) 0)
     (head-send! a "\x07;\x18;b\r")
     (head-wait 'buffet-wire-immediate-previous a
       (lambda () (equal? (head-read a '(head:buffer-store-id (head:current-buffer))) previous)))

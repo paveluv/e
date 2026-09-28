@@ -29,10 +29,22 @@ registration transactions. Reloading or retracting a definition leaves its
 model records intact. Each kind/version has one definition; register a new
 version when the payload contract changes.
 
-Model IDs are tagged lists such as `(model 7)`. A buffer numbered 7 is a
-different resource, referenced as `(buffer 7)`. Scopes are `session`, a named
-head `(head "desk")`, or an owning model ID, including a future view
-descriptor. Scope declares composition ownership, not an access grant or
+At M-x, `(model 7)` constructs a model reference without a lookup. Tab at a
+documented `model` argument offers live models with their kind as a hint;
+inside `(model ` it offers their numbers. Retired models leave the choices,
+but their references can still be written for inspection. Operations check
+existence, kind and ownership when used. Views are models too.
+
+The portable representation remains a tagged list, `'(model 7)`.
+`(model:metadata)` returns compact `(reference kind)` rows for all live
+models in allocation order, including models whose kind is unavailable.
+It neither copies payloads nor runs kind validators. Each completion lookup
+makes one metadata request to the base; printing a reference or repainting
+the completion list makes none.
+
+A buffer numbered 7 is a different resource, referenced as `'(buffer 7)`.
+Scopes are `session`, a named head `(head "desk")`, or an owning model ID,
+including a view descriptor. Scope declares composition ownership, not an access grant or
 automatic deletion policy. References are lists of tagged model/buffer IDs.
 Missing targets remain explicit; retiring a model never cascades into its
 referenced resources.

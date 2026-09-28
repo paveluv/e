@@ -152,6 +152,7 @@
       [(collection-seek) (arity 5) (apply collection:seek args)]
       [(collection-fetch) (arity 1) (collection:fetch (car args))]
       [(model-ids) (apply model:ids args)]
+      [(model-metadata) (arity 0) (model:metadata)]
       [(model-read) (arity 1) (model:snapshots (car args))]
       [(model-create) (control!) (arity 6) (generic-kind! (car args)) (apply model:create! actor args)]
       [(model-commit) (control!) (arity 1) (for-each (lambda (change) (generic-model! (car change))) (car args))

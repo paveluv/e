@@ -9,13 +9,16 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
-(eval
+(define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
+
+(evaluate!
   '(begin
      (import (prefix (head paint) paint:) (prefix (head widget) widget:)
              (prefix (head entry) entry:) (prefix (state store) store:)
              (prefix (head interaction) interaction:) (prefix (head window) window:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (head pacing) pacing:)
+             (prefix (head spinner) spinner:)
              (prefix (head style) style:)
              (prefix (head head) head:)
              (prefix (head echo) echo:)
@@ -35,6 +38,26 @@
        (make-time 'time-monotonic (* (mod ms 1000) 1000000) (div ms 1000)))
      (define (milliseconds time)
        (+ (* (time-second time) 1000) (/ (time-nanosecond time) 1000000)))
+     ;; Activity is local presentation: fast updates never flash, a slow one
+     ;; animates at a fixed corner without mutating the cached underlying row.
+     (let* ([now 0] [deadlines '()]
+            [activity (spinner:make (lambda () (stamp now)) (lambda (at) (set! deadlines (cons (milliseconds at) deadlines))))]
+            [rect '(4 2 6 1)] [lines '("界abcd")] [cells (vector (make-vector 6 'header))])
+       (define (show busy clip)
+         (let-values ([(text styles) (spinner:render! activity busy rect clip lines cells)])
+           (list (car text) (vector-ref (vector-ref styles 0) 0))))
+       (check 'activity-delay-animation-completion-and-clipping
+         (reverse (fold-left (lambda (out case)
+                               (set! now (car case))
+                               (cons (show (cadr case) (if (caddr case) '(5 2 5 1) rect)) out)) '()
+                    '((0 #t #f) (199 #t #f) (200 #t #f) (1000 #t #f) (1125 #t #f)
+                      (1250 #t #t) (1300 #f #f) (1400 #t #f))))
+         '(("界abcd" header) ("界abcd" header) ("⠋ abcd" (header ghost))
+           ("⠙ abcd" (header ghost)) ("⠹ abcd" (header ghost))
+           ("界abcd" header) ("界abcd" header) ("界abcd" header)))
+       (check 'activity-requests-only-local-visible-deadlines-and-preserves-input
+         (list (reverse deadlines) lines (vector-ref (vector-ref cells 0) 0))
+         '((200 200 1000 1125 1250 1600) ("界abcd") header)))
      (check 'input-relative-presentation-deadlines
        (map
          (lambda (case)
@@ -117,7 +140,7 @@
                [in-escape
                 (loop (cdr chars) out
                       (not (or (char-alphabetic? (car chars))
-                               (char=? (car chars) #\\))))]
+                             (char=? (car chars) #\\))))]
                [(char=? (car chars) #\esc)
                 (loop (cdr chars) out #t)]
                [else (loop (cdr chars) (cons (car chars) out) #f)])))
@@ -453,11 +476,11 @@
      (define scrolling
        (let loop ([row 0] [frames '()])
          (if (= row 40)
-             (reverse frames)
-             (begin
-               (head:window-prow-set! (head:current-window) row)
-               (let ([frame (painted paint:redraw!)])
-                 (loop (+ row 1) (cons frame frames)))))))
+           (reverse frames)
+           (begin
+             (head:window-prow-set! (head:current-window) row)
+             (let ([frame (painted paint:redraw!)])
+               (loop (+ row 1) (cons frame frames)))))))
      (check 'scrolling-frames-are-synchronized
             (map sync-events scrolling) (make-list 40 '(begin end)))
      (check 'scrolling-moves-the-viewport
@@ -679,4 +702,5 @@
          (check 'unchanged-entry-text-still-updates-selection-and-caret
            (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
        (head:show-buffer! was) (head:forget-buffer! b))
-     (test:finish! 'paint)))
+     (test:finish! 'paint))
+  (interaction-environment))

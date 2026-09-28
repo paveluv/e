@@ -7,7 +7,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (core kernel)
   (export add-after-reload-hook! call-with-registration-update call-with-runtime-registrations
-          condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery!
+          condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery! evaluate!
           fingerprint init-module! installation-directory load-config! load-module!
           load-modules! loaded-modules mailbox-peek mailbox-post! mailbox-receive! make-delivery-queue
           make-mailbox make-read-only-error make-refusal make-registry module-library
@@ -17,7 +17,7 @@
           retract-module! source-library)
   (import (rnrs)
           (only (chezscheme)
-                box unbox make-hashtable equal-hash
+                box unbox make-hashtable equal-hash make-weak-eq-hashtable
                 make-parameter make-thread-parameter current-directory format interaction-environment eval
                 scheme-environment environment-symbols top-level-bound? define-top-level-value
                 library-exports library-requirements library-requirements-options
@@ -707,6 +707,16 @@
   (define (editor-symbol? sym)
     (and (top-level-bound? sym)
          (not (hashtable-ref baseline-bindings sym #f))))
+
+  (define evaluation-environments (make-weak-eq-hashtable))
+
+  (edoc "Evaluate Scheme with compiler-registered forwarding information in a mutable editor environment. Imports edoc:expression once and preserves top-level definitions."
+        (form datum "Scheme form") (environment any "evaluation environment") (returns any))
+  (define (evaluate! form environment)
+    (unless (hashtable-ref evaluation-environments environment #f)
+      (eval '(import (prefix (only (foundation edoc) expression) edoc:)) environment)
+      (hashtable-set! evaluation-environments environment #t))
+    (eval (list 'edoc:expression form) environment))
 
   (define (publish-literals!)
     ;; Every type a module defines with a completer spells its values as a

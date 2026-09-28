@@ -233,7 +233,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Shared, owned by the base | Local, owned by each head |
 |---|---|
 | Buffer text, file facts, undo and redo history, marks | Windows, points, viewports and the selection |
-| Terminal processes and their screens | Prompts, `<completions>`, `<keys>`, `<buffet>` |
+| Terminal processes and their screens | Prompts, `<completions>`, `<bindings>`, `<buffet>` |
 | `*copy*`, one per head through its audience, shown as `[copy]` like every buffer that is one head's alone | |
 | The log's records | `<log>` renderings and the echo area |
 | Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |

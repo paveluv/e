@@ -269,4 +269,5 @@
          (check 'portable-types-follow-module-rollback-retraction-and-reimport
            (list aborted kept missing (eq? before (type-named 'file))) '(#t #t #t #t))))
 
+     (include "tests/forwarding.sps")
      (test:finish! 'edoc)))

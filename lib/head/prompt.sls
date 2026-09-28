@@ -183,9 +183,7 @@
     ;; a bound action run inside the prompt: a command, or a call with its
     ;; producers run and its other arguments as given
     (cond [(procedure? action) (action)]
-          [(keymap:call-action? action)
-           (apply (keymap:call-action-procedure action)
-                  (map (lambda (p) (if (procedure? p) (p) p)) (keymap:call-action-arguments action)))]
+          [(keymap:call-action? action) (keymap:run! action)]
           [else (void)]))
 
   (define (prompt-action event)

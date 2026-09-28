@@ -12,7 +12,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mouse)
-  (export init! track!)
+  (export bindings click! gesture-text init! position scroll! track!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head dispatch) dispatch:)
@@ -25,10 +25,19 @@
           (prefix (head window) window:)
           (prefix (sys tty) tty:))
 
+  ;; Keyboard input clears hover emphasis, not the physical pointer location.
+  (define last-position #f)
+
+  (edoc "The last known one-based (column . row) of the physical pointer, retained when keyboard input clears hover emphasis; #f before mouse input or when tracking is disabled."
+        (returns (or pair #f)))
+  (define (position)
+    (or (head:mouse-position) last-position))
+
   (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
         (on boolean "whether to track the mouse"))
   (define (track! on)
     (tty:mouse-reporting! on)
+    (set! last-position #f)
     (head:set-mouse-position! #f)
     (paint:show-message! (format "Mouse ~a" (if on "on" "off")) #f)
     (void))
@@ -99,7 +108,6 @@
     ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
-    (head:set-drag! #f)
     (let ([double? (head:double-click? x y (real-time))])
       (cond
         [(head:window-button-at (- x 1) (- y 1)) =>
@@ -335,7 +343,17 @@
     ;; for the loop, so it settles nothing.  A context that must not
     ;; change editor focus passes handle? #f: the report is consumed
     ;; without being applied.
-    (cond [(and handle? (widget-mouse! c b x y)) => values]
+    (set! last-position (and handle? (cons x y)))
+    ;; A new press replaces any preceding host gesture, including when a
+    ;; widget receives it. Motion and release instead belong to the original
+    ;; owner: entering a widget must not steal a divider or text drag.
+    (when (and handle? (char=? c #\M) (< (bitwise-and b 3) 3)
+               (zero? (bitwise-and b 96)))
+      (head:set-drag! #f))
+    (cond [(and handle?
+                (not (and (head:drag) (zero? (bitwise-and b 64))
+                          (or (char=? c #\m) (not (zero? (bitwise-and b 32))))))
+                (widget-mouse! c b x y)) => values]
           [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
                 (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
            (when handle? (mouse-move! x y))
@@ -356,6 +374,55 @@
           [(< (bitwise-and b 3) 3)                 ; a press
            (mouse-press! x y b)]
           [else "MOUSE-HANDLED"]))
+
+  (define (button-code button)
+    (case button [(primary) 0] [(middle) 1] [(secondary) 2]
+      [else (error 'mouse "expected primary, middle or secondary" button)]))
+
+  (edoc "Spell a mouse gesture for help: click or drag with a button, or wheel with a direction, followed by its modifier symbols."
+        (gesture list "(click-or-drag button modifiers) or (wheel direction modifiers)") (returns string))
+  (define (gesture-text gesture)
+    (string-append
+      (apply string-append (map (lambda (m) (case m [(control) "C-"] [(meta) "M-"] [(shift) "S-"] [else (error 'gesture-text "unknown modifier" m)])) (caddr gesture)))
+      (case (car gesture)
+        [(wheel) (string-append "Wheel " (symbol->string (cadr gesture)))]
+        [(click drag)
+         (string-append (case (cadr gesture) [(primary) "Left"] [(middle) "Middle"] [(secondary) "Right"] [else (error 'gesture-text "unknown button" gesture)])
+           " " (symbol->string (car gesture)))]
+        [else (error 'gesture-text "unknown gesture" gesture)])))
+
+  (edoc "Click a shown screen cell through the normal input route, including press and release."
+        (x integer "one-based screen column") (y integer "one-based screen row")
+        (button (one-of primary middle secondary) "mouse button"))
+  (define (click! x y button)
+    (let ([code (button-code button)])
+      (apply-mouse-event! #t #\M code x y)
+      (apply-mouse-event! #t #\m code x y)))
+
+  (edoc "Scroll under a screen cell without changing keyboard focus."
+        (x integer "one-based screen column") (y integer "one-based screen row")
+        (direction (one-of up down left right) "wheel direction"))
+  (define (scroll! x y direction)
+    (apply-mouse-event! #t #\M
+      (+ 64 (case direction [(up) 0] [(down) 1] [(left) 2] [(right) 3]
+              [else (error 'scroll! "expected a wheel direction" direction)])) x y))
+
+  (edoc "Read mouse bindings under the physical pointer, or an explicit screen cell. Returns (gesture keymap:call) pairs, with (click-or-drag button modifiers) or (wheel direction modifiers) gestures. Widget definitions supply semantic commands; legacy windows expose their normal click and wheel routes. Reading bindings never dispatches input or changes focus."
+        (locations (list-of pair) "optional one-based (column . row)") (returns list) (effects internal))
+  (define (bindings . locations)
+    (unless (<= (length locations) 1) (error 'bindings "expected at most one screen cell"))
+    (let ([at (if (pair? locations) (car locations) (position))])
+      (if (not at) '()
+        (let* ([x (car at)] [y (cdr at)] [widget (widget:pointer-bindings (- x 1) (- y 1))])
+          (if widget widget
+            (if (or (head:window-button-at (- x 1) (- y 1)) (head:divider-at (- x 1) (- y 1))
+                  (head:window-at (- x 1) (- y 1)
+                    (lambda (entry)
+                      (or (= (- y 1) (+ (cadr entry) (caddr entry)))
+                        (not (head:buffer-fact (head:window-buffer (car entry)) 'widget-id #f))))))
+              (append
+                (map (lambda (button) (list (list 'click button '()) (keymap:call click! x y button))) '(primary middle secondary))
+                (map (lambda (direction) (list (list 'wheel direction '()) (keymap:call scroll! x y direction))) '(up down left right))) '()))))))
 
   (edoc "Install the mouse: the handler the head's pump applies to every parsed mouse report.")
   (define (init!)

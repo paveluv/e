@@ -12,6 +12,18 @@ target's registered action. Targets must be mounted in the same head.
 Forks remap internal targets and retain external references. Changes to state
 connections never execute commands.
 
+At M-x, refer to a view with the `(model N)` literal; Tab at a documented
+model argument offers live models. `C-x TAB` includes **Widget commands**
+for the current composition, showing named connections and their target
+API calls. `(widget:command-bindings root)` provides the same discovery as
+data: `(view child-path kind bindings)` rows, with each binding spelled
+`(name target action fixed-arguments procedure-or-false available?)`.
+It includes unavailable connections; availability describes the target
+connection, while the control and domain action still validate their input.
+`widget:commands` returns only usable bindings for one view. Neither query
+invokes a command. Use `widget:invoke!` to follow a named connection with
+control-supplied arguments after its fixed arguments.
+
 `widget:context` returns source, descriptor and resolved inputs. Its optional
 `'current` argument checks current availability during a shown-frame action.
 `widget:repaint!` invalidates a control's local presentation without publishing
@@ -24,9 +36,10 @@ column without a heading; use `((identity . name))` to keep `name` when fitting
 a narrow pane, independently of its position among the columns. The default
 identity is the first column. `set-columns!` retains that identity.
 The table composes sticky headings and a normal scroll view;
-it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
+it does not allocate a view for each row. `table:select!`, `move!`, `invoke!`,
 `sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
-keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
+keyboard and mouse. F1–F12 use `table:toggle-visible-sort!` to address visible
+headings by zero-based position. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
@@ -50,11 +63,16 @@ validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
 
 While a query or its next row page is pending, the table retains one bounded
-viewport, replacing it when the new rows arrive. The heading shows an italic
-`[Updating]` in spare space, or `…` in a narrow pane. Retained rows preserve
+viewport, replacing it when the new rows arrive. Updates lasting more than
+200 ms show a single-cell spinner at the table's top-left corner, including
+its filter when present. It starts rotating after one second. Retained rows preserve
 their presentation but cannot activate an obsolete result. Initial loading
 and unavailable sources still have explicit placeholders. Viewport and
 selection lookups share a batch rather than waiting for each other.
+
+Columns measure formatted cells from the retained viewport. Each view remembers
+observed widths so filtering does not repeatedly shrink its columns; the last
+column takes spare room. No full collection scan or provider width data is needed.
 
 `table:register-presentation!` registers a head-local name, schema version
 and column rules `(column minimum alignment dependencies formatter)`. Alignment is `text`,
@@ -79,9 +97,12 @@ or queued for later execution. `lookup` also lets domain actions validate a
 row and its result basis without separate rank and range requests.
 
 `table:emphasize!` supplies a host's current document key without changing
-selection or sending interaction updates. `table:activate!` accepts an optional
-command name (default `activate`), allowing domain actions such as trash and
-delete to share the same hover, selection and pending-state validation.
+selection or sending interaction updates. `table:invoke!` invokes the
+composition's named command, defaulting to `activate` when the name is omitted.
+The control validates and adopts its hovered or selected row before supplying
+the selection and result basis to the connected action. Domain actions must
+also validate authoritative object versions; selection validation is not a
+transaction with a later mutation.
 
 Without a rule, string cells retain their raw text and match spans, and other
 values print as Scheme data. Logical depth indents the identity cell in the
@@ -102,9 +123,102 @@ implicit current window. `widget:host` returns the opaque mounting slot;
 when it opens a document elsewhere.
 
 `C-x TAB` lists the focused widget path's keys, including app capture contexts
-and unshadowed entry, table and global bindings. The listing follows internal
-focus changes. `widget:key-scopes` exposes that routing without moving focus
-or touching a chord; dispatch uses `key-scopes!` to reconcile focus first.
+and unshadowed entry, table and global bindings. Its widget calls show the
+actual receiver ID, so they can be issued from eval or scripts outside key
+dispatch. Shared operations retain their `table:`, `entry:` or `widget:`
+names. `widget:descendant` follows named children, for example
+`(widget:descendant app-id 'table 'filter 'entry)` in Buffet. Nested
+`keymap:call` expressions compose these public operations in bindings.
+The listing follows internal focus changes. `widget:key-scopes` exposes that
+routing without moving focus or touching a chord; dispatch uses `key-scopes!`
+to reconcile focus first.
+
+Buffet's kill/delete keys activate the table's `trash` and `delete` command
+connections, targeting `buffet:kill!` and `buffet:delete!`. The keyboard
+section follows the full forwarding chain from the control operation to the
+app action, with each step's documentation. **Widget commands** also lists
+the connections independently. The same explicit connection serves keys,
+mouse actions and programmatic activation.
+
+The first Bindings section follows the mouse independently of keyboard focus.
+Widget definitions can provide `pointer-bindings`: a procedure receiving a
+shown frame and local x/y coordinates and returning `(gesture action)` pairs.
+Use `(click primary ())`, `(click secondary ())`, `(click primary (shift))`
+or `(drag primary ())` for gestures, and `keymap:call` with public commands
+and explicit targets for actions. The callback must only inspect local,
+bounded presentation state: no input dispatch, RPC, focus changes or model
+updates. Reuse this same binding lookup in the widget's gesture handler.
+Press/release ownership, cancellation and dragging remain input behavior;
+reading a binding never starts a gesture.
+
+`widget:pointer-bindings` queries zero-based screen coordinates through the
+same shown-frame hit testing as pointer dispatch. Child gestures shadow the
+same gestures on ancestors; clipped and modal content cannot leak bindings.
+Scroll containers contribute their normal wheel route. The shared table,
+entry and action-text controls expose their public commands through this
+contract. `table:choose!` takes a table and a `(collection generation key)`
+reference, selects that displayed row and activates it when the host has
+provided an activation command; an obsolete result refuses.
+
+## Forwarding and inspection
+
+`widget:invoke!` and `widget:act!` are exported syntax, with private runtime
+dispatchers. An `elibrary` registers their call sites while compiling its
+procedure definitions. Ordinary app and control commands remain procedures:
+
+```scheme
+(edoc "Activate the chosen row." (id model) (selection any) (basis any))
+(define (choose! id selection basis)
+  (widget:invoke! id 'activate selection basis))
+```
+
+One call supplies both execution and inspection; no separate forwarding
+annotation can drift away from it. Constants, arguments, lexical bindings and
+simple structural operations provide the symbolic call template. Unknown
+runtime work remains named rather than being evaluated. Import prefixes and
+renames retain the dispatcher's identity.
+
+Outside `elibrary`, wrap a definition or expression in `edoc:expression`.
+M-x and the head's evaluation channel do this automatically. A macro that
+introduces forwarding must introduce this context around its generated code
+too. An unregistered call is a Scheme compilation error, including one hidden
+by a macro; the linter is not involved. Quoted code remains data.
+
+For a runtime list of arguments use the explicit spread form:
+
+```scheme
+(widget:invoke! (apply id 'activate arguments))
+```
+
+The syntax identifiers cannot be passed to ordinary `apply` or aliased as
+procedure values. Use `keymap:call` for structured bindings. Its compiler
+adapter retains the registered dispatcher identity so the same route is
+inspectable. This is an API contract, not an isolation boundary for arbitrary
+Scheme code.
+
+An extension implementing its own dispatch protocol can declare it inside
+`elibrary` with:
+
+```scheme
+(edoc "Dispatch an action." (id model) (action symbol) (args (list-of any)))
+(define-forwarding (dispatch! id action . args)
+  dispatch-command! inspect-command)
+```
+
+Keep `dispatch-command!` private and dedicated to this entry point. The
+inspector receives argument nodes `(value datum)` or `(unknown expression)`
+and returns a list of steps, each
+`(procedure argument-nodes rest-node-or-false reason-or-false)`. It reads
+existing local connection metadata; it must not invoke commands, perform I/O
+or request remote data. Private forwarding declarations are registered too.
+
+A query annotated `(inspect)` in its edoc may also reduce arguments during
+inspection when all inputs are known. Use this only for bounded local reads
+such as resolving a mounted descendant, never for producers or model fetches.
+Exceptions leave the argument symbolic. Inspection follows only registered
+forwarding, reports alternative sites conservatively and bounds cyclic or
+large chains. The compiler enforces registration; the local-query contract
+remains the extension author's responsibility.
 
 ## Buffer catalogue
 
@@ -300,8 +414,15 @@ validate the actual target and revision before committing an effect.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
 and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
-`layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
+`layout`, `anchor`, `locate`, `decorate`, `caret`, `busy?` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
+
+`busy?` receives `(data descriptor)` on visible frame preparation and returns
+whether this widget is awaiting work. Read already mirrored state only. The
+head supplies the delayed activity indicator over the composited top-left
+cell, preserving layout and the underlying content. Clipped or hidden corners
+schedule no animation; completion restores the original cell. The timer,
+animation and frame deadlines stay in the head and publish no model state.
 
 `prepare` receives `(id source inputs)` and derives display data once per source,
 input or definition change; its result is

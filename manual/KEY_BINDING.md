@@ -8,16 +8,17 @@ Press `C-h k`, then a key or complete chord, to open `<help>`. The report shows
 the resolved global command, where it was defined, shadowed definitions, and
 any meanings the key has inside prompts, incremental search, or query-replace.
 
-## Listing the keys
+## Inspecting bindings
 
-`C-x TAB` shows the keys that work in the active window, in the pop-up window
-above the echo area, as the read-only buffer `<keys>`: the buffer's own keys
-first, as its app declares them, then the bindings of its mode contexts,
-then the global ones, each section's title in bold, with a scrollbar for
-its length and a status bar of its own reading `<keys>`, the page the window
-is on of how many, counted in the window's rows, and the paging keys; the
-listing is laid out for the window showing it and again when the terminal
-is resized. It lists what works here: a key a nearer context takes, `RET`
+`C-x TAB` opens the read-only `<bindings>` inspector above the echo area.
+It shows mouse bindings first, followed by the active window's keyboard
+bindings and its widget command connections. Each row shows the public API
+and its documentation. Keyboard bindings are grouped by app and mode context,
+then by global bindings. The listing fits its window, with a scrollbar and
+the current page in its status bar. `(bindings:show!)` opens the same inspector
+from M-x or a script.
+
+It lists what works here: a key a nearer context takes, `RET`
 in `<finder>` say, is left out of the global section, and where the text is
 read-only, an app's buffer or one made read-only, the editing commands are
 left out, those whose edoc declares `(edits)`. Keys that run one
@@ -36,7 +37,7 @@ global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` or `M-Down` select the
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
-line puts it away, as `(keys:hide!)` does. `(keys:open!)` shows the listing
+line puts it away, as `(bindings:hide!)` does. `(bindings:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and
 `C-x TAB` pages it there. An app binds its keys in its
 mode's context to its own commands, `finder:choose!` for Enter in
@@ -62,7 +63,7 @@ in the echo area.
 A command must be a procedure callable with no arguments. Existing commands
 such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:focus-next!` can be
 used directly. `keymap:call` adapts a command that needs arguments, and the
-binding then reads as the call it makes in the keys listing and under `C-h k`;
+binding then reads as the call it makes in the bindings listing and under `C-h k`;
 a lambda works too, but shows as an anonymous command:
 
 ```scheme
@@ -71,8 +72,9 @@ a lambda works too, but shows as an anonymous command:
 ```
 
 Two structural actions describe themselves where a lambda shows as an
-anonymous command. `keymap:call` applies a command to what other procedures
-return when the key is pressed, and to any other argument as given, and
+anonymous command. `keymap:call` applies a command to what producer procedures
+or nested `keymap:call` expressions return when the key is pressed, and to
+any other argument as given. `keymap:run!` executes that same structured call;
 `keymap:prefill` opens M-x with the command's call typed up to its next
 argument, so completion asks for it:
 
@@ -83,8 +85,103 @@ argument, so completion asks for it:
 ```
 
 `C-h k` shows the first as `(edit:kill-buffer! (head:current-buffer))` and
-the second as `λ (edit:answer! `, by the names the top level gives the
+the third as `λ (edit:answer! `, by the names the top level gives the
 procedures, so a rename follows.
+
+Nested calls let a composition address a named child through public APIs:
+
+```scheme
+(keymap:bind! 'my-app "C-u"
+  (keymap:call entry:delete!
+    (keymap:call widget:descendant widget:target 'filter 'entry)
+    'all))
+```
+
+For widget bindings, `C-x TAB` substitutes the receiving view's ID for
+`widget:target`, so the shown Scheme expression also runs in eval or scripts.
+The ID addresses that view while it remains mounted. Describing a binding
+never invokes its argument producers.
+
+For a table action, bind the key to `table:invoke!` with a named command.
+Keep the command name explicit in bindings, including Enter's `activate`, so
+the listing identifies which connection is followed:
+
+```scheme
+(table:invoke! (model 110) 'activate) ; default action, opening a row in Buffet
+(table:invoke! (model 110) 'trash)    ; invoke the table's trash connection
+(table:invoke! (model 110) 'delete)   ; invoke the table's delete connection
+```
+
+Buffet's `C-k`, for example, is displayed as:
+
+```scheme
+(table:invoke! (widget:descendant (model 109) 'table) 'trash)
+```
+
+The table supplies its hovered or selected row and result basis to the
+connected action. Bindings shows the full registered forwarding chain below
+the key, with each operation's own documentation:
+
+```scheme
+(table:invoke! (widget:descendant (model 109) 'table) 'trash)
+  → (table:invoke! (model 110) 'trash)
+    → (widget:invoke! (model 110) 'trash selection basis)
+      → (widget:act! (model 109) 'kill selection basis)
+        → (buffet:kill! (model 109) selection basis)
+```
+
+The model IDs are those of the current composition. `selection` and `basis`
+remain symbolic and appear in italics: inspection does not select a row,
+run argument producers or execute commands. Only explicitly declared, bounded
+local queries can resolve arguments. Multiple forwarding sites are marked as possible routes;
+cycles and unavailable targets stop the chain with a note. This is a map of
+registered forwarding, not a prediction that runtime validation will succeed.
+The **Widget commands** section still lists the connections independently.
+Selection changes do not rewrite the binding or its help. Copy the initial
+expression to eval to use the same activation and validation path as the key.
+
+`keymap:call` is syntax so it can also accept forwarding syntax such as
+`widget:act!`. To construct a call from a list of arguments, use
+`(keymap:call (apply command arguments))`. Ordinary command procedures remain
+first-class values. [Widgets](WIDGETS.md#forwarding-and-inspection) describes
+how extensions register their forwarding at compilation.
+
+When the pointer has a target, `C-x TAB` starts with **Mouse bindings**.
+This section follows the pointer, including over an unfocused window; the
+keyboard sections continue to follow keyboard focus. A table heading shows
+its sort command, a row shows its explicit choice, and an entry shows caret
+placement and selection. Unavailable widget actions are omitted.
+While the pointer is over `<bindings>` itself, the mouse section keeps the last
+inspected target so you can read and scroll it. Moving elsewhere resumes
+inspection without resetting your reading position. A different keyboard
+context starts the listing at the top.
+
+For a widget window, **Widget commands** follows the keyboard sections.
+It lists named command connections from the whole current composition,
+including children outside the keyboard focus path. Each group names its
+child path, widget kind and `(model N)` reference. A row such as `activate`
+shows its target's public call and documentation. Fixed arguments are
+spelled as literals; remaining argument names, such as `selection basis`,
+are supplied by the invoking control, so these rows are call templates.
+Unavailable targets stay listed with an explanation. Rewiring updates the
+listing without resetting its reading position.
+
+This discovery reads mounted descriptors and cached sources locally. It
+does not execute actions or query the base, and does no work while Bindings is
+hidden. Argument spelling in Bindings and prefilled M-x expressions uses the
+same edoc types as completion; a model argument is `(model N)`, while an
+ordinary list argument stays quoted.
+
+`(mouse:bindings)` returns the current `(gesture action)` pairs as data;
+an optional `(column . row)` selects another screen cell, using one-based
+coordinates. `(mouse:position)` reports the physical pointer's last known
+cell even after keyboard input clears hover emphasis, or `#f` if unknown.
+Gestures include `(click primary ())`, `(click secondary ())`,
+`(click primary (shift))`, `(drag primary ())`, and `(wheel down ())`.
+`mouse:gesture-text` spells them for help. Actions use `keymap:call`, just
+like keyboard bindings. Legacy buffer apps expose `mouse:click!` and
+`mouse:scroll!`, which deliver input through their normal routes at the
+given screen coordinates.
 
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
@@ -126,7 +223,7 @@ printable character without a binding of its own resolves to, in the mode's
 context first, then the global map, and its command receives the character
 through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
 inserts it, while in `<finder>` and `<buffet>` the context binds it to
-`extend-filter!`, so typing grows the filter. The keys listing shows the
+`extend-filter!`, so typing grows the filter. The bindings listing shows the
 pseudo-key as `any character`. `MOUSE-CLICK`
 fires in a mode's context after a text click has placed point, so a mode can
 act on the click (the markdown viewer follows links with it). Mouse reports
@@ -197,7 +294,7 @@ A context may also come from a buffer's state rather than its mode. An app
 registers it with a predicate, `(mode:add-context! 'conflicted conflicted?)`
 say, and every buffer the predicate holds of has the context, before its
 mode's, so keys bound in it work only while the state holds, keep their
-other meanings elsewhere, and the keys listing shows them only where they
+other meanings elsewhere, and the bindings listing shows them only where they
 work.
 
 Buffer-mode contexts can bind command procedures and complete chords. Terminals

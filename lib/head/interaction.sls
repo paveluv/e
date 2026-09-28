@@ -26,7 +26,7 @@
       datum:copy))
 
   (edoc "Claim an unmounted view; return status and descriptor. Call from the head's pump thread."
-        (actor actor "attribution is supplied by the connection") (id list "view model id"))
+        (actor actor "attribution is supplied by the connection") (id model "view model id"))
   (define (claim! actor id)
     (let ([reply (call-with-values (lambda () (view:claim! actor id)) list)])
       (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
@@ -47,7 +47,7 @@
       (when (eq? status 'applied) (adopt! rows)) (values status rows)))
 
   (edoc "Fence owned interaction before rewiring a composition and adopt its new input generations."
-        (actor actor "owner") (owner list "containing view") (changes list "connection input changes"))
+        (actor actor "owner") (owner model "containing view") (changes list "connection input changes"))
   (define (bind! actor owner changes)
     (flush!)
     (let* ([leases (filter values (map (lambda (c)
@@ -58,7 +58,7 @@
       (apply values result)))
 
   (edoc "Set the owned root's logical focus target locally."
-        (id list "root") (target any "descendant or #f"))
+        (id model "root") (target any "descendant or #f"))
   (define (focus! id target)
     (let ([d (snapshot id)])
       (unless d (error 'focus! "root is not owned" id))
@@ -67,11 +67,11 @@
         (set! dirty? #t))))
 
   (edoc "Read the owned view's latest provisional descriptor locally. An unclaimed view returns #f."
-        (id list "view model id") (returns (or list #f)))
+        (id model "view model id") (returns (or list #f)))
   (define (snapshot id) (datum:copy (hashtable-ref owned id #f)))
 
   (edoc "Change interaction immediately for an owned view, without waiting for publication. Otherwise update saved unmounted state at the base. Activation must carry this actual state and model basis, not reread saved selection."
-        (actor actor "attribution is supplied by the connection") (id list "view model id")
+        (actor actor "attribution is supplied by the connection") (id model "view model id")
         (basis (or integer #f) "model revision") (state datum "interaction state"))
   (define (set-state! actor id basis state)
     (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0))) (error 'set-state! "invalid basis" basis))
@@ -102,7 +102,7 @@
   (define (flush!) (publish!) (publication:flush! writer))
 
   (edoc "Fence publication and release an owned mount, keeping its acknowledged state for resume."
-        (actor actor "attribution is supplied by the connection") (id list "view model id") (generation integer "the claimed generation"))
+        (actor actor "attribution is supplied by the connection") (id model "view model id") (generation integer "the claimed generation"))
   (define (release! actor id generation)
     (flush!)
     (let ([reply (call-with-values (lambda () (view:release! actor id generation)) list)])
