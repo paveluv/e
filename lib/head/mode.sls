@@ -196,13 +196,14 @@
          (string:prefix? "*scratch*" (head:buffer-name b))
          (find-mode "scheme")))
 
+  (define (detected-mode b)
+    (or (detect-mode (head:buffer-file b) (head:buffer-line b 0))
+        (scratch-mode b)))
+
   (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b buffer "the buffer"))
   (define (assign-mode! b)
-    (set-mode-of! b
-      (or (detect-mode (head:buffer-file b) (head:buffer-line b 0))
-          (scratch-mode b))
-      #t))
+    (set-mode-of! b (detected-mode b) #t))
 
   (edoc "The registered mode called name, or #f."
         (name mode "the mode's name")
@@ -420,12 +421,12 @@
   (define (refresh-buffer-modes!)
     ;; A detected or chosen mode stays: registration is additive, never a
     ;; theft. A mode gone from the registry leaves its name on the buffer,
-    ;; plain text until it returns.
+    ;; plain text until it returns. Readers resolve that name on every use;
+    ;; only newly successful detection needs to change shared facts.
     (for-each (lambda (b)
-                (let ([name (head:buffer-fact b 'mode #f)])
-                  (cond [(not name) (when (head:buffer-mode-auto b) (assign-mode! b))]
-                        [(find-mode name) => (lambda (m) (set-mode-of! b m))]
-                        [else (void)])))
+                (when (and (not (head:buffer-fact b 'mode #f)) (head:buffer-mode-auto b))
+                  (let ([m (detected-mode b)])
+                    (when m (set-mode-of! b m #t)))))
               (head:buffers)))
 
   ;;; The head's adopt hook -------------------------------------------------------
