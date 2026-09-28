@@ -77,13 +77,15 @@
 
   (edoc "Run an interaction that owns C-g and the cursor: uninterrupted, the cursor following its rules rather than a parked evaluation's."
         (thunk thunk "the interaction")
-        (returns any "what the thunk returns"))
+        (returns any "what the thunk returns") (effects internal))
   (define (interaction thunk)
     ;; An interaction owns C-g (head:call-uninterrupted) and the cursor:
     ;; while it runs, the cursor follows the interaction's rules, not a
     ;; parked evaluation's.
     (head:call-uninterrupted
-      (lambda () (parameterize ([paint:cursor-in-echo #f]) (thunk)))))
+      (lambda ()
+        (parameterize ([paint:cursor-in-echo #f])
+          (dynamic-wind dispatch:cancel! thunk dispatch:cancel!)))))
 
   ;;; Commands a prompt may run ------------------------------------------------------
 

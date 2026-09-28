@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head dispatch)
-  (export global-key! input! (rename (handle-key! key!)) pending? resolve! set-prompt-opener!)
+  (export cancel! global-key! input! (rename (handle-key! key!)) pending? resolve! set-prompt-opener!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head echo) echo:)
@@ -82,6 +82,9 @@
   ;; Its receiver owns every suffix; stale/invalid suffixes are never replayed.
   (define chord #f)
 
+  (edoc "Discard a pending key chord when an interaction begins, ends or loses its input device.")
+  (define (cancel!) (set! chord #f))
+
   (edoc "Whether a key prefix is waiting for one more event, without reading input." (returns boolean))
   (define (pending?) (and chord #t))
 
@@ -128,6 +131,7 @@
         (root list "active root") (event list "(key token text-fallback) or (text string source)")
         (contexts (list-of symbol) "outer host keymaps") (returns boolean))
   (define (input! root event . contexts)
+    (widget:cancel! root 'keyboard)
     (case (car event)
       [(text) (set! chord #f) (widget:input! root event)]
       [(key)
@@ -176,8 +180,9 @@
                        [(char? input) (tty:character-event input)]
                        [else input])])
       (cond
-        [(eof-object? event) (head:quit!)]
+        [(eof-object? event) (cancel!) (head:quit!)]
         [(string=? event "MOUSE-HANDLED")
+         (cancel!)
          (echo:settle!)
          (void)]
         [(head:buffer-fact (head:current-buffer) 'widget-id #f)

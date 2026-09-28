@@ -2,7 +2,18 @@
 ;; provisional state and publication are provided by head/interaction.
 (import (only (foundation edoc) elibrary))
 (elibrary (state view)
-  (export arrange! (rename (descriptor:basis basis)) (rename (descriptor:children children)) claim! create! (rename (descriptor:focus focus)) fork! (rename (descriptor:generation generation)) (rename (descriptor:kind kind)) (rename (descriptor:options options)) (rename (descriptor:owner owner)) (rename (descriptor:parent parent)) publish! release! (rename (descriptor:schema schema)) (rename (descriptor:sequence sequence)) set-state! snapshot (rename (descriptor:source source)) (rename (descriptor:state state)) tree)
+  (export arrange! (rename (descriptor:basis basis))
+    (rename (descriptor:children children)) claim! create!
+    (rename (descriptor:focus focus)) fork!
+    (rename (descriptor:generation generation))
+    (rename (descriptor:kind kind))
+    (rename (descriptor:options options))
+    (rename (descriptor:owner owner))
+    (rename (descriptor:parent parent)) publish! release!
+    (rename (descriptor:schema schema))
+    (rename (descriptor:sequence sequence)) set-state! snapshot
+    (rename (descriptor:source source))
+    (rename (descriptor:state state)) tree)
   (import (chezscheme) (prefix (core client) client:) (prefix (core descriptor) descriptor:))
 
   (edoc "Create a persistent view over a model using this connection's identity."

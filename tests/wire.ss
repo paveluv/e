@@ -1862,8 +1862,24 @@
                  (let* ([data (rpc head 'model-create 'wire-value 1 'session 'persistent '() "alpha\nbeta\ngamma")]
                         [first (rpc head 'view-create data 'text 2 '() 0)]
                         [second (rpc head 'view-create data 'text 2 '() 0)]
-                        [missing (rpc head 'view-create data 'not-installed 1 '() '(0 0))])
-                   (head-read a `(begin (window:show-widget! (head:current-window) (quote (unquote first)))
+                        [missing (rpc head 'view-create data 'not-installed 1 '() '(0 0))]
+                        [composition
+                         (head-read a
+                           `(let* ([who head:ui-actor] [source (store:create! who "entry across heads" '("seed"))]
+                                   [left (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [right (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [row (view:create! who #f 'row 1 '() '())]
+                                   [column (view:create! who #f 'column 1 '() '())]
+                                   [overlay (view:create! who #f 'overlay 1 '() '())]
+                                   [root (view:create! who #f 'scroll 1 '() #f)])
+                              (view:arrange! who
+                                (list (list row 0 (list (list 'left left '(grow 1)) (list 'right right '(grow 1))) '())
+                                      (list column 0 (list (list 'value ',first 'fit) (list 'fields row 'fit)) '())
+                                      (list overlay 0 (list (list 'body column '(grow 1))) '())
+                                      (list root 0 (list (list 'body overlay '(grow 1))) '())) '())
+                              (list root left right source)))]
+                        [root-view (car composition)] [left (cadr composition)] [right (caddr composition)] [source (cadddr composition)])
+                   (head-read a `(begin (window:show-widget! (head:current-window) ',root-view)
                                         (window:show-widget! (window:split-right!) (quote (unquote missing))) #t))
                    (head-read b `(begin (window:show-widget! (head:current-window) (quote (unquote second))) #t))
                    (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
@@ -1883,15 +1899,40 @@
                           (let ([before (view:state (interaction:snapshot ',second))])
                             (widget:pointer! '(pointer press primary ()) x (+ y 2))
                             (list before (view:state (interaction:snapshot ',second)))))) '(0 2))
+                   (head-read a `(begin (widget:focus! ',root-view ',left) #t))
+                   (head-send! a "\x1b;[200~local \x1b;[201~")
+                   (head-wait 'nested-entry-paste a (lambda () (head-sees? a "local seed")))
+                   (head-read b `(begin (head:store-edit! (head:adopt-store-buffer! ,source) (text:make-span 0 0 0 0) '("remote ")) #t))
+                   (head-wait 'nested-entry-foreign-text a (lambda () (head-sees? a "remote local seed")))
+                   (head-read a `(begin (entry:undo! ',left) (entry:select! ',right 3 1) (widget:focus! ',root-view ',right) #t))
+                   (head-wait 'nested-entry-shared-undo a (lambda () (head-sees? a "remote seed")))
+                   (test:check 'nested-entry-keeps-shared-text-and-independent-selection
+                     (head-read a `(list (head:buffer-lines (head:buffer-of-store-id ,source))
+                                         (view:state (interaction:snapshot ',right))
+                                         (equal? (view:state (interaction:snapshot ',left)) (view:state (interaction:snapshot ',right)))))
+                     '(#("remote seed") ((0 . 3) (0 . 1)) #f))
+                   (let ([before (call-with-input-file (string-append root "/model-checks") read)])
+                     (head-read a `(begin
+                                     (do ([i 0 (+ i 1)]) ((= i 100)) (widget:prepare! ',root-view (+ 10 (mod i 7)) (+ 4 (mod i 3)))) #t))
+                     (test:check 'warm-composition-resize-does-not-refetch-its-model
+                       (call-with-input-file (string-append root "/model-checks") read) before))
                    (head-send! a "\x18;\x03;")
                    (head-wait 'widget-head-detached a (lambda () (pump-head! a)))
                    (test:await 'widget-owner-released (lambda () (not (cdr (assq 'owner (rpc head 'view-read first))))))
+                   (rpc head 'edit source (cadr (rpc head 'snapshot source)) '(0 0 0 0) '("off "))
                    (set! a (start-head "screen A"))
                    (head-wait 'widget-resumed a
                      (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
                    (test:check 'widget-resume-preserves-state-and-missing-renderer
                      (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
-                   (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote first)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
+                   (test:check 'nested-resume-restores-focus-and-logical-selection
+                     (head-read a `(list (view:focus (interaction:snapshot ',root-view)) (view:state (interaction:snapshot ',right))
+                                         (head:buffer-lines (head:buffer-of-store-id ,source))))
+                     (list right '((0 . 3) (0 . 1)) '#("off remote seed")))
+                   (test:check 'resumed-entry-retains-its-selection-basis-through-detached-edits
+                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (head:buffer-lines (head:buffer-of-store-id ,source)) 0)))
+                     "off rXote seed")
+                   (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (head:buffer-fact b 'widget-id #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
                                         (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                    (head-read b `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote second)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools

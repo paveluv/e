@@ -97,6 +97,8 @@ selection use `'((0 . 0) (0 . 0))`. Multiple entries share text and undo history
 while keeping independent selection. `entry:insert!`, `delete!`, `move!`,
 `select!`, `undo!` and `redo!` all take an explicit view ID. They are also the
 registered actions, reached by normal keys, committed paste and click/drag.
+Tab and Shift-Tab cycle visible accepting children inside the current modal
+scope; `(widget:focus-next! view-id [backward?])` is the same host operation.
 Undo follows `edit:undo-scope`, or an explicit scope supplied to `entry:undo!`.
 
 The field accepts one line. Multiline paste is refused whole; an external
@@ -104,6 +106,8 @@ multiline edit displays an explanatory ghost without changing the source or
 its read-only flag. Undo is still available. Selections retain their actual
 edit basis: a concurrent disjoint edit rebases, and overlap refuses rather
 than overwriting unseen text. No operation switches the current editor buffer.
+If the selection's history has expired, Home or End establishes a new caret
+at the corresponding endpoint; typing cannot silently reuse an unknown range.
 
 This example runs in a head without any base configuration. It builds a row
 inside a column, inside an overlay and a scroll viewport. Make the host narrow
@@ -151,6 +155,10 @@ model and descriptor. Detach checkpoints retain widget IDs, not generated
 text. Reattach claims those views and restores acknowledged state. A missing
 renderer or unavailable model produces a placeholder with actions disabled;
 installing the definition makes the existing mount usable.
+Resume acquires retained text history for saved selections before painting,
+including edits made while the head was detached. Repeated preparation, hover
+and resizing read local snapshots. Measurement and rendering share immutable
+descriptor reads within each preparation pass.
 
 An unsupported view descriptor itself remains an inert adapter with its
 original ID and no claimed interaction owner. Its complete envelope can be

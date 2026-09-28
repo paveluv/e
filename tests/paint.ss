@@ -12,6 +12,7 @@
 (eval
   '(begin
      (import (prefix (head paint) paint:) (prefix (head widget) widget:)
+             (prefix (head entry) entry:) (prefix (state store) store:)
              (prefix (head interaction) interaction:) (prefix (head window) window:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (head pacing) pacing:)
@@ -652,4 +653,18 @@
            (painted paint:redraw!)
            (check 'full-output-reenables-widget-frame (widget:frame-id (caar (widget:shown))) scroll))
          (head:show-buffer! was) (head:forget-buffer! b)))
+     (entry:init!)
+     (let* ([w (head:current-window)] [was (head:current-buffer)]
+            [source (store:create! head:ui-actor "entry paint" '("abcdef"))]
+            [id (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 2) (0 . 0)))]
+            [b (window:show-widget! w id)])
+       (let ([output (painted paint:redraw!)])
+         (check 'entry-selection-reaches-the-window-painter (contains? output (style:code 'selection)) #t))
+       (entry:select! id 4 4)
+       (widget:prepare! id 10 1) (painted paint:present-echo!)
+       (check 'partial-paint-retains-shown-entry-caret (widget:caret (caar (widget:shown))) '(2 . 0))
+       (let ([output (painted paint:redraw!)])
+         (check 'unchanged-entry-text-still-updates-selection-and-caret
+           (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
+       (head:show-buffer! was) (head:forget-buffer! b))
      (test:finish! 'paint)))

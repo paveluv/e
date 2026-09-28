@@ -1,7 +1,19 @@
 ;; Canonical containment uses model transactions, including unchanged read witnesses.
 (import (only (foundation edoc) elibrary))
 (elibrary (state view)
-  (export arrange! (rename (descriptor:basis basis)) (rename (descriptor:children children)) claim! create! (rename (descriptor:focus focus)) fork! (rename (descriptor:generation generation)) (rename (descriptor:kind kind)) (rename (descriptor:options options)) (rename (descriptor:owner owner)) (rename (descriptor:parent parent)) publish! release! release-owner! reset-owners! (rename (descriptor:schema schema)) (rename (descriptor:sequence sequence)) set-state! snapshot (rename (descriptor:source source)) (rename (descriptor:state state)) tree upgrade)
+  (export arrange! (rename (descriptor:basis basis))
+    (rename (descriptor:children children)) claim! create!
+    (rename (descriptor:focus focus)) fork!
+    (rename (descriptor:generation generation))
+    (rename (descriptor:kind kind))
+    (rename (descriptor:options options))
+    (rename (descriptor:owner owner))
+    (rename (descriptor:parent parent)) publish! release!
+    release-owner! reset-owners!
+    (rename (descriptor:schema schema))
+    (rename (descriptor:sequence sequence)) set-state! snapshot
+    (rename (descriptor:source source))
+    (rename (descriptor:state state)) tree upgrade)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (state model) model:))
   (define registration (model:register-kind! 'widget-view 2 descriptor:valid?))
   (define (field r k) (cdr (assq k r)))
@@ -161,7 +173,35 @@
 
   (edoc "Publish guarded entries (id generation sequence basis state focus); every entry applies or none do."
         (actor actor "owner") (updates list "interaction entries"))
-  (define (publish! actor updates) (unless (and (list? updates) (for-all (lambda (r) (and (list? r) (= (length r) 6))) updates) (= (length updates) (length (unique (map car updates))))) (error (quote publish!) "expected distinct interaction entries")) (let-values ([(status rows) (transaction! actor (lambda (get need put read fail) (for-each (lambda (r) (let* ([id (car r)] [d (need id)] [focus (list-ref r 5)]) (unless (and (equal? actor (descriptor:owner d)) (= (cadr r) (descriptor:generation d)) (> (caddr r) (descriptor:sequence d))) (fail (quote stale))) (when focus (unless (and (not (descriptor:parent d)) (equal? id (root-of need focus fail))) (fail (quote stale)))) (put id (descriptor:with d (map cons (quote (sequence basis state focus)) (cddr r)))))) updates)) #t)]) (values status #f)))
+  (define (publish! actor updates)
+    (unless (and (list? updates)
+                 (for-all
+                   (lambda (r) (and (list? r) (= (length r) 6)))
+                   updates)
+                 (= (length updates) (length (unique (map car updates)))))
+      (error 'publish! "expected distinct interaction entries"))
+    (let-values ([(status rows)
+                  (transaction!
+                    actor
+                    (lambda (get need put read fail)
+                      (for-each
+                        (lambda (r)
+                          (let* ([id (car r)] [d (need id)] [focus (list-ref r 5)])
+                            (unless (and (equal? actor (descriptor:owner d))
+                                         (= (cadr r) (descriptor:generation d))
+                                         (> (caddr r) (descriptor:sequence d)))
+                              (fail 'stale))
+                            (when focus
+                              (unless (and (not (descriptor:parent d))
+                                           (equal? id (root-of need focus fail)))
+                                (fail 'stale)))
+                            (put id
+                                 (descriptor:with
+                                   d
+                                   (map cons '(sequence basis state focus) (cddr r))))))
+                        updates))
+                    #t)])
+      (values status #f)))
 
   (edoc "Change saved interaction of an unowned view; active views are operated through their head."
         (actor actor "caller") (id list "view") (basis any "source revision") (state datum "interaction"))
@@ -172,7 +212,45 @@
 
   (edoc "Fork a supported subtree, sharing sources and resetting ownership; the new root id."
         (actor actor "creator") (id list "source view") (returns list))
-  (define (fork! actor id) (let ([rows (tree id)]) (unless (and (assoc id rows) (for-all (lambda (row) (for-all (lambda (c) (assoc (cadr c) rows)) (descriptor:children (cdr row)))) rows)) (error (quote fork!) "subtree contains unavailable descriptors" id)) (car (model:allocate! actor (length rows) (lambda (ids) (let ([copies (map (lambda (row new) (cons (car row) new)) rows ids)]) (define (mapped id) (let ([found (assoc id copies)]) (and found (cdr found)))) (map (lambda (row) (let* ([old (cdr row)] [d (descriptor:with old (list (cons (quote parent) (and (not (equal? (car row) id)) (mapped (descriptor:parent old)))) (cons (quote children) (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c))) (descriptor:children old))) (cons (quote focus) (mapped (descriptor:focus old))) (quote (owner . #f)) (quote (generation . 0)) (quote (sequence . 0))))]) (list (quote widget-view) 2 (quote session) (quote persistent) (descriptor:references d) d))) rows)))))))
+  (define (fork! actor id)
+    (let ([rows (tree id)])
+      (unless (and (assoc id rows)
+                   (for-all
+                     (lambda (row)
+                       (for-all
+                         (lambda (c) (assoc (cadr c) rows))
+                         (descriptor:children (cdr row))))
+                     rows))
+        (error 'fork!
+          "subtree contains unavailable descriptors"
+          id))
+      (car (model:allocate!
+             actor
+             (length rows)
+             (lambda (ids)
+               (let ([copies (map (lambda (row new) (cons (car row) new))
+                                  rows
+                                  ids)])
+                 (define (mapped id)
+                   (let ([found (assoc id copies)]) (and found (cdr found))))
+                 (map (lambda (row)
+                        (let* ([old (cdr row)]
+                               [d (descriptor:with
+                                    old
+                                    (list
+                                      (cons
+                                        'parent
+                                        (and (not (equal? (car row) id))
+                                             (mapped (descriptor:parent old))))
+                                      (cons
+                                        'children
+                                        (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c)))
+                                             (descriptor:children old)))
+                                      (cons 'focus (mapped (descriptor:focus old))) '(owner . #f)
+                                      '(generation . 0) '(sequence . 0)))])
+                          (list 'widget-view 2 'session 'persistent
+                            (descriptor:references d) d)))
+                      rows)))))))
 
   (edoc "Release this disconnected head's descriptors, including detached or malformed trees."
         (actor actor "head"))

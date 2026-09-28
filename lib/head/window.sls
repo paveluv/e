@@ -25,32 +25,33 @@
           (prefix (state view) view:))
 
   (define (widget-buffer! id)
-    (or (find (lambda (b) (equal? id (head:buffer-fact b 'widget-id #f))) (head:buffers))
-      (kernel:call-with-runtime-registrations
-        (lambda ()
-          (let ([b (head:new-local-buffer! (format "widget ~a" (cadr id)))] [attached? #f])
-            (guard (ex [else (when attached? (widget:unmount! id)) (head:forget-buffer! b) (raise ex)])
-              (widget:mount! id b)
-              (set! attached? #t)
-              (head:register-app! b
-                (lambda ()
-                  (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
-                    (when w
-                      (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
-                        (head:view-replace! b (if (null? lines) '("") lines) '()
-                          (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
-                (lambda (event)
-                  (cond [(string=? event "BLUR") (widget:cancel! id 'blur) #t]
-                        [(string=? event "FOCUS") (widget:key-scopes! id "") #t]
-                        [else #f])))
-              (head:buffer-fact-set! b 'resume-kind 'widget)
-              (head:buffer-fact-set! b 'widget-id id)
-              (head:buffer-fact-set! b 'mode "widget")
-              (head:set-app-presentation! b 0 #f #f)
-              (head:set-app-cursor-visible! b #f)
-              (head:set-app-selectable! b #f)
-              (head:set-app-manages-viewport! b #t)
-              (head:set-app-status-position! b (lambda (b) "")) b))))))
+    (cond [(find (lambda (b) (equal? id (head:buffer-fact b 'widget-id #f))) (head:buffers))
+           => (lambda (b) (widget:mount! id b) b)]
+      [else (kernel:call-with-runtime-registrations
+              (lambda ()
+                (let ([b (head:new-local-buffer! (format "widget ~a" (cadr id)))] [attached? #f])
+                  (guard (ex [else (when attached? (widget:unmount! id)) (head:forget-buffer! b) (raise ex)])
+                    (widget:mount! id b)
+                    (set! attached? #t)
+                    (head:register-app! b
+                      (lambda ()
+                        (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
+                          (when w
+                            (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
+                              (head:view-replace! b (if (null? lines) '("") lines) '()
+                                (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
+                      (lambda (event)
+                        (cond [(string=? event "BLUR") (widget:cancel! id 'blur) #t]
+                          [(string=? event "FOCUS") (widget:key-scopes! id "") #t]
+                          [else #f])))
+                    (head:buffer-fact-set! b 'resume-kind 'widget)
+                    (head:buffer-fact-set! b 'widget-id id)
+                    (head:buffer-fact-set! b 'mode "widget")
+                    (head:set-app-presentation! b 0 #f #f)
+                    (head:set-app-cursor-visible! b #f)
+                    (head:set-app-selectable! b #f)
+                    (head:set-app-manages-viewport! b #t)
+                    (head:set-app-status-position! b (lambda (b) "")) b))))]))
 
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
         (w window "outer host") (id list "root view id") (returns buffer))
@@ -62,11 +63,12 @@
     (mode:register! "widget" '() '() #f #f
       (lambda (buffer row line)
         (let* ([id (head:buffer-fact buffer 'widget-id #f)] [f (and id (widget:prepared id))])
-          (and f (widget:frame-styles f row)))))
+          (and f (widget:frame-styles f row line)))))
     (head:add-buffer-placement-hook!
-      (lambda (w b)
-        (let ([id (head:buffer-fact b 'widget-id #f)])
-          (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) (head:windows)))
+      (lambda (w b peers)
+        (let ([id (head:buffer-fact b 'widget-id #f)] [old (head:buffer-fact (head:window-buffer w) 'widget-id #f)])
+          (when (and old (not (eq? b (head:window-buffer w)))) (widget:cancel! old 'hidden))
+          (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) peers))
             (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
             b))))
     (head:add-buffer-kill-hook!

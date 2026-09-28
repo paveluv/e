@@ -647,7 +647,21 @@
        (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
        (head:show-buffer! was)
        (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
-       (head:show-buffer! was) (head:forget-buffer! b) (head:forget-buffer! copy))
+       (widget:unmount! id)
+       (check 'explicitly-unmounted-adapter-remounts-on-show
+         (begin (window:show-widget! w id) (widget:actions id)) '(move select choose))
+       (actor:checkpoint! head:ui-actor
+         `(screen 4 1 (split right 1 1 (window 1 0 0 0 default #t #f default) (window 2 0 0 0 default #t #f default))
+            (((widget ,id) #f ()))))
+       (head:resume!)
+       (let* ([windows (filter (lambda (w) (not (head:popup? w))) (head:windows))]
+              [ids (map (lambda (w) (head:buffer-fact (head:window-buffer w) 'widget-id #f)) windows)])
+         (check 'resume-resolves-duplicate-widget-placements-before-installing-layout
+           (list (length ids) (equal? (car ids) (cadr ids))
+                 (map (lambda (id) (view:source (view:snapshot id))) ids))
+           (list 2 #f (list data data))))
+       (window:delete-others!) (head:show-buffer! was)
+       (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
      (let* ([events '()] [owner 'routing-fixture]
@@ -665,7 +679,9 @@
                (cons 'event (lambda (id source d event)
                               (case (car event)
                                 [(text) (record! id (cadr event)) #t]
-                                [(pointer) (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id (cadr event)) #t]
+                                [(pointer) (and (not (eq? (caddr event) 'middle))
+                                             (begin (when (eq? (cadr event) 'press) (widget:capture! id)) (record! id (cadr event)) #t))]
+                                [(cancel) (record! id 'cancel) #t]
                                 [else #f])))))))
        (define (show!) (widget:present! (list (list (widget:prepare! root 10 2) 0 0))))
        (define (key! key) (dispatch:input! root (list 'key key (and (= 1 (string-length key)) key))))
@@ -674,6 +690,7 @@
        (widget:register! 'route-row 1
          (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
            (cons 'actions (list (cons 'record record!)))
+           (cons 'event (lambda (id source d event) (and (eq? (car event) 'pointer) (begin (record! id 'bubbled) #t))))
            (cons 'layout (lambda (d width height measure locate)
                            (map (lambda (child x) (list (cadr child) (list x 0 5 height))) (view:children d) '(0 5))))))
        (for-each (lambda (entry)
@@ -700,6 +717,15 @@
        (widget:pointer! '(pointer move none ()) 99 99)
        (check 'pointer-capture-survives-outside-and-ends-on-release (take)
          (list (list 'press a) (list 'move a) (list 'release a) (list 'leave a)))
+       (widget:pointer! '(pointer press middle ()) 1 0)
+       (check 'unhandled-pointer-bubbles-to-its-own-parent (take) (list (list 'bubbled row)))
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:present! (list (list (widget:prepare! root 0 0) 0 0)))
+       (widget:pointer! '(pointer release primary ()) 1 0)
+       (check 'hidden-capture-cancels-without-retargeting-or-forgetting-focus
+         (list (take) (view:focus (interaction:snapshot root)))
+         (list (list (list 'press a) (list 'cancel a)) a))
+       (show!)
        (key! "C-x") (kernel:retract-module! owner) (install-leaf! #t) (show!) (key! "a")
        (key! "F1") (key! "x") (key! "F2")
        (check 'reload-cancels-chord-full-capture-still-types-and-ancestor-capture-wins (take)
@@ -725,7 +751,7 @@
        (define (foreign! start end replacement)
          (let-values ([(text rev) (store:snapshot source)])
            (store:edit! '(agent "entry-test") source rev (text:make-span 0 start 0 end) replacement))
-         (head:sync-foreign-edits! (list source)))
+         (head:sync-foreign-edits! source))
        (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
        (widget:mount! root 'entry-test) (show!)
        (entry:move! a 'right) (entry:move! a 'right) (entry:move! a 'right)
@@ -734,16 +760,22 @@
          '(((0 . 4) (0 . 4)) ((0 . 0) (0 . 0))))
        (entry:move! a 'left #t) (show!)
        (check 'entry-caret-and-selection-share-cell-geometry
-         (list (widget:caret (widget:prepared root)) (vector-ref (widget:frame-styles (widget:prepared root) 0) 2))
+         (list (widget:caret (widget:prepared root))
+               (vector-ref (widget:frame-styles (widget:prepared root) 0 (car (widget:frame-lines (widget:prepared root)))) 2))
          '((3 . 0) selection))
        (widget:focus! root b) (show!)
        (check 'entry-caret-translates-into-the-second-child (widget:caret (widget:prepared root)) '(10 . 0))
+       (widget:pointer! '(pointer move primary ()) 14 0)
+       (check 'entry-does-not-start-a-drag-from-another-widget (view:state (interaction:snapshot b)) '((0 . 0) (0 . 0)))
        (widget:pointer! '(pointer press primary ()) 11 0)
        (widget:pointer! '(pointer move primary ()) 14 0)
        (widget:pointer! '(pointer release primary ()) 14 0)
        (check 'entry-drag-selects-whole-wide-and-combining-graphemes
          (view:state (interaction:snapshot b)) '((0 . 4) (0 . 1)))
        (widget:focus! root a) (show!)
+       (dispatch:input! root '(key "TAB" #f))
+       (check 'entry-tab-uses-host-traversal (view:focus (interaction:snapshot root)) b)
+       (dispatch:input! root '(key "S-TAB" #f))
        (dispatch:input! root '(text "Q" paste))
        (check 'entry-paste-replaces-selection-once (line) "a界Qz")
        (entry:undo! a) (entry:redo! a)

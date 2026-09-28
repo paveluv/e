@@ -100,7 +100,11 @@
     (unless (and (memq direction '(left right home end)) (<= (length extend) 1) (for-all boolean? extend))
       (error 'move! "invalid movement" direction extend))
     (let-values ([(source d) (context id)])
-      (let* ([data (data source)] [points (project data d)] [edges (map car (caddr data))])
+      (let* ([data (data source)]
+             [points (or (project data d)
+                       (and (single-line? (source-lines source)) (memq direction '(home end))
+                         (not (and (pair? extend) (car extend))) '((0 . 0) (0 . 0))))]
+             [edges (map car (caddr data))])
         (unless points (refuse "Entry selection history is unavailable"))
         (let* ([a (caar points)] [b (caadr points)] [selecting? (and (pair? extend) (car extend))]
                [next (case direction
@@ -177,24 +181,28 @@
   (define (redo! id)
     (history! id 'redo 'mine))
 
+  (define dragging #f)
   (define (event! id source d event)
     (case (car event)
       [(text) (insert! id (cadr event)) #t]
+      [(cancel) (when (equal? dragging id) (set! dragging #f)) #t]
       [(pointer)
-       (and (eq? (caddr event) 'primary) (memq (cadr event) '(press move))
-         (let* ([f (widget:event-frame)] [data (data source)]
-                [points (project data (widget:frame-descriptor f))])
-           (and points
-             (let* ([x (+ (list-ref event 4) (offset points (caddr (widget:frame-rect f))))]
-                    [at (car (edge (caddr data) x cdr))]
-                    [extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
-                    [current (and extend? (project data d))])
-               (when extend?
-                 (let ([steps (changes source (or (view:basis d) (revision source)))])
-                   (unless (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))
-                     (refuse "Entry selection changed during the gesture"))))
-               (select! id at (if extend? (caadr current) at))
-               (when (eq? (cadr event) 'press) (widget:capture! id)) #t))))]
+       (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
+         [else (and (eq? (caddr event) 'primary)
+                 (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
+                 (let* ([f (widget:event-frame)] [data (data source)]
+                        [points (project data (widget:frame-descriptor f))])
+                   (and points
+                     (let* ([x (+ (list-ref event 4) (offset points (caddr (widget:frame-rect f))))]
+                            [at (car (edge (caddr data) x cdr))]
+                            [extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
+                            [current (and extend? (project data d))])
+                       (when extend?
+                         (let ([steps (changes source (or (view:basis d) (revision source)))])
+                           (unless (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))
+                             (refuse "Entry selection changed during the gesture"))))
+                       (select! id at (if extend? (caadr current) at))
+                       (when (eq? (cadr event) 'press) (widget:capture! id) (set! dragging id)) #t))))])]
       [else #f]))
 
   (edoc "Register the single-line entry definition and its ordinary keymap bindings.")
