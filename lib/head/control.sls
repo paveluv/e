@@ -7,6 +7,7 @@
           (prefix (sys glyph) glyph:))
   (define hover (make-hashtable equal-hash equal?))
   (define held (make-hashtable equal-hash equal?))
+  (define (release! id) (hashtable-delete! held id) (hashtable-delete! hover id))
   (define (input inputs name fallback)
     (let ([p (assq name inputs)]) (if (and p (eq? (cadr p) 'ready)) (caddr p) fallback)))
   (define (data id source inputs) (list id (input inputs 'text "[Unavailable]") (input inputs 'enabled #f)))
@@ -66,6 +67,6 @@
     (widget:register! 'label 1 (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)))
     (widget:register! 'action-text 1
       (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)
-        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'actions (list (cons 'activate activate!)))))
+        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'release release!) (cons 'actions (list (cons 'activate activate!)))))
     (keymap:bind-default! 'widget-action "RET" (keymap:call activate! widget:target))
     (keymap:bind-default! 'widget-action "SPC" (keymap:call activate! widget:target))))

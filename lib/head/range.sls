@@ -20,7 +20,7 @@
   (define (reader token)
     (or (kernel:registry-find readers (lambda (r) (eq? token (car r)))) (error 'range "released reader")))
   (define (ready? r generation)
-    (and r (eq? (field (field r 'value) 'status) 'ready) (= generation (field (field r 'value) 'generation))))
+    (and r (eq? (field r 'kind) 'collection) (eq? (field (field r 'value) 'status) 'ready) (= generation (field (field r 'value) 'generation))))
   (define (wanted)
     (fold-left
       (lambda (out r)

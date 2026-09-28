@@ -37,12 +37,13 @@
                       (lambda ()
                         (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
                           (when w
+                            (widget:set-active! id (eq? w (head:current-window)))
                             (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
                               (head:view-replace! b (if (null? lines) '("") lines) '()
                                 (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
                       (lambda (event)
-                        (cond [(string=? event "BLUR") (widget:cancel! id 'blur) #t]
-                          [(string=? event "FOCUS") (widget:key-scopes! id "") #t]
+                        (cond [(string=? event "BLUR") (widget:set-active! id #f) (widget:cancel! id 'blur) #t]
+                          [(string=? event "FOCUS") (widget:set-active! id #t) (widget:key-scopes! id "") #t]
                           [else #f])))
                     (head:buffer-fact-set! b 'resume-kind 'widget)
                     (head:buffer-fact-set! b 'widget-id id)

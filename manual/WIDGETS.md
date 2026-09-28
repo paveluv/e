@@ -18,6 +18,30 @@ connections never execute commands.
 hover or cached geometry to the base. Shared row/column allocation is exposed
 as `layout:container` for compound controls.
 
+`table:create!` takes an actor, collection and ordered column symbols. Pass
+`'list` as the fourth argument for the same selection engine with one column
+and no heading. The table composes sticky headings and a normal scroll view;
+it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
+`sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
+keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
+without changing selection. Sorting is shared through the collection;
+selection and visible columns belong to each view.
+
+The optional `activate` command binding receives a `(collection generation
+key)` row reference and its result basis after the binding's fixed arguments.
+Pending navigation cannot activate the previous row. A domain action should
+validate the reference and basis before changing data. Cells retain raw
+types until the head formats them; unavailable rows have an explicit ghost.
+
+Paged controls use a `service` callback `(id latest-frame)` on the head pump
+and a `release` callback `(id)` on unmount or definition replacement. They
+request ranges there, outside painting. Their pure `viewport` callback
+`(data descriptor width height visible-range)` derives the bounded visible
+data used by rendering, decoration and `frame-data` for exact shown-row hits.
+Measurement continues to use the compact prepared summary. `anchor` and
+`locate` may return `#f` while a row/rank is unavailable: scrolling retains
+the last saved stable anchor and a temporary head-local destination.
+
 The widget adapter mounts a base-owned view tree in an ordinary editor
 window. Models hold data; views hold independent interaction state; the head
 owns rendering and geometry. Multiple views can share one model and its

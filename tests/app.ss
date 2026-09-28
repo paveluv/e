@@ -22,6 +22,8 @@
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head entry) entry:) (prefix (foundation text) text:)
              (prefix (head control) control:) (prefix (core descriptor) descriptor:)
+             (prefix (head table) table:)
+             (prefix (foundation string) string:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -843,5 +845,6 @@
        (head:forget-buffer! b) (head:show-buffer! previous))
 
      (include "tests/control.sps")
+     (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (test:finish! 'app)))

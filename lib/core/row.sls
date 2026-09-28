@@ -23,7 +23,12 @@
     (let ([ports '((input source row-source (value source)) (input filter string (value filter))
                    (output rows row-source (id)) (output count integer (value count)))])
       (unless (equal? ports (port:describe '(model collection 1)))
-        (parameterize ([kernel:registering-module 'row]) (port:register! '(model collection 1) ports)))))
+        (parameterize ([kernel:registering-module 'row]) (port:register! '(model collection 1) ports))))
+    (for-each
+      (lambda (kind)
+        (let ([ports '((input rows row-source (source)) (output selection (or row-selection #f) (state selection)))])
+          (unless (equal? ports (port:describe (list 'view kind 1)))
+            (parameterize ([kernel:registering-module 'row]) (port:register! (list 'view kind 1) ports))))) '(table list)))
 
   (edoc "Validate unique portable (column-id label type) declarations."
         (columns any "candidate columns") (returns boolean))

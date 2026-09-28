@@ -1,9 +1,9 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next!
-          frame-children frame-clip frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          init! input! invalidate! invoke! key-scopes! mount! pointer! prepare! prepared present! register! repaint! reveal! shown target unmount!)
+  (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next! focused
+          frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
+          init! input! invalidate! invoke! key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -22,16 +22,58 @@
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
   (define-record-type mount (fields id slot (mutable subscription) (mutable ids)))
-  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable styles) (mutable caret)))
+  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
         (id list "view id") (descriptor any "interaction basis") (definition any "definition identity")
-        (source any "source basis") (inputs list "resolved input values and dependency bases") (rect list "absolute allocation within the root") (clip list "visible intersection")
+        (source any "source basis") (inputs list "resolved input values and dependency bases") (data any "owned visible projection and hit basis") (rect list "absolute allocation within the root") (clip list "visible intersection")
         (children list "back-to-front child frames") (lines list "clipped backend output")
         (cells vector "backend style cells") (caret any "root-relative caret point or #f"))
-  (define-record-type frame (fields id descriptor definition source inputs rect clip children lines cells caret))
+  (define-record-type frame (fields id descriptor definition source inputs data rect clip children lines cells caret))
   (define preparations (make-hashtable equal-hash equal?))
+  (define services (make-hashtable equal-hash equal?))
+  (define pending-scroll (make-hashtable equal-hash equal?))
+  (define scroll-positions (make-hashtable equal-hash equal?))
+  (define (release-service! id)
+    (let ([entry (hashtable-ref services id #f)])
+      (when entry ((field entry 'release (lambda (id) (void))) id) (hashtable-delete! services id)))
+    (hashtable-delete! pending-scroll id) (hashtable-delete! scroll-positions id))
+
+  (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
+  (define (pump!)
+    (vector-for-each
+      (lambda (id)
+        (let* ([n (hashtable-ref nodes id #f)] [d (and n (read-view id))] [entry (definition d)]
+               [old (hashtable-ref services id #f)])
+          (unless (eq? old entry)
+            (release-service! id)
+            (when entry (hashtable-set! services id entry)))
+          (when entry ((field entry 'service (lambda (id frame) (void))) id (allocation id)))))
+      (hashtable-keys nodes))
+    (vector-for-each
+      (lambda (child)
+        (let* ([intent (hashtable-ref pending-scroll child #f)] [parent (car intent)]
+               [d (read-view parent)] [f (allocation parent)])
+          (when (and d f)
+            (let ([anchor (anchor! child (cdr intent) (caddr (frame-rect f)))])
+              (when anchor
+                (hashtable-delete! pending-scroll child)
+                (interaction:set-state! head:ui-actor parent #f anchor))))))
+      (hashtable-keys pending-scroll)))
   (define presentations '())
+  (define inactive (make-hashtable equal-hash equal?))
+
+  (edoc "Set host focus independently of the tree's remembered logical focus." (id list "mounted root") (active boolean "whether host has focus"))
+  (define (set-active! id active)
+    (let ([was (not (hashtable-ref inactive id #f))])
+      (if active (hashtable-delete! inactive id) (hashtable-set! inactive id #t))
+      (unless (eq? was active)
+        (for-each (lambda (id) (repaint! id)) (mount-ids (node-root (mounted id)))))))
+
+  (edoc "Read the active host's focused descendant, or false for an inactive host." (id list "mounted view") (returns any) (effects internal))
+  (define (focused id)
+    (let* ([root (mount-id (node-root (mounted id)))] [d (read-view root)])
+      (and (not (hashtable-ref inactive root #f)) d (view:focus d))))
   (define frame-reads (make-parameter #f))
   (define (read-view id)
     ;; Measurement, layout and painting share one immutable descriptor per
@@ -72,7 +114,7 @@
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
-                        [(prepare render measure layout event anchor locate decorate caret) (procedure? (cdr p))]
+                        [(prepare viewport service release render measure layout event anchor locate decorate caret) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -221,13 +263,13 @@
       (for-each (lambda (id)
                   (let ([n (hashtable-ref nodes id #f)])
                     (when (and n (eq? (node-root n) mount) (not (member id ids)))
-                      (hashtable-delete! nodes id) (hashtable-delete! failures id)))) (mount-ids mount))
+                      (release-service! id) (hashtable-delete! nodes id) (hashtable-delete! failures id)))) (mount-ids mount))
       (for-each
         (lambda (row)
           (let* ([id (car row)] [old (hashtable-ref nodes id #f)])
             (if (and old (eq? (node-root old) mount))
               (begin (node-mirrored-set! old #f) (node-key-set! old #f))
-              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f))))) tree)
+              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f))))) tree)
       (mount-ids-set! mount ids)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
@@ -246,7 +288,7 @@
                              (when d (interaction:release! head:ui-actor id (view:generation d)))
                              (raise ex)])
                    (mount-subscription-set! m (subscribe! m tree))
-                   (reconcile! m tree) (hashtable-set! roots id m) m)))))])))
+                   (reconcile! m tree) (hashtable-set! roots id m) (pump!) m)))))])))
 
   (edoc "Release a root and its recursive resources after publication; canonical views and sources survive."
         (id list "root id"))
@@ -259,8 +301,9 @@
         (hashtable-delete! roots id)
         (hashtable-delete! preparations id)
         (hashtable-delete! last-focus id)
+        (hashtable-delete! inactive id)
         (set! presentations (filter (lambda (p) (not (equal? id (frame-id (car p))))) presentations))
-        (for-each (lambda (id) (hashtable-delete! nodes id) (hashtable-delete! failures id)) (mount-ids m))
+        (for-each (lambda (id) (release-service! id) (hashtable-delete! nodes id) (hashtable-delete! failures id)) (mount-ids m))
         (unsubscribe! (mount-subscription m)))))
 
   (edoc "Arrange owned trees, staging source demand before the guarded structural commit."
@@ -328,7 +371,9 @@
   (define (scroll-layout d width height measure locate)
     (unless (= (length (view:children d)) 1) (error 'scroll "expected one child"))
     (let* ([id (cadar (view:children d))] [extent (max height (cadr (measure id 'y width)))]
-           [at (min (max 0 (- extent height)) (max 0 (locate id (view:state d) width)))])
+           [position (locate id (view:state d) width)]
+           [intent (hashtable-ref pending-scroll id #f)]
+           [at (min (max 0 (- extent height)) (max 0 (if intent (cdr intent) (or position (hashtable-ref scroll-positions id 0)))))])
       (list (list id (list 0 (- at) width extent)))))
   (define (overlay-measure data d axis cross measure)
     (map (lambda (i) (apply max 0 (map (lambda (child) (list-ref (measure (cadr child) axis cross) i)) (view:children d)))) '(0 1)))
@@ -352,7 +397,8 @@
            [p (and (list? anchor) (= (length anchor) 5) (eq? (car anchor) 'child)
                 (or (find-id (cadr anchor))
                   (exists find-id (append (list-ref anchor 3) (list-ref anchor 4)))))])
-      (if p (+ (cadr (cadr p)) (if (equal? (car p) (cadr anchor)) (locate! (car p) (caddr anchor) (caddr (cadr p))) 0)) 0)))
+      (if p (let ([at (if (equal? (car p) (cadr anchor)) (locate! (car p) (caddr anchor) (caddr (cadr p))) 0)])
+              (and at (+ (cadr (cadr p)) at))) 0)))
   (define (find-frame frame id)
     (and frame (if (equal? id (frame-id frame)) frame (exists (lambda (f) (find-frame f id)) (frame-children frame)))))
   (define (allocation id)
@@ -369,14 +415,14 @@
         (let* ([width (caddr (frame-rect frame))]
                [height (cadddr (frame-rect frame))]
                [limit (max 0 (- (cadr (measure! child 'y width)) height))]
-               [old (min limit
-                         (max 0 (locate! child (view:state d) width)))]
+               [intent (hashtable-ref pending-scroll child #f)]
+               [old (min limit (max 0 (if intent (cdr intent) (or (locate! child (view:state d) width) (hashtable-ref scroll-positions child 0)))))]
                [next (min limit (max 0 (+ old delta)))])
-          (interaction:set-state!
-            head:ui-actor
-            id
-            #f
-            (anchor! child next width))
+          (hashtable-set! scroll-positions child next)
+          (let ([anchor (anchor! child next width)])
+            (if anchor
+              (begin (hashtable-delete! pending-scroll child) (interaction:set-state! head:ui-actor id #f anchor))
+              (begin (hashtable-set! pending-scroll child (cons id next)) (head:wake-main!))))
           (- delta (- next old))))))
 
   (define (rectangle? r)
@@ -441,7 +487,7 @@
     (let* ([n (mounted id)] [d (read-view id)] [entry (definition d)] [clip (layout:intersect rect parent-clip)])
       (let-values ([(available? source) (source! n d)])
         (define (placeholder text)
-          (make-frame id d #f source (inputs! id) rect clip '()
+          (make-frame id d #f source (inputs! id) #f rect clip '()
             (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip)))) (make-vector 0) #f))
         (guard (ex [else
                     (let ([basis (list entry source)])
@@ -449,7 +495,7 @@
                         (hashtable-set! failures id basis) (echo:set-text! (kernel:condition-text ex))))
                     (placeholder (format "[Widget failed ~s]" id))])
           (cond
-            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) rect clip '() '() (make-vector 0) #f)]
+            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) #f rect clip '() '() (make-vector 0) #f)]
             [(not (and entry available?)) (placeholder (format "[Unavailable widget ~s]" id))]
             [else
              (let* ([data (projection! n entry source)] [width (caddr rect)] [height (cadddr rect)]
@@ -464,17 +510,19 @@
                                                 (not (member (car p) seen)) (rectangle? (cadr p)) (check (cdr rest) (cons (car p) seen)))))))
                  (error 'prepare! "invalid child placements" id placements))
                (unless (equal? key (node-key n))
-                 (let ([lines (if render (render data d width height range) '())])
+                 (let* ([visible ((field entry 'viewport (lambda (data d width height range) data)) data d width height range)]
+                        [lines (if render (render visible d width height range) '())])
+                   (node-visible-set! n visible)
                    (unless (and (list? lines) (for-all string? lines)) (error 'prepare! "expected display lines"))
                    (node-lines-set! n
                      (map (lambda (line) (glyph:slice line (- (car clip) (car rect)) (caddr clip)))
                        (list-head lines (min (cdr range) (length lines)))))
                    (node-styles-set! n (style-cells clip rect
-                                         ((field entry 'decorate (lambda args '())) data d width height range)))
-                   (node-caret-set! n ((field entry 'caret (lambda args #f)) data d width height))
+                                         ((field entry 'decorate (lambda args '())) (node-visible n) d width height range)))
+                   (node-caret-set! n ((field entry 'caret (lambda args #f)) (node-visible n) d width height))
                    (node-key-set! n key)))
                (let ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)])
-                 (make-frame id d entry source (inputs! id) rect clip children
+                 (make-frame id d entry source (inputs! id) (node-visible n) rect clip children
                    (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))
                    (composite-styles clip (node-styles n) children)
                    (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p))))))))])))))
@@ -483,17 +531,19 @@
         (id list "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
   (define (prepare! id width height)
     (let ([rect (list 0 0 width height)])
+      (define (geometry f) (and f (list (frame-id f) (frame-rect f) (frame-clip f) (map geometry (frame-children f)))))
       (define (build)
         (parameterize ([frame-reads (make-hashtable equal-hash equal?)]
                        [input-reads (make-hashtable equal-hash equal?)] [measurement-cache (make-hashtable equal-hash equal?)])
           (build-frame! id rect rect)))
       (unless (rectangle? rect) (error 'prepare! "invalid allocation" rect))
-      (let* ([frame (build)] [d (read-view id)] [before (and d (view:focus d))])
+      (let* ([old (prepared id)] [frame (build)] [d (read-view id)] [before (and d (view:focus d))])
         (hashtable-set! preparations id frame)
         (ensure-focus! id)
         (let ([d (read-view id)])
           (unless (equal? before (and d (view:focus d)))
             (set! frame (build)) (hashtable-set! preparations id frame)))
+        (unless (equal? (geometry old) (geometry frame)) (head:wake-main!))
         frame)))
 
   (edoc "Read the latest prepared frame, which may not have been displayed."
@@ -794,7 +844,7 @@
           (if (and f (eq? (view:kind d) 'scroll))
             (let* ([width (caddr (frame-rect f))] [height (cadddr (frame-rect f))]
                    [point (locate! child anchor width)] [top (locate! child (view:state d) width)]
-                   [delta (cond [(< point top) (- point top)] [(>= point (+ top height)) (+ 1 (- point top height))] [else 0])])
+                   [delta (cond [(not (and point top)) 0] [(< point top) (- point top)] [(>= point (+ top height)) (+ 1 (- point top height))] [else 0])])
               (unless (zero? delta) (act! parent 'scroll delta)))
             (loop parent (cdr rest) (list 'child child anchor '() '())))))))
 
@@ -817,6 +867,7 @@
     (register! 'overlay 1 (list (cons 'layout overlay-layout) (cons 'measure overlay-measure)))
     (register! 'scroll 1 (list (cons 'layout scroll-layout) (cons 'measure overlay-measure) (cons 'actions (list (cons 'scroll scroll-action!)))))
     (head:add-pre-redraw-hook! drain-cancels!)
+    (head:add-pre-redraw-hook! pump!)
     (kernel:registry-observe! definitions
       (lambda (removed added)
         (when (and pointer-capture (not (live-frame? pointer-capture))) (defer-cancel! 'reload))

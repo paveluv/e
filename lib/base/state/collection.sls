@@ -244,6 +244,7 @@
       (error 'configure! "expected distinct filter/sort fields"))
     (let ([r (query-record id)] [bundle (connection:snapshot (list id))])
       (unless r (error 'configure! "query is unavailable" id))
+      (when (assq 'sort changes) (validate-sort! (field (field r 'value) 'columns) (cdr (assq 'sort changes))))
       (when (assq 'filter changes)
         (when (exists (lambda (e) (and (equal? id (cadr e)) (eq? (caddr e) 'filter)))
                 (cadr bundle)) (error 'configure! "filter is connected")))
