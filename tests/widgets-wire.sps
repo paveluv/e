@@ -1,6 +1,9 @@
 ;; Included in the existing two-real-head scenario. Run the shipped example.
 (let* ([example (string-append (current-directory) "/examples/widgets.e")]
-       [root-a (head-read a `(begin (load ,example) (widget-example:open! '("alpha.sls" "beta.ss" "gamma.e"))))]
+       [opened (begin
+                 (head-send! a (string-append "\x1b;xbegin (load " (format "~s" example) ") (widget-example:open! '(\"alpha.sls\" \"beta.ss\" \"gamma.e\")))\r"))
+                 (head-wait 'example-opened-through-mx a (lambda () (head-sees? a "Undo insertion"))))]
+       [root-a (head-read a '(head:buffer-fact (head:current-buffer) 'widget-id #f))]
        [table-a (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',root-a)))))]
        [filter-a (head-read a `(cadr (assq 'filter (view:children (interaction:snapshot ',table-a)))))]
        [entry-a (head-read a `(cadr (assq 'entry (view:children (interaction:snapshot ',filter-a)))))]
@@ -13,12 +16,12 @@
   (define (key ui table)
     (head-read ui `(let ([s (cdr (assq 'selection (view:state (interaction:snapshot ',table))))]) (and s (caddr s)))))
   (for-each (lambda (ui table) (head-wait 'collection-first-page ui (lambda () (equal? (key ui table) "alpha.sls")))) (list a b) (list table-a table-b))
+  (head-send! a "\x1b;[B\x1b;[A\x1b;[B\r")
+  (head-wait 'collection-terminal-keys a
+    (lambda () (equal? (head-read a `(let-values ([(source d inputs) (widget:context ',answer-a)])
+                                       (vector-ref (cdr (assq 'value source)) 0))) "beta.ss")))
   (test:check 'collection-real-head-keyboard-selection-and-immediate-activation
     (head-read a `(begin
-                    (dispatch:input! ',root-a '(key "DOWN" #f))
-                    (dispatch:input! ',root-a '(key "UP" #f))
-                    (dispatch:input! ',root-a '(key "DOWN" #f))
-                    (dispatch:input! ',root-a '(key "RET" #f))
                     (let-values ([(source d inputs) (widget:context ',answer-a)])
                       (let ([focused (equal? (widget:focused ',root-a) ',entry-a)])
                         (widget:focus! ',root-a ',answer-a) (widget:prepare! ',root-a 40 10)
