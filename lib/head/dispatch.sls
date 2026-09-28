@@ -96,7 +96,10 @@
            [stale? (and old (or (not (equal? owner (car old))) (not (= (keymap:generation) (cadr old)))))] )
       (set! chord #f)
       (if stale? (list 'cancelled #f #f sequence)
-        (let loop ([rest (if old (list (list-ref old 3)) scopes)])
+        ;; A prefix reserves the sequence, not every suffix in its first
+        ;; receiver. Keep the original routing path so a local C-x D can
+        ;; coexist with the host's C-x b; focus/reload still fence the chord.
+        (let loop ([rest (if old (list-ref old 3) scopes)])
           (if (null? rest) (list (if old 'invalid 'unhandled) #f #f sequence)
             (let* ([scope (car rest)] [receiver (car scope)] [contexts (cadr scope)]
                    [match (exists (lambda (context)
@@ -104,10 +107,10 @@
                                       (and (or hit prefix?) (list hit prefix?)))) contexts)])
               (cond
                 [(and match (cadr match))
-                 (set! chord (list owner (keymap:generation) sequence scope))
+                 (set! chord (list owner (keymap:generation) sequence (if old (list-ref old 3) scopes)))
                  (list 'prefix receiver #f sequence)]
                 [match (list 'command receiver (keymap:binding-action (cdar match)) sequence)]
-                [(and (not old) (caddr scope)) (list 'blocked receiver #f sequence)]
+                [(caddr scope) (list (if old 'invalid 'blocked) receiver #f sequence)]
                 [else (loop (cdr rest))])))))))
 
   (define (dispatch-sequence! first)

@@ -1,10 +1,27 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export backup-value? context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys matches? select
+  (export backup-value? context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys flags flags<? matches? select
           (rename (validate-properties validate)) validate-expected
           (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
+
+  (edoc-type buffer-flag "a buffer flag: conflicted or read-only"
+    (predicate (lambda (v) (and (memq v '(conflicted read-only)) #t)))
+    (complete (lambda (partial) '((conflicted . "unsettled reload conflicts") (read-only . "ordinary editing is guarded"))))
+    (portable #t) (within symbol))
+
+  (edoc "Active buffer flags in canonical order from a fact alist; conditional edit guards count as read-only."
+        (facts list "buffer facts") (returns (list-of buffer-flag)))
+  (define (flags facts)
+    (append (if (cond [(assq 'conflicts facts) => (lambda (p) (> (cdr p) 0))] [else #f]) '(conflicted) '())
+      (if (cond [(assq 'read-only facts) => cdr] [else #f]) '(read-only) '())))
+
+  (edoc "Compare flag sets in marker lexicographic order: empty, conflicted, both, read-only."
+        (a (list-of buffer-flag) "left") (b (list-of buffer-flag) "right") (returns boolean))
+  (define (flags<? a b)
+    (define (rank flags) (if (memq 'conflicted flags) (if (memq 'read-only flags) 2 1) (if (memq 'read-only flags) 3 0)))
+    (< (rank a) (rank b)))
 
   ;; Maintained by the text owner and carried with incremental edit replies.
   (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."

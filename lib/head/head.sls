@@ -17,7 +17,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
   (export add-buffer! add-buffer-kill-hook!
-    add-buffer-placement-hook! add-color-scheme-hook!
+    add-buffer-placement-hook! add-color-scheme-hook! add-local-buffer-hook!
     add-pre-redraw-hook! add-publication-hook!
     add-shutdown-hook! adopt-store! adopt-store-buffer!
     after-key! app-buffer app-buffer? app-cursor-style
@@ -382,12 +382,15 @@
   (define (buffers)
     ;; collections the head hands out are snapshots: callers keep them
     ;; without seeing later changes, and cannot disturb the seat's own
-    (append the-buffers '()))
+    (filter (lambda (b) (not (hashtable-ref (buffer-local-facts b) 'internal #f))) the-buffers))
 
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
   (define (set-buffers! bs)
-    (set! the-buffers bs))
+    (let ([old the-buffers])
+      (set! the-buffers bs)
+      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b bs))) old))
+      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b old))) bs))))
 
   (edoc "Every live window, in layout order, as a fresh list."
         (returns (list-of window)))
@@ -1478,7 +1481,7 @@
                (begin
                  ;; Subscribers can rename, hide, delete or readmit this id.
                  ;; Reconcile current truth instead of installing a stale ack.
-                 (when name (sync-foreign-edits! id))
+                 (when (or name (assq 'internal updates)) (sync-foreign-edits! id))
                  #t))
           (let ([name (and name (unique-local-name (string-copy name) b))]
                 [trailing? (buffer-trailing b)])
@@ -1490,6 +1493,8 @@
                              (and (buffer-modified b) (not (buffer-modified-at b))))
                      (note-local-modification! b))
                    (when name (buffer-name-raw-set! b name))
+                   (when (or name (exists (lambda (p) (memq (car p) '(file mode modified modified-at conflicts read-only app widget-id internal))) updates))
+                     (notify-local-buffer! b))
                    #t))))))
 
   (edoc "The current truth of a buffer for save and discard decisions, shared text not yet adopted here included: (values text revision facts)."
@@ -1604,18 +1609,11 @@
   (define (buffer-conflicted b)
     (> (buffer-fact b 'conflicts 0) 0))
 
-  (edoc-type buffer-flag "a buffer flag: conflicted (unsettled reload conflicts) or read-only (ordinary editing is guarded)"
-    (predicate (lambda (v) (and (memq v '(conflicted read-only)) #t)))
-    (complete (lambda (partial)
-                '((conflicted . "unsettled reload conflicts") (read-only . "ordinary editing is guarded"))))
-    (within symbol))
-
   (edoc "A buffer's active flags, in canonical order: conflicted, then read-only; a conditional edit guard counts as read-only. Modification time is separate."
         (b buffer "the buffer")
         (returns (list-of buffer-flag)))
   (define (buffer-flags b)
-    (append (if (buffer-conflicted b) '(conflicted) '())
-            (if (buffer-read-only b) '(read-only) '())))
+    (property:flags (list (cons 'conflicts (buffer-fact b 'conflicts 0)) (cons 'read-only (buffer-read-only b)))))
 
   (define (local-name name)
     ;; Locality is visible in every label, including user renames.
@@ -1752,7 +1750,8 @@
     (if (buffer-store-id b)
         (buffer-store-rev-set! b revision)
         (buffer-local-rev-set! b revision))
-    (bump-buffer-revision! b))
+    (bump-buffer-revision! b)
+    (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b)))
 
   (edoc "A buffer's text, revision and changes since a content revision, ending at this head's cached source: (values text revision changes)."
         (b buffer "the buffer")
@@ -2227,6 +2226,7 @@
           (reserve-store-name! (buffer-name b))
           (buffer-name-set! b (buffer-name b)))
       (set! the-buffers (append the-buffers (list b))))
+    (notify-local-buffer! b)
     b)
 
   (edoc "The live local tool buffer with a key, or #f."
@@ -2328,6 +2328,7 @@
                           (let ([b (make-buffer (shown-name (store:buffer-name id) (cond [(assq 'audience facts) => cdr] [else 'all]) #f) text 0
                                                 0 0 #f 0 0 0
                                                 id revision)])
+                            (hashtable-set! (buffer-local-facts b) 'internal (cond [(assq 'internal facts) => cdr] [else #f]))
                             (add-buffer! b)
                             (refresh-buffer-rendition! b)
                             (unless (assq 'wrap facts) (buffer-fact-set! b 'wrap 'default))
@@ -2543,6 +2544,7 @@
                   (if (store:visible? ui-actor id)
                     (let ([b (or b (adopt-store-buffer! id))])
                       (when b
+                        (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
                         (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
                           (unless (string=? name (buffer-name b))
                             (buffer-name-raw-set! b name)
@@ -3039,6 +3041,18 @@
 
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
+  (define local-buffer-hook-registry (kernel:make-registry))
+
+  (edoc "Observe legacy local-buffer membership and logical metadata changes on the head pump. Generated app text, cursor and layout changes are excluded; the callback must not wait for the base."
+        (proc procedure "(callback buffer present?)"))
+  (define (add-local-buffer-hook! proc)
+    (unless (procedure? proc) (error 'add-local-buffer-hook! "expected a procedure"))
+    (kernel:registry-add! local-buffer-hook-registry proc))
+
+  (define (notify-local-buffer! b)
+    (unless (buffer-store-id b)
+      (for-each (lambda (proc) (proc b (and (memq b the-buffers) #t)))
+        (kernel:registry-items local-buffer-hook-registry))))
 
   (edoc "Register a hook run with a buffer when this head forgets it."
         (proc procedure "(hook buffer)"))
@@ -3814,9 +3828,10 @@
       (call-with-display-update
         (lambda ()
           (set! the-buffers (remq b the-buffers))
+          (notify-local-buffer! b)
           (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
-          (let ([fallback (or (find buffer-visible? the-buffers)
+          (let ([fallback (or (find (lambda (b) (and (buffer-visible? b) (not (hashtable-ref (buffer-local-facts b) 'internal #f)))) the-buffers)
                             (new-buffer! "*scratch*"))])
             (for-each (lambda (w)
                         (when (eq? (window-buffer w) b)

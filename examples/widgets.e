@@ -30,6 +30,6 @@
               (list '(columns name) (list 'commands (list 'activate target 'pick '()))))
         (list root 0 (list (list 'table table '(grow 1))
                        (list 'answer output 'fit) (list 'undo undo 'fit) (list 'target target 'fit)) '())) '())
-    (connection:bind! who query (list (list query 'filter #f (list filter 'text))))
+    (connection:bind! who query (list (list query 'filter #f (list (list 'buffer needle) 'text))))
     (window:show-widget! (head:current-window) root)
     root))

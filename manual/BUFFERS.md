@@ -78,7 +78,7 @@ print in that form.
 | `C-x b` / `C-x C-b` | Open the buffet, the buffers laid out to pick from. Type to filter; Enter selects the most recently used other buffer or the chosen match. |
 | `M-x (edit:new-buffer! "name")` | Create an empty unvisited buffer with that name and show it. |
 | `M-Up` / `M-Down` / `M-Left` / `M-Right` | Move focus to the neighboring window in that screen direction. |
-| `M-Shift-Up` / `M-Shift-Down` | Switch the current window through all buffers alphabetically, wrapping at either end. |
+| `M-Shift-Up` / `M-Shift-Down` | Switch the current window through live buffers in Buffet's compound sort order, ignoring its filter and wrapping at either end. |
 | `C-x k` | Kill the current buffer at once; a document goes to the trash. |
 
 `C-x C-f` opens the [finder](FINDER.md) for directory navigation and recursive
@@ -141,8 +141,8 @@ Point and selection endpoints follow accepted edits, including edits that
 arrive while a command runs. Each window keeps its own point. If a reset or
 missing history prevents tracking a position, e keeps it within the new text.
 
-The alphabetical traversal is stable: merely visiting a buffer does not move it
-in that order. `M`-mousewheel performs the same previous/next operation on the
+With no explicit sort, traversal is alphabetical: merely visiting a buffer does
+not move it in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
 `C-x C-c` quits this head at once: shared text stays in the base, the
@@ -510,9 +510,9 @@ permanently deletes the chosen Trash or Backups entry; it refuses live rows.
 
 Type a substring to filter by buffer name or file path, ignoring case. The
 whole path is searchable, including directories hidden by elision. Pasted
-text also filters. The first line shows `Filter: ` followed by the query;
-a long query keeps its most recently typed characters visible. Backspace
-removes the last character cluster, and C-u clears the filter. The selected
+text also filters. The first line shows `Filter: ` followed by an editable
+single-line entry; long text follows its caret. Left/Right move within it,
+Backspace removes a character cluster, and C-u clears it. The selected
 buffer stays selected while it matches;
 otherwise the first match becomes the candidate. Empty results show
 `No matching buffers`, and Enter leaves the filter available for correction.
@@ -531,7 +531,7 @@ The live, read-only table has these columns:
 | `Modified` | F1 | Time of the latest content change, in local `HH:MM:SS`, when the buffer has unsaved changes; blank otherwise. |
 | `Flags` | F2 | `!!` for unsettled reload conflicts, `%` when ordinary text editing is guarded; both can appear together. |
 | `Buffer` | F3 | Buffer name. |
-| `Lines` | F4 | Current line count. |
+| `Lines` | F4 | Current document line count; blank for widget apps, whose generated rows are not document text. |
 | `Mode` | F5 | Detected or assigned mode. |
 | `File` | F6 | Visited path, with the home directory abbreviated as `~`. |
 
@@ -592,30 +592,36 @@ Moving the pointer away restores the focused list's keyboard emphasis. Hover nei
 scrolls nor takes focus. Modified rows are italic. These faces are
 configurable through [Styles](STYLES.md).
 
-There is no text cursor or text selection; C-Space does not set a mark.
-The keyboard candidate still scrolls into view. The status bar shows
-`<buffet>` and nothing more; `C-x TAB` lists the keys. Window numbers and
+Table rows have no text cursor or mark. The filter is an ordinary entry with
+a caret, text selection and undo. The keyboard candidate scrolls into view.
+The status bar keeps the name `<buffet>`; `C-x TAB` lists the keys. Window numbers and
 controls remain available in every window. Creation, deletion, edits, saves, renames and mode/file
 changes appear on redraw.
 
 ### Keyboard and mouse controls
 
-Every key of the app runs a `buffet:` command bound in the `buffet`
-context: `buffet:choose!` for Enter, `next-row!`, `previous-row!`,
-`page-down!`, `page-up!`, `first-row!`, `last-row!`, `erase!`,
-`clear-filter!`, `(toggle-sort-column! n)` for `F1` to `F6`, `return!` and
-`paste-filter!`, and typing is the context's `SELF-INSERT` binding,
-`(extend-filter! text)` with the character typed, so `C-x TAB` lists them
-all and `C-h k` describes them, and M-x or an agent drives the app the same
-way: `(filter! text)` sets the filter,
-`(select! (buffer "notes.md"))` makes a listed buffer the choice, and
-`(chosen)` is the choice, a buffer or a trashed or backup buffer's name.
-`(buffet:flags)` returns the chosen live buffer's flags, or `#f` for an
-archived entry or no choice. It uses the same `buffer-flag` enumeration as
-`(head:buffer-flags b)`: a list containing `conflicted`, `read-only`, both
-in that order, or neither. Modification time is separate from these flags.
-`buffet:kill!` and `buffet:delete!` perform the selected-row actions;
-`(edit:delete-trashed! name)` deletes an individual archived entry directly.
+Buffet composes the shared [entry, table and scroll widgets](WIDGETS.md).
+`(buffet:open!)` returns its app view. Its named `table` child provides
+`table:select!`, `table:move!`, `table:sort-by!`, `table:toggle-sort!` and
+`table:set-columns!`. That table's `filter` child contains an `entry` child
+for `entry:insert!`, `entry:delete!` and the other normal entry operations.
+All these operations take explicit view IDs. The table's logical state holds
+its `(collection generation key)` selection and result basis.
+
+`table:activate!` invokes the selected row's `activate` command by default;
+pass `trash` or `delete` to perform the corresponding Buffet action. The
+domain commands `buffet:choose!`, `buffet:kill!` and `buffet:delete!` receive
+the app ID, selection and basis, and reject stale rows. Shared archive
+operations also check the document's displayed metadata version. Flags use
+the same `buffer-flag` enumeration as `head:buffer-flags`: `conflicted` and
+`read-only`. `(edit:delete-trashed! name)` remains the direct archive command.
+
+`(buffet:create! commands)` creates an independent, unmounted composition.
+An optional catalogue query shares its filter and ordering with another view.
+Bind `open` and `return` explicitly to host actions; an embedded Buffet never
+chooses a window implicitly. The default `window:tool!` host retains the named
+app, origin and reopening policy. Split panes fork view state over the query,
+so selection, scroll and geometry remain independent.
 
 - Up / `C-p` / Shift-Tab, Down / `C-n` / Tab: move the candidate row.
 - Home / `C-a` / `M-<`, End / `C-e` / `M->`: select the first or last match.

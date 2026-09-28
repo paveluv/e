@@ -2,7 +2,7 @@
 ;; to render calls; one worker batch and one completion serve the whole head.
 (import (only (foundation edoc) elibrary))
 (elibrary (head range)
-  (export acquire! init! locate pump! read release! request! summary)
+  (export acquire! init! locate pump! read release! request! seek summary)
   (import (except (chezscheme) read) (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:) (prefix (foundation wire) wire:)
           (prefix (head head) head:) (prefix (state collection) collection:)
@@ -34,8 +34,9 @@
                    [pages (let loop ([i first] [pages '()])
                             (if (>= i end) pages
                               (loop (+ i page-size) (cons (list 'range id generation i (min page-size (- total i)) columns) pages))))]
-                   [ranks (map (lambda (key) (list 'rank id generation key)) keys)])
-              (fold-left (lambda (out key) (if (member key out) out (cons key out))) out (append (reverse pages) ranks))))))
+                   [ranks (map (lambda (key) (list 'rank id generation key)) keys)]
+                   [seeks (map (lambda (intent) (append (list 'seek id generation) intent)) (list-ref d 5))])
+              (fold-left (lambda (out key) (if (member key out) out (cons key out))) out (append (reverse pages) ranks seeks))))))
       '() (kernel:registry-items readers)))
   (define (notify!)
     (for-each (lambda (r) (when (kernel:registry-find readers (lambda (current) (eq? r current))) ((caddr r))))
@@ -55,7 +56,7 @@
                 (< ordinal (+ (list-ref request 3)
                              (if (eq? (car reply) 'ready) (length (list-ref reply 4)) (list-ref request 4))))))) cache))
   (define (missing-request key)
-    (if (eq? (car key) 'rank) (and (not (assoc key cache)) key)
+    (if (not (eq? (car key) 'range)) (and (not (assoc key cache)) key)
       (let* ([start (list-ref key 3)] [end (+ start (list-ref key 4))]
              ;; After a byte-shortened page, fetch only still-visible gaps.
              ;; Repeatedly filling speculative tails wastes wire on big cells.
@@ -145,12 +146,18 @@
 
   (edoc "Replace a viewport's bounded logical demand; later pump work fetches uncached pages/ranks. No row identity is inferred from an ordinal."
         (token any "reader") (generation integer "result generation") (start integer "first ordinal")
-        (count integer "at most 256 rows") (columns list "requested raw columns") (keys list "at most four stable keys to locate"))
-  (define (request! token generation start count columns keys)
+        (count integer "at most 256 rows") (columns list "requested raw columns") (keys list "stable keys to locate")
+        (navigation (list-of list) "optional list of (ordinal direction offset), at most four lookups combined"))
+  (define (request! token generation start count columns keys . navigation)
     (unless (and (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) (list generation start count))
-              (<= count 256) (list? columns) (for-all symbol? columns) (list? keys) (<= (length keys) 4))
+              (<= count 256) (list? columns) (for-all symbol? columns) (list? keys)
+              (<= (length navigation) 1)
+              (or (null? navigation) (and (list? (car navigation))
+                                       (for-all (lambda (n) (and (list? n) (= (length n) 3) (memq (cadr n) '(forward backward))
+                                                              (for-all (lambda (i) (and (integer? i) (exact? i) (>= i 0))) (list (car n) (caddr n))))) (car navigation))))
+              (<= (+ (length keys) (if (null? navigation) 0 (length (car navigation)))) 4))
       (error 'request! "invalid bounded demand"))
-    (let* ([r (reader token)] [d (list generation start count (list-sort column<? columns) keys)])
+    (let* ([r (reader token)] [d (list generation start count (list-sort column<? columns) keys (if (null? navigation) '() (car navigation)))])
       (unless (equal? d (list-ref r 4))
         (hashtable-delete! exhausted (cadr r))
         (set-car! (list-tail r 4) (datum:copy d)) (head:wake-main!))))
@@ -194,6 +201,30 @@
                                    (let ([row (find (lambda (r) (equal? (cadr r) key)) (list-ref (cadr e) 4))])
                                      (and row (list 'ready generation (caddr (cadr e)) (car row) (list-ref (cadr e) 5)))))) cache)])
               (or hit '(pending))))))))
+
+  (edoc "Read selectable navigation from cached rows or a demanded indexed lookup, without scheduling work."
+        (id row-source "query") (generation integer "result generation") (ordinal integer "display origin")
+        (direction (one-of forward backward) "direction") (offset integer "selectable steps") (returns list))
+  (define (seek id generation ordinal direction offset)
+    (let* ([s (summary id)] [entry (assoc (list 'seek id generation ordinal direction offset) cache)])
+      (cond [(equal? generation (hashtable-ref exhausted id #f)) '(unavailable cache-budget)]
+        [(not (ready? s generation)) '(pending)] [entry (datum:copy (cadr entry))]
+        [else
+         (let* ([v (field s 'value)] [total (field v 'count)] [basis (field v 'basis)]
+                [step (if (eq? direction 'forward) 1 -1)])
+           (define (answer ordinal) (list 'ready generation basis ordinal total))
+           (if (zero? total) (answer #f)
+             (let loop ([at (min ordinal (- total 1))] [left offset] [last #f] [budget 256])
+               (cond [(or (< at 0) (>= at total)) (if last (answer last) '(pending))]
+                 [(zero? budget) '(pending)]
+                 [else
+                  (let ([row (exists (lambda (e)
+                                       (and (eq? (caar e) 'range) (equal? (cadar e) id) (= (caddar e) generation)
+                                         (eq? (caadr e) 'ready) (find (lambda (r) (= (car r) at)) (list-ref (cadr e) 4)))) cache)])
+                    (cond [(not row) '(pending)]
+                      [(cond [(assq 'selectable (cadddr row)) => cdr] [else #t])
+                       (if (zero? left) (answer at) (loop (+ at step) (- left 1) at (- budget 1)))]
+                      [else (loop (+ at step) left last (- budget 1))]))]))))])))
 
   (edoc "Integrate range adoption and demand with the existing head frame pump.")
   (define (init!) (head:add-pre-redraw-hook! pump!)))

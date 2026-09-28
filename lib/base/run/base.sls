@@ -22,6 +22,7 @@
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
+          (prefix (state catalogue) catalogue:)
           (prefix (state collection) collection:)
           (prefix (state connection) connection:)
           (prefix (state journal) journal:)
@@ -34,7 +35,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -116,7 +117,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection connection-topology connection-bindings))
+      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -136,11 +137,19 @@
        (call-with-values (lambda () (apply connection:bind! actor args)) list)]
       [(connection-bindings) (arity 1) (connection:bindings (car args))]
       [(collection-source) (control!) (arity 3) (apply collection:create-source! actor args)]
-      [(collection-create) (control!) (arity 4) (apply collection:create! actor args)]
+      [(catalogue-source) (control!) (head!) (arity 2) (apply catalogue:create-source! actor args)]
+      [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
+      [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
+      [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
+      [(collection-create) (control!)
+       (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
+       (apply collection:create! actor args)]
       [(collection-configure) (control!) (arity 3) (call-with-values (lambda () (apply collection:configure! actor args)) list)]
       [(collection-summary) (arity 1) (collection:summary (car args))]
       [(collection-range) (arity 5) (apply collection:range args)]
       [(collection-rank) (arity 3) (apply collection:rank args)]
+      [(collection-lookup) (arity 4) (apply collection:lookup args)]
+      [(collection-seek) (arity 5) (apply collection:seek args)]
       [(collection-fetch) (arity 1) (collection:fetch (car args))]
       [(model-ids) (apply model:ids args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
@@ -158,6 +167,10 @@
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)
            (sort < (store:buffer-list)))]
+      [(buffer-metadata) (control!)
+       (unless (<= (length args) 1) (error 'wire "buffer-metadata expects optional IDs"))
+       (apply store:metadata args)]
+      [(buffer-archive) (control!) (arity 3) (call-with-values (lambda () (apply store:archive! actor args)) list)]
       [(name)
        (arity 1)
        (store:buffer-name (car args))]
@@ -780,6 +793,10 @@
                                 [(watch watch-head)
                                  (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
                                  (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
+                                [(catalogue-attach)
+                                 (unless (and control? (= (length message) 3) (eq? (car (policy:session-actor session)) 'head))
+                                   (error 'wire "catalogue-attach requires an all-buffer head"))
+                                 (parameterize ([kernel:registering-module owner]) (catalogue:attach! (policy:session-actor session)))]
                                 [else
                                  ;; Capture only the id, not the entire request.
                                  ;; An answer may precede the ticket reply.

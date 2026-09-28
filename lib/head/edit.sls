@@ -1390,34 +1390,40 @@
   (define (now-seconds) (time-second (current-time 'time-utc)))
 
   (define (trashed-entries)
-    ;; (id name killed-at actor backup), the newest kill first; backup is
+    ;; (id name killed-at actor backup version), the newest kill first; backup is
     ;; the backup fact, (path stamp checksum), of a version a save kept
     (list-sort (lambda (a b) (or (> (caddr a) (caddr b)) (and (= (caddr a) (caddr b)) (> (car a) (car b)))))
       (filter values
-        (map (lambda (id)
-               (let ([t (store:property id 'trashed #f)])
-                 (and t (list id (store:buffer-name id) (car t) (cadr t) (store:property id 'backup #f)))))
-             (store:buffer-list)))))
+        (map (lambda (entry)
+               (let* ([m (cadr entry)] [t (cdr (assq 'trashed m))])
+                 (and t (actor:in-audience? head:ui-actor (cdr (assq 'audience m)))
+                   (not (cdr (assq 'internal m)))
+                   (list (car entry) (cdr (assq 'name m)) (car t) (cadr t)
+                     (cdr (assq 'backup m)) (cdr (assq 'version m))))))
+             (cadr (store:metadata))))))
 
   (define (trash-entries) (filter (lambda (entry) (not (list-ref entry 4))) (trashed-entries)))
   (define (backup-entries) (filter (lambda (entry) (list-ref entry 4)) (trashed-entries)))
-  (define (trashed-ids) (map car (trash-entries)))
+  (define (archive-entry! entry action)
+    (let-values ([(status metadata) (store:archive! head:ui-actor (car entry) (list-ref entry 5) action)])
+      (unless (eq? status 'applied) (error 'archive-entry! "the entry changed; choose it again" (cadr entry)))))
 
   (edoc "Kill a buffer at once: a shared document goes to the trash, where restore! finds it under its name for store:trash-retention days; disposable output is deleted and a local buffer forgotten."
         (b buffer "the buffer to kill"))
   (define (kill-buffer! b)
     (let* ([b (edoc:type-value 'buffer b)] [id (head:buffer-store-id b)] [name (head:buffer-name b)])
-      (let-values ([(text revision facts) (head:buffer-state b)])
-        (let ([unsaved? (not (file:state-clean? text facts))]
-              [disposable? (cond [(assq 'disposable facts) => cdr] [else #f])])
-          (cond [(not id) (void)]
-                [disposable? (store:delete! head:ui-actor id)]
-                [else (store:set-properties! head:ui-actor id (list (list 'trashed (now-seconds) head:ui-actor)))])
-          (head:forget-buffer! b)
-          (log:add! 'edit:kill-buffer!
-            (cond [(or (not id) disposable?) (format "Killed ~a" name)]
-                  [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
-                  [else (format "Killed ~a; it is in the trash" name)]))))))
+      (let* ([m (and id (cadar (cadr (store:metadata (list id)))))]
+             [unsaved? (and m (cdr (assq 'modified m)))]
+             [disposable? (and m (cdr (assq 'disposable m)))])
+        (when id
+          (unless m (error 'kill-buffer! "the buffer no longer exists" name))
+          (let-values ([(status current) (store:archive! head:ui-actor id (cdr (assq 'version m)) 'trash)])
+            (unless (eq? status 'applied) (error 'kill-buffer! "the buffer changed; choose it again" name))))
+        (head:forget-buffer! b)
+        (log:add! 'edit:kill-buffer!
+          (cond [(or (not id) disposable?) (format "Killed ~a" name)]
+                [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
+                [else (format "Killed ~a; it is in the trash" name)])))))
 
   (edoc "The trashed buffers, the backups aside, newest first, as (name killed-at actor): killed-at in UTC seconds; each expires store:trash-retention days after it was killed."
         (returns (list-of list)))
@@ -1453,7 +1459,7 @@
     (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
       (unless entry (error 'restore! "no such buffer in the trash" name))
       (let ([id (car entry)])
-        (store:set-properties! head:ui-actor id '((trashed . #f) (backup . #f)))
+        (archive-entry! entry 'restore)
         (let ([b (head:adopt-store-buffer! id)])
           (unless b (error 'restore! "the buffer did not come back" name))
           (head:show-buffer! b)
@@ -1465,19 +1471,18 @@
   (define (delete-trashed! name)
     (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
       (unless entry (error 'delete-trashed! "no such buffer in the trash" name))
-      (let-values ([(text revision facts) (store:snapshot-state (car entry))])
-        (unless (and (cond [(assq 'trashed facts) => cdr] [else #f])
-                  (store:discard! head:ui-actor (car entry) revision facts))
-          (error 'delete-trashed! "the entry changed; choose it again" name)))
+      (archive-entry! entry 'delete)
       (log:add! 'edit:delete-trashed! (format "Permanently deleted ~a" name))))
 
   (edoc "Delete every trashed buffer for good, the backups kept; how many went."
         (returns integer))
   (define (empty-trash!)
-    (let ([ids (trashed-ids)])
-      (for-each (lambda (id) (store:delete! head:ui-actor id)) ids)
-      (log:add! 'edit:empty-trash! (format "Emptied the trash: ~a buffer~a" (length ids) (if (= (length ids) 1) "" "s")))
-      (length ids)))
+    (let ([count 0])
+      (for-each (lambda (entry)
+                  (let-values ([(status m) (store:archive! head:ui-actor (car entry) (list-ref entry 5) 'delete)])
+                    (when (eq? status 'applied) (set! count (+ 1 count))))) (trash-entries))
+      (log:add! 'edit:empty-trash! (format "Emptied the trash: ~a buffer~a" count (if (= count 1) "" "s")))
+      count))
 
   ;;; Indentation and formatting ------------------------------------------------
 

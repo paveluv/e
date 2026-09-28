@@ -10,14 +10,16 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) pop-up-or-reuse! register-link-tag! resize! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! unlink!)
+  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) open-document! pop-up-or-reuse! register-link-tag! resize! return! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! tool! unlink!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
+          (prefix (head document) document:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
@@ -34,7 +36,9 @@
            => (lambda (b) (widget:mount! id b) b)]
       [else (kernel:call-with-runtime-registrations
               (lambda ()
-                (let ([b (head:new-local-buffer! (format "widget ~a" (cadr id)))] [attached? #f])
+                (let* ([d (view:snapshot id)] [options (if d (view:options d) '())]
+                       [name (and options (assq 'name options))]
+                       [b (head:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))] [attached? #f])
                   (guard (ex [else (when attached? (widget:unmount! id)) (head:forget-buffer! b) (raise ex)])
                     (widget:mount! id b)
                     (set! attached? #t)
@@ -53,6 +57,7 @@
                     (head:buffer-fact-set! b 'resume-kind 'widget)
                     (head:buffer-fact-set! b 'widget-id id)
                     (head:buffer-fact-set! b 'mode "widget")
+                    (for-each (lambda (key) (let ([p (assq key options)]) (when p (head:buffer-fact-set! b key (cdr p))))) '(tool-key recency))
                     (head:set-app-presentation! b 0 #f #f)
                     (head:set-app-cursor-visible! b #f)
                     (head:set-app-selectable! b #f)
@@ -62,10 +67,60 @@
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
         (w window "outer host") (id list "root view id") (returns buffer))
   (define (show-widget! w id)
-    (head:set-window-buffer! w (widget-buffer! id))
-    (head:window-buffer w))
+    (let ([origin (document:reference (head:window-buffer w))])
+      (head:set-window-buffer! w (widget-buffer! id))
+      (let* ([b (head:window-buffer w)] [actual (buffer-widget b)] [d (interaction:snapshot actual)])
+        (when (and d (eq? (view:kind d) 'window-tool))
+          (when (and origin (not (equal? origin actual)))
+            (interaction:set-state! head:ui-actor actual #f (list (cons 'origin origin))))
+          (widget:set-active! actual (eq? w (head:current-window)))
+          (widget:prepare! actual (head:window-content-width w) (head:window-size w)))
+        (head:window-buffer w))))
+
+  (define (tool-window id)
+    (let ([slot (widget:host id)])
+      (or (find (lambda (w) (eq? (head:window-buffer w) slot)) (head:windows))
+        (error 'window "tool has no visible window" id))))
+
+  (edoc "Open a semantic document reference through an explicit window-tool host. Inactive panel clicks use the previously focused window and preserve its focus; keyboard actions use the tool's own window."
+        (id list "window-tool view") (ref datum "catalogue document reference"))
+  (define (open-document! id ref)
+    (let* ([own (tool-window id)] [event-target (head:app-event-focus)]
+           [target (if (and event-target (memq event-target (head:windows))) event-target own)]
+           [b (document:resolve! ref)])
+      (unless b (error 'open-document! "document is unavailable" ref))
+      (widget:keep-host-focus!)
+      (head:with-window target (head:show-buffer! b))))
+
+  (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
+        (id list "window-tool view"))
+  (define (return! id)
+    (let* ([w (tool-window id)] [d (interaction:snapshot id)] [p (assq 'origin (view:state d))]
+           [b (or (and p (document:resolve! (cdr p)))
+                (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
+      (when b (head:with-window w (head:show-buffer! b)))))
+
+  (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view can be shown or forked normally."
+        (name string "tool name without brackets") (build procedure "commands -> app view") (returns list))
+  (define (tool! name build)
+    (let* ([key (string-append "*" name "*")] [old (head:find-tool-buffer key)])
+      (if old (buffer-widget old)
+        (let* ([options (list (cons 'name (string-append "<" name ">")) (cons 'tool-key key) '(recency . behind))]
+               [host (view:create! head:ui-actor #f 'window-tool 1 options '())]
+               [app (build (list (list 'open host 'open-document '()) (list 'return host 'return '())))])
+          (view:arrange! head:ui-actor (list (list host 0 (list (list 'app app '(grow 1))) options)) '())
+          (widget-buffer! host) host))))
+
+  (define (tool-service! id frame)
+    (let* ([d (interaction:snapshot id)] [app (cadr (assq 'app (view:children d)))])
+      (when (assq 'current (widget:commands app))
+        (widget:invoke! app 'current
+          (and (not (eq? (head:current-buffer) (widget:host id))) (document:reference (head:current-buffer)))))))
 
   (define (init-widget-host!)
+    (widget:register! 'window-tool 1
+      (append (layout:container 'y)
+        (list (cons 'service tool-service!) (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!))))))
     (mode:register! "widget" '() '() #f #f
       (lambda (buffer row line)
         (let* ([id (buffer-widget buffer)] [f (and id (widget:prepared id))])

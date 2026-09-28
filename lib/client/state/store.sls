@@ -5,9 +5,9 @@
 ;; delta on the wire, never the buffer's text.
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
+  (export archive! blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite!
+          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite!
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           view visible? visit! watch!)
@@ -21,6 +21,17 @@
 
   (define validate-properties property:validate)
   (define validate-edit-context property:edit-context)
+
+  (edoc "Read coherent metadata without buffer contents: (epoch ((id metadata-or-false) ...))."
+        (selection (list-of list) "optional numeric IDs; omitted means all") (returns list) (effects remote))
+  (define (metadata . selection) (apply client:request 'buffer-metadata selection))
+
+  (edoc "Trash, restore or permanently delete an archive by ID and reviewed metadata version. Return status and current metadata; a refusal never retries."
+        (actor actor "connection supplies attribution") (id integer "buffer ID") (version integer "reviewed metadata version")
+        (action (one-of trash restore delete) "operation"))
+  (define (archive! actor id version action)
+    (let ([reply (client:request 'buffer-archive id version action)])
+      (stale! id 'facts) (apply values reply)))
   ;; id -> (label text revision facts), or #f for a buffer known to be absent
   (define cache (make-eqv-hashtable))
   ;; ids whose cached entry may lag the base: text (edits only, so only the

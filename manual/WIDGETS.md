@@ -18,14 +18,23 @@ connections never execute commands.
 hover or cached geometry to the base. Shared row/column allocation is exposed
 as `layout:container` for compound controls.
 
-`table:create!` takes an actor, collection and ordered column symbols. Pass
-`'list` as the fourth argument for the same selection engine with one column
-and no heading. The table composes sticky headings and a normal scroll view;
+`table:create!` takes an actor, collection and ordered column symbols. Its
+optional fourth argument is an options alist. Use `((kind . list))` for one
+column without a heading; use `((identity . name))` to keep `name` when fitting
+a narrow pane, independently of its position among the columns. The default
+identity is the first column. `set-columns!` retains that identity.
+The table composes sticky headings and a normal scroll view;
 it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
 `sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
 keyboard and mouse. F1–F12 address the visible headings. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
+
+Section rows remain scrollable but cannot be selected or activated. Up/Down,
+Home/End and Page Up/Down use the provider's selectable index; a large run of
+sections never makes the head walk the result. Page movement uses the shown
+viewport height. A result's suggested default is used for the initial choice;
+subsequent results retain a surviving stable key.
 
 Rows use the same theme-aware `candidate` and `candidate-hover` faces as
 Buffet. A hovered row takes precedence over the keyboard choice without
@@ -39,6 +48,175 @@ key)` row reference and its result basis after the binding's fixed arguments.
 Pending navigation cannot activate the previous row. A domain action should
 validate the reference and basis before changing data. Cells retain raw
 types until the head formats them; unavailable rows have an explicit ghost.
+
+While a query or its next row page is pending, the table retains one bounded
+viewport, replacing it when the new rows arrive. The heading shows an italic
+`[Updating]` in spare space, or `…` in a narrow pane. Retained rows preserve
+their presentation but cannot activate an obsolete result. Initial loading
+and unavailable sources still have explicit placeholders. Viewport and
+selection lookups share a batch rather than waiting for each other.
+
+`table:register-presentation!` registers a head-local name, schema version
+and column rules `(column minimum alignment dependencies formatter)`. Alignment is `text`,
+`tail` or `right`. Select it with a table option such as
+`(presentation file-labels 1)`. Dependencies list additional raw columns needed
+to present this cell; only the selected columns and their dependencies are
+requested. The formatter receives the cell state (`(ready value)`, `(absent)`,
+`(pending)` or `(unavailable reason)`), the requested row cells and row attributes.
+It returns `(text (start end roles) ...)`, where spans
+use character offsets in that formatted text. Map raw match spans through
+escaping or abbreviation in this function. Table fitting handles grapheme
+clipping and padding, keeping matches off ellipses and neighboring columns.
+Rules format only visible cells, and registration replacement invalidates
+local presentation without changing the query. A missing named presentation
+produces an explicit unavailable view.
+
+An explicit `table:select!` synchronizes the compact query before choosing a
+key. Immediate normal activation can resolve that exact key with one bounded
+`collection:lookup` while its page is still arriving. Pending movement,
+destructive commands and still-preparing queries refuse; nothing is retried
+or queued for later execution. `lookup` also lets domain actions validate a
+row and its result basis without separate rank and range requests.
+
+`table:emphasize!` supplies a host's current document key without changing
+selection or sending interaction updates. `table:activate!` accepts an optional
+command name (default `activate`), allowing domain actions such as trash and
+delete to share the same hover, selection and pending-state validation.
+
+Without a rule, string cells retain their raw text and match spans, and other
+values print as Scheme data. Logical depth indents the identity cell in the
+TUI. Creation rows show italic names and an italic `[create]` suffix;
+pending cells show `[Pending]`. Semantic row roles compose with the normal
+choice/hover styles. Providers supply facts, never terminal widths or ANSI.
+
+`window:tool!` retains a named composition for this head. Its builder receives
+explicit `open` and `return` command bindings and returns an unmounted app
+view. Show the returned host with `window:show-widget!`; simultaneous placements
+fork views over shared sources. The host owns origin, MRU and inactive-panel
+click routing. An optional app `current` binding receives the focused document
+key (or false while the tool has focus), for local emphasis.
+
+Embedded compositions supply their own command bindings. They do not use an
+implicit current window. `widget:host` returns the opaque mounting slot;
+`widget:keep-host-focus!` lets a pointer action retain the outer host's focus
+when it opens a document elsewhere.
+
+`C-x TAB` lists the focused widget path's keys, including app capture contexts
+and unshadowed entry, table and global bindings. The listing follows internal
+focus changes. `widget:key-scopes` exposes that routing without moving focus
+or touching a chord; dispatch uses `key-scopes!` to reconcile focus first.
+
+## Buffer catalogue
+
+Create a head's source with `(document:create-source! 'transient)`, then use
+`collection:create!` and `table:create!` as for other collections. Shared
+documents, Backups and Trash come from one subscribed base inventory.
+Case-insensitive filters search names and file paths, including `~/` spelling.
+Compound sorts apply to live rows; archives follow in separate newest-first
+sections. The sortable columns are `modified`, `flags`, `name`, `lines`,
+`mode` and `file`. Timestamps are raw nanoseconds, flags are `buffer-flag`
+enumerations, and paths keep their absolute identity. Format them in the head.
+Generated apps and widgets have no Lines value.
+
+For an editable shared filter, use a persistent source and
+`(catalogue:create-query! actor source)`, which returns `(query filter-reference)`.
+The query owns the source and internal filter buffer; views borrow both.
+Retiring the query releases those resources, while unmounting a view leaves
+other borrowers intact. More generally, the optional final argument to
+`collection:create!` declares owned resource references. Ownership requires a
+persistent query so restart cannot leave saved resources without their owner.
+`catalogue:neighbor` uses the same cached, unfiltered live ordering for buffer
+switching, without fetching archive rows or maintaining a head-side comparator.
+
+Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
+for widget hosts, and `(local actor attachment token)` for remaining local
+buffers. `document:reference` obtains a listed buffer's key;
+`document:resolve!` resolves it in the owning head, adopting shared text as
+needed. Foreign or retired local tokens return false. A retained widget view
+can be mounted with `window:show-widget!`. Local metadata is sent in bounded,
+coalesced batches; repaint, hover and generated rows are never contributions.
+Disconnect removes the attachment's contribution. Persistent source recipes
+rebuild their inventory, not opaque local objects, after restart.
+
+`store:metadata` reads a coherent `(epoch ((id metadata-or-false) ...))`
+without copying text or history; an optional list restricts it to those IDs.
+Each row includes a `version` witness for content, facts and lifetime.
+`store:archive!` takes actor, ID, reviewed version and `trash`, `restore` or
+`delete`, returning status and current metadata. It refuses stale versions
+and incompatible states atomically. Unrelated buffer changes do not invalidate
+the witness. Restoration retains history and uses the usual unique-name
+policy; permanent deletion requires an archive and never deletes a disk file.
+Validate the query basis at dispatch as well. A refusal refreshes the view
+without retrying the action. The host still retires displayed buffers through
+`head:forget-buffer!`, which moves windows to surviving buffers.
+
+## Prepared collections
+
+`collection:create!` creates a query over a source model, filter and compound
+sort. A vector source uses case-insensitive substring filtering and typed
+scalar sorting. Other providers own their domain filtering and ordering.
+The compact summary includes `status`, `generation`, `basis`, raw `columns`,
+display-row `count`, `complete`, `default`, `details` and `sortable`. `default`
+is an empty or single-key list, so a false key is unambiguous. `details` holds
+domain facts such as a match count distinct from the number of display rows.
+Supported sorts are validated when configuring a prepared query.
+
+Register a provider in the base with `collection:register!`:
+
+```scheme
+(collection:register! 'my-source 1
+  (lambda (source query cancelled? publish!)
+    ;; Queue work in the domain service; return promptly.
+    ...))
+```
+
+`source` is a borrowed immutable model envelope. `query` contains `id`,
+`filter` and `sort`. The provider owns its queue and cancellation checkpoints;
+the vector provider uses its own computation worker. Preparation must never
+block the collection dispatcher. Use `(publish! result #f)` for an immutable
+snapshot or `(publish! #f diagnostic-string)` for failure. Several snapshots
+may be published in order; a partial readable result has `complete` false.
+Publish completion promptly and coalesce intermediate updates. A repeated
+publication of the same result object is a no-op. The callback returns false
+after its request is superseded, including an input change away and back.
+
+`collection:make-result` takes columns, count, `row-at`, `locate`, `seek` and
+an options alist with `complete`, `default`, `details` and `sortable`.
+`row-at` reads `(key cells attributes)` at an ordinal. `locate` maps a key to
+an ordinal or false. `seek` takes `(ordinal forward|backward offset)` and
+returns a selectable ordinal or false for an entirely ineligible result.
+It starts inclusively, skips sections and clamps at selectable ends. Offset
+zero finds the eligible row at or beyond the origin in the chosen direction.
+Callbacks read prepared indexes only: no scanning, waiting, filesystem I/O
+or formatting. Results must remain immutable after publication.
+
+Raw row attributes are a validated alist: `selectable` (boolean), `depth`
+(nonnegative logical level), `roles` (semantic symbols), `matches`
+(`(column start end)` spans in raw strings), `creation` (`file` or `directory`),
+and `pending` (column symbols). Attributes and spans belong to the range's
+generation and basis. Missing cells are absent; pending and unavailable cells
+are distinct from zero, false and an empty string. Custom non-scalar sorting
+belongs to the provider and is declared through `sortable`.
+
+`collection:range`, `rank` and `seek` are guarded by the result generation;
+`fetch` batches at most four requests. Rows, keys, attributes and diagnostics
+share the reply budget. A range contains at most 256 rows and 512 KiB; cells
+over 64 KiB become unavailable, while an oversized key/attribute row makes
+the range unavailable. Heads use the shared `range:` cache, queuing misses
+on the pump. Painting, hover and cached navigation perform no remote work.
+
+Connect a shared query's filter to its text buffer, not to a particular entry
+view. For example, with `filter-source` a `(buffer id)` reference:
+
+```scheme
+(connection:bind! (actor:current) query
+  (list (list query 'filter #f (list filter-source 'text))))
+```
+
+The query owns this connection. Closing the original entry leaves other
+views and the query connected to the same authored text. A multiline source
+is unavailable; deleting the source removes the edge and restores the input
+default. Source edits use the text store's normal revision and undo behavior.
 
 Paged controls use a `service` callback `(id latest-frame)` on the head pump
 and a `release` callback `(id)` on unmount or definition replacement. They

@@ -19,6 +19,7 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head widget) widget:)
           (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <keys> buffer while it is shown
@@ -67,7 +68,7 @@
             nearer))
 
   (define (context-groups context nearer read-only? . keep)
-    ;; keep, when given, admits a binding's action: the commands allowed in a
+    ;; keep, when given, admits a binding: the commands allowed in a
     ;; prompt for the global section while one is open
     ;; (keys command description) for a context's bindings that work here:
     ;; not shadowed by a nearer context, and not editing where the text is
@@ -89,7 +90,7 @@
                   (if (and command
                            (not (shadowed? (keymap:binding-sequence b) nearer))
                            (not (and read-only? (edits? action)))
-                           (or (null? keep) ((car keep) action)))
+                           (or (null? keep) ((car keep) b)))
                       (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
                       groups))))))
 
@@ -192,6 +193,21 @@
     ;; the context of an open prompt's content view, or #f
     (let ([body (prompt:content)]) (and body (prompt:content-context body))))
 
+  (define (contexts b key)
+    (let* ([root (head:buffer-fact b 'widget-id #f)] [outer (if root '(global) (append (mode:key-contexts b) '(global)))])
+      (if (not root) outer
+        (let loop ([scopes (cadr (widget:key-scopes root key))] [out '()])
+          (if (null? scopes) (append out outer)
+            (let ([out (append out (filter (lambda (c) (not (memq c out))) (cadar scopes)))])
+              (if (caddar scopes) out (loop (cdr scopes) out))))))))
+
+  (define (reachable? b context binding)
+    (let* ([sequence (keymap:binding-sequence binding)] [path (contexts b (car sequence))])
+      (let loop ([path path] [nearer '()])
+        (and (pair? path)
+          (if (eq? (car path) context) (not (shadowed? sequence nearer))
+            (loop (cdr path) (cons (car path) nearer)))))))
+
   (define (listing b width)
     ;; the keys that work now: with a prompt open, its content view's
     ;; context, the prompt's keys and the global commands allowed in a
@@ -199,10 +215,11 @@
     ;; among them, then the global ones; each context's keys less those a
     ;; nearer context takes, and less the editing commands where the text
     ;; is read-only, in the width given
-    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [prompting? (prompt:active?)])
+    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [prompting? (prompt:active?)]
+          [widget? (head:buffer-fact b 'widget-id #f)])
       (let loop ([contexts (if prompting?
                                (append (if (prompt-context) (list (prompt-context)) '()) '(prompt global))
-                               (append (mode:key-contexts b) '(global)))]
+                               (contexts b ""))]
                  [nearer '()] [out '()])
         (if (null? contexts)
             (apply append (reverse out))
@@ -210,8 +227,11 @@
               (loop (cdr contexts) (cons context nearer)
                     (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
                                    (append (if (and prompting? (eq? context 'global))
-                                               (context-groups context nearer #f prompt:allowed?)
-                                               (context-groups context nearer (and (not prompting?) read-only?)))
+                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))))
+                                               (if (and widget? (not prompting?))
+                                                 (context-groups context '() (and (eq? context 'global) read-only?)
+                                                   (lambda (binding) (reachable? b context binding)))
+                                                 (context-groups context nearer (and (not prompting?) read-only?))))
                                            (capture-note context))
                                    width)
                           out)))))))
@@ -269,7 +289,7 @@
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
     ;; comes last, so the rest compares on its own
-    (list b (mode:key-contexts b) (read-only-text? b) (prompt:active?) (prompt-context) (listing-width)))
+    (list b (list (contexts b "") (keymap:generation)) (read-only-text? b) (prompt:active?) (prompt-context) (listing-width)))
 
   (define (fill! b)
     ;; the listing for a buffer into the view: from the top for a new
