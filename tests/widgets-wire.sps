@@ -29,18 +29,22 @@
                         (let ([f (widget:prepare! ',root-a 40 10)])
                           (list (vector-ref (cdr (assq 'value source)) 0) focused
                             (vector-ref (widget:frame-styles f 3 (list-ref (widget:frame-lines f) 3)) 0)))))))
-    '("beta.ss" #t selection))
+    '("beta.ss" #t candidate))
   (test:check 'collection-fork-keeps-selection-independent (key b table-b) "alpha.sls")
   (test:check 'collection-example-action-uses-real-undo
     (head-read a `(begin (entry:undo! ',answer-a)
                     (let-values ([(source d inputs) (widget:context ',answer-a)]) (vector-ref (cdr (assq 'value source)) 0)))) "")
-  (test:check 'collection-warm-frames-send-no-wire-data
+  (test:check 'collection-warm-hover-and-frames-send-no-wire-data
     (head-read a
       `(let ([io (lambda () (call-with-input-file "/proc/self/io"
                               (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
                                                          (if (eq? k 'wchar:) v (loop)))))))])
-         (let ([before (io)])
-           (do ([i 0 (+ i 1)]) ((= i 100)) (widget:prepare! ',root-a (+ 20 (modulo i 20)) 10))
+         (let ([before (io)]
+               [p (find (lambda (p) (equal? (widget:frame-id (car p)) ',root-a)) (widget:shown))])
+           (do ([i 0 (+ i 1)]) ((= i 100))
+             (widget:pointer! '(pointer move none ()) (+ (cadr p) 2) (+ (caddr p) 2 (modulo i 2)))
+             (widget:prepare! ',root-a (+ 20 (modulo i 20)) 10))
+           (widget:pointer! '(pointer move none ()) -1 -1)
            (- (io) before)))) 0)
   (head-read a `(begin (dispatch:input! ',root-a '(text "beta" typed)) #t))
   (for-each (lambda (ui table) (head-wait 'connected-filter-across-heads ui

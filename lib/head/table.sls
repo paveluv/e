@@ -137,6 +137,13 @@
   (define (ready? v) (and v (eq? (get v 'status #f) 'ready)))
   (define (descriptor s) (interaction:snapshot (session-id s)))
   (define (selected s) (get (view:state (descriptor s)) 'selection #f))
+  (define (hovered-row s)
+    ;; Hover is a local candidate, not a selection publication. Keep its
+    ;; shown generation, basis and ordinal so keys can adopt it coherently.
+    (let ([h (session-hovered s)] [v (metadata s)])
+      (and (pair? h) (eq? (car h) 'row) (ready? v)
+        (equal? (car (cadr h)) (session-query s))
+        (= (cadr (cadr h)) (get v 'generation 0)) h)))
   (define (columns s v)
     (let ([all (get v 'columns '())])
       (filter values (map (lambda (name) (assq name all)) (get (view:options (descriptor s)) 'columns (map car all))))))
@@ -243,27 +250,35 @@
   (edoc "Select a stable row key, resolving its current rank asynchronously if needed." (id list "table or descendant") (key datum "row identity"))
   (define (select! id key)
     (let* ([s (runtime id)] [v (metadata s)])
+      (session-hovered-set! s #f)
       (session-pending-set! s (list 'key key))
       (when (ready? v) (seek! s (session-pending s) v)) (repaint! s)))
 
-  (edoc "Move the selection in result order. Uncached movement replaces bounded destination intent; activation waits for that row."
+  (edoc "Move from the hovered row or selection in result order, clearing hover. Uncached movement replaces bounded destination intent; activation waits for that row."
         (id list "table or descendant") (direction symbol "next, previous, first or last"))
   (define (move! id direction)
-    (let* ([s (runtime id)] [v (metadata s)] [pending (session-pending s)]
-           [at (if (and pending (eq? (car pending) 'ordinal)) (cadr pending) (session-ordinal s))]
+    (let* ([s (runtime id)] [v (metadata s)] [pending (session-pending s)] [hover (hovered-row s)]
+           [at (if hover (cadddr hover)
+                 (if (and pending (eq? (car pending) 'ordinal)) (cadr pending) (session-ordinal s)))]
            [count (get v 'count 0)]
            [next (case direction [(next) (+ at 1)] [(previous) (- at 1)] [(first) 0] [(last) (- count 1)] [else (error 'move! "invalid direction" direction)])])
+      (session-hovered-set! s #f)
       (session-pending-set! s (list 'ordinal (max 0 (min (max 0 (- count 1)) next))))
       (when (ready? v) (seek! s (session-pending s) v)) (repaint! s)))
 
-  (edoc "Activate the known current selection through the explicit command binding; pending or stale rows refuse."
+  (edoc "Adopt the hovered row, if any, and activate the selection through the explicit command binding; pending or stale rows refuse."
         (id list "table or descendant") (returns any))
   (define (activate! id)
-    (let* ([s (runtime id)] [v (metadata s)] [selection (selected s)])
-      (unless (and (ready? v) selection (not (session-pending s))
-                (equal? (car selection) (session-query s)) (= (cadr selection) (get v 'generation 0)))
-        (error 'activate! "selection is pending or unavailable"))
-      (widget:invoke! (session-id s) 'activate selection (get (view:state (descriptor s)) 'basis '()))))
+    (let* ([s (runtime id)] [v (metadata s)] [hover (hovered-row s)])
+      (when hover
+        (session-hovered-set! s #f)
+        (save-selection! s (cadr (cadr hover)) (caddr (cadr hover)) (caddr hover) (cadddr hover))
+        (repaint! s))
+      (let ([selection (selected s)])
+        (unless (and (ready? v) selection (not (session-pending s))
+                  (equal? (car selection) (session-query s)) (= (cadr selection) (get v 'generation 0)))
+          (error 'activate! "selection is pending or unavailable"))
+        (widget:invoke! (session-id s) 'activate selection (get (view:state (descriptor s)) 'basis '())))))
 
   (edoc "Set shared collection sorting using raw column values; selection remains local." (id list "table") (keys list "(column ascending-or-descending) entries"))
   (define (sort-by! id keys)
@@ -310,7 +325,8 @@
            [selection (and s (selected s))])
       (let-values ([(format spans) (if (and s (pair? (columns s v))) (fit s v width) (values (lambda (row) "") '()))])
         (make-visible s v (and reply (eq? (car reply) 'ready) (list-ref reply 4)) (and reply (car reply)) spans format
-          selection (and s (session-hovered s))
+          selection (and s (or (hovered-row s)
+                             (let ([h (session-hovered s)]) (and (pair? h) (eq? (car h) 'column) h))))
           (and s (focused? s))))))
   (define (render v d width height clip)
     (cond [(eq? (view:kind d) 'table-heading) (list ((visible-format v) #f))]
@@ -326,15 +342,15 @@
            (cons (list (list 0 0 width 1) 'header)
              (if (and (pair? (visible-hover v)) (eq? (car (visible-hover v)) 'column))
                (let ([span (assv (cadr (visible-hover v)) (visible-spans v))])
-                 (if span (list (list (list (cadr span) 0 (- (caddr span) (cadr span)) 1) 'hover)) '())) '()))]
+                 (if span (list (list (list (cadr span) 0 (- (caddr span) (cadr span)) 1) '(header hover))) '())) '()))]
       [(not (visible-rows v)) (list (list (list 0 (car clip) width 1) 'ghost))]
       [else
        (filter values
          (map (lambda (row)
                 (let ([selected (and (visible-selection v) (equal? (caddr (visible-selection v)) (cadr row)))]
-                      [hover (equal? (visible-hover v) (list 'row (cadr row)))])
-                  (cond [hover (list (list 0 (car row) width 1) 'hover)]
-                    [(and selected (visible-focus v)) (list (list 0 (car row) width 1) 'selection)] [else #f]))) (visible-rows v)))]))
+                      [hover (and (pair? (visible-hover v)) (eq? (car (visible-hover v)) 'row) (cadr (visible-hover v)))])
+                  (cond [(and hover (equal? (caddr hover) (cadr row))) (list (list 0 (car row) width 1) 'candidate-hover)]
+                    [(and (not hover) selected (visible-focus v)) (list (list 0 (car row) width 1) 'candidate)] [else #f]))) (visible-rows v)))]))
   (define (anchor id ordinal width)
     (let* ([s (runtime id)] [v (metadata s)]
            [r (and (ready? v) (range:read (session-query s) (get v 'generation 0) ordinal 1 (map car (columns s v))))])
@@ -360,7 +376,10 @@
                        (if heading?
                          (find (lambda (p) (<= (cadr p) (list-ref event 4) (- (caddr p) 1))) (visible-spans v))
                          (and (visible-rows v) (find (lambda (row) (= (car row) (list-ref event 5))) (visible-rows v)))))]
-                [hover (and hit (if heading? (list 'column (car hit)) (list 'row (cadr hit))))])
+                [hover (and hit (if heading? (list 'column (car hit))
+                                  (let ([shown (visible-metadata v)])
+                                    (list 'row (list (session-query (visible-session v)) (get shown 'generation 0) (cadr hit))
+                                      (get shown 'basis '()) (car hit)))))])
            (unless (equal? hover (session-hovered s)) (session-hovered-set! s hover) (repaint! s))
            (when (and hit (eq? phase 'press) (eq? (caddr event) 'primary))
              (if heading?
@@ -369,6 +388,7 @@
                  (when (and (ready? current) (equal? (session-query s) (session-query (visible-session v)))
                          (= (get current 'generation 0) (get shown 'generation -1)))
                    (save-selection! s (get shown 'generation 0) (cadr hit) (get shown 'basis '()) (car hit))
+                   (session-hovered-set! s #f) (repaint! s)
                    (when (assq 'activate (widget:commands (session-id s))) (activate! (session-id s))))))))])))
   (define (sort-visible! id index)
     (let* ([s (runtime id)] [f (exists (lambda (p) (find-frame (car p) (child s 'heading))) (widget:shown))]

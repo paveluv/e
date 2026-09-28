@@ -15,6 +15,8 @@
   (define root (view:create! actor #f 'row 1 '() '()))
   (define (show! width)
     (let ([f (widget:prepare! root width 6)]) (widget:present! (list (list f 0 0))) f))
+  (define (face frame row column)
+    (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) column))
   (define (pump!) (range:pump!) (widget:pump!) (show! 80))
   (define (await-key id expected)
     (test:await 'table-row (lambda () (pump!) (equal? expected (key id)))))
@@ -27,6 +29,35 @@
   (await-key table 0) (await-key list-view 0)
   (check 'table-and-list-share-data-not-selection
     (begin (table:move! table 'next) (list (key table) (key list-view))) '(1 0))
+  (show! 80)
+  (let ([before (view:state (interaction:snapshot table))] [focus (widget:focused root)])
+    (widget:pointer! '(pointer move none ()) 2 3)
+    (let ([f (show! 80)])
+      (check 'table-hover-is-one-local-candidate-without-focus-or-selection-publication
+        (list (map (lambda (row) (face f row 0)) '(1 2 3))
+          (view:state (interaction:snapshot table)) (widget:focused root))
+        (list '(#f #f candidate-hover) before focus)))
+    (table:move! table 'next)
+    (let ([f (show! 80)])
+      (check 'table-keys-continue-from-hover-and-restore-keyboard-style
+        (list (key table) (face f 3 0) (face f 4 0)) '(3 #f candidate)))
+    (widget:pointer! '(pointer move none ()) 2 3)
+    (table:activate! table)
+    (check 'table-enter-adopts-the-hovered-row (list (key table) (caddar activated)) '(2 2)))
+  (widget:pointer! '(pointer move none ()) 2 0)
+  (let ([f (show! 80)])
+    (check 'table-heading-hover-retains-its-background
+      (list (face f 0 0) (face f 0 39) (face f 3 0)) '((header hover) header candidate)))
+  (widget:set-active! root #f)
+  (widget:pointer! '(pointer move none ()) 2 4)
+  (let* ([f (show! 80)] [hovered (list (face f 3 0) (face f 4 0))])
+    (widget:pointer! '(pointer move none ()) 99 99)
+    (let ([inactive (face (show! 80) 3 0)])
+      (widget:set-active! root #t)
+      (check 'table-leave-and-host-focus-restore-only-the-keyboard-candidate
+        (list hovered inactive (face (show! 80) 3 0) (key table))
+        '((#f candidate-hover) #f candidate 2))))
+  (table:select! table 1)
   (table:select! table 199)
   (check 'table-pending-navigation-cannot-expose-or-activate-old-row
     (list (selection table) (refused? (lambda () (table:activate! table)))) '(#f #t))
@@ -73,8 +104,8 @@
     (widget:pointer! '(pointer move none ()) 2 2)
     (let ([f (show! 80)])
       (check 'table-hover-marks-the-shown-scrolled-row
-        (map (lambda (row) (vector-ref (widget:frame-styles f row (list-ref (widget:frame-lines f) row)) 0)) '(1 2 3))
-        '(#f hover #f)))
+        (map (lambda (row) (face f row 0)) '(1 2 3))
+        '(#f candidate-hover #f)))
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-row-click-uses-shown-key-and-explicit-command
       (list (key table) (- (length activated) before)) '(71 1)))

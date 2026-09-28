@@ -27,6 +27,13 @@ keyboard and mouse. F1–F12 address the visible headings. Wheel movement scroll
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
+Rows use the same theme-aware `candidate` and `candidate-hover` faces as
+Buffet. A hovered row takes precedence over the keyboard choice without
+moving focus, scrolling or publishing selection. Up/Down continues from that
+row; Enter adopts and activates it. Leaving the rows restores the keyboard
+choice, emphasized only while the table or its filter has focus. Heading
+hover adds bold and dotted underline while retaining the heading background.
+
 The optional `activate` command binding receives a `(collection generation
 key)` row reference and its result basis after the binding's fixed arguments.
 Pending navigation cannot activate the previous row. A domain action should
@@ -146,7 +153,9 @@ is needed. Renderer definitions are module-owned; runtime mounts belong to
 the head and survive definition reloads.
 
 `decorate` receives the same arguments as `render` and returns
-`((rectangle face-symbol) ...)` in local backend coordinates. `caret` receives
+`((rectangle face) ...)` in local backend coordinates. A face is a semantic
+symbol or a nonempty list of symbols layered in order, such as `(header hover)`.
+Later rectangles replace earlier ones where they overlap. `caret` receives
 `(data descriptor width height)` and returns a local `(x . y)` or `#f`.
 The host clips and composes both with the text. Only the active root's focused
 descendant supplies the displayed caret. These are head presentation callbacks;
