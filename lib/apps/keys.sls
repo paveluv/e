@@ -28,6 +28,7 @@
   (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
   (define keyboard-cache #f)
+  (define listed-pointer '()) ; the last inspected target, retained while browsing this help
 
   (define (stale-listing? b)
     ;; a <keys> or <keys 2> local buffer that is not the view: one an older
@@ -296,7 +297,14 @@
       ;; the screen's width less the listing's scrollbar column
       (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
 
-  (define (situation b . pointer)
+  (define (pointer-bindings)
+    (let ([at (mouse:position)])
+      (if (and at (head:window-at (- (car at) 1) (- (cdr at) 1)
+                    (lambda (entry) (eq? (head:window-buffer (car entry)) view))))
+          listed-pointer
+          (mouse:bindings))))
+
+  (define (situation b pointer)
     ;; what the listing depends on: the buffer, its contexts, its text being
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
@@ -304,18 +312,18 @@
     (let ([root (head:buffer-fact b 'widget-id #f)])
       (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
         (read-only-text? b) (prompt:active?) (prompt-context)
-        (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) (if (pair? pointer) (car pointer) (mouse:bindings)))
+        (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
         (listing-width))))
 
   (define (action-basis action)
     (if (keymap:call-action? action)
       (cons (keymap:call-action-procedure action) (map action-basis (keymap:call-action-arguments action))) action))
 
-  (define (fill! b)
+  (define (fill! b pointer now)
     ;; the listing for a buffer into the view: from the top for a new
-    ;; subject, in place when only the width changed, a resize say
-    (let* ([pointer (mouse:bindings)] [now (situation b pointer)] [width (listing-width)]
-           [same? (and listed (equal? (list-head listed 6) (list-head now 6)))]
+    ;; keyboard context; keep the reader's place through pointer or width changes
+    (let* ([width (listing-width)]
+           [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
            [keyboard-key (append (list-head now 5) (list width))]
            [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
            [lines (append (section "Mouse bindings"
@@ -325,11 +333,18 @@
            [lines (if (null? lines) (list "no keys") lines)])
       (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
+      (set! listed-pointer pointer)
       (head:view-replace! view lines)
-      (for-each (lambda (w)
-                  (let ([top (if same? (min (head:window-top w) (- (length lines) 1)) 0)])
-                    (head:window-top-set! w top) (head:window-prow-set! w top) (head:window-pcol-set! w 0)))
-                (view-windows))))
+      (unless same?
+        (for-each (lambda (w)
+                    (head:window-top-set! w 0) (head:window-topseg-set! w 0)
+                    (head:window-prow-set! w 0) (head:window-pcol-set! w 0))
+                  (view-windows)))))
+
+  (define (refresh! b)
+    (let* ([pointer (pointer-bindings)] [now (situation b pointer)])
+      (and (not (equal? listed now))
+           (begin (fill! b pointer now) #t))))
 
   (define (ensure-view!)
     ;; the <keys> buffer, made fresh when none is live
@@ -348,6 +363,7 @@
     (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
     (set! view #f)
     (set! keyboard-cache #f)
+    (set! listed-pointer '())
     (set! listed #f))
 
   (define (follow!)
@@ -358,8 +374,7 @@
       (if (null? (view-windows))
           (drop-view!)
           (let ([b (subject)])
-            (when (and b (not (eq? b view)) (not (equal? listed (situation b))))
-              (fill! b))))))
+            (when (and b (not (eq? b view))) (refresh! b))))))
 
   ;;; Pages -----------------------------------------------------------------------
 
@@ -438,15 +453,13 @@
        ;; the situation changed under the listing, a prompt opened say: it
        ;; refills; unchanged, or with nothing else to describe, it pages
        (let ([b (subject)])
-         (if (and b (not (eq? b view)) (not (equal? listed (situation b))))
-             (fill! b)
-             (page-down!)))]
+         (unless (and b (not (eq? b view)) (refresh! b)) (page-down!)))]
       [else
        (let ([b (or (subject) (head:window-buffer (head:current-window)))])
          (ensure-view!)
          (remember-over! (head:popup))
          (head:set-window-buffer! (head:popup) view)
-         (fill! b)
+         (refresh! b)
          (head:show-popup! (head:popup-default-rows)))]))
 
   (define (remember-over! w)
@@ -464,7 +477,7 @@
       (ensure-view!)
       (remember-over! (head:current-window))
       (head:show-buffer! view)
-      (unless (eq? b view) (fill! b))))
+      (unless (eq? b view) (refresh! b))))
 
   (edoc "Put the listing away from the current window and show what the window showed before it, the pop-up hiding when it showed nothing else; ESC and C-g in <keys>.")
   (define (keys-return!)

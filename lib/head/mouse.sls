@@ -12,7 +12,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mouse)
-  (export bindings click! gesture-text init! scroll! track!)
+  (export bindings click! gesture-text init! position scroll! track!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head dispatch) dispatch:)
@@ -27,6 +27,11 @@
 
   ;; Keyboard input clears hover emphasis, not the physical pointer location.
   (define last-position #f)
+
+  (edoc "The last known one-based (column . row) of the physical pointer, retained when keyboard input clears hover emphasis; #f before mouse input or when tracking is disabled."
+        (returns (or pair #f)))
+  (define (position)
+    (or (head:mouse-position) last-position))
 
   (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
         (on boolean "whether to track the mouse"))
@@ -403,10 +408,10 @@
               [else (error 'scroll! "expected a wheel direction" direction)])) x y))
 
   (edoc "Read mouse bindings under the physical pointer, or an explicit screen cell. Returns (gesture keymap:call) pairs, with (click-or-drag button modifiers) or (wheel direction modifiers) gestures. Widget definitions supply semantic commands; legacy windows expose their normal click and wheel routes. Reading bindings never dispatches input or changes focus."
-        (position (list-of pair) "optional one-based (column . row)") (returns list) (effects internal))
-  (define (bindings . position)
-    (unless (<= (length position) 1) (error 'bindings "expected at most one screen cell"))
-    (let ([at (if (pair? position) (car position) (or (head:mouse-position) last-position))])
+        (locations (list-of pair) "optional one-based (column . row)") (returns list) (effects internal))
+  (define (bindings . locations)
+    (unless (<= (length locations) 1) (error 'bindings "expected at most one screen cell"))
+    (let ([at (if (pair? locations) (car locations) (position))])
       (if (not at) '()
         (let* ([x (car at)] [y (cdr at)] [widget (widget:pointer-bindings (- x 1) (- y 1))])
           (if widget widget

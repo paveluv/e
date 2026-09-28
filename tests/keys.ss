@@ -22,6 +22,7 @@
              (prefix (head head) head:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
+             (prefix (head mouse) mouse:)
              (prefix (head paint) paint:)
              (prefix (head prompt) prompt:)
              (prefix (head window) window:)
@@ -275,5 +276,40 @@
        (list (eq? (head:window-buffer popup) (view)) (index-of "keys-test keys") (< 0 (index-of "Global keys")) (eq? (head:current-window) popup))
        '(#t 0 #t #t))
      (head:set-current! w1)
+
+     ;; Reading help must not replace it with its own mouse bindings. Exercise
+     ;; the same behavior in the pop-up and an ordinary split, including the
+     ;; physical pointer retained after keyboard input clears hover emphasis.
+     (keys:hide!)
+     (define (viewport w) (cons (head:window-top w) (head:window-topseg w)))
+     (for-each
+       (lambda (placement)
+         (window:focus! w1) (head:show-buffer! b)
+         (when (eq? placement 'split) (window:focus! (window:split-right!)))
+         (if (eq? placement 'split) (keys:open!) (keys:show!))
+         (let ([w (if (eq? placement 'split) (head:current-window) popup)])
+           (window:focus! w1) (paint:window-layout)
+           (head:set-mouse-position! '(2 . 2)) (head:before-frame!)
+           (keys:show!) ; read past the mouse section
+           (let* ([help (head:window-buffer w)] [saved (head:buffer-lines help)]
+                  [start (cadr (assq w (head:layout)))] [x (+ 3 (head:window-xoff w))] [y (+ 2 start)]
+                  [top (viewport w)])
+             (head:set-mouse-position! (cons x y)) (head:before-frame!)
+             (let ([still? (and (eq? saved (head:buffer-lines help)) (equal? top (viewport w)))])
+               (mouse:scroll! x y 'down) (head:before-frame!)
+               (let ([scrolled (viewport w)])
+                 (head:set-mouse-position! #f) (head:before-frame!)
+                 (head:set-mouse-position! (cons x (+ start (head:window-size w) 1))) (head:before-frame!)
+                 (check (list 'help-hover-and-wheel-keep-listing placement)
+                   (list still? (or (> (car scrolled) (car top)) (and (= (car scrolled) (car top)) (> (cdr scrolled) (cdr top)))) (equal? scrolled (viewport w))
+                     (eq? saved (head:buffer-lines help)) (eq? w1 (head:current-window))) '(#t #t #t #t #t))
+                 (head:set-mouse-position! '(3 . 2)) (head:before-frame!)
+                 (check (list 'leaving-help-resumes-inspection-without-scrolling placement)
+                   (list (not (eq? saved (head:buffer-lines help))) (equal? scrolled (viewport w))) '(#t #t))
+                 (head:show-buffer! other) (head:before-frame!)
+                 (check (list 'new-keyboard-subject-starts-at-top placement) (viewport w) '(0 . 0)))))
+           (keys:hide!)
+           (when (eq? placement 'split) (window:focus! w) (window:delete!))))
+       '(popup split))
 
      (test:finish! 'keys)))

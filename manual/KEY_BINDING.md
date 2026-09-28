@@ -106,10 +106,16 @@ This section follows the pointer, including over an unfocused window; the
 keyboard sections continue to follow keyboard focus. A table heading shows
 its sort command, a row shows its explicit choice, and an entry shows caret
 placement and selection. Unavailable widget actions are omitted.
+While the pointer is over `<keys>` itself, the mouse section keeps the last
+inspected target so you can read and scroll it. Moving elsewhere resumes
+inspection without resetting your reading position. A different keyboard
+context starts the listing at the top.
 
 `(mouse:bindings)` returns the current `(gesture action)` pairs as data;
 an optional `(column . row)` selects another screen cell, using one-based
-coordinates. Gestures include `(click primary ())`, `(click secondary ())`,
+coordinates. `(mouse:position)` reports the physical pointer's last known
+cell even after keyboard input clears hover emphasis, or `#f` if unknown.
+Gestures include `(click primary ())`, `(click secondary ())`,
 `(click primary (shift))`, `(drag primary ())`, and `(wheel down ())`.
 `mouse:gesture-text` spells them for help. Actions use `keymap:call`, just
 like keyboard bindings. Legacy buffer apps expose `mouse:click!` and
