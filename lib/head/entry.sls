@@ -83,7 +83,7 @@
       (values source d)))
 
   (edoc "Select a range in an entry's text source; caret and anchor are character indices, snapped to whole graphemes."
-        (id list "entry view") (caret integer "active end") (anchor integer "fixed end"))
+        (id model "entry view") (caret integer "active end") (anchor integer "fixed end"))
   (define (select! id caret anchor)
     (unless (and (integer? caret) (exact? caret) (>= caret 0) (integer? anchor) (exact? anchor) (>= anchor 0))
       (error 'select! "expected nonnegative character indices" caret anchor))
@@ -94,7 +94,7 @@
           (map (lambda (n) (cons 0 (car (edge edges n car)))) (list caret anchor))))))
 
   (edoc "Move an entry caret by grapheme or to an endpoint, optionally extending its selection."
-        (id list "entry view") (direction (one-of left right home end) "motion")
+        (id model "entry view") (direction (one-of left right home end) "motion")
         (extend (list-of boolean) "extend selection, at most one"))
   (define (move! id direction . extend)
     (unless (and (memq direction '(left right home end)) (<= (length extend) 1) (for-all boolean? extend))
@@ -136,14 +136,14 @@
           (list old (head:buffer-store-id b) basis)))))
 
   (edoc "Insert text once, replacing the entry selection through the shared edit journal. Multiline input is refused whole."
-        (id list "entry view") (text string "committed text"))
+        (id model "entry view") (text string "committed text"))
   (define (insert! id text)
     (unless (and (string? text) (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list text))))
       (refuse "Entry does not accept multiline text"))
     (let-values ([(source d) (context id)]) (replace! id source d (state d) text)))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
-        (id list "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
+        (id model "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
   (define (delete! id direction)
     (unless (memq direction '(backward forward all)) (error 'delete! "invalid direction" direction))
     (let-values ([(source d) (context id)])
@@ -172,13 +172,13 @@
           (values status detail)))))
 
   (edoc "Undo an entry's source using the editor's undo-scope, with an optional explicit mine, all or (actor identity) scope."
-        (id list "entry view") (scope (list-of any) "scope override, at most one"))
+        (id model "entry view") (scope (list-of any) "scope override, at most one"))
   (define (undo! id . scope)
     (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
     (history! id 'undo (if (pair? scope) (car scope) (edit:undo-scope))))
 
   (edoc "Redo an entry's source through the editor's shared undo journal."
-        (id list "entry view"))
+        (id model "entry view"))
   (define (redo! id)
     (history! id 'redo 'mine))
 

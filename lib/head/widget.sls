@@ -1,7 +1,7 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! caret commands context descendant event-frame focus! focus-next! focused
+  (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
           host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
@@ -25,7 +25,7 @@
   (define-record-type mount (fields id slot (mutable subscription) (mutable ids)))
 
   (edoc "The opaque host slot supplied when this tree was mounted."
-        (id list "mounted view or descendant") (returns any) (effects internal))
+        (id model "mounted view or descendant") (returns any) (effects internal))
   (define (host id) (mount-slot (node-root (mounted id))))
 
   (define retain-focus? (make-parameter #f))
@@ -35,7 +35,7 @@
   (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret) (mutable activity)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
-        (id list "view id") (descriptor any "interaction basis") (definition any "definition identity")
+        (id model "view id") (descriptor any "interaction basis") (definition any "definition identity")
         (source any "source basis") (inputs list "resolved input values and dependency bases") (data any "owned visible projection and hit basis") (rect list "absolute allocation within the root") (clip list "visible intersection")
         (children list "back-to-front child frames") (lines list "clipped backend output")
         (cells vector "backend style cells") (caret any "root-relative caret point or #f"))
@@ -76,14 +76,14 @@
   (define presentations '())
   (define inactive (make-hashtable equal-hash equal?))
 
-  (edoc "Set host focus independently of the tree's remembered logical focus." (id list "mounted root") (active boolean "whether host has focus"))
+  (edoc "Set host focus independently of the tree's remembered logical focus." (id model "mounted root") (active boolean "whether host has focus"))
   (define (set-active! id active)
     (let ([was (not (hashtable-ref inactive id #f))])
       (if active (hashtable-delete! inactive id) (hashtable-set! inactive id #t))
       (unless (eq? was active)
         (for-each (lambda (id) (repaint! id)) (mount-ids (node-root (mounted id)))))))
 
-  (edoc "Read the active host's focused descendant, or false for an inactive host." (id list "mounted view") (returns any) (effects internal))
+  (edoc "Read the active host's focused descendant, or false for an inactive host." (id model "mounted view") (returns any) (effects internal))
   (define (focused id)
     (let* ([root (mount-id (node-root (mounted id)))] [d (read-view root)])
       (and (not (hashtable-ref inactive root #f)) d (view:focus d))))
@@ -105,7 +105,7 @@
     (or (hashtable-ref nodes id #f) (error 'widget "view is not mounted" id)))
 
   (edoc "Find a descendant of a mounted view by its named child path. Read the head's current logical tree; no geometry or window discovery is involved. A missing child refuses."
-        (id list "starting view") (path (list-of symbol) "child names in order") (returns list "descendant view") (effects internal))
+        (id model "starting view") (path (list-of symbol) "child names in order") (returns model "descendant view") (effects internal))
   (define (descendant id . path)
     (unless (for-all symbol? path) (error 'descendant "expected child names" path))
     (mounted id)
@@ -170,30 +170,46 @@
          (values (cdar (node-mirrored n)) (cdr (node-mirrored n)))])))
 
   (edoc "List available named actions of a mounted view, including a nested child."
-        (id list "view id") (returns list) (effects internal))
+        (id model "view id") (returns list) (effects internal))
   (define (actions id)
     (let* ([n (mounted id)] [d (read-view id)] [entry (definition d)])
       (let-values ([(available? source) (source! n d)])
         (if available? (map car (field entry 'actions '())) '()))))
 
-  (edoc "List usable explicit command bindings; absent or foreign targets are disabled." (id list "mounted control") (returns list) (effects internal))
+  (edoc "List usable explicit command bindings; absent or foreign targets are disabled." (id model "mounted control") (returns list) (effects internal))
   (define (commands id)
     (let ([d (read-view id)])
       (if (not d) '()
-        (filter (lambda (c)
-                  (let ([n (hashtable-ref nodes (cadr c) #f)] [target (read-view (cadr c))])
-                    (and n target (equal? (view:owner target) head:ui-actor)
-                      (memq (caddr c) (actions (cadr c)))))) (descriptor:commands d)))))
+        (filter (lambda (c) (cdr (command-target c))) (descriptor:commands d)))))
+
+  (define (command-target c)
+    (let* ([id (cadr c)] [n (hashtable-ref nodes id #f)] [d (and n (read-view id))]
+           [proc (assq (caddr c) (field (definition d) 'actions '()))])
+      (cons (and proc (cdr proc))
+        (and proc d (equal? (view:owner d) head:ui-actor)
+          (let-values ([(available? source) (source! n d)]) available?)))))
+
+  (edoc "Inspect all named command connections in a mounted composition from local descriptors and definitions. Rows are (view child-path kind bindings); bindings are (name target action fixed-arguments procedure-or-false available?). Include unavailable targets without invoking callbacks, reading payloads remotely or moving focus."
+        (id model "composition root or subtree") (returns list) (effects internal))
+  (define (command-bindings id)
+    (mounted id)
+    (let walk ([id id] [path '()])
+      (let* ([d (read-view id)] [cs (if d (descriptor:commands d) '())])
+        (append
+          (if (null? cs) '()
+            (list (list id path (view:kind d)
+                    (map (lambda (c) (let ([target (command-target c)]) (append c (list (car target) (and (cdr target) #t))))) cs))))
+          (if d (apply append (map (lambda (child) (walk (cadr child) (append path (list (car child))))) (view:children d))) '())))))
 
   (edoc "Invoke an explicit command target with its fixed arguments followed by control-supplied arguments."
-        (id list "control") (command symbol "binding name") (arguments (list-of any) "additional arguments") (returns any))
+        (id model "control") (command symbol "binding name") (arguments (list-of any) "additional arguments") (returns any))
   (define (invoke! id command . arguments)
     (let ([c (assq command (commands id))])
       (unless c (error 'invoke! "command target is unavailable" id command))
       (apply act! (cadr c) (caddr c) (append (cadddr c) arguments))))
 
   (edoc "Invalidate one mounted view's derived presentation after a head-local cache or hover change."
-        (id list "view") (projection (list-of boolean) "also rebuild prepared data when true"))
+        (id model "view") (projection (list-of boolean) "also rebuild prepared data when true"))
   (define (repaint! id . projection)
     (let ([n (hashtable-ref nodes id #f)])
       (when n
@@ -223,7 +239,7 @@
             (when cache (hashtable-set! cache id inputs)) inputs)))))
 
   (edoc "Read a mounted view's borrowed source, provisional descriptor and resolved inputs as three values, without remote reads. Actions retain their exact invocation basis."
-        (id list "view") (mode (list-of symbol) "current bypasses a shown action basis") (effects internal))
+        (id model "view") (mode (list-of symbol) "current bypasses a shown action basis") (effects internal))
   (define (context id . mode)
     (unless (or (null? mode) (equal? mode '(current))) (error 'context "expected current" mode))
     (let ([current (and (null? mode) (invocation))])
@@ -236,7 +252,7 @@
               (values source d (inputs! id))))))))
 
   (edoc "Invoke a named action with an explicit view, coherent source and provisional interaction."
-        (id list "view id") (action symbol "action") (arguments (list-of any) "action arguments") (returns any))
+        (id model "view id") (action symbol "action") (arguments (list-of any) "action arguments") (returns any))
   (define (act! id action . arguments)
     (let* ([n (mounted id)] [d (read-view id)] [entry (definition d)]
            [proc (assq action (field entry 'actions '()))])
@@ -296,7 +312,7 @@
       (mount-ids-set! mount ids)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
-        (id list "root view") (slot any "head-local host identity") (returns any))
+        (id model "root view") (slot any "head-local host identity") (returns any))
   (define (mount! id slot)
     (let ([old (hashtable-ref roots id #f)])
       (cond [old (unless (eq? slot (mount-slot old)) (error 'mount! "view already has a host" id)) old]
@@ -314,7 +330,7 @@
                    (reconcile! m tree) (hashtable-set! roots id m) (pump!) m)))))])))
 
   (edoc "Release a root and its recursive resources after publication; canonical views and sources survive."
-        (id list "root id"))
+        (id model "root id"))
   (define (unmount! id)
     (let ([m (hashtable-ref roots id #f)])
       (when m
@@ -561,7 +577,7 @@
                      (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p)))))))))])))))
 
   (edoc "Prepare a recursive frame for a root allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live."
-        (id list "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
+        (id model "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
   (define (prepare! id width height)
     (let ([rect (list 0 0 width height)])
       (define (geometry f) (and f (list (frame-id f) (frame-rect f) (frame-clip f) (map geometry (frame-children f)))))
@@ -580,7 +596,7 @@
         frame)))
 
   (edoc "Read the latest prepared frame, which may not have been displayed."
-        (id list "root view") (returns any))
+        (id model "root view") (returns any))
   (define (prepared id) (hashtable-ref preparations id #f))
 
   (edoc "Adopt the exact frames whose output was successfully flushed. The painter calls this before publication hooks."
@@ -668,7 +684,7 @@
     (let ([f (if (event-frame) (shown-root root) (or (prepared root) (shown-root root)))]) (and f (or (modal f) f))))
 
   (edoc "Focus a visible accepting descendant within the root's current modal scope. Hidden roots retain their remembered target."
-        (root list "root view") (id list "descendant view"))
+        (root model "root view") (id model "descendant view"))
   (define (focus! root id)
     (let* ([frame (focus-frame root)] [d (read-view root)] [old (and d (view:focus d))])
       (unless (and frame d (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
@@ -699,7 +715,7 @@
         [else (when (and d old) (interaction:focus! root #f)) #f])))
 
   (edoc "Cycle visible accepting descendants within the active modal scope, wrapping in tree order."
-        (id list "root or descendant view") (backward (list-of boolean) "reverse direction, at most one") (returns any))
+        (id model "root or descendant view") (backward (list-of boolean) "reverse direction, at most one") (returns any))
   (define (focus-next! id . backward)
     (unless (and (<= (length backward) 1) (for-all boolean? backward)) (error 'focus-next! "expected an optional boolean" backward))
     (let* ([root (mount-id (node-root (mounted id)))] [old (ensure-focus! root)]
@@ -709,14 +725,14 @@
       (when next (focus! root next)) next))
 
   (edoc "Build ordered keymap receivers and a chord ownership basis for this root. The outer host may append its own contexts."
-        (root list "active root") (key string "first key token") (returns list "(basis scopes focused-view)"))
+        (root model "active root") (key string "first key token") (returns list "(basis scopes focused-view)"))
   (define (key-scopes! root key)
     (drain-cancels!)
     (ensure-focus! root)
     (key-scopes root key))
 
   (edoc "Read the remembered focus's key routing without changing focus or consuming a pending chord. Includes capture, yield and modal boundaries; hosts can append their contexts."
-        (root list "mounted root") (key string "first key token, or empty for all contexts") (returns list "(basis scopes focused-view)") (effects internal))
+        (root model "mounted root") (key string "first key token, or empty for all contexts") (returns list "(basis scopes focused-view)") (effects internal))
   (define (key-scopes root key)
     (let* ([d (read-view root)] [focus (and d (view:focus d))] [scope (focus-frame root)]
            [path (if focus (path focus) (if scope (path (frame-id scope)) (list root)))] [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))]
@@ -735,7 +751,7 @@
       (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis) (append captures normal) focus)))
 
   (edoc "Offer committed text or an unbound normalized key to the focused path; a full capture or modal boundary stops bubbling."
-        (root list "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
+        (root model "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
   (define (input! root event)
     (drain-cancels!)
     (let* ([focus (ensure-focus! root)] [scope (focus-frame root)]
@@ -750,7 +766,7 @@
                 (eq? (field entry 'capture 'partial) 'full) (equal? id barrier) (loop (cdr ids))))))))
 
   (edoc "Capture pointer motion and release for the current shown press target, including outside its allocation."
-        (id list "current event receiver"))
+        (id model "current event receiver"))
   (define (capture! id)
     (let ([f (event-frame)] [e (pointer-event)])
       (unless (and f e (eq? (cadr e) 'press) (not (eq? (caddr e) 'none))
@@ -759,7 +775,7 @@
       (set! pointer-capture f) (set! capture-button (caddr e))))
 
   (edoc "Cancel a root's pointer gesture when its host hides, blurs or loses the device; retain logical focus."
-        (root list "root") (reason symbol "cancellation reason"))
+        (root model "root") (reason symbol "cancellation reason"))
   (define (cancel! root reason)
     (let ([n (and pointer-capture (hashtable-ref nodes (frame-id pointer-capture) #f))])
       (when (and n (equal? root (mount-id (node-root n)))) (defer-cancel! reason)))
@@ -905,7 +921,7 @@
     (list (list '(click primary ()) (keymap:call act! (frame-id frame) 'select y))))
 
   (edoc "Reveal a logical source anchor in its nearest containing scroll viewport, without changing selection."
-        (id list "descendant") (anchor datum "source anchor"))
+        (id model "descendant") (anchor datum "source anchor"))
   (define (reveal! id anchor)
     (hashtable-delete! pending-reveal id)
     (let loop ([child id] [rest (cdr (reverse (path id)))] [place anchor])

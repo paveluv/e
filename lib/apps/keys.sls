@@ -31,6 +31,7 @@
   (define section-cache '()) ; context -> (derived calls . rendered lines)
   (define description-cache (make-hashtable equal-hash equal?)) ; (context sequence) -> (call command summary)
   (define derived-cache #f) ; routing basis -> (context binding receiver) declarations
+  (define commands-cache #f)
   (define listed-pointer '()) ; the last inspected target, retained while browsing this help
 
   (define (stale-listing? b)
@@ -346,12 +347,49 @@
         (read-only-text? b) (prompt:active?) (prompt-context)
         (if (prompt:active?) '() (derived-bindings b (list b routing (and scopes (car scopes)))))
         (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
+        (if (and root (not (prompt:active?))) (widget:command-bindings root) '())
         (listing-width))))
 
   (define (action-basis action)
     (if (keymap:call-action? action)
       (list (keymap:call-action-procedure action) (keymap:action-reason action)
         (map action-basis (keymap:call-action-arguments action))) action))
+
+  (define (command-template procedure arguments)
+    ;; Fixed arguments are expressions; remaining formal names are supplied
+    ;; by the invoking control, not invented values or a runnable nullary call.
+    (let* ([text (keymap:action-text (apply keymap:call procedure arguments))]
+           [sigs (edoc:edoc-of procedure)] [sig (and sigs (find (lambda (s) (eq? (edoc:signature-kind s) 'procedure)) sigs))]
+           [remaining (if sig
+                        (let skip ([f (edoc:signature-formals sig)] [n (length arguments)])
+                          (if (and (> n 0) (pair? f)) (skip (cdr f) (- n 1)) f)) 'arguments)]
+           [tail (let spell ([f remaining])
+                   (cond [(null? f) ""] [(pair? f) (string-append " " (symbol->string (car f)) (spell (cdr f)))]
+                     [else (format " . ~a" f)]))])
+      (string-append (substring text 0 (- (string-length text) 1)) tail ")")))
+
+  (define (command-sections bindings width)
+    (let ([basis (list bindings width)])
+      (unless (and commands-cache (equal? (car commands-cache) basis))
+        (set! commands-cache
+          (cons basis
+            (if (null? bindings) '()
+              (cons "Widget commands"
+                (apply append
+                  (map (lambda (row)
+                         (section
+                           (format "~a (~a): ~a"
+                             (if (null? (cadr row)) "root" (string:join (map symbol->string (cadr row)) "/"))
+                             (caddr row) (edoc:type-spelling 'model (car row)))
+                           (map (lambda (binding)
+                                  (let* ([proc (list-ref binding 4)]
+                                         [public? (and proc (not (string=? (keymap:action-text proc) "anonymous command")))])
+                                    (list (list (symbol->string (car binding)))
+                                      (if public? (command-template proc (cons (cadr binding) (cadddr binding)))
+                                        (command-template widget:act! (cons* (cadr binding) (caddr binding) (cadddr binding))))
+                                      (string-append (if (list-ref binding 5) "" "Unavailable target. ")
+                                        (if proc (summary-of proc) "Target action is not registered."))))) (cadddr row)) width)) bindings)))))))
+      (cdr commands-cache)))
 
   (define (fill! b pointer now)
     ;; the listing for a buffer into the view: from the top for a new
@@ -361,13 +399,13 @@
            [keyboard-key (append (list-head now 6) (list width))]
            [keyboard (begin
                        (unless same? (hashtable-clear! description-cache))
-                       (unless (and same? (= (list-ref listed 7) width)) (set! section-cache '()))
+                       (unless (and same? (= (list-ref listed 8) width)) (set! section-cache '()))
                        (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache)
                          (listing b width (list-ref now 5))))]
            [lines (append (section "Mouse bindings"
                             (map (lambda (binding)
                                    (list (list (mouse:gesture-text (car binding))) (keymap:action-text (cadr binding)) (summary-of (cadr binding)))) pointer) width)
-                    keyboard)]
+                    keyboard (command-sections (list-ref now 7) width))]
            [lines (if (null? lines) (list "no keys") lines)])
       (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
@@ -404,6 +442,7 @@
     (set! section-cache '())
     (hashtable-clear! description-cache)
     (set! derived-cache #f)
+    (set! commands-cache #f)
     (set! listed-pointer '())
     (set! listed #f))
 

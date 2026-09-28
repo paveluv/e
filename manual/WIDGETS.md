@@ -12,6 +12,18 @@ target's registered action. Targets must be mounted in the same head.
 Forks remap internal targets and retain external references. Changes to state
 connections never execute commands.
 
+At M-x, refer to a view with the `(model N)` literal; Tab at a documented
+model argument offers live models. `C-x TAB` includes **Widget commands**
+for the current composition, showing named connections and their target
+API calls. `(widget:command-bindings root)` provides the same discovery as
+data: `(view child-path kind bindings)` rows, with each binding spelled
+`(name target action fixed-arguments procedure-or-false available?)`.
+It includes unavailable connections; availability describes the target
+connection, while the control and domain action still validate their input.
+`widget:commands` returns only usable bindings for one view. Neither query
+invokes a command. Use `widget:invoke!` to follow a named connection with
+control-supplied arguments after its fixed arguments.
+
 `widget:context` returns source, descriptor and resolved inputs. Its optional
 `'current` argument checks current availability during a shown-frame action.
 `widget:repaint!` invalidates a control's local presentation without publishing

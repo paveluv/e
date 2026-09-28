@@ -163,6 +163,10 @@ the type that costs no typing: Tab writes it. A string at such an argument
 expands into the literal from its quote, `(mode:choose! "sch` Tab giving
 `(mode:choose! (mode "scheme")`, and a bare `sch` does the same; inside the
 constructor the values spell bare, `(mode "sc` Tab giving `(mode "scheme`.
+A `model` argument offers live model references as `(model 7)`, with the
+model kind beside each choice. Inside `(model `, Tab offers the allocation
+numbers. Model references remain ordinary Scheme values: variables and
+expressions producing them work as arguments too.
 A string value completes as a session: `(edit:visit-file! "man` lists the
 paths under `manual/`, `(buffer "` the buffer names; with several matches
 Tab extends the path to their longest common prefix, as a shell does; a

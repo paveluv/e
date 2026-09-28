@@ -31,7 +31,7 @@
 ;; itself with the same helpers, through forms of its own.
 
 (library (foundation edoc)
-  (export argument-name argument-notes argument-type argument? edoc edoc-entry edoc-named edoc-of
+  (export argument-name argument-notes argument-type argument? call-argument-type edoc edoc-entry edoc-named edoc-of
           edoc-template edoc-type edoc-type? edoc-types elibrary first-sentence
           install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
@@ -1059,6 +1059,28 @@
       [(symbol? t) (let ([type (type-named t)]) (and type (type-search-of type)))]
       [(and (pair? t) (list? t) (eq? (car t) 'or)) (exists type-searcher (cdr t))]
       [else #f]))
+
+  (edefine (call-argument-type signatures index)
+    (edoc "The documented type at a zero-based call argument, including rest elements and the union of overloaded signatures; false when undocumented."
+          (signatures (or list #f) "edoc signatures") (index integer "argument position") (returns datum))
+    (define (formal-at formals index)
+      (cond [(pair? formals) (if (= index 0) (cons (car formals) #f) (formal-at (cdr formals) (- index 1)))]
+        [(symbol? formals) (cons formals #t)] [else #f]))
+    (unless (and (integer? index) (exact? index) (>= index 0)) (error 'call-argument-type "expected a nonnegative argument position" index))
+    (let ([types
+           (fold-left
+             (lambda (types sig)
+               (let* ([formals (case (signature-kind sig)
+                                 [(procedure) (signature-formals sig)]
+                                 [(constructor accessor mutator predicate syntax) (map argument-name (signature-arguments sig))]
+                                 [else #f])]
+                      [formal (and formals (formal-at formals index))]
+                      [argument (and formal (find (lambda (a) (eq? (argument-name a) (car formal))) (signature-arguments sig)))])
+                 (if (not argument) types
+                   (let* ([type (argument-type argument)]
+                          [type (if (and (cdr formal) (pair? type) (eq? (car type) 'list-of)) (cadr type) type)])
+                     (if (member type types) types (cons type types)))))) '() (or signatures '()))])
+      (cond [(null? types) #f] [(null? (cdr types)) (car types)] [else (cons 'or (reverse types))])))
 
   (edefine (type-completions t partial)
     (edoc "The values a type offers for a partial text, as (value . hint) pairs: a completer's for a name, the literals of a one-of, every member's for an or, #f for #f."

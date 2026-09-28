@@ -32,6 +32,7 @@
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
                 procedure-arity-mask logbit?)
           (prefix (core kernel) kernel:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:))
 
   ;;; Key syntax --------------------------------------------------------------
@@ -402,8 +403,8 @@
                      (environment-symbols (interaction-environment)))])
       (and sym (symbol->string sym))))
 
-  (define (spell value)
-    (if (or (symbol? value) (pair? value) (null? value)) (format "'~s" value) (format "~s" value)))
+  (define (spell procedure index value)
+    (edoc:type-spelling (edoc:call-argument-type (edoc:edoc-of procedure) index) value))
 
   (edoc "The top-level name of the command a pre-filled M-x calls, or #f while it has none."
         (action (record prefill-action) "the pre-fill")
@@ -417,7 +418,8 @@
         (returns string))
   (define (prefill-text action)
     (string-append "(" (action-text (prefill-action-procedure action))
-                   (apply string-append (map (lambda (v) (string-append " " (spell v))) (prefill-action-arguments action)))
+                   (apply string-append (map (lambda (v i) (string-append " " (spell (prefill-action-procedure action) i v)))
+                                          (prefill-action-arguments action) (iota (length (prefill-action-arguments action)))))
                    " "))
 
   (edoc "How a key action reads: a procedure by its top-level name, a call as the expression it runs, a pre-filled M-x as M-x and its text, a keymap action by name; unbound and anonymous say so."
@@ -433,13 +435,13 @@
         [(call-action? action)
          (string-append "(" (describe (call-action-procedure action))
                         (apply string-append
-                          (map (lambda (p)
+                          (map (lambda (p i)
                                  (string-append " "
                                    (cond [(call-action? p) (describe p)]
-                                     [(procedure? p) (cond [(assq p substitutions) => (lambda (v) (spell (cdr v)))]
+                                     [(procedure? p) (cond [(assq p substitutions) => (lambda (v) (spell (call-action-procedure action) i (cdr v)))]
                                                        [else (string-append "(" (describe p) ")")])]
-                                     [else (spell p)])))
-                               (call-action-arguments action)))
+                                     [else (spell (call-action-procedure action) i p)])))
+                               (call-action-arguments action) (iota (length (call-action-arguments action)))))
                         ")")]
         ;; the M-x prompt's label, as eval draws it, then the text it opens with
         [(prefill-action? action) (string-append "λ " (prefill-text action))]

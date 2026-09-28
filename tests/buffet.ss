@@ -71,7 +71,8 @@
        (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
            (list (filter (lambda (needle) (not (string:search text needle 0 (string-length text))))
-                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "edit:kill-buffer!" "Kill a buffer" "Unavailable:"))
+                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "edit:kill-buffer!" "Kill a buffer" "Unavailable:"
+                     "Widget commands" "app/table (table): (model " "activate" "buffet:choose!" "basis)"))
              (not (string:search text "anonymous command" 0 (string-length text)))
              (not (string:search text "(widget:target)" 0 (string-length text)))
              (equal? focus (widget:focused (root)))) '(() #t #t #t)))
@@ -82,7 +83,7 @@
          (parameterize ([widget:target #f]) (eval (read (open-input-string text))))
          (settle!)
          (test:check 'listed-buffet-call-works-in-eval-outside-key-dispatch
-           (list (string:prefix? "(table:move! (widget:descendant '" text) (not (equal? (caddr before) (caddr (selection))))) '(#t #t)))
+           (list (string:prefix? "(table:move! (widget:descendant (model " text) (not (equal? (caddr before) (caddr (selection))))) '(#t #t)))
        (widget:focus! (root) (child (child (table) 'body) 'rows))
        (head:before-frame!)
        (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
@@ -90,6 +91,29 @@
            (and (string:search text "buffet keys" 0 (string-length text))
              (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
        (keys:hide!) (widget:focus! (root) focus) (settle!))
+     (let* ([id (table)] [options (view:options (interaction:snapshot id))]
+            [activate (assq 'activate (cdr (assq 'commands options)))])
+       (define (replace! action)
+         (interaction:flush!)
+         (interaction:arrange! head:ui-actor
+           (list (list id (get (model:snapshot id) 'revision) (view:children (interaction:snapshot id))
+                   (map (lambda (p)
+                          (if (eq? (car p) 'commands)
+                            (cons 'commands (map (lambda (c) (if (eq? (car c) 'activate)
+                                                               (list 'activate (cadr c) action (cadddr c)) c)) (cdr p))) p)) options)))
+           (list (list (root) (view:generation (interaction:snapshot (root))))))
+         (head:before-frame!))
+       (keys:show!)
+       (replace! 'unregistered-action)
+       (test:check 'keys-shows-rewired-unavailable-command-template
+         (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+           (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
+             '("Unavailable target." "widget:act!" "unregistered-action"))) #t)
+       (replace! (caddr activate))
+       (test:check 'keys-updates-restored-command
+         (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+           (not (string:search text "unregistered-action" 0 (string-length text)))) #t)
+       (keys:hide!) (settle!))
      (select! a)
      (let ([generation (keymap:generation)])
        (keys:show!) (settle!) (head:before-frame!)

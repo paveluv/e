@@ -7,6 +7,14 @@
        [root (view:create! actor #f 'column 1 '() '())])
   (define (line) (vector-ref (head:buffer-lines (head:buffer-of-store-id source)) 0))
   (define (show!) (let ([f (widget:prepare! root 40 3)]) (widget:present! (list (list f 0 0))) f))
+  (define (rebind! action)
+    (interaction:flush!)
+    (let ([revision (cdr (assq 'revision (model:snapshot button)))]
+          [lease (view:generation (interaction:snapshot root))])
+      (interaction:arrange! actor
+        (list (list button revision '()
+                (list '(text . "Replace") '(enabled . #t) (list 'commands (list 'activate entry action '("new"))))))
+        (list (list root lease)))))
   (define enabled
     (begin (model:register-kind! 'control-enabled 1 boolean?)
       (model:create! actor 'control-enabled 1 'session 'transient '() #t)))
@@ -27,6 +35,11 @@
     (check 'control-fork-remaps-internal-command-target
       (cadar (descriptor:commands (view:snapshot new-button))) new-entry))
   (widget:mount! root 'control-fixture) (show!)
+  (let ([focus (widget:focused root)])
+    (check 'command-discovery-includes-descendants-and-fixed-arguments-without-invocation
+      (list (widget:command-bindings root) (widget:focused root) (line))
+      (list (list (list button '(button) 'action-text
+                    (list (list 'activate entry 'insert '("new") entry:insert! #t)))) focus "original")))
   (entry:select! entry 8 0)
   (control:activate! button)
   (check 'control-direct-command-edits-real-source (line) "new")
@@ -58,4 +71,13 @@
   (let ([before (line)])
     (check 'control-stale-overlap-refuses-without-losing-text
       (list (refused? (lambda () (control:activate! button))) (line)) (list #t before)))
+  ;; Rewiring to an absent action stays inspectable, but cannot execute.
+  (rebind! 'absent)
+  (check 'command-discovery-retains-unavailable-connections
+    (list (widget:command-bindings button) (widget:commands button))
+    (list (list (list button '() 'action-text
+                  (list (list 'activate entry 'absent '("new") #f #f)))) '()))
+  (rebind! 'insert)
+  (check 'command-discovery-follows-rewiring
+    (list-ref (car (cadddr (car (widget:command-bindings button)))) 4) entry:insert!)
   (widget:unmount! root) (widget:invalidate!))

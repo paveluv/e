@@ -3,9 +3,9 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! export ids import! register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! export ids import! metadata register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
-          (only (chezscheme) unbox make-mutex with-mutex void gensym)
+          (only (chezscheme) unbox make-mutex with-mutex void gensym format)
           (prefix (core identity) identity:)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
@@ -31,6 +31,10 @@
   (define (positive-integer? n) (and (natural? n) (> n 0)))
   (define (tagged? value tag)
     (and (list? value) (= (length value) 2) (eq? (car value) tag) (positive-integer? (cadr value))))
+  (edoc-type model "a model reference, spelled (model number); operations validate existence and kind"
+    (predicate (lambda (v) (tagged? v 'model))) (portable #t) (within list)
+    (complete (lambda (partial) (map (lambda (row) (cons (car row) (symbol->string (cadr row)))) (metadata))))
+    (write (lambda (id) (format "(model ~a)" (cadr id)))))
   (define (scope? value)
     (or (eq? value 'session) (tagged? value 'model)
         (and (list? value) (= (length value) 2) (eq? (car value) 'head)
@@ -153,7 +157,7 @@
         (persistence (one-of transient persistent) "base lifetime only, or restart recovery")
         (references list "tagged model/buffer references; missing targets remain explicit")
         (value datum "the initial payload")
-        (returns list))
+        (returns model))
   (define (create! actor kind schema scope persistence references value)
     (car (allocate! actor 1 (lambda (ids) (list (list kind schema scope persistence references value))))))
 
@@ -217,17 +221,24 @@
                        (vector->list (hashtable-keys (state-records data))))))))
 
   (edoc "An owned model envelope alist, or #f when absent; an unknown kind retains its complete portable payload."
-        (id list "the tagged model id") (returns (or list #f)))
+        (id model "the model") (returns (or list #f)))
   (define (snapshot id)
     (datum:copy (car (read-records (list id)))))
 
+  (edoc "Live models as (reference kind) rows in allocation order, without copying their payloads. Retired models are absent; unknown kinds remain inspectable."
+        (returns list))
+  (define (metadata)
+    (with-mutex (state-lock data)
+      (map (lambda (n) (list (list 'model n) (field (hashtable-ref (state-records data) n #f) 'kind)))
+        (list-sort < (vector->list (hashtable-keys (state-records data)))))))
+
   (edoc "Read a record's revision without copying its payload; #f denotes an absent record. Capture a snapshot when that revision changes."
-        (id list "tagged model ID") (returns (or integer #f)))
+        (id model "tagged model ID") (returns (or integer #f)))
   (define (revision id)
     (let ([r (car (read-records (list id)))]) (and r (field r 'revision))))
 
   (edoc "Whether a live model's current kind definition accepts its saved payload."
-        (id list "the tagged model id") (returns boolean))
+        (id model "the tagged model id") (returns boolean))
   (define (available? id)
     (let ([entry (car (read-records (list id)))])
       (and entry (accepts? (definition-of entry) entry))))
@@ -284,7 +295,7 @@
                        (values 'applied (datum:copy after))])))))))))
 
   (edoc "Retire non-authored model state against its revision; values are applied with #f, or stale/unavailable with the current envelope. References are not cascaded into destructive operations."
-        (actor actor "the author") (id list "the tagged model id") (revision integer "the expected revision"))
+        (actor actor "the author") (id model "the tagged model id") (revision integer "the expected revision"))
   (define (retire! actor id revision)
     (mutate!
       (lambda ()

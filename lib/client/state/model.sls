@@ -2,7 +2,7 @@
 ;; One background batch and one pending invalidation set serve every mount.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export available? commit! create! ids retire! snapshot snapshots subscribe! unsubscribe!)
+  (export available? commit! create! ids metadata retire! snapshot snapshots subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core kernel) kernel:)
@@ -11,6 +11,12 @@
   (define dirty (make-eqv-hashtable)) ; n -> generation, or #f for a rescan
   (define active? #f)
   (define subscribers (kernel:make-registry car))
+  (edoc-type model "a model reference, spelled (model number); operations validate existence and kind"
+    (predicate (lambda (v) (and (list? v) (= (length v) 2) (eq? (car v) 'model)
+                             (integer? (cadr v)) (exact? (cadr v)) (> (cadr v) 0))))
+    (portable #t) (within list)
+    (complete (lambda (partial) (map (lambda (row) (cons (car row) (symbol->string (cadr row)))) (metadata))))
+    (write (lambda (id) (format "(model ~a)" (cadr id)))))
   (define (number id)
     (unless (and (list? id) (= (length id) 2) (eq? (car id) 'model)
                  (integer? (cadr id)) (exact? (cadr id)) (> (cadr id) 0))
@@ -98,11 +104,11 @@
     (kernel:registry-remove! subscribers (lambda (entry) (eq? (car entry) token))))
 
   (edoc "An owned subscribed snapshot, read locally without a request."
-        (id list "the tagged model id") (returns (or list #f)))
+        (id model "the model") (returns (or list #f)))
   (define (snapshot id) (datum:copy (caddr (mirror id))))
 
   (edoc "Whether the subscribed model's mirrored kind accepts its payload, without a request."
-        (id list "the tagged model id") (returns boolean))
+        (id model "the tagged model id") (returns boolean))
   (define (available? id) (cadr (mirror id)))
 
   (edoc "Query the base for live model ids, optionally restricted to one kind without reading payloads."
@@ -110,10 +116,14 @@
         (returns list) (effects remote))
   (define (ids . kinds) (apply client:request 'model-ids kinds))
 
+  (edoc "Query compact (reference kind) metadata for live models in allocation order, without requesting payloads. Retired models are absent; unknown kinds remain inspectable."
+        (returns list) (effects remote))
+  (define (metadata) (client:request 'model-metadata))
+
   (edoc "Create base-owned non-authored model state, attributed to this connection."
         (actor actor "attribution is supplied by the connection") (kind symbol "the registered kind") (schema integer "its version")
         (scope datum "the ownership scope") (persistence (one-of transient persistent) "restart policy")
-        (references list "resource references") (value datum "initial value") (returns list))
+        (references list "resource references") (value datum "initial value") (returns model))
   (define (create! actor kind schema scope persistence references value)
     (client:request 'model-create kind schema scope persistence references value))
 
@@ -122,6 +132,6 @@
   (define (commit! actor changes) (apply values (client:request 'model-commit changes)))
 
   (edoc "Retire non-authored model state at its revision; this connection supplies attribution."
-        (actor actor "attribution is supplied by the connection") (id list "the tagged model id") (revision integer "expected revision"))
+        (actor actor "attribution is supplied by the connection") (id model "the tagged model id") (revision integer "expected revision"))
   (define (retire! actor id revision) (apply values (client:request 'model-retire id revision)))
 )

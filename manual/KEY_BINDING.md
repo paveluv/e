@@ -138,6 +138,22 @@ inspected target so you can read and scroll it. Moving elsewhere resumes
 inspection without resetting your reading position. A different keyboard
 context starts the listing at the top.
 
+For a widget window, **Widget commands** follows the keyboard sections.
+It lists named command connections from the whole current composition,
+including children outside the keyboard focus path. Each group names its
+child path, widget kind and `(model N)` reference. A row such as `activate`
+shows its target's public call and documentation. Fixed arguments are
+spelled as literals; remaining argument names, such as `selection basis`,
+are supplied by the invoking control, so these rows are call templates.
+Unavailable targets stay listed with an explanation. Rewiring updates the
+listing without resetting its reading position.
+
+This discovery reads mounted descriptors and cached sources locally. It
+does not execute actions or query the base, and does no work while Keys is
+hidden. Argument spelling in Keys and prefilled M-x expressions uses the
+same edoc types as completion; a model argument is `(model N)`, while an
+ordinary list argument stays quoted.
+
 `(mouse:bindings)` returns the current `(gesture action)` pairs as data;
 an optional `(column . row)` selects another screen cell, using one-based
 coordinates. `(mouse:position)` reports the physical pointer's last known

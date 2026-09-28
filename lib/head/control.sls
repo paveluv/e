@@ -19,7 +19,7 @@
   (define (service! id frame)
     (when (and (hashtable-ref held id #f) (not (enabled? id))) (hashtable-delete! held id)))
 
-  (edoc "Invoke an enabled action-text control's explicit command target." (id list "action view") (returns any))
+  (edoc "Invoke an enabled action-text control's explicit command target." (id model "action view") (returns any))
   (define (activate! id)
     (unless (enabled? id) (error 'activate! "action is unavailable" id))
     (widget:invoke! id 'activate))
@@ -62,7 +62,7 @@
              [else (memq phase '(move leave))])))]))
 
   (edoc "Compose a label, an existing single-line text entry and status text; the root exposes the entry's text output."
-        (actor datum "creator") (source list "text buffer reference") (label string "label") (status string "status text") (returns list "root view"))
+        (actor datum "creator") (source list "text buffer reference") (label string "label") (status string "status text") (returns model "root view"))
   (define (create-filter! actor source label status)
     (let* ([root (view:create! actor source 'filter 1 '((spacing . normal)) '())]
            [label (view:create! actor #f 'label 1 (list (cons 'text label)) '())]

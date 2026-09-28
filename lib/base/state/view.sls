@@ -67,16 +67,16 @@
 
   (edoc "Create an unparented persistent view; source is a model/buffer reference or #f for a container."
         (actor actor "creator") (source datum "source reference") (kind symbol "widget contract")
-        (schema integer "contract version") (options list "logical options") (state datum "interaction") (returns list))
+        (schema integer "contract version") (options list "logical options") (state datum "interaction") (returns model))
   (define (create! actor source kind schema options state)
     (let ([d (descriptor:make source kind schema options state)])
       (model:create! actor 'widget-view 2 'session 'persistent (descriptor:references d) d)))
 
-  (edoc "Read a canonical descriptor, or #f if unavailable." (id list "view id") (returns any))
+  (edoc "Read a canonical descriptor, or #f if unavailable." (id model "view id") (returns any))
   (define (snapshot id) (let ([r (entry id)]) (and r (value r))))
 
   (edoc "Read a coherent supported subtree as (id . descriptor) entries; opaque children remain referenced."
-        (id list "root or child id") (returns list))
+        (id model "root or child id") (returns list))
   (define (tree id)
     (let loop ()
       (let ([result
@@ -99,7 +99,7 @@
         (if (eq? result 'retry) (loop) result))))
 
   (edoc "Claim an entire unowned root atomically; return status and (id . descriptor) entries."
-        (actor actor "head") (id list "root id"))
+        (actor actor "head") (id model "root id"))
   (define (claim! actor id)
     (unless (descriptor:head? actor) (error 'claim! "expected a head" actor))
     (transaction! actor
@@ -109,7 +109,7 @@
                                  (put id (ownership d actor)))) (walk get id fail))) #t))
 
   (edoc "Release a tree only under its current root owner generation."
-        (actor actor "head") (id list "root id") (generation integer "lease"))
+        (actor actor "head") (id model "root id") (generation integer "lease"))
   (define (release! actor id generation)
     (transaction! actor
       (lambda (get need put read fail)
@@ -205,14 +205,14 @@
       (values status #f)))
 
   (edoc "Change saved interaction of an unowned view; active views are operated through their head."
-        (actor actor "caller") (id list "view") (basis any "source revision") (state datum "interaction"))
+        (actor actor "caller") (id model "view") (basis any "source revision") (state datum "interaction"))
   (define (set-state! actor id basis state)
     (transaction! actor (lambda (get need put read fail)
                           (let ([d (need id)]) (when (descriptor:owner d) (fail 'owned))
                             (put id (descriptor:with d (list (cons 'basis basis) (cons 'state state)))))) #t))
 
   (edoc "Fork a supported subtree, sharing sources and resetting ownership; the new root id."
-        (actor actor "creator") (id list "source view") (returns list))
+        (actor actor "creator") (id model "source view") (returns model))
   (define (fork! actor id)
     (let ([rows (tree id)])
       (unless (and (assoc id rows)

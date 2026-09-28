@@ -25,7 +25,7 @@
         (widget:focus! root entry) (entry:insert! entry (cadr event)) #t)))
 
   (edoc "Create an unmounted Buffet composition. Commands explicitly bind open (document reference) and return; no current-window fallback is used. An optional existing query shares filter and sort; selection and geometry always belong to this view."
-        (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns list "app view"))
+        (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns model "app view"))
   (define (create! commands . shared)
     (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
     (let* ([query (if (pair? shared) (car shared)
@@ -64,7 +64,7 @@
       (unless (eq? status 'applied) (error 'buffet "document changed; choose it again" status))))
 
   (edoc "Open the exact selected document through the host; archive selections restore that ID against its shown version first."
-        (id list "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
+        (id model "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
   (define (choose! id selection basis)
     (unless (assq 'open (widget:commands id)) (error 'choose! "no open command is connected"))
     (let ([row (selected-row id selection basis)])
@@ -96,7 +96,7 @@
   (define (delete-binding id) (archive-binding id edit:delete-trashed! #f))
 
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
-        (returns list "Buffet view"))
+        (returns model "Buffet view"))
   (define (open!)
     (let* ([was (head:current-buffer)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
