@@ -568,6 +568,22 @@
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
      (interaction:init!) (widget:init!) (window:init!) (entry:init!)
+     ;; Widget host hooks must leave shared buffers alone after their store
+     ;; records disappear, whether hidden or still shown in a window.
+     (let* ([was (head:current-buffer)]
+            [shown (head:new-buffer! "deleted while shown")]
+            [hidden (head:new-buffer! "deleted while hidden")]
+            [ids (map head:buffer-store-id (list shown hidden))]
+            [errors (log:entries 'head:forget-buffer!)])
+       (head:show-buffer! shown)
+       (for-each (lambda (id) (store:delete! '(base test) id)) ids)
+       (head:sync-foreign-edits!)
+       (check 'widget-host-retirement-never-reads-deleted-shared-facts
+         (list (map head:buffer-of-store-id ids)
+               (and (not (memq (head:current-buffer) (list shown hidden))) #t)
+               (equal? errors (log:entries 'head:forget-buffer!)))
+         '((#f #f) #t #t))
+       (head:show-buffer! was))
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
      (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
