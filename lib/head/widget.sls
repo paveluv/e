@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret commands context descendant event-frame focus! focus-next! focused
           frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -135,7 +135,7 @@
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
-                        [(prepare viewport service release render measure layout event anchor locate decorate caret) (procedure? (cdr p))]
+                        [(prepare viewport service release render measure layout event pointer-bindings anchor locate decorate caret) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -764,6 +764,34 @@
       (or (exists (lambda (child) (hit child x y)) (reverse (frame-children f)))
         (and (or (option (frame-descriptor f) 'modal #f) (not (option (frame-descriptor f) 'pass-through #f))) f))))
 
+  (define (pointer-location x y captured)
+    (let* ([placement (if captured
+                        (find (lambda (p) (find-frame (car p) (frame-id pointer-capture))) presentations)
+                        (find (lambda (p) (layout:contains? (frame-clip (car p)) (- x (cadr p)) (- y (caddr p)))) (reverse presentations)))]
+           [root (and placement (car placement))]
+           [x (if placement (- x (cadr placement)) x)] [y (if placement (- y (caddr placement)) y)])
+      (and root (list root (if captured (find-frame root (frame-id pointer-capture)) (hit (or (modal root) root) x y)) x y))))
+
+  (edoc "Read mouse commands at a shown screen position without delivering input. Return #f outside widgets, otherwise (gesture action) pairs from the target's pointer-bindings callback and its ancestors. Gestures are (click-or-drag button modifiers) or (wheel direction modifiers). Callbacks receive a shown frame and local x/y and must only read local state. Nearer gestures shadow ancestor gestures; modal boundaries and clipping apply."
+        (x integer "zero-based screen column") (y integer "zero-based screen row") (returns any) (effects internal))
+  (define (pointer-bindings x y)
+    (let ([at (pointer-location x y #f)])
+      (and at
+        (let* ([root (car at)] [f (cadr at)] [scope (or (modal root) root)])
+          (if (not (and f (live-frame? f))) '()
+            (let loop ([ids (reverse (path (frame-id f)))] [out '()] [scroll? #f])
+              (if (null? ids)
+                (append out (if scroll?
+                              (list (list '(wheel up ()) (keymap:call pointer! '(scroll 0 -3 cells) x y))
+                                (list '(wheel down ()) (keymap:call pointer! '(scroll 0 3 cells) x y))) '()))
+                (let* ([frame (find-frame scope (car ids))] [definition (and frame (frame-definition frame))]
+                       [describe (field definition 'pointer-bindings #f)]
+                       [bindings (if (and describe (live-frame? frame))
+                                   (describe frame (- (caddr at) (car (frame-rect frame))) (- (cadddr at) (cadr (frame-rect frame)))) '())])
+                  (loop (cdr ids)
+                    (append out (filter (lambda (b) (not (assoc (car b) out))) bindings))
+                    (or scroll? (and definition (assq 'scroll (field definition 'actions '())))))))))))))
+
   (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
         (event list "(pointer phase button modifiers) or (scroll dx dy units)")
         (x integer "screen x, zero based") (y integer "screen y, zero based") (returns any))
@@ -783,12 +811,8 @@
   (define (route-pointer! event x y)
     (retain-focus? #f)
     (let* ([captured (and pointer-capture (live-frame? pointer-capture) (not (eq? (car event) 'scroll)))]
-           [placement (if captured
-                        (find (lambda (p) (find-frame (car p) (frame-id pointer-capture))) presentations)
-                        (find (lambda (p) (layout:contains? (frame-clip (car p)) (- x (cadr p)) (- y (caddr p)))) (reverse presentations)))]
-           [root (and placement (car placement))]
-           [x (if placement (- x (cadr placement)) x)] [y (if placement (- y (caddr placement)) y)]
-           [f (and root (if captured (find-frame root (frame-id pointer-capture)) (hit (or (modal root) root) x y)))])
+           [at (pointer-location x y captured)] [root (and at (car at))]
+           [x (if at (caddr at) x)] [y (if at (cadddr at) y)] [f (and at (cadr at))])
       (unless captured (when pointer-capture (defer-cancel! 'stale-target)))
       (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'move))
         (unless (and hover-target f (equal? (frame-id hover-target) (frame-id f)))
@@ -869,7 +893,9 @@
           text))))
   (define (text-event! id source d event)
     (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
-      (begin (act! id 'select (list-ref event 5)) #t)))
+      (begin (keymap:run! (cadar (text-pointer-bindings (event-frame) (list-ref event 4) (list-ref event 5)))) #t)))
+  (define (text-pointer-bindings frame x y)
+    (list (list '(click primary ()) (keymap:call act! (frame-id frame) 'select y))))
 
   (edoc "Reveal a logical source anchor in its nearest containing scroll viewport, without changing selection."
         (id list "descendant") (anchor datum "source anchor"))
@@ -895,7 +921,7 @@
                          (cons 'locate (lambda (data anchor width)
                                          (if (and (list? anchor) (= (length anchor) 2) (equal? (car anchor) (car data)) (integer? (cadr anchor))) (max 0 (cadr anchor)) 0)))
                          (cons 'anchor (lambda (data position width) (list (car data) position))) (cons 'focus #t)
-                         (cons 'contexts '(widget-text)) (cons 'event text-event!)
+                         (cons 'contexts '(widget-text)) (cons 'event text-event!) (cons 'pointer-bindings text-pointer-bindings)
                          (cons 'actions (list (cons 'move text-move!) (cons 'select text-select!) (cons 'choose text-choose!)))))
     (keymap:bind-default! 'widget-text "UP" (keymap:call act! target 'move -1))
     (keymap:bind-default! 'widget-text "DOWN" (keymap:call act! target 'move 1))

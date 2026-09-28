@@ -12,6 +12,7 @@
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
              (prefix (head keymap) keymap:)
+             (prefix (head mouse) mouse:)
              (prefix (head document) document:) (prefix (head paint) paint:)
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state model) model:) (prefix (state view) view:)
@@ -81,6 +82,27 @@
            (and (string:search text "buffet keys" 0 (string-length text))
              (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
        (keys:hide!) (widget:focus! (root) focus) (settle!))
+     (let ([focus (widget:focused (root))] [selected (selection)] [sort (get (get (collection:summary (query)) 'value) 'sort)])
+       (head:set-mouse-position! '(2 . 2)) (keys:show!) (settle!) (head:before-frame!)
+       (let* ([b (head:window-buffer (head:popup))] [lines (head:buffer-lines b)]
+              [header (cadr (assoc '(click primary ()) (mouse:bindings)))])
+         (head:before-frame!)
+         (test:check 'mouse-help-first-inspects-heading-without-changing-state
+           (list (vector-ref lines 0) (eq? lines (head:buffer-lines b))
+             (keymap:call-action-procedure header) (cadr (keymap:call-action-arguments header))
+             (caddr (selection)) (get (get (collection:summary (query)) 'value) 'sort) (widget:focused (root)))
+           (list "Mouse bindings" #t table:toggle-sort! 'modified (caddr selected) sort focus))
+         (head:set-mouse-position! '(2 . 3)) (head:before-frame!)
+         (let* ([bindings (mouse:bindings)] [row (cadr (assoc '(click primary ()) bindings))])
+           (test:check 'hover-changes-mouse-section-and-includes-wheel
+             (list (not (eq? lines (head:buffer-lines b))) (keymap:call-action-procedure row)
+               (and (assoc '(wheel up ()) bindings) (assoc '(wheel down ()) bindings) #t)
+               (widget:focused (root)))
+             (list #t table:choose! #t focus)))
+         (head:set-mouse-position! '(1000 . 1000)) (head:before-frame!)
+         (test:check 'leaving-shown-target-clears-mouse-section
+           (string:prefix? "Mouse" (head:buffer-line b 0)) #f))
+       (head:set-mouse-position! #f) (keys:hide!) (settle!))
      (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
      (test:check 'typing-from-entry-filters-in-base
        (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection)))

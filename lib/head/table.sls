@@ -2,7 +2,7 @@
 ;; remains here until those apps adopt the composable controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export activate! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
+  (export activate! choose! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
@@ -562,6 +562,38 @@
       (if (and (row:selection? anchor) (equal? (car anchor) (session-query s)))
         (let ([r (range:locate (session-query s) (get v 'generation 0) (caddr anchor))])
           (and (eq? (car r) 'ready) (or (list-ref r 3) 0))) 0)))
+
+  (edoc "Choose an explicitly identified displayed row and activate it if the table has an activate command. Refuse a stale result or a row no longer displayed; no deferred activation is queued."
+        (id list "table or descendant") (selection list "(collection generation key)"))
+  (define (choose! id selection)
+    (let* ([s (runtime id)] [current (metadata s)] [display (session-display s)]
+           [row (and (row:selection? selection) display (ready? current)
+                  (equal? (car selection) (session-query s)) (= (cadr selection) (get current 'generation -1))
+                  (= (cadr selection) (get (car display) 'generation -1))
+                  (find (lambda (row) (and (equal? (cadr row) (caddr selection)) (get (cadddr row) 'selectable #t))) (or (caddr display) '())))])
+      (unless row (error 'choose! "displayed row is no longer available" selection))
+      (save-selection! s (cadr selection) (caddr selection) (get current 'basis '()) (car row))
+      (session-hovered-set! s #f) (repaint! s)
+      (when (assq 'activate (widget:commands (session-id s))) (activate! (session-id s)))))
+
+  (define (pointer-hit f x y)
+    (let* ([v (widget:frame-data f)] [s (runtime (widget:frame-id f))]
+           [heading? (eq? (view:kind (widget:frame-descriptor f)) 'table-heading)]
+           [marker (and v heading? (updating v (caddr (widget:frame-rect f))))])
+      (and v (not (and marker (<= (car marker) x (- (+ (car marker) (glyph:cells (cadr marker))) 1))))
+        (if heading?
+          (find (lambda (p) (and (memq (car (list-ref (columns s (visible-metadata v)) (car p))) (get (visible-metadata v) 'sortable '()))
+                              (<= (cadr p) x (- (caddr p) 1)))) (visible-spans v))
+          (and (visible-rows v) (find (lambda (row) (and (get (cadddr row) 'selectable #t) (= (car row) y))) (visible-rows v)))))))
+  (define (pointer-bindings f x y)
+    (let* ([s (runtime (widget:frame-id f))] [v (widget:frame-data f)] [hit (pointer-hit f x y)]
+           [current (metadata s)] [shown (and v (visible-metadata v))])
+      (if (not (and hit (ready? current) (equal? (session-query s) (session-query (visible-session v)))
+                    (= (get current 'generation 0) (get shown 'generation -1)))) '()
+        (list (list '(click primary ())
+                (if (eq? (view:kind (widget:frame-descriptor f)) 'table-heading)
+                  (keymap:call toggle-sort! (session-id s) (car (list-ref (columns s shown) (car hit))))
+                  (keymap:call choose! (session-id s) (list (session-query s) (get shown 'generation 0) (cadr hit)))))))))
   (define (event! id source d event)
     (let ([s (runtime id)])
       (case (car event)
@@ -574,27 +606,16 @@
         [(pointer)
          (let* ([f (widget:event-frame)] [v (widget:frame-data f)] [phase (cadr event)]
                 [heading? (eq? (view:kind d) 'table-heading)]
-                [marker (and v heading? (updating v (caddr (widget:frame-rect f))))]
-                [hit (and v (not (eq? phase 'leave))
-                       (not (and marker (<= (car marker) (list-ref event 4) (- (+ (car marker) (glyph:cells (cadr marker))) 1))))
-                       (if heading?
-                         (find (lambda (p) (and (memq (car (list-ref (columns s (visible-metadata v)) (car p))) (get (visible-metadata v) 'sortable '()))
-                                             (<= (cadr p) (list-ref event 4) (- (caddr p) 1)))) (visible-spans v))
-                         (and (visible-rows v) (find (lambda (row) (and (get (cadddr row) 'selectable #t) (= (car row) (list-ref event 5)))) (visible-rows v)))))]
+                [hit (and (not (eq? phase 'leave)) (pointer-hit f (list-ref event 4) (list-ref event 5)))]
                 [hover (and hit (if heading? (list 'column (car hit))
                                   (let ([shown (visible-metadata v)])
                                     (list 'row (list (session-query (visible-session v)) (get shown 'generation 0) (cadr hit))
                                       (get shown 'basis '()) (car hit)))))])
            (unless (equal? hover (session-hovered s)) (session-hovered-set! s hover) (repaint! s))
-           (when (and hit (eq? phase 'press) (eq? (caddr event) 'primary))
-             (if heading?
-               (toggle-sort! (session-id s) (car (list-ref (columns s (visible-metadata v)) (car hit))))
-               (let ([current (metadata s)] [shown (visible-metadata v)])
-                 (when (and (ready? current) (equal? (session-query s) (session-query (visible-session v)))
-                         (= (get current 'generation 0) (get shown 'generation -1)))
-                   (save-selection! s (get shown 'generation 0) (cadr hit) (get shown 'basis '()) (car hit))
-                   (session-hovered-set! s #f) (repaint! s)
-                   (when (assq 'activate (widget:commands (session-id s))) (activate! (session-id s))))))))])))
+           (or (memq phase '(move leave))
+             (and hit (eq? phase 'press) (eq? (caddr event) 'primary)
+               (let ([binding (assoc '(click primary ()) (pointer-bindings f (list-ref event 4) (list-ref event 5)))])
+                 (and binding (begin (keymap:run! (cadr binding)) #t))))))])))
 
   (edoc "Cycle sorting for a currently visible heading by position. An absent or unsortable heading does nothing."
         (id list "table or descendant") (index integer "zero-based visible column position"))
@@ -617,7 +638,7 @@
                                        (cons 'emphasize emphasize!) (cons 'sort-by sort-by!) (cons 'toggle-sort toggle-sort!) (cons 'set-columns set-columns!))))))) '(table list))
     (for-each (lambda (kind)
                 (widget:register! kind 1
-                  (append (list (cons 'prepare data) (cons 'viewport viewport) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate) (cons 'event event!))
+                  (append (list (cons 'prepare data) (cons 'viewport viewport) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate) (cons 'event event!) (cons 'pointer-bindings pointer-bindings))
                     (if (eq? kind 'table-body) (list (cons 'focus #t) (cons 'anchor anchor) (cons 'locate locate)) '())))) '(table-heading table-body))
     (for-each (lambda (p) (keymap:bind-default! 'widget-table (car p) (keymap:call move! widget:target (cdr p))))
       '(("UP" . previous) ("DOWN" . next) ("HOME" . first) ("END" . last) ("PGUP" . page-previous) ("PGDN" . page-next)))

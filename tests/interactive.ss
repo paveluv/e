@@ -323,7 +323,10 @@
      (wait-for! 'close-the-test-split
        (lambda () (not (and (find-cell "1▏") (find-cell "2▏")))) 5000)
      ;; C-x TAB works inside a prompt, listing the prompt's keys in the pop-up;
-     ;; pressed again after the prompt closes, the listing returns to the buffer's
+     ;; pressed again after the prompt closes, the listing returns to the buffer's.
+     ;; Move into the echo area so the hover-following mouse section is empty
+     ;; and these keyboard bindings are on the first page.
+     (send! (format "\x1b;[<35;1;~aM" (vector-length (vt:emulator-screen mirror))))
      (send! "\x1b;x")
      (send! "\x18;\t")
      (wait-for! 'c-x-tab-inside-a-prompt-lists-the-prompts-keys

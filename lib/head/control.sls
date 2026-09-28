@@ -32,28 +32,34 @@
     (let* ([id (car data)] [role (cond [(assq 'role (view:options d)) => cdr] [else #f])]
            [face (cond [(not (cadddr data)) 'ghost] [(and (hashtable-ref hover id #f) (caddr data)) 'hover] [else role])])
       (if (and face (zero? (car range))) (list (list (list 0 0 (min width (glyph:cells (cadr data))) 1) face)) '())))
-  (define (inside? inputs event)
-    (let* ([f (widget:event-frame)] [rect (widget:frame-rect f)] [clip (widget:frame-clip f)]
-           [x (list-ref event 4)] [y (list-ref event 5)])
+  (define (inside? f inputs x y)
+    (let* ([rect (widget:frame-rect f)] [clip (widget:frame-clip f)])
       (and (= y 0) (<= 0 x) (< x (glyph:cells (input inputs 'text "")))
         (layout:contains? clip (+ (car rect) x) (+ (cadr rect) y)))))
+  (define (pointer-bindings f x y)
+    (if (and (inside? f (widget:frame-inputs f) x y) (enabled? (widget:frame-id f)))
+      (list (list '(click primary ()) (keymap:call activate! (widget:frame-id f)))) '()))
   (define (event! id source d event)
     (case (car event)
       [(cancel blur)
        (hashtable-delete! held id) (hashtable-delete! hover id) (widget:repaint! id)]
       [(pointer)
        (let-values ([(source d inputs) (widget:context id)])
-         (let* ([phase (cadr event)] [inside (and (not (eq? phase 'leave)) (inside? inputs event))]
+         (let* ([phase (cadr event)] [inside (and (not (eq? phase 'leave)) (inside? (widget:event-frame) inputs (list-ref event 4) (list-ref event 5)))]
                 [old (hashtable-ref hover id #f)])
            (if inside (hashtable-set! hover id #t) (hashtable-delete! hover id))
            (unless (eq? old inside) (widget:repaint! id))
            (case phase
-             [(press) (when (and inside (eq? (caddr event) 'primary) (enabled? id))
-                        (widget:capture! id) (hashtable-set! held id #t))]
+             [(press) (and inside (eq? (caddr event) 'primary) (enabled? id)
+                        (begin (widget:capture! id) (hashtable-set! held id #t) #t))]
              [(release)
               (let ([pressed (hashtable-ref held id #f)])
                 (hashtable-delete! held id)
-                (when (and pressed inside (enabled? id)) (activate! id)))])))]))
+                (when (and pressed inside)
+                  (let ([binding (assoc '(click primary ()) (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5)))])
+                    (when binding (keymap:run! (cadr binding)))))
+                (and pressed #t))]
+             [else (memq phase '(move leave))])))]))
 
   (edoc "Compose a label, an existing single-line text entry and status text; the root exposes the entry's text output."
         (actor datum "creator") (source list "text buffer reference") (label string "label") (status string "status text") (returns list "root view"))
@@ -71,6 +77,6 @@
     (widget:register! 'label 1 (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)))
     (widget:register! 'action-text 1
       (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)
-        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'service service!) (cons 'release release!) (cons 'actions (list (cons 'activate activate!)))))
+        (cons 'focus #t) (cons 'contexts '(widget-action)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings) (cons 'service service!) (cons 'release release!) (cons 'actions (list (cons 'activate activate!)))))
     (keymap:bind-default! 'widget-action "RET" (keymap:call activate! widget:target))
     (keymap:bind-default! 'widget-action "SPC" (keymap:call activate! widget:target))))

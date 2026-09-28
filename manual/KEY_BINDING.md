@@ -101,6 +101,21 @@ For widget bindings, `C-x TAB` substitutes the receiving view's ID for
 The ID addresses that view while it remains mounted. Describing a binding
 never invokes its argument producers.
 
+When the pointer has a target, `C-x TAB` starts with **Mouse bindings**.
+This section follows the pointer, including over an unfocused window; the
+keyboard sections continue to follow keyboard focus. A table heading shows
+its sort command, a row shows its explicit choice, and an entry shows caret
+placement and selection. Unavailable widget actions are omitted.
+
+`(mouse:bindings)` returns the current `(gesture action)` pairs as data;
+an optional `(column . row)` selects another screen cell, using one-based
+coordinates. Gestures include `(click primary ())`, `(click secondary ())`,
+`(click primary (shift))`, `(drag primary ())`, and `(wheel down ())`.
+`mouse:gesture-text` spells them for help. Actions use `keymap:call`, just
+like keyboard bindings. Legacy buffer apps expose `mouse:click!` and
+`mouse:scroll!`, which deliver input through their normal routes at the
+given screen coordinates.
+
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 

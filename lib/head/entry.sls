@@ -183,6 +183,17 @@
     (history! id 'redo 'mine))
 
   (define dragging #f)
+  (define (pointer-bindings f x y)
+    (let* ([id (widget:frame-id f)] [data (widget:frame-data f)]
+           [points (project data (widget:frame-descriptor f))])
+      (if (not points) '()
+        (let* ([at (car (edge (caddr data) (+ x (offset points (caddr (widget:frame-rect f)))) cdr))]
+               [d (interaction:snapshot id)] [current (project data d)]
+               [steps (changes (car data) (or (view:basis d) (revision (car data))))]
+               [extend? (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))])
+          (append (list (list '(click primary ()) (keymap:call select! id at at)))
+            (if extend?
+              (map (lambda (gesture) (list gesture (keymap:call select! id at (caadr current)))) '((click primary (shift)) (drag primary ()))) '()))))))
   (define (event! id source d event)
     (case (car event)
       [(text) (insert! id (cadr event)) #t]
@@ -191,18 +202,12 @@
        (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
          [else (and (eq? (caddr event) 'primary)
                  (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
-                 (let* ([f (widget:event-frame)] [data (data id source '())]
-                        [points (project data (widget:frame-descriptor f))])
-                   (and points
-                     (let* ([x (+ (list-ref event 4) (offset points (caddr (widget:frame-rect f))))]
-                            [at (car (edge (caddr data) x cdr))]
-                            [extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
-                            [current (and extend? (project data d))])
-                       (when extend?
-                         (let ([steps (changes source (or (view:basis d) (revision source)))])
-                           (unless (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))
-                             (refuse "Entry selection changed during the gesture"))))
-                       (select! id at (if extend? (caadr current) at))
+                 (let* ([extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
+                        [binding (assoc (if extend? '(click primary (shift)) '(click primary ()))
+                                   (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5)))])
+                   (when (and extend? (not binding)) (refuse "Entry selection changed during the gesture"))
+                   (and binding
+                     (begin (keymap:run! (cadr binding))
                        (when (eq? (cadr event) 'press) (widget:capture! id) (set! dragging id)) #t))))])]
       [else #f]))
 
@@ -211,7 +216,7 @@
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (max 1 (cdr (car (reverse (caddr data)))))))))
-        (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!)
+        (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (list (cons 'insert insert!) (cons 'select select!) (cons 'move move!)
                          (cons 'delete delete!) (cons 'undo undo!) (cons 'redo redo!)))))
     (for-each (lambda (binding)

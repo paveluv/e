@@ -17,6 +17,7 @@
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
+          (prefix (head mouse) mouse:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head widget) widget:)
@@ -26,6 +27,7 @@
   (define over '()) ; ((window . buffer) ...) what a window showed before the listing took it
   (define listed #f) ; (buffer contexts read-only?) the listing describes
   (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
+  (define keyboard-cache #f)
 
   (define (stale-listing? b)
     ;; a <keys> or <keys 2> local buffer that is not the view: one an older
@@ -294,23 +296,36 @@
       ;; the screen's width less the listing's scrollbar column
       (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
 
-  (define (situation b)
+  (define (situation b . pointer)
     ;; what the listing depends on: the buffer, its contexts, its text being
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
     ;; comes last, so the rest compares on its own
-    (list b (list (contexts b "") (keymap:generation)) (read-only-text? b) (prompt:active?) (prompt-context) (listing-width)))
+    (let ([root (head:buffer-fact b 'widget-id #f)])
+      (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
+        (read-only-text? b) (prompt:active?) (prompt-context)
+        (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) (if (pair? pointer) (car pointer) (mouse:bindings)))
+        (listing-width))))
+
+  (define (action-basis action)
+    (if (keymap:call-action? action)
+      (cons (keymap:call-action-procedure action) (map action-basis (keymap:call-action-arguments action))) action))
 
   (define (fill! b)
     ;; the listing for a buffer into the view: from the top for a new
     ;; subject, in place when only the width changed, a resize say
-    (let* ([now (situation b)]
-           [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
-           [lines (let ([lines (listing b (listing-width))]) (if (null? lines) (list "no keys") lines))])
+    (let* ([pointer (mouse:bindings)] [now (situation b pointer)] [width (listing-width)]
+           [same? (and listed (equal? (list-head listed 6) (list-head now 6)))]
+           [keyboard-key (append (list-head now 5) (list width))]
+           [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
+           [lines (append (section "Mouse bindings"
+                            (map (lambda (binding)
+                                   (list (list (mouse:gesture-text (car binding))) (keymap:action-text (cadr binding)) (summary-of (cadr binding)))) pointer) width)
+                    keyboard)]
+           [lines (if (null? lines) (list "no keys") lines)])
+      (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
-      (head:buffer-read-only-set! view #f)
-      (head:buffer-lines-set! view (list->vector lines))
-      (head:buffer-read-only-set! view #t)
+      (head:view-replace! view lines)
       (for-each (lambda (w)
                   (let ([top (if same? (min (head:window-top w) (- (length lines) 1)) 0)])
                     (head:window-top-set! w top) (head:window-prow-set! w top) (head:window-pcol-set! w 0)))
@@ -326,12 +341,13 @@
       ;; long, and read by position: a scrollbar on the configured side
       (head:buffer-fact-set! view 'scrollbar #t)
       (head:set-buffer-status! view status)
-      (head:add-buffer! view)
+      (head:register-view! view void)
       (mode:choose! "keys" view)))
 
   (define (drop-view!)
     (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
     (set! view #f)
+    (set! keyboard-cache #f)
     (set! listed #f))
 
   (define (follow!)

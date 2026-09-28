@@ -113,6 +113,26 @@ The listing follows internal focus changes. `widget:key-scopes` exposes that
 routing without moving focus or touching a chord; dispatch uses `key-scopes!`
 to reconcile focus first.
 
+The first Keys section follows the mouse independently of keyboard focus.
+Widget definitions can provide `pointer-bindings`: a procedure receiving a
+shown frame and local x/y coordinates and returning `(gesture action)` pairs.
+Use `(click primary ())`, `(click secondary ())`, `(click primary (shift))`
+or `(drag primary ())` for gestures, and `keymap:call` with public commands
+and explicit targets for actions. The callback must only inspect local,
+bounded presentation state: no input dispatch, RPC, focus changes or model
+updates. Reuse this same binding lookup in the widget's gesture handler.
+Press/release ownership, cancellation and dragging remain input behavior;
+reading a binding never starts a gesture.
+
+`widget:pointer-bindings` queries zero-based screen coordinates through the
+same shown-frame hit testing as pointer dispatch. Child gestures shadow the
+same gestures on ancestors; clipped and modal content cannot leak bindings.
+Scroll containers contribute their normal wheel route. The shared table,
+entry and action-text controls expose their public commands through this
+contract. `table:choose!` takes a table and a `(collection generation key)`
+reference, selects that displayed row and activates it when the host has
+provided an activation command; an obsolete result refuses.
+
 ## Buffer catalogue
 
 Create a head's source with `(document:create-source! 'transient)`, then use
