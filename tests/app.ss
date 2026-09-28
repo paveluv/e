@@ -21,6 +21,7 @@
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head entry) entry:) (prefix (foundation text) text:)
+             (prefix (head control) control:) (prefix (core descriptor) descriptor:)
              (prefix (sys glyph) glyph:)
              (prefix (core kernel) kernel:)
              (prefix (service log) log:)
@@ -812,7 +813,7 @@
        (port:register! '(view connected-consumer 1) '((input choice string (options choice))))
        (widget:register! 'connected-producer 1 '())
        (widget:register! 'connected-consumer 1
-         (list (cons 'prepare (lambda (source inputs) (caddr (assq 'choice inputs))))
+         (list (cons 'prepare (lambda (id source inputs) (caddr (assq 'choice inputs))))
            (cons 'render (lambda (data descriptor width height range) (list data)))
            (cons 'actions (list (cons 'inspect (lambda (id)
                                                  (let-values ([(source descriptor inputs) (widget:context id)])
@@ -841,5 +842,6 @@
          '(() #f "future descriptor"))
        (head:forget-buffer! b) (head:show-buffer! previous))
 
+     (include "tests/control.sps")
      (include "tests/range.sps")
      (test:finish! 'app)))

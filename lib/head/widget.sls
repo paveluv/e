@@ -1,11 +1,11 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! caret context event-frame focus! focus-next!
+  (export act! actions arrange! cancel! capture! caret commands context event-frame focus! focus-next!
           frame-children frame-clip frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          init! input! invalidate! key-scopes! mount! pointer! prepare! prepared present! register! reveal! shown target unmount!)
+          init! input! invalidate! invoke! key-scopes! mount! pointer! prepare! prepared present! register! repaint! reveal! shown target unmount!)
   (import (chezscheme)
-          (prefix (core kernel) kernel:)
+          (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
           (prefix (foundation datum) datum:)
           (prefix (foundation string) string:)
@@ -111,6 +111,31 @@
       (let-values ([(available? source) (source! n d)])
         (if available? (map car (field entry 'actions '())) '()))))
 
+  (edoc "List usable explicit command bindings; absent or foreign targets are disabled." (id list "mounted control") (returns list) (effects internal))
+  (define (commands id)
+    (let ([d (read-view id)])
+      (if (not d) '()
+        (filter (lambda (c)
+                  (let ([n (hashtable-ref nodes (cadr c) #f)] [target (read-view (cadr c))])
+                    (and n target (equal? (view:owner target) head:ui-actor)
+                      (memq (caddr c) (actions (cadr c)))))) (descriptor:commands d)))))
+
+  (edoc "Invoke an explicit command target with its fixed arguments followed by control-supplied arguments."
+        (id list "control") (command symbol "binding name") (arguments (list-of any) "additional arguments") (returns any))
+  (define (invoke! id command . arguments)
+    (let ([c (assq command (commands id))])
+      (unless c (error 'invoke! "command target is unavailable" id command))
+      (apply act! (cadr c) (caddr c) (append (cadddr c) arguments))))
+
+  (edoc "Invalidate one mounted view's derived presentation after a head-local cache or hover change."
+        (id list "view") (projection (list-of boolean) "also rebuild prepared data when true"))
+  (define (repaint! id . projection)
+    (let ([n (hashtable-ref nodes id #f)])
+      (when n
+        (node-key-set! n #f)
+        (when (and (pair? projection) (car projection)) (node-data-key-set! n #f))
+        (head:wake-main!))))
+
   (define invocation (make-parameter #f))
   (define input-reads (make-parameter #f))
   (define (inputs! id)
@@ -133,11 +158,12 @@
             (when cache (hashtable-set! cache id inputs)) inputs)))))
 
   (edoc "Read a mounted view's borrowed source, provisional descriptor and resolved inputs as three values, without remote reads. Actions retain their exact invocation basis."
-        (id list "view") (effects internal))
-  (define (context id)
-    (let ([current (invocation)])
+        (id list "view") (mode (list-of symbol) "current bypasses a shown action basis") (effects internal))
+  (define (context id . mode)
+    (unless (or (null? mode) (equal? mode '(current))) (error 'context "expected current" mode))
+    (let ([current (and (null? mode) (invocation))])
       (if (and current (equal? id (car current))) (apply values (cdr current))
-        (let* ([n (mounted id)] [d (read-view id)] [f (event-frame)])
+        (let* ([n (mounted id)] [d (read-view id)] [f (and (null? mode) (event-frame))])
           (let-values ([(available? source) (source! n d)])
             (unless available? (error 'context "widget source is unavailable" id))
             (if (and f (equal? id (frame-id f)))
@@ -270,7 +296,7 @@
   (define (projection! n entry source)
     (let* ([inputs (inputs! (node-id n))] [key (list entry source inputs)])
       (unless (equal? key (node-data-key n))
-        (node-data-set! n ((field entry 'prepare (lambda (source inputs) source)) source inputs))
+        (node-data-set! n ((field entry 'prepare (lambda (id source inputs) source)) (node-id n) source inputs))
         (node-data-key-set! n key))
       (node-data n)))
   (define measurement-cache (make-parameter #f))
@@ -297,14 +323,6 @@
           (let ([proc (field entry 'locate #f)])
             (if proc (proc (projection! n entry source) anchor width) (locate-child! id anchor width)))
           0))))
-  (define (linear-layout axis)
-    (lambda (d width height measure locate)
-      (let* ([children (view:children d)] [horizontal? (eq? axis 'x)]
-             [gap (case (option d 'spacing 'none) [(normal) 1] [(wide) 2] [else 0])]
-             [sizes (layout:linear (if horizontal? width height) gap
-                      (map (lambda (child) (append (measure (cadr child) axis (if horizontal? height width)) (list (caddr child)))) children))])
-        (map (lambda (child size)
-               (list (cadr child) (if horizontal? (list (car size) 0 (cadr size) height) (list 0 (car size) width (cadr size))))) children sizes))))
   (define (overlay-layout d width height measure locate)
     (map (lambda (child) (list (cadr child) (list 0 0 width height))) (view:children d)))
   (define (scroll-layout d width height measure locate)
@@ -312,13 +330,6 @@
     (let* ([id (cadar (view:children d))] [extent (max height (cadr (measure id 'y width)))]
            [at (min (max 0 (- extent height)) (max 0 (locate id (view:state d) width)))])
       (list (list id (list 0 (- at) width extent)))))
-  (define (spacing d)
-    (case (option d 'spacing 'none) [(normal) 1] [(wide) 2] [else 0]))
-  (define (linear-measure direction)
-    (lambda (data d axis cross measure)
-      (let* ([children (view:children d)] [sizes (map (lambda (child) (measure (cadr child) axis cross)) children)]
-             [along? (eq? direction axis)] [gap (if along? (* (spacing d) (max 0 (- (length sizes) 1))) 0)])
-        (map (lambda (i) (+ gap (apply (if along? + max) (cons 0 (map (lambda (p) (list-ref p i)) sizes))))) '(0 1)))))
   (define (overlay-measure data d axis cross measure)
     (map (lambda (i) (apply max 0 (map (lambda (child) (list-ref (measure (cadr child) axis cross) i)) (view:children d)))) '(0 1)))
   (define (content-placements! id width)
@@ -725,7 +736,7 @@
 
   ;; The minimal text widget deliberately consumes arbitrary model values.
   ;; It needs no extra base dataset service or evaluator allocation.
-  (define (text-data model inputs)
+  (define (text-data id model inputs)
     (let ([value (cdr (assq 'value model))])
       (cons (cdr (assq 'revision model)) (list->vector (string:lines (if (string? value) value (format "~s" value)))))))
   (define (text-source! id source descriptor)
@@ -801,8 +812,8 @@
     (keymap:bind-default! 'widget-text "UP" (keymap:call act! target 'move -1))
     (keymap:bind-default! 'widget-text "DOWN" (keymap:call act! target 'move 1))
     (keymap:bind-default! 'widget-text "RET" (keymap:call act! target 'choose))
-    (register! 'row 1 (list (cons 'layout (linear-layout 'x)) (cons 'measure (linear-measure 'x))))
-    (register! 'column 1 (list (cons 'layout (linear-layout 'y)) (cons 'measure (linear-measure 'y))))
+    (register! 'row 1 (layout:container 'x))
+    (register! 'column 1 (layout:container 'y))
     (register! 'overlay 1 (list (cons 'layout overlay-layout) (cons 'measure overlay-measure)))
     (register! 'scroll 1 (list (cons 'layout scroll-layout) (cons 'measure overlay-measure) (cons 'actions (list (cons 'scroll scroll-action!)))))
     (head:add-pre-redraw-hook! drain-cancels!)

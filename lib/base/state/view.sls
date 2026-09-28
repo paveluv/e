@@ -251,6 +251,12 @@
                                         (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c)))
                                              (descriptor:children old)))
                                       (cons 'focus (mapped (descriptor:focus old))) '(owner . #f)
+                                      (cons 'options
+                                        (map (lambda (p)
+                                               (if (eq? (car p) 'commands)
+                                                 (cons 'commands
+                                                   (map (lambda (c) (list (car c) (or (mapped (cadr c)) (cadr c)) (caddr c) (cadddr c))) (cdr p))) p))
+                                          (descriptor:options old)))
                                       '(generation . 0) '(sequence . 0)))])
                           (list 'widget-view 2 'session 'persistent
                             (descriptor:references d) d)))

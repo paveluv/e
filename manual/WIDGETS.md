@@ -1,5 +1,23 @@
 # Widgets and views
 
+`control:create-filter!` composes a label, an `entry` over an existing text
+buffer, and an italic status label. Its root exposes the `text` output port;
+the entry retains the normal editing, undo and stale-edit protection.
+
+An `action-text` view takes `text` and `enabled` input defaults in its options,
+plus explicit command bindings such as
+`(commands (activate target-view-id insert ("replacement")))`.
+`control:activate!` and Return/Space or a valid mouse press/release invoke the
+target's registered action. Targets must be mounted in the same head.
+Forks remap internal targets and retain external references. Changes to state
+connections never execute commands.
+
+`widget:context` returns source, descriptor and resolved inputs. Its optional
+`'current` argument checks current availability during a shown-frame action.
+`widget:repaint!` invalidates a control's local presentation without publishing
+hover or cached geometry to the base. Shared row/column allocation is exposed
+as `layout:container` for compound controls.
+
 The widget adapter mounts a base-owned view tree in an ordinary editor
 window. Models hold data; views hold independent interaction state; the head
 owns rendering and geometry. Multiple views can share one model and its
@@ -55,7 +73,7 @@ and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
 `layout`, `anchor`, `locate`, `decorate`, `caret` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
 
-`prepare` receives `(source inputs)` and derives display data once per source,
+`prepare` receives `(id source inputs)` and derives display data once per source,
 input or definition change; its result is
 borrowed immutable input to measurement and rendering. Without it, that input
 is the source envelope. A renderer receives

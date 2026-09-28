@@ -1,7 +1,7 @@
 ;; Portable view data shared by the base and head implementations of view.
 (import (only (foundation edoc) elibrary))
 (elibrary (core descriptor)
-  (export basis children focus generation head? kind make options owner parent references schema sequence source state valid? with)
+  (export basis children commands focus generation head? kind make options owner parent references schema sequence source state valid? with)
   (import (except (rnrs) parent) (prefix (foundation datum) datum:))
   (define keys '(source kind schema parent children options generation owner sequence basis state focus))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
@@ -29,6 +29,14 @@
 
   (edoc "Read the portable view's options field without a state lookup." (d list "descriptor") (returns any))
   (define (options d) (field d 'options))
+
+  (edoc "Read explicit named command targets, each (name view action arguments)." (d list "descriptor") (returns list))
+  (define (commands d) (cond [(assq 'commands (options d)) => cdr] [else '()]))
+  (define (commands? xs)
+    (and (list? xs)
+      (for-all (lambda (x) (and (list? x) (= (length x) 4) (symbol? (car x))
+                             (id? (cadr x) '(model)) (symbol? (caddr x)) (list? (cadddr x)))) xs)
+      (unique? (map car xs))))
 
   (edoc "Read the portable view's generation field without a state lookup." (d list "descriptor") (returns any))
   (define (generation d) (field d 'generation))
@@ -65,6 +73,7 @@
          (unique? (map car (children d))) (unique? (map cadr (children d)))
          (list? (options d)) (for-all (lambda (p) (and (pair? p) (symbol? (car p)))) (options d))
          (unique? (map car (options d)))
+         (commands? (commands d))
          (natural? (generation d)) (or (not (owner d)) (head? (owner d)))
          (natural? (sequence d)) (or (not (basis d)) (natural? (basis d)))
          (or (not (focus d)) (id? (focus d) '(model)))))
@@ -80,4 +89,6 @@
     (datum:copy (map (lambda (p) (or (assq (car p) changes) p)) d)))
 
   (edoc "The source and child resource references of a descriptor." (d list "descriptor") (returns list))
-  (define (references d) (append (if (source d) (list (source d)) '()) (map cadr (children d)))))
+  (define (references d)
+    (fold-left (lambda (out id) (if (member id out) out (append out (list id)))) '()
+      (append (if (source d) (list (source d)) '()) (map cadr (children d)) (map cadr (commands d))))))
