@@ -82,3 +82,33 @@
       (head-read ui `(begin
                        (for-each head:forget-buffer! (filter (lambda (b) (equal? ',root (head:buffer-fact b 'widget-id #f))) (head:buffers)))
                        (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b) (list root-a root-b)))
+
+;; Exercise the real head bridge and connection-owned cleanup without another
+;; terminal process. The provider sees raw local metadata, never fitted text.
+(let* ([source (head-read a '(begin (kernel:load-modules! '("document")) (document:create-source! 'transient)))]
+       [ref (head-read a '(let ([b (head:register-view! "catalogue-wire" void)]) (document:reference b)))]
+       [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)]
+       [temporary (connect)])
+  (define (count query)
+    (let ([v (cdr (assq 'value (rpc head 'collection-summary query)))])
+      (and (eq? (cdr (assq 'status v)) 'ready) (cdr (assq 'count v)))))
+  (define (retire id)
+    (let* ([packet (rpc head 'model-read (list id))] [r (caddar (cadr packet))])
+      (rpc head 'model-retire id (cdr (assq 'revision r)))))
+  (test:await 'catalogue-wire-local (lambda () (equal? (count query) 1)))
+  (test:check 'catalogue-wire-cannot-resolve-another-heads-token
+    (head-read b `(begin (kernel:load-modules! '("document")) (document:resolve! ',ref))) #f)
+  (head-read a `(begin (head:forget-buffer! (document:resolve! ',ref)) #t))
+  (test:await 'catalogue-wire-removal (lambda () (equal? (count query) 0)))
+  (hello temporary '(head "catalogue-wire"))
+  (receive temporary)
+  (let* ([token (rpc temporary 'catalogue-attach)]
+         [source (rpc temporary 'catalogue-source "/home" 'transient)]
+         [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)])
+    (rpc temporary 'catalogue-contribute token '((1 ((name . "catalogue-wire") (version . 0)))))
+    (test:await 'catalogue-wire-contributed (lambda () (equal? (count query) 1)))
+    (sys:close-connection! temporary)
+    (test:await 'catalogue-wire-detached (lambda () (equal? (count query) 0)))
+    (test:check 'catalogue-wire-detach-retires-contribution (count query) 0)
+    (for-each retire (list query source)))
+  (for-each retire (list query source)))

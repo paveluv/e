@@ -13,6 +13,7 @@
   '(begin
      (import (except (head edit) init!)
              (prefix (head head) head:)
+             (prefix (head document) document:)
              (prefix (state store) store:)
              (prefix (state model) model:)
              (prefix (state connection) connection:) (prefix (core port) port:)
@@ -863,4 +864,5 @@
      (include "tests/control.sps")
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
+     (include "tests/document.sps")
      (test:finish! 'app)))

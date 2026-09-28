@@ -20,10 +20,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export backups-kept blame buffer-list buffer-name close! conflict-state conflicts create! delete! discard! drop-mark! drop-property!
+  (export archive! backups-kept blame buffer-list buffer-name close! conflict-state conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
-          mark marks properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision
+          mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision
           rewrite! set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
           snapshot-state state subscribe! trash-retention undo! undo-authors undo-labels unsubscribe!
           valid-import? validate-edit-context validate-properties view visible? visit! watch!)
@@ -75,6 +75,7 @@
     (fields (mutable label)
             (mutable text)       ; immutable line vector, per (text)
             (mutable revision)
+            (mutable version)    ; metadata/lifecycle witness, independent of text revision
             (mutable deltas)     ; entries, newest first: see make-entry
             (mutable marks)      ; (((actor . name) . position) ...)
             (mutable undo)       ; undo groups, most recent operation first
@@ -97,6 +98,7 @@
             (mutable buffers)    ; id -> buffer; replaced once during restore
             (mutable next-id)
             (mutable closing?)
+            (mutable epoch)
             deliveries))         ; ordered callbacks, shared kernel mechanism
 
   (define the-store
@@ -104,7 +106,7 @@
       (lambda ()
         (make-store (make-mutex)
                     (make-eqv-hashtable)
-                    1 #f (kernel:make-delivery-queue)))))
+                    1 #f 0 (kernel:make-delivery-queue)))))
 
   (define (current-store) (unbox the-store))
 
@@ -207,7 +209,7 @@
   (define (copy-buffer b)
     ;; Text, entries and property cells are immutable. Planning owns every
     ;; mutable record, including history groups and settled conflicts.
-    (make-buffer (buffer-label b) (buffer-text b) (buffer-revision b)
+    (make-buffer (buffer-label b) (buffer-text b) (buffer-revision b) (buffer-version b)
       (buffer-deltas b) (buffer-marks b)
       (map (lambda (g)
              (make-undo-group (undo-group-id g) (undo-group-actor g) (undo-group-key g)
@@ -335,7 +337,7 @@
            [hidden? (cond [(assq 'trashed updates) => (lambda (entry) (and (cdr entry) #t))] [else #f])]
            [name (unique-name name #f hidden?)] [id (store-next-id s)])
       (store-next-id-set! s (+ id 1))
-      (let ([b (make-buffer name text 0 '() '() '() '() #f #f #f '() #f)])
+      (let ([b (make-buffer name text 0 0 '() '() '() '() #f #f #f '() #f)])
         (install-properties! b updates)
         (refresh-edit-facts! b #f)
         (hashtable-set! (store-buffers s) id b))
@@ -829,7 +831,7 @@
       (for-each
         (lambda (state)
           (let* ([state (datum:copy state)] [facts (list-ref state 4)]
-                 [b (make-buffer (caddr state) (cadddr state) (cadr state) '() '() '() '() #f #f
+                 [b (make-buffer (caddr state) (cadddr state) (cadr state) 0 '() '() '() '() #f #f
                       (cond [(assq 'modified-at facts) => cdr] [else #f]) '() #f)])
             (install-properties! b (filter (lambda (entry) (not (eq? (car entry) 'modified-at))) facts))
             (refresh-edit-facts! b #f)
@@ -852,6 +854,54 @@
     (locked
       (lambda ()
         (vector->list (hashtable-keys (store-buffers (current-store)))))))
+
+  (define (metadata-row id b)
+    ;; Caller holds the store lock. No baseline, text or journal is copied.
+    (and b
+      (append (list (cons 'id id) (cons 'version (buffer-version b)) (cons 'revision (buffer-revision b))
+                (cons 'name (buffer-label b)) (cons 'lines (vector-length (buffer-text b)))
+                (cons 'flags (property:flags (list (cons 'conflicts (length (unsettled-conflicts b)))
+                                               (cons 'read-only (property-value b 'read-only #f))))))
+        (edit-facts b)
+        (map (lambda (key) (cons key (property-value b key (if (eq? key 'audience) 'all #f))))
+          '(file mode audience trashed backup disposable internal)))))
+
+  (edoc "Read coherent buffer metadata without contents: (epoch ((id metadata-or-false) ...)). Omit IDs for the whole catalogue; selected missing IDs have false metadata. Version fences content, fact and lifecycle changes."
+        (selection (list-of list) "optional list of numeric IDs") (returns list))
+  (define (metadata . selection)
+    (unless (and (<= (length selection) 1)
+              (or (null? selection) (and (list? (car selection)) (for-all (lambda (id) (integer-at-least? id 1)) (car selection)))))
+      (error 'metadata "expected a list of buffer IDs"))
+    (locked (lambda ()
+              (let ([s (current-store)])
+                (list (store-epoch s)
+                  (map (lambda (id) (list id (datum:copy (metadata-row id (hashtable-ref (store-buffers s) id #f)))))
+                    (if (null? selection) (vector->list (hashtable-keys (store-buffers s))) (car selection))))))))
+
+  (edoc "Guard an archive action by ID and metadata version. Trash retains documents and deletes disposable output; restore retains history and allocates a unique name; delete only removes an archive, never its disk file. Return (values status current-metadata-or-false)."
+        (actor actor "caller") (id integer "buffer ID") (version integer "reviewed metadata version")
+        (action (one-of trash restore delete) "archive operation"))
+  (define (archive! actor id version action)
+    (unless (and (integer-at-least? id 1) (integer-at-least? version 0) (memq action '(trash restore delete)))
+      (error 'archive! "invalid archive action"))
+    (transact! actor
+      (lambda (actor)
+        (let* ([b (hashtable-ref (store-buffers (current-store)) id #f)]
+               [trashed (and b (property-value b 'trashed #f))])
+          (define (reply status) (values status (datum:copy (metadata-row id (hashtable-ref (store-buffers (current-store)) id #f)))))
+          (cond [(not b) (reply 'unavailable)]
+            [(not (= version (buffer-version b))) (reply 'stale)]
+            [(or (not (actor:in-audience? actor (property-value b 'audience 'all))) (property-value b 'internal #f)) (reply 'refused)]
+            [(if (eq? action 'trash) trashed (not trashed)) (reply 'refused)]
+            [else
+             (cond [(or (eq? action 'delete) (and (eq? action 'trash) (property-value b 'disposable #f))) (delete-buffer! actor id)]
+               [else
+                (let ([updates (if (eq? action 'restore) '((trashed . #f) (backup . #f))
+                                 (list (list 'trashed (time-second (current-time 'time-utc)) actor)))])
+                  (install-properties! b updates)
+                  (when (eq? action 'restore) (rename-buffer! actor id (buffer-label b)))
+                  (for-each (lambda (p) (enqueue-event! `(property ,id ,(car p) ,actor))) updates))])
+             (reply 'applied)])))))
 
   (edoc "Whether a buffer id is live."
         (id integer "the buffer id")
@@ -3156,6 +3206,9 @@
   (define (deliver-event! event)
     ;; Caller holds the mutation lock. Capture recipients at commit;
     ;; resolve their registrations again when the shared queue delivers.
+    (let* ([s (current-store)] [epoch (+ 1 (store-epoch s))] [b (hashtable-ref (store-buffers s) (cadr event) #f)])
+      (store-epoch-set! s epoch)
+      (when b (buffer-version-set! b epoch)))
     (let ([tokens
            (kernel:call-with-runtime-registrations
              (lambda ()

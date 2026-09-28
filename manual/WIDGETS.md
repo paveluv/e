@@ -67,6 +67,40 @@ TUI. Creation rows show italic names and an italic `[create]` suffix;
 pending cells show `[Pending]`. Semantic row roles compose with the normal
 choice/hover styles. Providers supply facts, never terminal widths or ANSI.
 
+## Buffer catalogue
+
+Create a head's source with `(document:create-source! 'transient)`, then use
+`collection:create!` and `table:create!` as for other collections. Shared
+documents, Backups and Trash come from one subscribed base inventory.
+Case-insensitive filters search names and file paths, including `~/` spelling.
+Compound sorts apply to live rows; archives follow in separate newest-first
+sections. The sortable columns are `modified`, `flags`, `name`, `lines`,
+`mode` and `file`. Timestamps are raw nanoseconds, flags are `buffer-flag`
+enumerations, and paths keep their absolute identity. Format them in the head.
+Generated apps and widgets have no Lines value.
+
+Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
+for widget hosts, and `(local actor attachment token)` for remaining local
+buffers. `document:reference` obtains a listed buffer's key;
+`document:resolve!` resolves it in the owning head, adopting shared text as
+needed. Foreign or retired local tokens return false. A retained widget view
+can be mounted with `window:show-widget!`. Local metadata is sent in bounded,
+coalesced batches; repaint, hover and generated rows are never contributions.
+Disconnect removes the attachment's contribution. Persistent source recipes
+rebuild their inventory, not opaque local objects, after restart.
+
+`store:metadata` reads a coherent `(epoch ((id metadata-or-false) ...))`
+without copying text or history; an optional list restricts it to those IDs.
+Each row includes a `version` witness for content, facts and lifetime.
+`store:archive!` takes actor, ID, reviewed version and `trash`, `restore` or
+`delete`, returning status and current metadata. It refuses stale versions
+and incompatible states atomically. Unrelated buffer changes do not invalidate
+the witness. Restoration retains history and uses the usual unique-name
+policy; permanent deletion requires an archive and never deletes a disk file.
+Validate the query basis at dispatch as well. A refusal refreshes the view
+without retrying the action. The host still retires displayed buffers through
+`head:forget-buffer!`, which moves windows to surviving buffers.
+
 ## Prepared collections
 
 `collection:create!` creates a query over a source model, filter and compound

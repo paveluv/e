@@ -300,7 +300,7 @@
         (thunk thunk "the head")
         (returns integer "the exit status"))
   (define (call-with-runtime thunk)
-    (let ([modules '("activity" "actor" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "interaction" "journal" "log" "model" "path" "port" "row"
+    (let ([modules '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "git" "https" "identity" "interaction" "journal" "log" "model" "path" "port" "row"
                      "property" "range" "reference" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "widget" "wire")])
       (kernel:pin-modules! (cons* "client" "cache" modules))
       (guard (ex [(stale-base? ex) (report-stale! (stale-status ex)) 1]
