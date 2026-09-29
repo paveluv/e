@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export create-view! delete! expression! history! insert! move! page! paste! register! scroll! select! set-mark! transfer!)
+  (export create-view! delete! expression! format! history! insert! move! page! paste! register! replace-region! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -211,6 +211,26 @@
     (let ([group (mount-group m)])
       (and group (eq? (car group) kind) (= (or (view:basis d) (text-control:revision source)) (text-control:revision source))
         (equal? (cadr group) (typing-basis d)))))
+
+  (define (current-source source)
+    (let ([m (text-control:mirror source)])
+      (list (cons 'id (list 'buffer (text-source:id m))) (cons 'revision (text-source:revision m)) (cons 'value (text-source:lines m)))))
+  (define (rewrite! id source d old proposed positions properties label)
+    (let-values ([(span replacement) (text:difference old proposed)])
+      (let* ([document (text-source:id (text-control:mirror source))] [m (mounted id)]
+             [basis (or (view:basis d) (text-control:revision source))]
+             [properties (filter (lambda (p) (not (equal? (store:property document (car p) #f) (cdr p)))) properties)])
+        (mount-group-set! m #f) (mount-goal-set! m #f)
+        (if (and (equal? old proposed) (null? properties))
+          (let ([ps (text-source:rebase positions (text-source:changes (text-control:mirror source) basis (text-control:revision source)))])
+            (unless ps (refuse "Editor selection history is unavailable"))
+            (unless (= (view:sequence d) (view:sequence (interaction:snapshot id))) (refuse "The editor selection changed"))
+            (publish! id source d ps (cadddr (state d)) #t))
+          (let ([reload? (document:check! head:ui-actor document)])
+            (text-control:submit! id source d old basis span replacement
+              (list (list 'editor head:ui-actor id (gensym->unique-string (gensym))) label (cons 'undo properties)) positions
+              (lambda (ps) (next-state id (current-source source) d ps (cadddr (state d)) #t)))
+            (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))))
   (define (replace! id source d selection replacement typing? . accepted)
     (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
       (let* ([m (mounted id)] [old (text-control:basis-text source d)] [basis (or (view:basis d) (text-control:revision source))]
@@ -225,8 +245,7 @@
                           (lambda (ps)
                             (let* ([mirror (text-control:mirror source)]
                                    [top (text-source:rebase (list (caddr (state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
-                              (next-state id (list (cons 'id (list 'buffer document))
-                                               (cons 'revision (text-source:revision mirror)) (cons 'value (text-source:lines mirror))) d
+                              (next-state id (current-source source) d
                                 (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))))])
           (mount-goal-set! m #f)
           (when (and settled? typing? (text-control:current? id source d))
@@ -255,6 +274,43 @@
             (cond [(= end (string-length text)) (reverse (cons (substring text start end) out))]
               [(char=? (string-ref text end) #\newline) (loop (+ end 1) (+ end 1) (cons (substring text start end) out))]
               [else (loop start (+ end 1) out)])) typing?))))
+
+  (edoc "Replace an explicit range at an editor's declared text basis as one undo action, placing the caret after the replacement."
+        (id model "editor view") (start position "first endpoint") (end position "last endpoint") (text string "replacement"))
+  (define (replace-region! id start end text)
+    (unless (and (position? start) (position? end) (string? text)) (error 'replace-region! "invalid replacement"))
+    (let-values ([(source d) (text-control:context id 'editor)] [(lines trailing?) (text:from-string text)])
+      (replace! id source d (list start end) (append (vector->list lines) (if trailing? '("") '())) #f)))
+
+  (edoc "Compute indentation or formatting through the document's mode and admit it against the original source revision. Preserve logical selections through the accepted result; callbacks cannot retarget a newer view."
+        (id model "editor view") (operation (one-of indent-line indent-region indent-buffer indent-expression tab format-region format-buffer) "transformation"))
+  (define (format! id operation)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let* ([old (text-control:basis-text source d)] [ps (list-head (state d) 3)]
+             [document (text-source:id (text-control:mirror source))] [name (store:property document 'mode #f)]
+             [mode (and name (mode:find name))]
+             [input (mode:source old (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode)))]
+             [span (text-source:span ps)] [last (- (vector-length old) 1)])
+        (when (and (memq operation '(indent-region format-region)) (not (cadddr (state d)))) (refuse "The mark is not set"))
+        (let-values ([(from to)
+                      (case operation
+                        [(tab indent-line) (values (caar ps) (caar ps))]
+                        [(indent-buffer format-buffer) (values 0 last)]
+                        [(indent-region format-region) (values (car (text:span-start span)) (car (text:span-end span)))]
+                        [(indent-expression) (let-values ([(a b) (expression:forward old (car ps))])
+                                               (unless a (refuse "No expression after the caret")) (values (+ (car a) 1) (car b)))]
+                        [else (error 'format! "invalid transformation" operation)])])
+          (when (and (<= from to) (or (not (eq? operation 'tab)) (and name (mode:indent-on-tab? name))))
+            (if (memq operation '(format-region format-buffer))
+              (let* ([formatter (and name (mode:formatter name))]
+                     [lines (and formatter (formatter input from to))])
+                (unless lines (refuse "No formatter result for these lines"))
+                (unless (and (list? lines) (for-all text:line? lines)) (error 'format! "invalid formatter lines" lines))
+                (let* ([out (text:splice old from (+ to 1) lines)] [next (if (zero? (vector-length out)) '#("") out)])
+                  (rewrite! id source d old next ps (if (= to last) '((trailing . #t)) '()) "Format text")))
+              (let-values ([(next points) (mode:indent name input from to (and (memq operation '(tab indent-line)) #t) ps)])
+                (unless next (refuse "No indenter for this mode"))
+                (rewrite! id source d old next points '() "Indent text"))))))))
 
   (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish."
         (id model "editor view") (operation (one-of copy cut line forward backward) "transfer") (publish procedure "(text accumulate?)"))
@@ -429,4 +485,5 @@
         ("C-M-f" forward-expression) ("C-M-b" backward-expression) ("C-M-u" up-expression) ("C-M-d" down-expression)
         ("C-M-n" next-list) ("C-M-p" previous-list) ("C-M-a" beginning-of-form) ("C-M-e" end-of-form)
         ("C-M-@" mark-expression) ("C-M-h" mark-form) ("C-M-t" transpose-expressions)
-        ("C-M-k" kill-expression) ("C-M-BACKSPACE" backward-kill-expression)))))
+        ("C-M-k" kill-expression) ("C-M-BACKSPACE" backward-kill-expression)
+        ("TAB" indent-tab) ("C-M-q" indent-expression) ("C-M-\\" indent-region)))))

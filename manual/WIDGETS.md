@@ -839,6 +839,14 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   `(edit:transpose-expressions! id)`. Their ordinary Control-Meta bindings work
   inside nested editors. All views share expression analysis by immutable text
   snapshot. The `expression:` query API now accepts line vectors, not buffers.
+- Indentation and formatting accept a view too: `edit:indent-line!`,
+  `edit:indent-region!`, `edit:indent-buffer!`, `edit:indent-expression!`,
+  `edit:format-region!` and `edit:format-buffer!`. Tab uses the mode's existing
+  opt-in and cycles indentation stops. Transformations preserve the logical
+  selection; formatting the last line records the final-newline flag in the
+  same undo action. Providers compute against a captured `mode:source`.
+- `edit:replace-region-text! id start end text` replaces an explicit range at
+  the view's declared text basis, with the caret following the accepted edit.
 
 Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
 use those commands. Shift-arrows extend selection; Control-Space sets the
@@ -855,6 +863,6 @@ refuse instead of clamping an edit to different text. Read-only sources remain
 navigable. Empty insertion and deletion at a document boundary are inert.
 
 Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; bulk-region commands, mode indentation,
+still use their existing host; bulk-region commands, mode-specific editing bindings,
 search/conflict decorations and window chrome have not
 yet moved to the nested editor.

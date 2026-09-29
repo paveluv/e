@@ -21,7 +21,7 @@
   (export add-context! (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
-          indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
+          indent indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
           key-context key-contexts line-styles
           memoize-analysis mode? (rename (mode-name name))
           (rename (buffer-mode-name name-of)) (rename (mode-of of))
@@ -383,6 +383,36 @@
         (returns (or procedure #f)))
   (define (indenter name)
     (let ([entry (indenter-entry name)]) (and entry (cadr entry))))
+
+  (edoc "Compute indentation and logical positions against an immutable source, without editing. Cycle chooses the next stop and pads blank lines; otherwise use the nearest stop and leave blank lines unchanged. Returns proposed lines and positions, or false lines without an indenter."
+        (name (or mode #f) "mode") (source (record presentation-source) "source snapshot") (from integer "first row") (to integer "last row")
+        (cycle? boolean "cycle stops") (positions list "logical positions to preserve") (effects internal))
+  (define (indent name source from to cycle? positions)
+    (define (leading line)
+      (let loop ([i 0]) (if (and (< i (string-length line)) (memv (string-ref line i) '(#\space #\tab))) (loop (+ i 1)) i)))
+    (define (column? n) (and (integer? n) (exact? n) (>= n 0)))
+    (let* ([proc (and name (indenter name))] [lines (source-lines source)] [last (min to (- (vector-length lines) 1))])
+      (if (not proc) (values #f positions)
+        (let ([columns (proc source from last)] [out lines])
+          (unless (and (list? columns) (<= (length columns) (+ 1 (- last from)))
+                    (for-all (lambda (c) (or (not c) (column? c) (and (list? c) (pair? c) (for-all column? c)))) columns))
+            (error 'indent "invalid indenter result" columns))
+          (let loop ([row from] [columns columns])
+            (when (pair? columns)
+              (let* ([line (vector-ref lines row)] [lead (leading line)] [stops (car columns)]
+                     [column (if (pair? stops)
+                               (if cycle? (or (find (lambda (n) (> n lead)) stops) (car stops))
+                                 (fold-left (lambda (best n) (if (< (abs (- n lead)) (abs (- best lead))) n best)) (car stops) (cdr stops))) stops)]
+                     [next (if (and column (or cycle? (< lead (string-length line))))
+                             (string-append (make-string column #\space) (substring line lead (string-length line))) line)])
+                (unless (string=? next line)
+                  (when (eq? out lines) (set! out (vector-copy lines)))
+                  (vector-set! out row next))
+                (when (and column (or cycle? (< lead (string-length line))))
+                  (set! positions (map (lambda (p) (if (= (car p) row)
+                                                     (cons row (if (<= (cdr p) lead) column (+ (cdr p) (- column lead)))) p)) positions)))
+                (loop (+ row 1) (cdr columns)))))
+          (values out positions)))))
 
   (edoc "Whether TAB runs a mode's indenter."
         (name string "the mode's name")

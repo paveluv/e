@@ -556,14 +556,18 @@
       [(id) (editor:expression! id 'transpose)]))
 
   (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs."
-        (edits))
-  (define (indent-expression!)
-    (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
-      (cond [(not end) (set-message! "No expression after point")]
-            [(< (car start) (car end))
-             (when (indent-rows! (+ (car start) 1) (car end))
-               (set! message (format "Indented ~a line~a" (- (car end) (car start)) (if (= (- (car end) (car start)) 1) "" "s"))))]
-            [else (set! message "Nothing to indent below the first line")])))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define indent-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
+         (cond [(not end) (set-message! "No expression after point")]
+           [(< (car start) (car end))
+            (when (indent-rows! (+ (car start) 1) (car end))
+              (set! message (format "Indented ~a line~a" (- (car end) (car start)) (if (= (- (car end) (car start)) 1) "" "s"))))]
+           [else (set! message "Nothing to indent below the first line")]))]
+      [(id) (editor:format! id 'indent-expression)]))
 
   (edoc "Move point one character left, crossing to the end of the previous line.")
   (define (move-left!)
@@ -902,19 +906,23 @@
                   (text:make-span sr sc er ec) '("")))
 
   (edoc "Replace the text between two ordered points with new text, in one structural edit."
+        (id model "editor view; omission is the legacy window adapter")
         (start position "where the replaced text starts")
         (end position "where it ends")
         (text string "the replacement")
         (edits))
-  (define (replace-region-text! start end text)
-    ;; Replace one ordered buffer range in a single structural operation.
-    ;; Bulk editors use this instead of rebuilding a line once per match.
-    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-           [parts (split-inserted-lines text)])
-      (with-recorded-edit "replace region"
-        (parameterize ([edit-source source])
-          (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
-        (changed!))))
+  (define replace-region-text!
+    (case-lambda
+      [(start end text)
+       ;; Replace one ordered buffer range in a single structural operation.
+       ;; Bulk editors use this instead of rebuilding a line once per match.
+       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+              [parts (split-inserted-lines text)])
+         (with-recorded-edit "replace region"
+           (parameterize ([edit-source source])
+             (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
+           (changed!)))]
+      [(id start end text) (editor:replace-region! id start end text)]))
 
   (edoc "Replace the text between two ordered points with text computed against a basis, in one structural edit that leaves point where it was: the basis, head:edit-basis taken before the computation, lets the store project point and mark into the revision it accepts."
         (basis list "the edit basis the text was computed against")
@@ -1338,160 +1346,66 @@
   (define (mode-source b lines)
     (mode:source lines (map (lambda (key) (cons key (head:buffer-fact b key #f))) (mode:required-facts (mode:of b)))))
 
-  (define (leading-blanks s)
-    (let loop ([i 0])
-      (if (and (< i (string-length s))
-               (memv (string-ref s i) '(#\space #\tab)))
-          (loop (+ i 1))
-          i)))
+  (define (indent-rows! from to . cycle?)
+    (let* ([b (head:current-buffer)] [source (head:edit-basis b)]
+           [point (head:point)] [mark (head:mark)] [name (mode:name-of b)])
+      (let-values ([(lines positions) (mode:indent name (mode-source b (car source)) from to
+                                        (and (pair? cycle?) (car cycle?)) (if mark (list point mark) (list point)))])
+        (if (not lines) (begin (set! message "No indenter for this mode") #f)
+          (begin
+            (unless (eq? lines (car source))
+              (parameterize ([edit-source source] [edit-point (car positions)] [edit-mark (and mark (cadr positions))])
+                (with-recorded-edit "indent" (replace-buffer-lines! b lines) (changed!))))
+            (when (and (eq? lines (car source)) (eq? lines (head:buffer-lines b))) (head:goto! (car positions)))
+            #t)))))
 
-  (define (settle-stops col cur)
-    ;; An indenter entry resolved for a line currently at cur: the
-    ;; nearest stop (ties leftward); a bare column stands.
-    (if (pair? col)
-        (fold-left (lambda (best s)
-                     (if (< (abs (- s cur)) (abs (- best cur))) s best))
-                   (car col) col)
-        col))
-
-  (define (cycle-stops col cur)
-    ;; TAB's resolution: the nearest stop right of cur, wrapping back
-    ;; to the first past the last.
-    (if (pair? col)
-        (or (find (lambda (s) (> s cur)) col) (car col))
-        col))
-
-  (define (apply-indent! from cols pad?)
-    ;; Rewrite the leading whitespace of rows from.. to the given
-    ;; columns (#f leaves a row, as does a whitespace-only row --
-    ;; except with pad?, which pads it out to the column: TAB on a
-    ;; blank line).  One undo entry; point and mark follow their
-    ;; line's text, landing on the indentation when they sat inside
-    ;; the old one.  -> whether anything changed.
-    (define b (head:window-buffer current-window))
-    (define v (car (edit-basis-for b)))
-    (define wanted-point (edit-point))
-    (define wanted-mark (edit-mark))
-    (define n (vector-length v))
-    (define (retabbed s col)
-      (let ([rest (string:tail s (leading-blanks s))])
-        (if (string=? rest "")
-            (if pad? (make-string col #\space) s)
-            (string-append (make-string col #\space) rest))))
-    (let ([changes
-           (let loop ([r from] [cs cols] [acc '()])
-             (if (or (null? cs) (>= r n))
-                 (reverse acc)
-                 (loop (+ r 1) (cdr cs)
-                       (if (and (car cs)
-                                (not (string=? (retabbed (vector-ref v r)
-                                                         (car cs))
-                                               (vector-ref v r))))
-                           (cons (cons r (car cs)) acc)
-                           acc))))])
-      (when (pair? changes)
-        (with-recorded-edit "indent"
-          (let ([nv (let ([o (make-vector n)])
-                      (do ([i 0 (+ i 1)]) ((= i n) o)
-                        (vector-set! o i (vector-ref v i))))]
-                [next-point-col (cdr wanted-point)]
-                [next-mark-col (and wanted-mark (cdr wanted-mark))])
-            (for-each
-              (lambda (change)
-                (let* ([row (car change)] [col (cdr change)]
-                       [old (vector-ref v row)]
-                       [lead (leading-blanks old)]
-                       [follow (lambda (c)
-                                 (if (<= c lead) col (+ c (- col lead))))])
-                  (vector-set! nv row (retabbed old col))
-                  (when (= row (car wanted-point))
-                    (set! next-point-col (follow (cdr wanted-point))))
-                  (when (and wanted-mark (= row (car wanted-mark)))
-                    (set! next-mark-col (follow (cdr wanted-mark))))))
-              changes)
-            (parameterize ([edit-point (cons (car wanted-point) next-point-col)]
-                           [edit-mark (and wanted-mark (cons (car wanted-mark) next-mark-col))])
-              (replace-buffer-lines! b nv)))
-          (changed!)))
-      (pair? changes)))
-
-  (define (indent-rows! from to)
-    ;; Indent rows [from, to] by the mode's indenter, each settling on
-    ;; the stop nearest its current indentation; -> #f without one.
-    (let ([indent (mode-tool mode:indenter)])
-      (if (not indent)
-          (begin (set! message "No indenter for this mode") #f)
-          (let* ([b (head:window-buffer current-window)]
-                 [source (head:edit-basis b)]
-                 [v (car source)]
-                 [wanted (head:point)] [selected (head:mark)]
-                 [last (min to (- (vector-length v) 1))]
-                 [cols (let settle ([r from]
-                                    [cs (indent (mode-source b v) from last)]
-                                    [acc '()])
-                         (if (null? cs)
-                             (reverse acc)
-                             (settle (+ r 1) (cdr cs)
-                                     (cons (settle-stops
-                                             (car cs)
-                                             (leading-blanks
-                                               (vector-ref v r)))
-                                           acc))))])
-            (parameterize ([edit-source source] [edit-point wanted] [edit-mark selected])
-              (apply-indent! from cols #f))
-            #t))))
-
-  (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation."
-        (edits))
-  (define (indent-line!)
-    ;; TAB's work: indent the current line, cycling through its stops
-    ;; -- the nearest stop right of the current indentation, wrapping
-    ;; -- and land on the indentation (a blank line pads out to it);
-    ;; point already past it stays with its text.
-    (let ([indent (mode-tool mode:indenter)])
-      (if (not indent)
-          (set! message "No indenter for this mode")
-          (let* ([b (head:window-buffer current-window)]
-                 [source (head:edit-basis b)]
-                 [wanted (head:point)] [selected (head:mark)]
-                 [row (car wanted)]
-                 [lead (leading-blanks (vector-ref (car source) row))]
-                 [cols (indent (mode-source b (car source)) row row)]
-                 [col (and (pair? cols)
-                           (cycle-stops (car cols) lead))])
-            (when col
-              (unless (parameterize ([edit-source source] [edit-point wanted] [edit-mark selected])
-                        (apply-indent! row (list col) #t))
-                (when (and (eq? (car source) (head:buffer-lines b)) (< point-col col))
-                  (set! point-col col)))))))
-    (void))
+  (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation." (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define indent-line!
+    (case-lambda
+      [()
+       (indent-rows! point-row point-row #t)
+       (void)]
+      [(id) (editor:format! id 'indent-line)]))
 
   (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing."
-        (edits))
-  (define (indent-tab!)
-    ;; TAB: the mode indents when it asked to; otherwise nothing.
-    (when (mode-tool mode:indent-on-tab?)
-      (indent-line!)))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define indent-tab!
+    (case-lambda
+      [()
+       ;; TAB: the mode indents when it asked to; otherwise nothing.
+       (when (mode-tool mode:indent-on-tab?)
+         (indent-line!))]
+      [(id) (editor:format! id 'tab)]))
 
   (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop."
-        (edits))
-  (define (indent-region!)
-    (if (not mark-active?)
-        (set! message "The mark is not set now")
-        (let ([from (min mark-row point-row)]
-              [to (max mark-row point-row)])
-          (when (indent-rows! from to)
-            (set! message (format "Indented ~a line~a" (+ (- to from) 1)
-                                  (if (= from to) "" "s"))))))
-    (void))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define indent-region!
+    (case-lambda
+      [()
+       (if (not mark-active?)
+         (set! message "The mark is not set now")
+         (let ([from (min mark-row point-row)]
+               [to (max mark-row point-row)])
+           (when (indent-rows! from to)
+             (set! message (format "Indented ~a line~a" (+ (- to from) 1)
+                                   (if (= from to) "" "s"))))))
+       (void)]
+      [(id) (editor:format! id 'indent-region)]))
 
   (edoc "Indent every line of the current buffer by the mode's indenter."
-        (edits))
-  (define (indent-buffer!)
-    (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
-      (when (indent-rows! 0 (- n 1))
-        (set! message (format "Indented ~a lines" n))))
-    (void))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define indent-buffer!
+    (case-lambda
+      [()
+       (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
+         (when (indent-rows! 0 (- n 1))
+           (set! message (format "Indented ~a lines" n))))
+       (void)]
+      [(id) (editor:format! id 'indent-buffer)]))
 
   (define (replace-rows! from to lines . properties)
     ;; Replace rows [from, to] of the current buffer with lines (a
@@ -1546,23 +1460,31 @@
               #t]))])))
 
   (edoc "Rewrite the lines between mark and point with the mode's formatter."
-        (edits))
-  (define (format-region!)
-    (if (not mark-active?)
-        (set! message "The mark is not set now")
-        (let ([from (min mark-row point-row)]
-              [to (max mark-row point-row)])
-          (when (format-rows! from to)
-            (set! message "Formatted region"))))
-    (void))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define format-region!
+    (case-lambda
+      [()
+       (if (not mark-active?)
+         (set! message "The mark is not set now")
+         (let ([from (min mark-row point-row)]
+               [to (max mark-row point-row)])
+           (when (format-rows! from to)
+             (set! message "Formatted region"))))
+       (void)]
+      [(id) (editor:format! id 'format-region)]))
 
   (edoc "Rewrite the whole current buffer with the mode's formatter."
-        (edits))
-  (define (format-buffer!)
-    (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
-      (when (format-rows! 0 (- n 1))
-        (set! message (format "Formatted ~a lines" n))))
-    (void))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define format-buffer!
+    (case-lambda
+      [()
+       (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
+         (when (format-rows! 0 (- n 1))
+           (set! message (format "Formatted ~a lines" n))))
+       (void)]
+      [(id) (editor:format! id 'format-buffer)]))
 
   ;;; Viewport commands -------------------------------------------------------
 
@@ -1778,7 +1700,9 @@
                         (cons 'up-expression up-expression!) (cons 'down-expression down-expression!)
                         (cons 'next-list next-list!) (cons 'previous-list previous-list!) (cons 'beginning-of-form beginning-of-form!) (cons 'end-of-form end-of-form!)
                         (cons 'mark-expression mark-expression!) (cons 'mark-form mark-form!) (cons 'transpose-expressions transpose-expressions!)
-                        (cons 'kill-expression kill-expression!) (cons 'backward-kill-expression backward-kill-expression!)))
+                        (cons 'kill-expression kill-expression!) (cons 'backward-kill-expression backward-kill-expression!)
+                        (cons 'indent-tab indent-tab!) (cons 'indent-expression indent-expression!) (cons 'indent-region indent-region!)
+                        (cons 'indent-line indent-line!) (cons 'indent-buffer indent-buffer!) (cons 'format-region format-region!) (cons 'format-buffer format-buffer!)))
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
     ;; Presentation mode is captured with the record, not read on delivery.
