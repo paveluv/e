@@ -456,20 +456,20 @@
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
-        (access (list-of any) "write access, at most one"))
+        (access (list-of any) "optional write access, then coherent (revision . facts) review"))
   (define (reload! actor id lines facts . access)
-    (unless (<= (length access) 1) (error 'reload! "expected one write access"))
-    (apply values (mutate actor id 'reload (list lines facts))))
+    (unless (<= (length access) 2) (error 'reload! "expected access and optional reviewed state"))
+    (apply values (mutate actor id 'reload (append (list lines facts) (if (= (length access) 2) (list (cadr access)) '())))))
 
   (edoc "Reread a buffer from its file through the base, the disk's text one undoable edit settling the pending conflicts: (values status detail), applied with the revision."
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
-        (access (list-of any) "write access, at most one"))
+        (access (list-of any) "optional write access, then coherent (revision . facts) review"))
   (define (reread! actor id lines facts . access)
-    (unless (<= (length access) 1) (error 'reread! "expected one write access"))
-    (apply values (mutate actor id 'reread (list lines facts))))
+    (unless (<= (length access) 2) (error 'reread! "expected access and optional reviewed state"))
+    (apply values (mutate actor id 'reread (append (list lines facts) (if (= (length access) 2) (list (cadr access)) '())))))
 
   (edoc "Settle a reload conflict through the base: (values status detail)."
         (actor actor "the actor identity")

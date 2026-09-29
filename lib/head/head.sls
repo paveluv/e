@@ -92,7 +92,7 @@
     store-resolve! store-resolve-picks! store-rewrite!
     sync-foreign-edits! tile! tool-buffer! transfer-split!
     typed-text ui-actor view-append! view-buffer? view-replace!
-    view-review! visit-file! wait-for-frame! wake-main!
+    view-review!  wait-for-frame! wake-main!
     weighted-first window window-at window-auto-scrollbar-set!
     window-buffer window-buffer-set! window-button-at
     window-buttons window-buttons-width window-content-width
@@ -2177,14 +2177,6 @@
        (new-buffer! name '("") '())]
       [(name lines facts)
        (require-store-buffer! (store:create! ui-actor name lines (complete-buffer-facts facts)))]))
-
-  (edoc "Visit a file as a shared buffer, reusing one already visiting it: (values buffer created?)."
-        (name string "the buffer name")
-        (lines vector "the lines read")
-        (facts list "the file facts"))
-  (define (visit-file! name lines facts)
-    (let-values ([(id created?) (store:visit! ui-actor name lines (complete-buffer-facts facts))])
-      (values (require-store-buffer! id) created?)))
 
   (define (complete-buffer-facts facts)
     ;; Publish initial content and caller facts before callbacks. Fill only

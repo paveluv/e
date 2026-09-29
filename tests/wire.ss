@@ -2228,7 +2228,7 @@
                              (make-list 2
                                (list (if existing? '#("disk") '#("")) 0
                                      (list (cons 'file path) (cons 'base (if existing? "disk\n" ""))
-                                           (cons 'trailing existing?) '(mode . #f) '(mode-auto . #t) '(wrap . default) '(modified . #f))
+                                           (cons 'trailing existing?) 'mode 'mode-auto 'wrap '(modified . #f))
                                      (if existing? '#("agent disk") '#("agent ")) "scheme" #f
                                      (if existing? "disk\n" "") #t))
                              '((agent "opening")) (if existing? "disk\n" (eof-object))

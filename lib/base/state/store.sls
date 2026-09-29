@@ -2677,15 +2677,17 @@
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit: base, stamp, trailing")
-        (access* (list-of any) "write access, at most one"))
+        (access* (list-of any) "optional write access, then coherent (revision . facts) review; stale review refuses atomically"))
   (define (reload! actor id lines facts . access*)
-    (unless (<= (length access*) 1) (error 'reload! "expected one write access" access*))
+    (unless (<= (length access*) 2) (error 'reload! "expected access and optional reviewed state" access*))
     (let ([disk (text:normalize lines)] [updates (datum:copy (writable-properties facts))]
-          [access (own-write-access (and (pair? access*) (car access*)))])
+          [access (own-write-access (and (pair? access*) (car access*)))]
+          [review (and (= (length access*) 2) (datum:copy (cadr access*)))])
       (transact! actor
         (lambda (actor)
           (cond
             [(write-refusal id access) => (lambda (reason) (values 'refused reason))]
+            [(and review (not (reviewed-state? (buffer-of 'reload id) review))) (values 'refused 'stale-review)]
             [else
              (guard (ex [(conflict-history? ex) (values 'refused 'pending-edits)])
                (plan-buffer! id
@@ -2847,16 +2849,18 @@
         (id integer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit: base, stamp, trailing")
-        (access* (list-of any) "write access, at most one"))
+        (access* (list-of any) "optional write access, then coherent (revision . facts) review; stale review refuses atomically"))
   (define (reread! actor id lines facts . access*)
-    (unless (<= (length access*) 1) (error 'reread! "expected one write access" access*))
+    (unless (<= (length access*) 2) (error 'reread! "expected access and optional reviewed state" access*))
     (let ([disk (text:normalize lines)]
           [updates (datum:copy (writable-properties facts))]
-          [access (own-write-access (and (pair? access*) (car access*)))])
+          [access (own-write-access (and (pair? access*) (car access*)))]
+          [review (and (= (length access*) 2) (datum:copy (cadr access*)))])
       (transact! actor
         (lambda (actor)
           (cond
             [(write-refusal id access) => (lambda (reason) (values 'refused reason))]
+            [(and review (not (reviewed-state? (buffer-of 'reread! id) review))) (values 'refused 'stale-review)]
             [else
              (let* ([b (buffer-of 'reread! id)]
                     [text (buffer-text b)]

@@ -72,6 +72,84 @@
       (list (field (ready q2) 'count) (field (ready other) 'count)) '(1 1))
     (retire! other))
   (delete-file (path "fresh.txt"))
+  ;; Canonical visiting invalidates inventory even outside Finder. Creation
+  ;; logs each real ancestor once and mode/placement remain head concerns.
+  (change! q2 (list (cons 'filter (path "acquired/child.txt"))))
+  (system (format "ln -s ~s ~s" root (path "alias")))
+  (let* ([destination #f] [target (path "acquired/child.txt")] [nested #f]
+         [alias (collection:create! actor source (path "alias/acquired/child.txt") '() 'transient)]
+         [token (model:subscribe! (list source)
+                  (lambda (notice)
+                    (unless nested
+                      (set! nested #t)
+                      (set! nested (cadr (acquisition:acquire! actor (path "nested-acquire")))))))])
+    (ready alias)
+    (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination (head:buffer-store-id value))))
+    (model:unsubscribe! token)
+    (test:check 'ordinary-visit-invalidates-proposals-and-logs-creation-in-order
+      (list (file-exists? target) (integer? nested) (store:property destination 'base)
+        (map (lambda (q) (map (lambda (r) (car (cadr r))) (rows q '(name)))) (list q2 alias))
+        (reverse (map log:datum (filter (lambda (r) (string:search (log:datum r) (path "acquired") 0 (string-length (log:datum r))))
+                                  (log:entries 'file:create!)))))
+      (list #t #t "" '((path) (path))
+        (list (string-append "Created directory " (path "acquired/")) (string-append "Created file " target))))
+    (store:delete! actor destination)
+    (store:delete! actor nested) (delete-file (path "nested-acquire"))
+    (delete-file target) (delete-directory (path "acquired"))
+    (retire! alias) (delete-file (path "alias")))
+
+  ;; Reopen is one undoable merge; earlier edits survive. A stale review is
+  ;; refused for both merge and reread without changing newer text or facts.
+  (let ([target (path "acquire-merge")])
+    (file:write! target '#("one" "two") #t)
+    (let ([id (cadr (acquisition:acquire! actor target))])
+      (store:edit! actor id 0 (text:make-span 0 0 0 0) '("mine "))
+      (file:write! target '#("one" "disk") #t)
+      (acquisition:acquire! actor target)
+      (let ([merged (store:line id 1)])
+        (store:undo! actor id)
+        (let ([before (call-with-values (lambda () (store:snapshot id)) (lambda (text revision) text))])
+          (store:undo! actor id)
+          (test:check 'acquisition-reload-preserves-earlier-undo
+            (list merged before (store:line id 0)) '("disk" #("mine one" "two") "one"))))
+      (let-values ([(text revision facts) (store:snapshot-state id)])
+        (store:edit! actor id revision (text:make-span 0 0 0 0) '("later "))
+        (test:check 'stale-file-reviews-cannot-replace-concurrent-work
+          (list
+            (map (lambda (operation) (call-with-values (lambda () (operation actor id '("lost") '((base . "lost\n")) 'any (cons revision facts))) list))
+              (list store:reload! store:reread!))
+            (store:line id 0) (store:property id 'base))
+          '(((refused stale-review) (refused stale-review)) "later one" "one\ndisk\n")))
+      (store:delete! actor id))
+    (delete-file target))
+
+  ;; Replacing a shown parent, including with a symlink, invalidates its
+  ;; creation witness. Partial creation is kept and accurately reported.
+  (for-each
+    (lambda (link?)
+      (let* ([parent (path "proposal-parent")] [away (path "proposal-away")]
+             [target (string-append parent "/child")])
+        (mkdir parent)
+        (let ([witness (list 'file parent (sys:file-identity parent))])
+          (rename-file parent away)
+          (if link? (system (format "ln -s ~s ~s" away parent)) (mkdir parent))
+          (test:check (list 'creation-refuses-replaced-parent link?)
+            (list (test:raises? (lambda () (acquisition:acquire! actor target witness)))
+              (file-exists? target)) '(#t #f))
+          (if link? (delete-file parent) (delete-directory parent))
+          (delete-directory away)))) '(#f #t))
+  (let ([parent (path "partial")] [block (path "partial/blocked")])
+    (parameterize ([kernel:registering-module 'acquisition-fixture])
+      (file:add-create-hook! (lambda (created) (when (string=? created parent)
+                                                 (call-with-output-file block (lambda (out) (display "keep" out)))))))
+    (dynamic-wind void
+      (lambda ()
+        (test:check 'partial-directory-creation-is-retained-and-logged
+          (list (test:raises? (lambda () (acquisition:acquire! actor (string-append block "/file"))))
+            (file-directory? parent) (call-with-input-file block get-string-all)
+            (log:datum (car (log:entries 'file:create!))))
+          (list #t #t "keep" (string-append "Created directory " parent "/"))))
+      (lambda () (kernel:retract-module! 'acquisition-fixture) (delete-file block) (delete-directory parent))))
   (let ([g (field (ready q) 'generation)])
     (retire! source)
     (test:check 'filesystem-source-retirement-fences-prepared-rows-and-completion

@@ -353,6 +353,16 @@ base; their collection queries keep independent filters and compound sorts.
 filter text. It returns `(query filter-buffer-reference)` and gives the query
 ownership of that source and internal filter buffer. Views borrow these resources.
 
+Finder and ordinary file visits acquire files through the base's
+`acquisition:acquire!` service. Creation invalidates affected inventory and
+parent listings; unrelated cached subtrees remain available. A creation row's
+`proposal` cell carries its kind and observed parent identity. Finder checks
+the shown selection/basis, then passes this witness to `edit:visit-file!` with
+an explicit destination callback. A changed parent or an already created
+target refuses the stale proposal. Acquired file references go to the host;
+directory results stay in the Finder query. No filesystem work runs while
+painting rows or inspecting their cells.
+
 The filter uses Finder's rooted, non-overlapping literal path keys. Prepared
 rows retain hierarchy, exact path identities, raw metadata and match spans.
 Keys distinguish observed `(path absolute-path kind)` from uncreated

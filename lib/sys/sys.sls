@@ -16,7 +16,7 @@
           close-process! close-terminal-process! connect-local connection-alive?
           connection-input connection-output directory-changes! directory-reader duplicate-output-port duplicate-standard-input-port
           duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
-          ensure-private-directory! file-info host-name listen-local open-directory-watch open-process
+          ensure-private-directory! file-identity file-info host-name listen-local open-directory-watch open-process
           process-exited? process-identity process-input
           (rename (command-process-pid process-pid)) process-result
           (rename (poll-process! process-status)) reap-terminal-process! redirect-daemon-ports!
@@ -524,6 +524,25 @@
                   (bytevector-u32-native-ref out (os-case 20 16 28))))
           (let ([code (foreign-ref 'int (c-errno) 0)])
             (if (= code 2) #f (os-error 'base path-or-fd code))))))
+
+  (edoc "A resolved filesystem identity (path device inode), or false if inaccessible. Unlike timestamps it survives child creation but detects replacement."
+        (path string "path to resolve") (returns (or list #f)))
+  (define (file-identity path)
+    (let ([resolved (canonical-file-path path)] [out (make-bytevector 512 0)])
+      (and resolved
+        (if (eq? os 'linux)
+          (and c-statx
+            (let ([name (string->utf8 (string-append resolved (string #\nul)))])
+              (dynamic-wind (lambda () (lock-object name) (lock-object out))
+                (lambda ()
+                  (and (zero? (c-statx -100 name #x900 #x100 out))
+                    (not (zero? (logand (bytevector-u32-native-ref out 0) #x100)))
+                    (list resolved (cons (bytevector-u32-native-ref out 136) (bytevector-u32-native-ref out 140))
+                      (bytevector-u64-native-ref out 32))))
+                (lambda () (unlock-object out) (unlock-object name)))))
+          (and (zero? (c-lstat resolved out))
+            (list resolved (if (eq? os 'macos) (bytevector-u32-native-ref out 0) (bytevector-u64-native-ref out 0))
+              (bytevector-u64-native-ref out 8)))))))
 
   (define (private-info! path info kind)
     (unless (and info (= (logand (car info) #o170000) kind)

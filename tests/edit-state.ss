@@ -321,7 +321,7 @@
                              (set! observed
                                (let-values ([(text revision facts) (store:snapshot-state id)])
                                  (list text revision
-                                   (property:select facts '(file base stamp trailing mode mode-auto wrap modified)))))
+                                   (property:select facts '(file base stamp trailing modified)))))
                              (set! opened
                                (if (eq? effect 'revisit)
                                    (begin (visit-file! target) (head:current-buffer))
@@ -341,13 +341,10 @@
                      (list (equal? observed
                              (list lines 0
                                (list (cons 'file target) (cons 'base (or content ""))
-                                     (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing)
-                                     (cons 'mode mode) '(mode-auto . #t) '(wrap . default) '(modified . #f))))
-                           (eq? opened (head:current-buffer)) kept?
-                           (equal? (reverse events)
-                             (case effect [(edit) '(create edit)]
-                               [(revisit) '(create property edit)]
-                               [(metadata) '(create rename property property property property)] [else '(create)]))
+                                     (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing) '(modified . #f))))
+                           (eq? opened (head:current-buffer))
+                           (and kept? (or (eq? effect 'metadata) (equal? (mode:name-of opened) mode)))
+                           (= 1 (length (filter (lambda (event) (eq? event 'create)) events)))
                            (equal? (and (file-exists? target) (file:read target)) (or content ""))
                            (if (memq effect '(edit revisit))
                                (begin (store:undo! bot id) (head:before-frame!)

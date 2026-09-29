@@ -3,7 +3,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service directory)
   (export clear! close! directory? entry-complete? entry-count entry-created entry-kind entry-link?
-          entry-matches entry-mode entry-modified entry-path entry-size filter-path make-cache make-missing matches? missing?
+          entry-matches entry-mode entry-modified entry-path entry-size filter-path invalidate! make-cache make-missing matches? missing?
           (rename (parent-path parent)) poll! read! relative-path scan!)
   (import (chezscheme)
           (prefix (foundation path-filter) path-filter:)
@@ -93,12 +93,12 @@
   ;; nor navigation invalidate it. Listings include hidden names, but their
   ;; metadata and subtrees are loaded only when a query needs them.
   (define-record-type (cache %make-cache cache?)
-    (fields entries directories read watch? (mutable watcher)))
+    (fields entries directories aliases read watch? (mutable watcher)))
 
   (edoc "Create a filesystem inventory cache, optionally subscribing to directory changes."
         (watch? boolean "whether to use OS notifications when available") (returns any))
   (define (make-cache watch?)
-    (%make-cache (make-hashtable string:hash string=?) (make-hashtable string:hash string=?)
+    (%make-cache (make-hashtable string:hash string=?) (make-hashtable string:hash string=?) (make-hashtable string:hash string=?)
       (sys:directory-reader) watch? (and watch? (sys:open-directory-watch))))
 
   (edoc "Release the cache's filesystem subscriptions."
@@ -113,9 +113,29 @@
     (close! cache)
     (hashtable-clear! (cache-entries cache))
     (hashtable-clear! (cache-directories cache))
+    (hashtable-clear! (cache-aliases cache))
     (cache-watcher-set! cache (and (cache-watch? cache) (sys:open-directory-watch))))
 
+  (edoc "Invalidate cached facts for a changed path; replacement also invalidates its parent listing and any cached subtree. Called only by the cache owner."
+        (cache any "inventory") (path string "canonical changed path") (replaced? boolean "entry created, removed or replaced")
+        (returns boolean))
   (define (invalidate! cache path replaced?)
+    ;; Explicit roots may reach the same directory through symlinks. Index
+    ;; those few roots once when reading them, not every recursive directory
+    ;; or every change; invalidation itself does no filesystem work.
+    (define (prefix path) (if (string=? path "/") "/" (string-append path "/")))
+    (fold-left (lambda (changed? target) (or (invalidate-path! cache target replaced?) changed?)) #f
+      (cons path
+        (filter values
+          (map (lambda (alias)
+                 (let ([real (hashtable-ref (cache-aliases cache) alias #f)])
+                   (cond [(string=? real path) alias]
+                     [(string:prefix? (prefix real) path)
+                      (string-append (prefix alias) (substring path (string-length (prefix real)) (string-length path)))]
+                     [(string:prefix? (prefix path) real) alias]
+                     [else #f]))) (vector->list (hashtable-keys (cache-aliases cache))))))))
+
+  (define (invalidate-path! cache path replaced?)
     (let ([changed? #f])
       (define (drop! table key)
         (when (hashtable-contains? table key)
@@ -181,6 +201,10 @@
           (let ([known (hashtable-ref (cache-directories cache) path 'stale)])
             (let ([entries (if (eq? known 'stale)
                              (begin
+                               (when follow?
+                                 (let ([real (sys:canonical-file-path path)])
+                                   (when (and real (not (string=? path real)))
+                                     (hashtable-set! (cache-aliases cache) path real))))
                                (sys:watch-directory! (cache-watcher cache) path)
                                (let ([entries ((cache-read cache) path follow?)])
                                  (hashtable-set! (cache-directories cache) path entries) entries))

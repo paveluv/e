@@ -65,6 +65,7 @@
           (prefix (head style) style:)
           (prefix (head table) table:)
           (prefix (head window) window:)
+          (prefix (service acquisition) acquisition:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -970,71 +971,30 @@
 
   ;;; Files -----------------------------------------------------------------
 
-  (define (file-buffer path)
-    ;; -> (values buffer created?). Consult shared identity before reading
-    ;; disk; admission rechecks it under the writer if another visitor wins.
-    (cond [(store:find-file path)
-           => (lambda (id)
-                (values (or (head:adopt-store-buffer! id)
-                            (error 'visit-file! "buffer visiting this file is not visible" path)) #f))]
-      [else
-       (when (file-directory? path) (refuse-file! "Choose a file inside the directory"))
-       (unless (file-exists? path #f)
-         (file:make-directories! (file:directory-part path))
-         ;; Another visitor may create it first. Read their file without
-         ;; replacing it; file:create! is exclusive and logs only success.
-         (guard (ex [(i/o-file-already-exists-error? ex) (void)] [else (raise ex)])
-           (file:create! path)))
-       (let* ([disk (file:read-state path)]
-              [lines (file:lines (car disk))]
-              [detected (mode:detect path (vector-ref lines 0))])
-         (head:visit-file! (file:base-name path) lines
-                           (append (list (cons 'file path) (cons 'mode (and detected (mode:name detected))))
-                             (list (cons 'trailing (file:ends-in-newline? (car disk)))
-                                   (cons 'base (car disk)) (cons 'stamp (cdr disk))))))]))
-
-  (edoc "Visit a file, creating missing parents and an empty file on disk before opening its buffer. A trailing slash creates directories only; existing directories open in Finder. Existing files and shared buffers are reused, never overwritten. Each new path is logged."
-        (path file "the path to visit; a trailing slash requests a directory")
-        (destination procedure "(kind value) handler: directory and canonical path, or buffer and admitted buffer; one argument uses the current window")
-        (returns boolean "whether the path was opened"))
+  (edoc "Visit a file through the base, creating it and its missing parents if needed; a trailing slash creates/navigates a directory. Reopening preserves shared edits and merges disk changes undoably. An explicit destination receives directory/path or buffer/adopted-buffer; otherwise use this head's current window."
+        (path file "the path to visit")
+        (destination procedure "optional placement callback")
+        (proposal any "optional Finder creation witness")
+        (returns boolean))
   (define visit-file!
     (case-lambda
-      [(path) (visit-file! path (lambda (kind value) (case kind [(directory) (head:open-directory! value)] [(buffer) (head:show-buffer! value)])))]
-      [(path destination)
-       (define (visit-buffer! path)
-         ;; Admit the complete disk baseline before showing the buffer. Shared
-         ;; identity wins over creation, preserving unsaved and recovered work.
-         (let ([path (file:visit-path path)])
-           (let-values ([(b created?)
-                         (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
-                                                    (equal? (head:buffer-file b) path))) buffers)
-                                => (lambda (b) (values b #f))]
-                           [else (file-buffer path)])])
-             (destination 'buffer b)
-             (log:add! 'edit:visit-file!
-               (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
-               created?)
-             (unless created?
-               (let-values ([(text revision facts) (head:buffer-state b)])
-                 (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
-                   (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
-                     ;; Reopening compares content even if a stamp is unchanged.
-                     (let ([disk (guard (ex [else #f]) (read-disk path))])
-                       (cond
-                         [(and disk (string=? (car disk) base))
-                          (head:buffer-facts-set! b
-                            (list (cons 'stamp (cdr disk)))
-                            (property:select facts '(file base stamp)))]
-                         [disk (reopen-changed-file! b path disk)]
-                         [else
-                          (log:add! 'edit:visit-file! (format "Cannot reread ~a" path))])))))))))
-       (unless (procedure? destination) (error 'visit-file! "expected a destination handler"))
-       (guard (ex [else
-                   (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
-         (let ([full (file:canonical (file:expand path))])
-           (if (or (string:suffix? "/" path) (file-directory? full))
-               (begin (file:make-directories! full) (destination 'directory full))
-             (visit-buffer! full))) #t)]))
+      [(path)
+       (visit-file! path (lambda (kind value)
+                           (case kind [(directory) (head:open-directory! value)] [(buffer) (head:show-buffer! value)])))]
+      [(path destination) (visit-file! path destination #f)]
+      [(path destination proposal)
+       (unless (procedure? destination) (error 'visit-file! "expected a destination procedure" destination))
+       (guard (ex [else (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
+         (let ([result (acquisition:acquire! head:ui-actor (file:expand (file:absolute path)) proposal)])
+           (case (car result)
+             [(directory) (destination 'directory (cadr result))]
+             [(buffer)
+              (let ([b (or (head:adopt-store-buffer! (cadr result))
+                         (error 'visit-file! "acquired buffer is no longer visible"))])
+                (head:sync-foreign-edits! (cadr result))
+                (destination 'buffer b)
+                (log:add! 'edit:visit-file! (cons (if (caddr result) "Loaded" "Visited") (list-ref result 3)) (caddr result))
+                (when (list-ref result 4) (log:add! 'edit:visit-file! (list-ref result 4))))]) #t))]))
 
   (define (refuse! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
@@ -1208,15 +1168,6 @@
             (format "Reread ~a, its changes on disk ~a; undo brings the buffer's text back" path why)
             (format "~a changed on disk, ~a, and could not be reread: ~a" path why detail)))
       (eq? status 'applied)))
-
-  (define (reopen-changed-file! b path disk)
-    ;; The file changed on disk since the buffer's baseline: reload it, and
-    ;; where the store cannot, a baseline the log no longer reaches say,
-    ;; reread it instead, undoably
-    (let-values ([(status detail) (reload-from-disk! b path disk)])
-      (cond [(eq? status 'applied) #t]
-            [(eq? detail 'pending-edits) (set-message! (merge-failure detail)) #f]
-            [else (reread-through-store! b path disk (merge-failure detail))])))
 
   (define (current-file-disk)
     ;; the current buffer, its file's path and the disk's state, for the
