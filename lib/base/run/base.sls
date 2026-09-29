@@ -12,6 +12,7 @@
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
+          (prefix (service filesystem) filesystem:)
           ;; Startup also publishes these modules into base configuration.
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
@@ -35,7 +36,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -141,6 +142,11 @@
       [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
       [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
       [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
+      [(filesystem-source) (control!) (arity 3) (apply filesystem:create-source! actor args)]
+      [(filesystem-query) (control!) (arity 2) (apply filesystem:create-query! actor args)]
+      [(filesystem-configure) (control!) (arity 3) (call-with-values (lambda () (apply filesystem:configure! actor args)) list)]
+      [(filesystem-refresh) (control!) (arity 0) (filesystem:refresh! actor) #t]
+      [(filesystem-complete) (control!) (arity 2) (apply filesystem:complete! actor args)]
       [(collection-create) (control!)
        (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
        (apply collection:create! actor args)]

@@ -304,6 +304,12 @@ zero finds the eligible row at or beyond the origin in the chosen direction.
 Callbacks read prepared indexes only: no scanning, waiting, filesystem I/O
 or formatting. Results must remain immutable after publication.
 
+An optional final `demand` procedure receives `(ordinals columns)` for the
+bounded rows actually returned by a range read. It only queues background
+enrichment and returns promptly; it performs no filesystem I/O or waiting.
+Publish enriched cells as a new immutable generation sharing the existing
+ordering. Queries over prepared queries forward demand to the original index.
+
 Raw row attributes are a validated alist: `selectable` (boolean), `depth`
 (nonnegative logical level), `roles` (semantic symbols), `matches`
 (`(column start end)` spans in raw strings), `creation` (`file` or `directory`),
@@ -318,6 +324,41 @@ share the reply budget. A range contains at most 256 rows and 512 KiB; cells
 over 64 KiB become unavailable, while an oversized key/attribute row makes
 the range unavailable. Heads use the shared `range:` cache, queuing misses
 on the pump. Painting, hover and cached navigation perform no remote work.
+
+### Filesystem sources
+
+`filesystem:create-source!` takes an actor, absolute home directory, hidden-entry
+boolean and persistence. Sources share a cached filesystem inventory in the
+base; their collection queries keep independent filters and compound sorts.
+`filesystem:create-query!` takes actor, an unshared persistent source and initial
+filter text. It returns `(query filter-buffer-reference)` and gives the query
+ownership of that source and internal filter buffer. Views borrow these resources.
+
+The filter uses Finder's rooted, non-overlapping literal path keys. Prepared
+rows retain hierarchy, exact path identities, raw metadata and match spans.
+Keys distinguish observed `(path absolute-path kind)` from uncreated
+`(proposal absolute-path kind)` entries. Summary `details` includes `root`, a
+raw-character `missing` span or false, `matches`, `unreadable`, `hidden` and
+`completion`. Creation rows and intermediate ancestors are display rows;
+they do not inflate the match count. Names-only searches avoid file metadata
+reads; requesting metadata columns queues enrichment. Metadata sorts acquire
+the required facts before publishing their order.
+
+`filesystem:configure!` changes the hidden option against a source revision.
+`filesystem:refresh!` invalidates the shared inventory and restarts its queries.
+Filesystem watches are disabled, so external changes require refresh. Scanning,
+sorting and completion share a separate cooperative queue, allowing other
+filesystem queries and in-memory collections to progress.
+
+`filesystem:complete!` takes actor, query and shown generation, and queues
+completion only for a complete readable match set, returning an intent number
+or false. The same query basis publishes `completion` as `(pending intent)`,
+`(ready intent text)` or `(unavailable intent diagnostic)`. The host must match
+the intent and query basis and retain the requesting filter revision, applying
+the proposed text as one guarded edit only while all remain current.
+Reading a result never edits the filter or executes an
+activation. Typing, refresh, newer requests and source retirement supersede
+obsolete work. The head receives a bounded proposal, never the full match set.
 
 Connect a shared query's filter to its text buffer, not to a particular entry
 view. For example, with `filter-source` a `(buffer id)` reference:

@@ -167,3 +167,26 @@
     (test:check 'catalogue-wire-detach-retires-contribution (count query) 0)
     (for-each retire (list query source)))
   (for-each retire (list query source)))
+
+;; The same prepared-range transport serves filesystem queries. No extra head
+;; or process is needed to exercise client dispatch and metadata enrichment.
+(let* ([source (head-read a `(begin (kernel:load-modules! '("filesystem"))
+                               (filesystem:create-source! head:ui-actor ,root #f 'persistent)))]
+       [pair (head-read a `(filesystem:create-query! head:ui-actor ',source
+                             ,(string-append (current-directory) "/lib/service/file-query.s")))]
+       [query (car pair)] [intent #f])
+  (define (value) (cdr (assq 'value (rpc head 'collection-summary query))))
+  (test:await 'filesystem-wire-ready
+    (lambda () (let ([v (value)]) (and (eq? (cdr (assq 'status v)) 'ready) (cdr (assq 'complete v))))))
+  (let ([v (value)])
+    (set! intent (head-read a `(filesystem:complete! head:ui-actor ',query ,(cdr (assq 'generation v))))))
+  (test:await 'filesystem-wire-completed
+    (lambda ()
+      (equal? (cdr (assq 'completion (cdr (assq 'details (value)))))
+        (list 'ready intent (string-append (current-directory) "/lib/service/file-query.sls")))))
+  (test:check 'filesystem-wire-completion-is-a-bounded-base-result
+    (let* ([v (value)] [p (rpc head 'collection-range query (cdr (assq 'generation v)) 0 2 '(name))]
+           [r (find (lambda (r) (eq? (caadr r) 'path)) (list-ref p 4))])
+      (list (cdr (assq 'count v)) (caddr (assq 'name (caddr r))))) '(2 "file-query.sls"))
+  (let* ([packet (rpc head 'model-read (list query))] [r (caddar (cadr packet))])
+    (rpc head 'model-retire query (cdr (assq 'revision r)))))

@@ -43,7 +43,7 @@
                       (let loop ([i 0]) (or (= i (vector-length (cadr v)))
                                           (and (row:valid? (car v) (vector-ref (cadr v) i)) (loop (+ i 1))))))))))
   (define-record-type (result %make-result result?)
-    (fields columns count at locate seek complete default details sortable))
+    (fields columns count at locate seek complete default details sortable demand))
   (define-record-type publication (fields generation basis result))
   ;; A ticket is unique even if input A changes to B and back to A.
   (define-record-type job (fields id key serial mutex))
@@ -52,15 +52,16 @@
   (define (bounded? value limit)
     (guard (ex [else #f]) (<= (bytevector-length (wire:encode value)) limit)))
 
-  (edoc "Make an immutable prepared index. Callbacks read only this snapshot: row-at ordinal, locate key, seek ordinal direction offset. Seek includes its origin, skips ineligible rows and clamps at selectable ends. Options are complete, default (zero or one key), details and sortable column names."
+  (edoc "Make an immutable prepared index. Callbacks read only this snapshot: row-at ordinal, locate key, seek ordinal direction offset. Seek includes its origin, skips ineligible rows and clamps at selectable ends. Options are complete, default (zero or one key), details and sortable column names. Optional demand queues background enrichment for a bounded list of ordinals and columns; it must return promptly without I/O."
         (columns list "raw column contracts") (count integer "display rows, including sections")
         (row-at procedure "ordinal -> raw row") (locate procedure "key -> ordinal or false")
         (seek procedure "ordinal forward|backward nonnegative-offset -> selectable ordinal or false")
-        (options list "portable summary facts") (returns any))
-  (define (make-result columns count row-at locate seek options)
+        (options list "portable summary facts") (demand (list-of procedure) "optional nonblocking metadata demand callback") (returns any))
+  (define (make-result columns count row-at locate seek options . demand)
     (unless (and (row:columns? columns) (natural? count) (procedure? row-at) (procedure? locate) (procedure? seek)
               (list? options) (for-all (lambda (p) (and (pair? p) (memq (car p) result-fields))) options)
-              (distinct? (map car options)) (bounded? (list columns options) 16384))
+              (distinct? (map car options)) (bounded? (list columns options) 16384)
+              (<= (length demand) 1) (for-all procedure? demand))
       (error 'make-result "invalid prepared collection"))
     (let ([complete (get options 'complete #t)] [default (get options 'default '())]
           [details (get options 'details '())]
@@ -69,7 +70,7 @@
                 (list? sortable) (for-all (lambda (c) (assq c columns)) sortable) (distinct? sortable))
         (error 'make-result "invalid result options" options))
       (%make-result (datum:copy columns) count row-at locate seek complete
-        (datum:copy default) (datum:copy details) (datum:copy sortable))))
+        (datum:copy default) (datum:copy details) (datum:copy sortable) (and (pair? demand) (car demand)))))
 
   (edoc "Register base preparation for a source kind. Start receives source-envelope, query (id/filter/sort), cancelled? and publish! (result diagnostic); it queues work and returns promptly. Publish an immutable result or false plus a diagnostic. Only the current ticket can publish."
         (kind symbol "source kind") (schema integer "source schema") (start procedure "nonblocking provider dispatch"))
@@ -341,10 +342,12 @@
               (let ([row ((result-at source) (vector-ref order i))])
                 (hashtable-set! positions (car row) i)
                 (when (row:selectable? row) (set! eligible (cons i eligible)))))
-            (make-result columns n (lambda (i) ((result-at source) (vector-ref order i)))
+            (apply make-result columns n (lambda (i) ((result-at source) (vector-ref order i)))
               (lambda (key) (hashtable-ref positions key #f))
               (indexed-seek n (and (not (= (length eligible) n)) (list->vector (reverse eligible))))
-              (list (cons 'complete (result-complete source)))))))))
+              (list (cons 'complete (result-complete source)))
+              (if (result-demand source)
+                (list (lambda (ordinals columns) ((result-demand source) (map (lambda (i) (vector-ref order i)) ordinals) columns))) '())))))))
   (define (flat-work!)
     (let loop ()
       (let ([item (with-mutex flat-lock
@@ -385,7 +388,9 @@
         (let* ([r (publication-result p)] [end (min (result-count r) (+ start (min 256 count)))]
                [start (min start end)] [basis (publication-basis p)]
                [header (bytevector-length (wire:encode (list 'ready generation basis start '() (result-count r))))])
-          (define (reply rows) (list 'ready generation basis start (reverse rows) (result-count r)))
+          (define (reply rows)
+            (when (and (pair? rows) (result-demand r)) ((result-demand r) (map car rows) columns))
+            (list 'ready generation basis start (reverse rows) (result-count r)))
           (unless (for-all (lambda (c) (assq c (result-columns r))) columns) (error 'range "unknown column" columns))
           (let loop ([i start] [rows '()] [bytes header])
             (if (= i end) (reply rows)

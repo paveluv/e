@@ -21,6 +21,7 @@
           (prefix (service directory) directory:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
+          (prefix (service file-query) file-query:)
           (prefix (sys glyph) glyph:)
           (prefix (sys sys) sys:)
           (prefix (sys tty) tty:))
@@ -59,8 +60,8 @@
   ;; results cannot mutate a new query, a killed app or a reloaded module.
   (define-record-type scan
     (fields buffer registration (mutable path) query (mutable keys) hidden? show-hidden? sorts generation (mutable seed) (mutable update) (mutable started?)
-            (mutable wanted) (mutable detailed) (mutable details) (mutable finished) (mutable completion) (mutable missing) (mutable proposed)))
-  (define-record-type result (fields inventory rows data positions choice source count))
+            (mutable wanted) (mutable detailed) (mutable details) (mutable finished) (mutable completion) (mutable missing) (mutable proposed) (mutable plan)))
+  (define-record-type result (fields inventory rows data positions choice source count index))
   (define scan-lock (make-mutex))
   (define scan-ready (make-condition))
   (define generation 0)
@@ -73,7 +74,7 @@
 
   (define (directory-prefix path)
     (if (string=? path "/") "/" (string-append path "/")))
-  (define (directory-filter path) (path-filter:format-keys (list (directory-prefix path))))
+  (define (directory-filter path) (file-query:directory-filter path))
   (define (normalize-filter text)
     (cond [(string=? text "") text]
           [(char=? (string-ref text 0) #\/) text]
@@ -83,18 +84,10 @@
            (if (and (> (string-length text) 1) (char=? (string-ref text 1) #\/)) text
                (string:insert text 1 "/"))]
           [else (string-append "/" text)]))
-  (define (typed-keys text)
-    (map (lambda (key)
-           (if (path-filter:anchored? key)
-               (string-append (directory-prefix (file:canonical (file:directory-part key))) (file:base-name key)) key))
-      (path-filter:parse text (file:expand "~"))))
-  (define (key-root keys)
-    (if (and (pair? keys) (path-filter:anchored? (car keys))) (file:canonical (file:directory-part (car keys))) "/"))
+  (define (typed-keys text) (file-query:keys text (file:expand "~")))
+  (define (key-root keys) (file-query:root keys))
   (define (search-root text) (key-root (typed-keys text)))
-  (define (filter-keys text)
-    (let ([keys (typed-keys text)])
-      ;; A directory-only token is an overview of that directory's children.
-      (if (and (= (length keys) 1) (string=? (car keys) (directory-prefix (key-root keys)))) '() keys)))
+  (define (filter-keys text) (file-query:filter-keys (typed-keys text)))
   (define (saved-filter text directory)
     ;; Migrate saved views from the separate-directory model. New views
     ;; already have a rooted first key, or an empty filter rooted at /.
@@ -102,10 +95,7 @@
       (if (or (and (null? keys) (string=? directory "/"))
               (and (pair? keys) (path-filter:anchored? (car keys)))) text
           (string-append (directory-filter directory) (if (string=? text "") "" (string-append " " text))))))
-  (define (hidden-keys? keys)
-    (exists (lambda (key) (or (string:prefix? "." key)
-                            (and (string:search key "/." 0 (string-length key)) #t))) keys))
-  (define (query-hidden? text) (or (show-hidden) (hidden-keys? (typed-keys text))))
+  (define (query-hidden? text) (or (show-hidden) (file-query:hidden-keys? (typed-keys text))))
 
   (define (start-scan!)
     (set! location (search-root query))
@@ -125,7 +115,7 @@
         (let ([seed (and (pair? keys) request (= generation (scan-generation request))
                          (equal? needle (scan-completion request)) (scan-finished request)
                          (cons (scan-path request) (scan-finished request)))])
-          (set! request (make-scan view (head:app-of view) (search-root needle) needle keys hidden? (show-hidden) sorts generation seed #f #f '() #f #f #f #f #f #f)))
+          (set! request (make-scan view (head:app-of view) (search-root needle) needle keys hidden? (show-hidden) sorts generation seed #f #f '() #f #f #f #f #f #f #f)))
         (condition-signal scan-ready)))
     (render!))
 
@@ -137,44 +127,16 @@
               (let ([value (guard (ex [else #f]) (if directory? (file-directory? path) (file-exists? path #f)))])
                 (hashtable-set! existence key value) value))))
       (define (inspect-filter! job)
-        (let* ([text (scan-query job)] [keys (path-filter:parse text (file:expand "~"))])
-          (and (pair? keys)
-               (let* ([path (car keys)] [n (string-length path)])
-                 (define (raw-index at)
-                   (if (not (char=? (string-ref text 0) #\")) at
-                       ;; Let Scheme decode escapes; a prefix closed here must
-                       ;; spell exactly the corresponding decoded path prefix.
-                       (let loop ([i 1])
-                         (if (= i (string-length text)) i
-                             (let ([prefix (guard (ex [else #f])
-                                             (read (open-input-string (string-append (substring text 0 i) "\""))))])
-                               (if (and (string? prefix) (string=? prefix (substring path 0 at))) i
-                                   (loop (+ i 1))))))))
-                 (let walk ([i 1] [start 1])
-                   (cond [(> i n) #f]
-                         [(or (= i n) (char=? (string-ref path i) #\/))
-                          (let ([directory? (or (< i n) (string:suffix? "/" path))])
-                            (if (exists? (substring path 0 i) directory?) (walk (+ i 1) (+ i 1))
-                                (let* ([keys (typed-keys text)] [full (car keys)]
-                                       ;; Resolve dot components before rooting the
-                                       ;; proposal, just as visit-file! resolves them.
-                                       [root (let parent ([path (key-root keys)])
-                                               (if (or (string=? path "/") (exists? path #t)) path
-                                                   (parent (directory:parent path))))])
-                                  (unless (exists? full (string:suffix? "/" full))
-                                    (scan-path-set! job root)
-                                    (scan-keys-set! job keys)
-                                    (scan-missing-set! job
-                                      (cons (string-length (filter-text (substring text 0 (raw-index start))))
-                                        (string-length (filter-text (substring text 0 (raw-index n))))))
-                                    (scan-proposed-set! job
-                                      (let build ([from (string-length (directory-prefix root))])
-                                        (and (< from (string-length full))
-                                          (let* ([slash (string:search full "/" from (string-length full))]
-                                                 [child (and slash (build (+ slash 1)))])
-                                            (directory:make-missing (substring full 0 (or slash (string-length full)))
-                                              (and slash #t) (if child (list child) '()))))))))))]
-                         [else (walk (+ i 1) start)]))))))
+        (let* ([text (scan-query job)]
+               [plan (file-query:plan text (file:expand "~") (scan-show-hidden? job) exists?)]
+               [missing (file-query:plan-missing plan)])
+          (scan-plan-set! job plan)
+          (scan-path-set! job (file-query:plan-root plan))
+          (scan-keys-set! job (file-query:plan-keys plan))
+          (scan-proposed-set! job (file-query:plan-proposed plan))
+          (scan-missing-set! job (and missing
+                                   (cons (string-length (filter-text (substring text 0 (car missing))))
+                                     (string-length (filter-text (substring text 0 (cdr missing)))))))))
       (define (completion-inventory job)
         ;; Completion has proved the same matches. Re-root its retained tree
         ;; instead of walking millions of cached nonmatching entries again.
@@ -196,53 +158,9 @@
                       (unless (null? out) (head:wake-main!)))))))))
       (define (complete-filter! job)
         (when (and (scan-finished job) (eq? (with-mutex scan-lock (scan-completion job)) 'requested))
-          (let* ([prefix-size (if (string=? (scan-path job) "/") 0 (string-length (scan-path job)))]
-                 [full-keys (typed-keys (scan-query job))]
-                 ;; The first token already fixes this directory. Removing
-                 ;; its constant prefix preserves both scores and implications
-                 ;; without making the solver rediscover it character by character.
-                 [keys (if (pair? full-keys) (cons (string:tail (car full-keys) prefix-size) (cdr full-keys)) '())]
-                 [data (result-data (scan-finished job))]
-                 [match? (path-filter:matcher (scan-keys job))]
-                 [common #f] [example #f]
-                 [spell (lambda (parts)
-                          (if (and example (pair? parts) (path-filter:anchored? (car parts)))
-                              (cons (substring example 0 (+ prefix-size (string-length (car parts)))) (cdr parts))
-                              (if (pair? parts) (cons (string-append (substring (scan-path job) 0 prefix-size) (car parts)) (cdr parts)) parts)))]
-                 [walk (lambda (visit)
-                         (let loop ([i 0])
-                           (or (= i (vector-length data))
-                               (and (or (not (zero? (mod i 256))) (live-request? job))
-                                    (let* ([entry (cdr (vector-ref data i))] [path (directory:filter-path entry)])
-                                      (and (or (directory:missing? entry) (not (match? path))
-                                               (begin
-                                                 (unless example (set! example path))
-                                                 (set! common (if common (string:common-prefix (list common path)) path))
-                                                 (visit (string:tail path prefix-size))))
-                                           (loop (+ i 1))))))))]
-                 [only (and (= (result-count (scan-finished job)) 1)
-                            (find (lambda (row) (and (not (directory:missing? (cdr row)))
-                                                     (match? (directory:filter-path (cdr row)))))
-                              (result-rows (scan-finished job))))]
-                 [next (if (and (= (length full-keys) 1) only (directory:directory? (cdr only)))
-                           (directory-filter (car only))
-                           (path-filter:format-keys
-                             (spell (path-filter:complete keys walk
-                                      (lambda (parts)
-                                        (and (or (null? parts) (path-filter:anchored? (car parts)))
-                                          (eq? (or (scan-show-hidden? job) (hidden-keys? (spell parts))) (scan-hidden? job))
-                                          ;; Directory lookup uses real spelling. Never
-                                          ;; narrow scope to only one case variant.
-                                          (or (not common) (string:prefix? (directory-prefix (key-root (spell parts))) common))
-                                          ;; Completing a directory's trailing slash
-                                          ;; would enter it and change the match set.
-                                          (not (exists
-                                                 (lambda (i)
-                                                   (let ([entry (cdr (vector-ref data (- i first-row)))])
-                                                     (and (not (directory:missing? entry))
-                                                          (directory:directory? entry) (match? (directory:filter-path entry)))))
-                                                 (hashtable-ref (result-positions (scan-finished job)) (key-root (spell parts)) '())))))
-                                      (lambda () (not (live-request? job)))))))])
+          (let* ([plan (scan-plan job)]
+                 [next (file-query:complete (result-index (scan-finished job)) plan (scan-query job)
+                         (file:expand "~") (scan-show-hidden? job) (lambda () (not (live-request? job))))])
             (when (with-mutex scan-lock
                     (and (eq? request job) (begin (scan-completion-set! job next) #t))) (head:wake-main!)))))
       (dynamic-wind
@@ -398,14 +316,7 @@
       (if (directory:directory? (cdr row)) "/" "")
       (if (directory:missing? (cdr row)) " [create]" "")))
   (define (raw row column)
-    (let ([entry (cdr row)])
-      (if (zero? column) (car row)
-          (case column
-            [(1) (and (not (directory:directory? entry)) (directory:entry-size entry))]
-            [(2) (directory:entry-modified entry)]
-            [(3) (directory:entry-created entry)]
-            [(4) (directory:entry-mode entry)]
-            [(5) (directory:entry-count entry)]))))
+    (file-query:value (cdr row) (list-ref '(name size modified created permissions count) column)))
   (define (permissions entry)
     (let ([mode (directory:entry-mode entry)])
       (if (not mode) "?"
@@ -453,41 +364,6 @@
                   (if (pair? (filter-keys query)) "Matches" "Entries"))
       '#(14 8 16 16 13 9) 0 '(3 4 2 1 5) '#(text right text text text right)))
   (define (heading column) (table:heading (columns) sorts column))
-  (define (listing inventory location query keys sorts complete? check!)
-    (define match? (path-filter:matcher keys))
-    (define (entry<? a b)
-      (check!)
-      (table:less? sorts raw
-        (lambda (a b) (or (string-ci<? (car a) (car b))
-                        (and (string-ci=? (car a) (car b)) (string<? (car a) (car b))))) a b))
-    (define (tree entries tail)
-      ;; Sort siblings, then emit each directory beside its descendants.
-      ;; Absolute paths remain the identity even when basenames repeat.
-      (if (null? entries) tail
-        (let ([rows (map (lambda (e) (cons (directory:entry-path e) e)) entries)])
-          (fold-right (lambda (row rest) (check!) (cons row (tree (directory:entry-matches (cdr row)) rest)))
-            tail (append (sort entry<? (filter (lambda (row) (directory:directory? (cdr row))) rows))
-                   (sort entry<? (filter (lambda (row) (not (directory:directory? (cdr row)))) rows)))))))
-    (let* ([filtered? (pair? keys)]
-           [dirs (filter directory:directory? inventory)]
-           [visible-dirs
-            (filter (lambda (e)
-                      (or (directory:missing? e) (not filtered?) (match? (directory:filter-path e))
-                          ;; Keep the route to an explicitly typed descendant,
-                          ;; even when this directory is a non-traversed link.
-                          (let ([prefix (string-append (directory:relative-path e location) "/")])
-                            (exists (lambda (key) (string:prefix? (string:fold-case prefix) (string:fold-case key)))
-                              (typed-keys query)))
-                          (and (directory:entry-count e) (positive? (directory:entry-count e)))
-                          ;; Keep unknown groups navigable, including failed
-                          ;; searches, without resurfacing pending zeroes.
-                          (and (not (directory:entry-link? e))
-                               (or complete? (not (directory:entry-count e)))
-                               (not (directory:entry-complete? e))))) dirs)]
-           [files (filter (lambda (e) (and (not (directory:directory? e))
-                                        (or (directory:missing? e) (match? (directory:filter-path e))))) inventory)])
-      (tree (append visible-dirs files) '())))
-
   (define (prepare-result inventory job done?)
     (call/cc
       (lambda (cancel)
@@ -495,46 +371,29 @@
         (define (check!)
           (set! steps (+ steps 1))
           (when (and (zero? (mod steps 256)) (not (live-request? job))) (cancel #f)))
-        (let* ([root (scan-path job)] [needle (scan-query job)]
-               [proposed (scan-proposed job)]
-               [shown (if (and proposed (not (exists (lambda (entry) (string=? (directory:entry-path entry) (directory:entry-path proposed))) inventory)))
-                          (cons proposed inventory) inventory)]
-               [rows (listing shown root needle (scan-keys job) (scan-sorts job) done? check!)]
-               [data (list->vector rows)] [positions (make-hashtable string-ci-hash string-ci=?)]
-               [match? (path-filter:matcher (scan-keys job))] [count 0]
-               [exact #f] [folded #f] [file #f] [creation #f])
+        (let* ([root (scan-path job)]
+               [plan (scan-plan job)]
+               [index (file-query:prepare inventory plan (scan-query job)
+                        (map (lambda (key) (list (list-ref '(name size modified created permissions count) (car key))
+                                                 (if (cdr key) 'descending 'ascending))) (scan-sorts job)) done? check!)]
+               [rows (map (lambda (entry) (cons (directory:entry-path entry) entry)) (vector->list (file-query:index-entries index)))]
+               [data (list->vector rows)] [positions (make-hashtable string-ci-hash string-ci=?)])
           (do ([i 0 (+ i 1)]) ((= i (vector-length data)))
             (check!)
-            (let* ([row (vector-ref data i)] [entry (cdr row)]
-                   [relative (directory:relative-path entry root)]
-                   [name (if (directory:directory? entry) (string-append relative "/") relative)])
-              ;; One case-insensitive index retains distinct case variants.
-              (hashtable-update! positions (car row)
-                (lambda (indices) (append indices (list (+ i first-row)))) '())
-              (if (directory:missing? entry) (set! creation row)
-                  (begin
-                    (when (or (string=? relative needle) (string=? name needle) (string=? (directory:filter-path entry) needle)
-                            (string=? (car row) needle)) (set! exact row))
-                    (when (and (not folded) (or (string-ci=? relative needle) (string-ci=? name needle)
-                                              (string-ci=? (directory:filter-path entry) needle) (string-ci=? (car row) needle))) (set! folded row))
-                    (when (and (not file) (not (directory:directory? entry))) (set! file row))
-                    (when (or (not (directory:directory? entry)) (match? (directory:filter-path entry)))
-                      (set! count (+ count 1)))))
-            ))
+            (hashtable-update! positions (car (vector-ref data i))
+              (lambda (indices) (append indices (list (+ i first-row)))) '()))
           (and (live-request? job)
-               (make-result inventory rows data positions
-                 (or exact folded (and (pair? (scan-keys job)) file)
-                     (find (lambda (row) (not (directory:missing? (cdr row)))) rows) creation)
-                 ;; Even canonical text is demanded by row. A large result
-                 ;; is an index, never millions of preformatted strings.
-                 (render:defer (+ first-row (max 1 (vector-length data)))
-                   (lambda (i)
-                     (if (or (< i first-row) (zero? (vector-length data))) ""
-                         (let* ([row (vector-ref data (- i first-row))] [entry (cdr row)])
-                           (string-append (label row root)
-                             (if (and (not (directory:missing? entry)) (directory:directory? entry))
-                                 (format "  ~a~a" (or (directory:entry-count entry) "?")
-                                   (if (directory:entry-complete? entry) "" "+")) "")))))) count))))))
+            (make-result inventory rows data positions
+              (let ([entry (file-query:index-choice index)]) (and entry (cons (directory:entry-path entry) entry)))
+              (render:defer (+ first-row (max 1 (vector-length data)))
+                (lambda (i)
+                  (if (or (< i first-row) (zero? (vector-length data))) ""
+                    (let* ([row (vector-ref data (- i first-row))] [entry (cdr row)])
+                      (string-append (label row root)
+                        (if (and (not (directory:missing? entry)) (directory:directory? entry))
+                          (format "  ~a~a" (or (directory:entry-count entry) "?")
+                            (if (directory:entry-complete? entry) "" "+")) ""))))))
+              (file-query:index-count index) index))))))
   (define (match-ghost)
     (string-append
       (format " [~a~a match~a]" match-count (if (and complete? (zero? failures)) "" "+")

@@ -17,8 +17,13 @@
      (import (except (head edit) init!) (prefix (head head) head:) (prefix (core kernel) kernel:) (prefix (head keymap) keymap:) (prefix (head dispatch) dispatch:)
              (prefix (foundation string) string:) (prefix (head window) window:) (prefix (head paint) paint:)
              (prefix (foundation path-filter) path-filter:)
+             (prefix (foundation text) text:)
              (prefix (service log) log:)
+             (prefix (service filesystem) filesystem:)
              (prefix (head mode) mode:)
+             (prefix (state collection) collection:)
+             (prefix (state model) model:)
+             (prefix (state store) store:)
              (prefix (sys sys) sys:) (prefix (test) test:))
 
      (define check test:check)
@@ -42,6 +47,8 @@
      (for-each (lambda (name)
                  (call-with-output-file (path name)
                    (lambda (p) (display (if (string=? name "zeta.txt") "z\n" "one\ntwo\n") p)))) names)
+
+     (include "tests/filesystem.sps")
 
      ;; loading a module through the kernel publishes the literals of the
      ;; completing types it brings: file and directory read paths back
