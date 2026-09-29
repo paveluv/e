@@ -1,5 +1,5 @@
-;; edit.sls -- the command layer: the library (edit), the e editor's
-;; default app.
+;; edit.sls -- the canonical editing API. Explicit editor-view commands
+;; coexist with the current-window adapter while ordinary windows migrate.
 ;;
 ;; Everything a user does to text and to the seat that shows it: the
 ;; buffer commands (the window commands are (window)'s), visiting,
@@ -10,7 +10,7 @@
 ;; search and replace are (search)'s, the log's views and conflicts (delta-log)'s).  It
 ;; composes the seams below --
 ;; store, head, paint, prompt, file, mode, keymap -- and is what M-x
-;; sees bare: the loader imports (edit) into the top level.
+;; sees as edit: calls: the loader imports this library with its prefix.
 ;;
 ;; Hot-reloadable like any module: its registrations (bindings, hooks,
 ;; formatters, descriptions) are made in init!, owned by edit, so a
@@ -29,19 +29,19 @@
 (elibrary (head edit)
   (export answer! backspace! backups backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
           beginning-of-line! buffer-clean? buffer-text
-          call-as-one-edit! copy-region! copy-text copy-text! current-batch current-region
-          delete-forward! delete-trashed! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
+          call-as-one-edit! copy-region! copy-text copy-text! (rename (editor:create-view! create-view!)) current-batch current-region
+          (rename (editor:delete! delete!)) delete-forward! delete-trashed! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
           format-region!
           forward-copy-buffer-to-system-clipboard forward-expression! indent-buffer! indent-expression! indent-line!
           indent-region!
-          indent-tab! init! insert-text! keyboard-quit! kill-buffer! kill-expression! kill-line! kill-region!
+          indent-tab! init! (rename (editor:insert! insert!)) insert-text! keyboard-quit! kill-buffer! kill-expression! kill-line! kill-region!
           mark-expression! mark-form!
-          message-progress move-horizontal! move-left! move-right! move-vertical!
+          message-progress (rename (editor:move! move!)) move-horizontal! move-left! move-right! move-vertical!
           new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
           page-window-fraction! (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
           quit! redo! redraw-command! region-text reload! replace-region-text! reread! restore!
-          rewrite-region! rewrite-regions! save! save-file! set-mark-command! set-message!
+          rewrite-region! rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
           set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! undo-scope up-expression!
           visit-file! with-region
           yank!)
@@ -54,6 +54,7 @@
           (prefix (foundation text) text:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
+          (prefix (head editor) editor:)
           (prefix (head expression) expression:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -66,7 +67,6 @@
           (prefix (head table) table:)
           (prefix (head text-layout) text-layout:)
           (prefix (head window) window:)
-          (prefix (service doc) doc:)
           (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -365,24 +365,30 @@
                        [else "the store is unavailable"]))]))
         message)))
 
-  (edoc "Undo one action in the current buffer within the undo-scope: this head's latest under mine, any actor's under all."
-        (returns string "the report shown in the echo area")
+  (edoc "Undo one action within undo-scope. An explicit editor view returns journal status and detail; omitting it uses the legacy current window and echo report."
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (undo!)
-    (history-shift! 'undo "Undo" (undo-scope)))
+  (define undo!
+    (case-lambda
+      [() (history-shift! 'undo "Undo" (undo-scope))]
+      [(id) (editor:history! id 'undo (undo-scope))]))
 
-  (edoc "Reverse this head's latest undo."
-        (returns string "the report shown in the echo area")
+  (edoc "Reverse this head's latest undo in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (redo!)
-    (history-shift! 'redo "Redo" 'mine))
+  (define redo!
+    (case-lambda
+      [() (history-shift! 'redo "Redo" 'mine)]
+      [(id) (editor:history! id 'redo 'mine)]))
 
-  (edoc "Undo an actor's latest live action in the current shared buffer."
+  (edoc "Undo an actor's latest live action in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
         (who actor "the actor's identity")
-        (returns string "the report shown in the echo area")
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (undo-actor! who)
-    (history-shift! 'undo "Undo" (list 'actor who)))
+  (define undo-actor!
+    (case-lambda
+      [(who) (history-shift! 'undo "Undo" (list 'actor who))]
+      [(who id) (editor:history! id 'undo (list 'actor who))]))
 
   ;;; Point, mark, and editing ----------------------------------------------
 
@@ -1688,6 +1694,7 @@
   ;; commands is installed here too.
   (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet.")
   (define (init!)
+    (editor:register! undo! redo!)
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
     ;; Presentation mode is captured with the record, not read on delivery.
@@ -1770,19 +1777,6 @@
       (head:add-pre-redraw-hook! reload-if-due!)
       (head:set-after-key! clamp-point!))
 
-    (doc:register!
-      '(((undo-scope) (("parameter" . "(undo-scope [scope])")) "symbol"
-         ("(head edit)") edit "Editing commands" #f
-         "Choose the default scope of `undo!` and C-_. `mine` (the default) selects this head's latest live action; `all` selects the latest live action of any actor. The preference belongs to the head. Local buffers use their own history in either mode.")
-        ((undo!) (("procedure" . "(undo!)")) "string"
-         ("(head edit)") edit "Editing commands" #f
-         "Undo one action in the current buffer within `undo-scope`, `mine` or `all`. Shared changes use attributed inverse edits; an overlap, changed text property, or unavailable history refuses without changing any part of the action.")
-        ((redo!) (("procedure" . "(redo!)")) "string"
-         ("(head edit)") edit "Editing commands" #f
-         "Reverse this head's latest undo, including an undo of another actor's action. Redo uses the same overlap checks and is independent of `undo-scope`. A fresh edit by this head invalidates its redo.")
-        ((undo-actor!) (("procedure" . "(undo-actor! actor)")) "string"
-         ("(head edit)") edit "Editing commands" #f
-         "Undo the named actor's latest live action in the current shared buffer without changing `undo-scope`. Both the original author and this head's request are retained in the history and audit log.")))
   )
 
 ) ;; library (edit)

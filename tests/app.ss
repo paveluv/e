@@ -14,6 +14,7 @@
 (evaluate!
   '(begin
      (import (except (head edit) init!)
+             (prefix (only (head edit) init!) edit:)
              (prefix (head head) head:)
              (prefix (head catalogue-host) catalogue-host:)
              (prefix (state store) store:)
@@ -878,6 +879,7 @@
        (head:forget-buffer! b) (head:show-buffer! previous))
 
      (include "tests/control.sps")
+     (include "tests/editor-widget.sps")
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")

@@ -56,15 +56,19 @@
     (unless (and (integer? start) (exact? start) (>= start 0)
                  (integer? count) (exact? count) (>= count 0))
       (error 'slice "invalid cell interval" start count))
-    (let ([end (+ start count)])
-      (let loop ([parts (clusters text)] [char 0] [cell 0] [used 0] [out '()])
-        (if (or (null? parts) (>= cell end))
-          (apply string-append (reverse (cons (make-string (- count used) #\space) out)))
-          (let* ([n (caar parts)] [width (cdar parts)] [next (+ cell width)]
-                 [visible (max 0 (- (min end next) (max start cell)))])
-            (loop (cdr parts) (+ char n) next (+ used visible)
-              (if (zero? visible) out
-                (cons (if (= visible width) (substring text char (+ char n)) (make-string visible #\space)) out))))))))
+    (if (plain? text)
+      (let* ([size (string-length text)] [from (min start size)] [to (min (+ start count) size)]
+             [part (substring text from to)] [padding (- count (- to from))])
+        (if (zero? padding) part (string-append part (make-string padding #\space))))
+      (let ([end (+ start count)])
+        (let loop ([parts (clusters text)] [char 0] [cell 0] [used 0] [out '()])
+          (if (or (null? parts) (>= cell end))
+            (apply string-append (reverse (cons (make-string (- count used) #\space) out)))
+            (let* ([n (caar parts)] [width (cdar parts)] [next (+ cell width)]
+                   [visible (max 0 (- (min end next) (max start cell)))])
+              (loop (cdr parts) (+ char n) next (+ used visible)
+                (if (zero? visible) out
+                  (cons (if (= visible width) (substring text char (+ char n)) (make-string visible #\space)) out)))))))))
 
   (edoc "A text fitted to exactly a width in cells, padded on the right or cut at whole clusters with an ellipsis, on the left when asked."
         (text string "the text")

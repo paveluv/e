@@ -788,3 +788,54 @@ basis; `widget:capture!` keeps motion and release on that target outside its
 rectangle. Blur, removal and failed output cancel capture. The TUI decodes
 device button codes before routing. Wheel movement changes scroll anchors,
 preserves focus and selection, and bubbles only its unconsumed remainder.
+
+## Multiline editor views
+
+`(edit:create-view! actor document-id options)` creates an unmounted `editor`
+view over an existing store document. Mount it directly, compose it with
+other views, or pass its root to `window:show-widget!`. Options are `()` for
+wrapping or `((wrap . #f))` for unwrapped text. The `text` output port exposes
+the source text. [examples/editor.e](../examples/editor.e) places wrapped and
+unwrapped editors side by side over one document.
+
+Each view owns `(caret anchor top marked?)`, with all three positions expressed
+as zero-based `(row . character)` pairs at the descriptor's text basis.
+Widths, wrapped segments and desired display columns remain in the head.
+Painting uses the document's mode and the same text projection as ordinary
+windows. Mode metadata is acquired outside painting; warm navigation and
+resizing use the shared mirror without requesting text or publishing geometry.
+
+The canonical commands take an explicit view, including `(model N)` at M-x:
+
+- `edit:select! id caret anchor` establishes a selection, or clears it when
+  the endpoints agree. It also recovers from unavailable selection history.
+- `edit:move! id direction [extend]` accepts `left`, `right`, `up`, `down`,
+  `home`, `end`, `start` and `finish`. Up/Down follow displayed rows and require
+  an allocation. Omitted `extend` follows mark activity.
+- `edit:set-mark! id active` starts selection at the caret or collapses it.
+- `edit:insert! id text` and `edit:delete! id direction` use the source journal;
+  deletion directions are `backward` and `forward`. Multiline paste is one
+  operation. Consecutive insertions at their unchanged resulting caret share
+  an undo group; movement or a source change ends the run.
+- `edit:undo! id`, `edit:redo! id` and `edit:undo-actor! actor id` preserve
+  actor attribution and the existing overlap protection. `undo-scope` still
+  defaults to `mine`; explicit view calls return journal status and detail.
+- `edit:scroll! id rows` changes the logical top without changing selection
+  and returns any unconsumed scroll distance for an enclosing viewport.
+
+Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
+use those commands. Shift-arrows extend selection; Control-Space sets the
+mark and C-g clears it. Return inserts a newline, Backspace/Delete remove
+whole graphemes, and C-_/C-M-_ undo/redo. Mouse presses and drags select using
+the shown frame; the wheel scrolls even when the host is inactive.
+
+Entry and editor share guarded mutation and history settlement. A committed
+edit survives a callback that closes its view, but cannot overwrite a newly
+claimed view or a newer selection. Missing history and overlapping edits
+refuse instead of clamping an edit to different text. Read-only sources remain
+navigable. Empty insertion and deletion at a document boundary are inert.
+
+Nested editors currently provide these core commands. Ordinary editor windows
+still use their existing host; expression commands, mode indentation,
+clipboard commands, search/conflict decorations and window chrome have not
+yet moved to the nested editor.

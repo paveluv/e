@@ -411,6 +411,7 @@
      (test:check 'half-open-clipping-and-composition-preserve-whole-clusters
        (list (layout:intersect '(0 0 2 2) '(2 1 3 3))
          (layout:contains? '(0 0 2 2) 2 1) (layout:contains? '(0 0 0 2) 0 1)
-         (map (lambda (c) (apply glyph:slice c)) '(("界éZ" 1 2) ("界éZ" 0 1) ("界éZ" 2 3))))
-       '((2 1 0 1) #f #f (" é" " " "éZ ")))
+         (map (lambda (c) (apply glyph:slice c)) '(("界éZ" 1 2) ("界éZ" 0 1) ("界éZ" 2 3)
+                                                   ("abcd" 1 2) ("abcd" 3 3) ("abcd" 6 2) ("" 0 0))))
+       '((2 1 0 1) #f #f (" é" " " "éZ " "bc" "d  " "  " "")))
      (test:finish! 'render)))
