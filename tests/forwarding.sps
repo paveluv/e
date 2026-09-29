@@ -118,8 +118,12 @@
         (let* ([calls-before (calls)]
                [producer (lambda () (calls (+ 1 (calls))) 4)]
                [make-action (eval '(lambda (p) (keymap:call fixture:select! p)))]
-               [trace ((eval 'keymap:action-trace) (make-action producer))])
-          (check 'inspection-never-runs-producers-or-preparation
-            (list (= calls-before (calls)) (length trace)) '(#t 3)))))
+               [trace ((eval 'keymap:action-trace) (make-action producer))]
+               [same-name (eval '(keymap:action-trace (keymap:call fixture:select! 4 'selection)))])
+          (check 'inspection-keeps-unresolved-spans-distinct-from-constants-without-running-actions
+            (list (= calls-before (calls)) (length trace)
+              (map (lambda (row)
+                     (map (lambda (span) (substring (cadr row) (car span) (cdr span))) (list-ref row 4))) same-name))
+            '(#t 3 (() ("selection") ("selection")))))))
     (lambda ()
       (for-each (lambda (p) (when (file-exists? p) (delete-file p))) (list source object)))))

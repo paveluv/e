@@ -131,9 +131,9 @@ the key, with each operation's own documentation:
 ```
 
 The model IDs are those of the current composition. `selection` and `basis`
-remain symbolic: inspection does not select a row, run argument producers
-or execute commands. Only explicitly declared, bounded local queries can
-resolve arguments. Multiple forwarding sites are marked as possible routes;
+remain symbolic and appear in italics: inspection does not select a row,
+run argument producers or execute commands. Only explicitly declared, bounded
+local queries can resolve arguments. Multiple forwarding sites are marked as possible routes;
 cycles and unavailable targets stop the chain with a note. This is a map of
 registered forwarding, not a prediction that runtime validation will succeed.
 The **Widget commands** section still lists the connections independently.

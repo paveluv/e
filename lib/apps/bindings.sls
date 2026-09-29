@@ -26,6 +26,24 @@
   (define keyboard-cache #f)
   (define commands-cache #f)
   (define listed-pointer '()) ; the last inspected target, retained while browsing this help
+  (define symbolic-spans (make-weak-eq-hashtable)) ; rendered text -> unresolved character spans
+
+  ;; Preserve semantic marks while fitting text into columns. Plain strings
+  ;; remain the display/cache keys; buffer facts publish the final row marks.
+  (define (spans text) (hashtable-ref symbolic-spans text '()))
+  (define (marked text ranges)
+    (unless (null? ranges) (hashtable-set! symbolic-spans text ranges))
+    text)
+  (define (join . parts)
+    (let loop ([parts parts] [offset 0] [ranges '()] [out '()])
+      (if (null? parts) (marked (apply string-append (reverse out)) (apply append (reverse ranges)))
+        (loop (cdr parts) (+ offset (string-length (car parts)))
+          (cons (map (lambda (r) (cons (+ offset (car r)) (+ offset (cdr r)))) (spans (car parts))) ranges)
+          (cons (car parts) out)))))
+  (define (slice text start end)
+    (marked (substring text start end)
+      (map (lambda (r) (cons (- (max start (car r)) start) (- (min end (cdr r)) start)))
+        (filter (lambda (r) (and (< (car r) end) (> (cdr r) start))) (spans text)))))
 
   (define (stale-listing? b)
     ;; a <bindings> or <bindings 2> local buffer that is not the view: one an older
@@ -61,8 +79,8 @@
 
   (define (trace action . substitutions)
     (map (lambda (row)
-           (list (string-append (if (= (car row) 0) "" (string-append (make-string (* 2 (min 8 (car row))) #\space) "→ "))
-                   (cadr row) (if (cadddr row) (string-append " [" (cadddr row) "]") ""))
+           (list (join (if (= (car row) 0) "" (string-append (make-string (* 2 (min 8 (car row))) #\space) "→ "))
+                   (marked (cadr row) (list-ref row 4)) (if (cadddr row) (string-append " [" (cadddr row) "]") ""))
              (if (caddr row) (summary-of (caddr row)) "")))
       (apply keymap:action-trace action substitutions)))
 
@@ -106,7 +124,7 @@
   (define (cells s) (glyph:cells s))
 
   (define (pad s width)
-    (if (>= (cells s) width) s (string-append s (make-string (- width (cells s)) #\space))))
+    (if (>= (cells s) width) s (join s (make-string (- width (cells s)) #\space))))
 
   (define (wrap text width)
     ;; the text as lines of at most width cells, broken at spaces, a word
@@ -118,7 +136,7 @@
             (reverse (cons word out))
             (let cut ([n (string-length word)])
               (if (or (<= n 1) (<= (cells (substring word 0 n)) width))
-                  (loop (substring word n (string-length word)) (cons (substring word 0 n) out))
+                  (loop (slice word n (string-length word)) (cons (slice word 0 n) out))
                   (cut (- n 1)))))))
     (let loop ([words (apply append (map chop (filter (lambda (w) (> (string-length w) 0)) (split-words text))))]
                [line ""] [out '()])
@@ -126,14 +144,14 @@
         [(null? words) (reverse (if (string=? line "") out (cons line out)))]
         [(string=? line "") (loop (cdr words) (car words) out)]
         [(<= (+ (cells line) 1 (cells (car words))) width)
-         (loop (cdr words) (string-append line " " (car words)) out)]
+         (loop (cdr words) (join line " " (car words)) out)]
         [else (loop words "" (cons line out))])))
 
   (define (split-words s)
     (let loop ([i 0] [start 0] [out '()])
       (cond
-        [(= i (string-length s)) (reverse (cons (substring s start i) out))]
-        [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (substring s start i) out))]
+        [(= i (string-length s)) (reverse (cons (slice s start i) out))]
+        [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (slice s start i) out))]
         [else (loop (+ i 1) start out)])))
 
   (define (bracket keys i)
@@ -179,7 +197,7 @@
                            (let loop ([i 0] [out '()])
                              (if (= i height) (reverse out)
                                  (loop (+ i 1)
-                                       (cons (string-append
+                                       (cons (join
                                                (bracket keys i) (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
                                                (pad (if (< i (length lines)) (car (list-ref lines i)) "") command-width) "  "
                                                (if (< i (length lines)) (cdr (list-ref lines i)) ""))
@@ -271,6 +289,16 @@
         (vector-set! v 1 'chrome))
       v))
 
+  (define (row-styles b row line)
+    (let* ([rows (head:buffer-fact b 'symbolic-spans '#())]
+           [ranges (if (< row (vector-length rows)) (vector-ref rows row) '())])
+      (and (pair? ranges)
+        (let ([v (styles line)])
+          (for-each (lambda (r)
+                      (do ([i (car r) (+ i 1)]) ((>= i (min (cdr r) (vector-length v))))
+                        (vector-set! v i 'italic))) ranges)
+          v))))
+
   ;;; The buffer in the pop-up ------------------------------------------------------------
 
   (define (view-windows)
@@ -334,15 +362,17 @@
   (define (command-template procedure arguments)
     ;; Fixed arguments are expressions; remaining formal names are supplied
     ;; by the invoking control, not invented values or a runnable nullary call.
+    (define (formal name)
+      (let ([text (string-copy (symbol->string name))]) (marked text (list (cons 0 (string-length text))))))
     (let* ([text (keymap:action-text (keymap:call (apply procedure arguments)))]
            [sigs (edoc:edoc-of procedure)] [sig (and sigs (find (lambda (s) (eq? (edoc:signature-kind s) 'procedure)) sigs))]
            [remaining (if sig
                         (let skip ([f (edoc:signature-formals sig)] [n (length arguments)])
                           (if (and (> n 0) (pair? f)) (skip (cdr f) (- n 1)) f)) 'arguments)]
            [tail (let spell ([f remaining])
-                   (cond [(null? f) ""] [(pair? f) (string-append " " (symbol->string (car f)) (spell (cdr f)))]
-                     [else (format " . ~a" f)]))])
-      (string-append (substring text 0 (- (string-length text) 1)) tail ")")))
+                   (cond [(null? f) ""] [(pair? f) (join " " (formal (car f)) (spell (cdr f)))]
+                     [else (join " . " (formal f))]))])
+      (join (substring text 0 (- (string-length text) 1)) tail ")")))
 
   (define (command-sections bindings width)
     (let ([basis (list bindings width)])
@@ -383,7 +413,7 @@
       (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
       (set! listed-pointer pointer)
-      (head:view-replace! view lines)
+      (head:view-replace! view lines (list (cons 'symbolic-spans (list->vector (map spans lines)))))
       (unless same?
         (for-each (lambda (w)
                     (head:window-top-set! w 0) (head:window-topseg-set! w 0)
@@ -549,7 +579,7 @@
 
   (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
-    (mode:register! "bindings" '() '() styles #f #f)
+    (mode:register! "bindings" '() '() styles #f row-styles)
     (head:register-resume! 'bindings (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" show!)
     (keymap:bind-default! "C-x S-TAB" page-up!)

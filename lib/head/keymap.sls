@@ -411,7 +411,7 @@
     (unless (<= (length bindings) 1) (error 'action-text "expected optional producer values"))
     (describe action))
 
-  (edoc "Describe a structured binding and its registered forwarding chain without running argument producers or commands. Rows are (depth text procedure-or-false note-or-false); alternatives, cycles and unresolved runtime arguments stay explicit. Only declared local inspection queries may reduce arguments."
+  (edoc "Describe a structured binding and its registered forwarding chain without running argument producers or commands. Rows are (depth text procedure-or-false note-or-false unresolved-spans), with half-open (start . end) character spans for unresolved arguments. Alternatives and cycles stay explicit; only declared local inspection queries may reduce arguments."
         (action any "binding action") (bindings (list-of list) "optional producer-to-value substitutions") (returns list))
   (define (action-trace action . bindings)
     (define substitutions (if (null? bindings) '() (car bindings)))
@@ -426,15 +426,22 @@
     (define (node-text procedure index n)
       (if (eq? (car n) 'value) (spell procedure index (cadr n)) (format "~a" (cadr n))))
     (define (call-text procedure arguments tail)
-      (string-append "(" (action-text procedure)
-        (apply string-append (map (lambda (n i) (string-append " " (node-text procedure i n))) arguments (iota (length arguments))))
-        (if tail (string-append " . " (node-text procedure (length arguments) tail)) "") ")"))
+      (let ([prefix (string-append "(" (action-text procedure))])
+        (let loop ([nodes (append arguments (if tail (list tail) '()))] [i 0]
+                   [offset (string-length prefix)] [parts (list prefix)] [spans '()])
+          (if (null? nodes) (cons (apply string-append (reverse (cons ")" parts))) (reverse spans))
+            (let* ([separator (if (= i (length arguments)) " . " " ")]
+                   [text (node-text procedure i (car nodes))]
+                   [start (+ offset (string-length separator))] [end (+ start (string-length text))])
+              (loop (cdr nodes) (+ i 1) end (cons text (cons separator parts))
+                (if (eq? (caar nodes) 'unknown) (cons (cons start end) spans) spans)))))))
     (define left 64)
     (define (follow procedure arguments tail depth seen note)
       (let* ([identity (list procedure arguments tail)] [cycle? (member identity seen)]
              [stop? (or cycle? (>= depth 16) (<= left 1) tail note)]
              [note (or note (and cycle? "cycle") (and (or (>= depth 16) (<= left 1)) "trace limit"))]
-             [row (list depth (call-text procedure arguments tail) procedure note)])
+             [text (call-text procedure arguments tail)]
+             [row (list depth (car text) procedure note (cdr text))])
         (set! left (- left 1))
         (cons row
           (if stop? '()
@@ -445,15 +452,16 @@
                          [rows (follow (car step) (cadr step) (caddr step) (+ depth 1) (cons identity seen) (cadddr step))])
                     (append
                       (if (> (length steps) 1)
-                        (cons (list (caar rows) (cadar rows) (caddar rows) (or (cadddr (car rows)) "possible")) (cdr rows)) rows)
+                        (cons (list (caar rows) (cadar rows) (caddar rows) (or (cadddr (car rows)) "possible")
+                                (list-ref (car rows) 4)) (cdr rows)) rows)
                       (walk (cdr rest)))))))))))
     (unless (<= (length bindings) 1) (error 'action-trace "expected optional producer values"))
     (let ([procedure (cond [(call-action? action) (call-action-procedure action)] [(procedure? action) action] [else #f])])
-      (if (not procedure) (list (list 0 (action-text action substitutions) #f #f))
+      (if (not procedure) (list (list 0 (action-text action substitutions) #f #f '()))
         (let* ([arguments (if (call-action? action) (map node (call-action-arguments action)) '())]
                [original (action-text action substitutions)] [chain (follow procedure arguments #f 0 '() #f)])
           (if (string=? original (cadar chain)) chain
-            (cons (list 0 original procedure #f)
+            (cons (list 0 original procedure #f '())
               (if (call-action? action)
                 (map (lambda (row) (cons (+ 1 (car row)) (cdr row))) chain)
                 (cdr chain))))))))
