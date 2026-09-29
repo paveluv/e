@@ -511,7 +511,7 @@
                                           (equal? (vector-ref (car (state b)) 0) "later ordinary line")
                                           (not (head:buffer-trailing b))))
                                  (and (equal? before (state b)) (equal? name (head:buffer-name b))
-                                      (let ([message (log:datum (car (log:entries 'edit:save-file! 1)))])
+                                      (let ([message (log:datum (car (log:entries (if shared? 'document:save-document! 'edit:save-file!) 1)))])
                                         (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
                                              (string:suffix? "saved baseline was not updated." message))))))))
                    (lambda ()
@@ -545,13 +545,13 @@
                '(edit visit))
              '((#t #t) (#t #t)))
            ;; Reuse the same read fixture: the service must carry its
-           ;; pre-I/O review through both merge and replacement admission.
+           ;; pre-I/O review through explicit reads and save's automatic merge.
            (check 'base-document-reads-refuse-concurrent-text-and-file-changes
              (map
                (lambda (operation change)
                  (let* ([b (fresh "reviewed reload" #t)] [id (head:buffer-store-id b)] [newer #f])
                    (head:store-reset! b '("mine")
-                     (list (cons 'file path) (cons 'base (file:text disk #t))))
+                     (list (cons 'file path) (cons 'base (if (eq? operation 'save) "old\n" (file:text disk #t)))))
                    (let ([result
                           (interrupt-during!
                             (lambda ()
@@ -560,10 +560,16 @@
                                 [(file) (store:set-properties! bot id '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))])
                               (set! newer (call-with-values (lambda () (store:snapshot-state id)) list)))
                             (lambda () (set-timer 10000)
-                              (call-with-values (lambda () (operation head:ui-actor id)) list)))])
+                              (case operation
+                                [(save)
+                                 (let ([reply (document:save! head:ui-actor id path '("mine" #f))])
+                                   (list (car reply) (and (string:search (cadr reply) "stale-review" 0 (string-length (cadr reply))) #t)))]
+                                [else (call-with-values
+                                        (lambda () ((if (eq? operation 'reload) document:reload! document:reread!) head:ui-actor id)) list)])))])
                      (list result (equal? newer (call-with-values (lambda () (store:snapshot-state id)) list))))))
-               (list document:reload! document:reread!) '(text file))
-             '(((#t (refused stale-review)) #t) ((#t (refused stale-review)) #t))))
+               '(reload reread save save) '(text file text file))
+             '(((#t (refused stale-review)) #t) ((#t (refused stale-review)) #t)
+               ((#t (refused #t)) #t) ((#t (refused #t)) #t))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
      ;; Before the input reader runs no question can be answered: the prompts

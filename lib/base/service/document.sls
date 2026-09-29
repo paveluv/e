@@ -1,10 +1,11 @@
 ;; Document filesystem operations belong to the base, independently of views.
 (import (only (foundation edoc) elibrary))
 (elibrary (service document)
-  (export acquire! check! reload! reread!)
-  (import (chezscheme) (prefix (core property) property:)
+  (export acquire! check! reload! reread! save! save-output!)
+  (import (chezscheme) (prefix (core kernel) kernel:)
+          (prefix (core property) property:)
           (prefix (foundation string) string:) (prefix (service file) file:)
-          (prefix (service log) log:) (prefix (state store) store:)
+          (prefix (service log) log:) (prefix (state actor) actor:) (prefix (state store) store:)
           (prefix (sys activity) activity:) (prefix (sys sys) sys:))
 
   (define (disk-facts disk)
@@ -98,6 +99,116 @@
                            #f
                            (format "File review refused (~a); shared work was retained" detail)))]
                       [else (format "File review refused (~a); shared work was retained" detail)])))]))]))))
+
+  (define (back-up! actor path disk)
+    (let* ([sum (file:checksum (car disk))]
+           [same (find (lambda (entry)
+                         (let* ([facts (cadr entry)] [backup (fact facts 'backup)])
+                           (and backup (fact facts 'trashed) (not (fact facts 'internal))
+                                (actor:in-audience? actor (fact facts 'audience))
+                                (equal? (car backup) path) (equal? (caddr backup) sum))))
+                       (cadr (store:metadata)))])
+      (if same (fact (cadr same) 'name)
+        (store:buffer-name
+          (store:create! actor (string-append (file:base-name path) ".bak") (file:lines (car disk))
+            (list (cons 'trailing (file:ends-in-newline? (car disk)))
+                  ;; No head registry belongs here. Restoring a backup detects
+                  ;; its mode from this provenance and its own first line.
+                  (cons 'source-file path)
+                  (list 'trashed (time-second (current-time 'time-utc)) actor)
+                  (list 'backup path (cdr disk) sum)))))))
+
+  (define (save-document! actor id path adoption output)
+    ;; One filesystem engine. The explicit output adapter is only for legacy
+    ;; detached head-local text; it receives a receipt, never a hidden document.
+    (let ([written? #f])
+      (call/cc
+        (lambda (return)
+          (define (refuse message) (return (list 'refused message)))
+          (guard (ex [else
+                      (let ([message (if written?
+                                       (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex))
+                                       (format "Save failed: ~a" (kernel:condition-text ex)))])
+                        (log:add! 'document:save-document! message)
+                        (list 'failed message))])
+            (let-values ([(text revision facts) (if id (store:snapshot-state id) (apply values output))])
+              (define (check-source! facts)
+                (when (and (fact facts 'app) (fact facts 'alive))
+                  (refuse "Cannot save a buffer that belongs to a live app"))
+                (when (> (or (fact facts 'conflicts) 0) 0) (refuse "Resolve the conflicts first")))
+              (check-source! facts)
+              (unless (and (list? adoption) (= (length adoption) 2)
+                           (string? (car adoption)) (or (not (cadr adoption)) (string? (cadr adoption))))
+                (error 'save-document! "expected (first-line detected-mode)"))
+              (let ([adopted? (not (equal? path (fact facts 'file)))])
+                (when (and adopted? (not (equal? (car adoption) (vector-ref text 0))))
+                  (refuse "The first line changed; review the detected mode and save again"))
+                (let-values ([(disk identity) (if (file-exists? path #f) (read-disk path) (values #f #f))])
+                  (when (and disk (not adopted?) (not (fact facts 'modified))
+                             (equal? (car disk) (fact facts 'base)))
+                    (return '(unchanged "No changes to save")))
+                  (when (and disk (not adopted?) (not (equal? (car disk) (fact facts 'base))))
+                    (unless id (refuse "The file changed on disk; visit it as a shared document before merging local output"))
+                    (let-values ([(status detail)
+                                  (apply-disk! actor id path (cons revision facts) disk identity #f)])
+                      (cond
+                        [(eq? status 'applied)
+                         (unless (null? (cadr detail)) (refuse "Resolve the conflicts first"))
+                         (let-values ([(merged rev current) (store:snapshot-state id)])
+                           (unless (and (equal? (fact current 'file) path)
+                                        (equal? (fact current 'base) (car disk)))
+                             (refuse "Buffer's file or baseline changed; review the file again"))
+                           (check-source! current)
+                           (set! text merged) (set! revision rev) (set! facts current))]
+                        [(memq detail '(no-base basis-too-old))
+                         (let-values ([(status detail)
+                                       (apply-disk! actor id path (cons revision facts) disk identity #t)])
+                           (unless (eq? status 'applied) (refuse (format "File review refused (~a)" detail)))
+                           (refuse (format "~a changed on disk and was reread instead of saved; undo brings your text back"
+                                     (file:base-name path))))]
+                        [else (refuse (format "File review refused (~a); further edits have been preserved" detail))])))
+                  (let* ([trailing (cond [(assq 'trailing facts) => cdr] [else #t])]
+                         [written (file:text text trailing)]
+                         [review (property:select facts
+                                   (append '(file base app alive)
+                                     (if adopted? '(read-only disposable mode mode-auto) '())))]
+                         [updates (append (list (cons 'file path) (cons 'base written) '(stamp . #f))
+                                    (if adopted? `((read-only . #f) (disposable . #f)
+                                                   (mode . ,(cadr adoption)) (mode-auto . #t)) '()))]
+                         [kept (and disk (not (string=? (car disk) written)) (back-up! actor path disk))])
+                    ;; Check after backup publication too: its subscribers may
+                    ;; replace the target. Never overwrite a newly appeared file.
+                    (let-values ([(current current-identity)
+                                  (if (file-exists? path #f) (read-disk path) (values #f #f))])
+                      (unless (and (equal? identity current-identity)
+                                   (equal? (and disk (car disk)) (and current (car current))))
+                        (refuse "Disk changed again; operation cancelled. Review the file again.")))
+                    (file:write! path text trailing)
+                    (set! written? #t)
+                    ;; Text may advance during I/O; its modified flag remains
+                    ;; derived against these exact written bytes. Metadata may
+                    ;; not be retargeted or readopted underneath this receipt.
+                    (when (and id (not (store:set-properties! actor id updates review (file:base-name path))))
+                      (error 'save-document! "Buffer's file state changed; saved baseline was not updated."))
+                    (let ([message (if (and adopted? kept)
+                                     (format "Wrote ~a; what it held is kept as ~a" path kept)
+                                     (format "Wrote ~a" path))])
+                      (log:add! 'document:save-document! message)
+                      (if id (list 'saved message) (list 'saved message updates))))))))))))
+
+  (edoc "Save a shared document in the base, merging external edits undoably and backing up overwritten bytes. File facts, name and an adopted mode commit together; newer text remains dirty. Returns (saved message), (unchanged message), (refused message) or (failed message); a failed save can already have written bytes. Hooks belong to the caller."
+        (actor actor "requesting actor") (id integer "document identity")
+        (path string "canonical target") (adoption list "(reviewed-first-line detected-mode-name-or-false), used for Save As")
+        (returns list))
+  (define (save! actor id path adoption)
+    (activity:call-with (lambda () (save-document! actor id path adoption #f))))
+
+  (edoc "Save detached legacy head-local output using the same base filesystem and backup engine. Returns save! statuses, with facts appended to a saved receipt for guarded local adoption. External changes to an already visited file refuse; merging requires a shared document. This adapter ends with local output migration."
+        (actor actor "requesting actor") (path string "canonical target")
+        (text vector "local lines") (facts list "coherent local facts")
+        (adoption list "(reviewed-first-line detected-mode-name-or-false)") (returns list))
+  (define (save-output! actor path text facts adoption)
+    (activity:call-with (lambda () (save-document! actor #f path adoption (list text #f facts)))))
 
   (edoc "Acquire a file or directory in the base without placing it in a window. Missing files and parents are created exclusively; existing shared work is reused and disk changes merge undoably. Returns (directory path) or (buffer id admitted? path diagnostic). Filesystem failures raise."
         (actor actor "requesting head") (path string "absolute path, trailing slash requests a directory")

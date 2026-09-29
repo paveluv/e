@@ -861,6 +861,24 @@ reusing an old disk observation. An unreadable or unvisited file returns
 `#f`. These operations share the acquisition service's base worker boundary;
 heads receive results and ordinary text deltas, not a disk-text round trip.
 
+`(document:save! actor id canonical-path '(first-line mode-name))` saves
+a shared document without requiring a window. The last argument carries a
+reviewed first line and the head's detected mode name (or `#f`) for Save As;
+an inconsistent first line refuses adoption. The base owns file reads,
+undoable merge/reread decisions, backups, writing and atomic publication of
+the file, baseline, name and mode. Text edited during writing remains dirty;
+concurrent changes to the reviewed file facts refuse baseline publication.
+The result is `(saved message)`, `(unchanged message)`, `(refused message)`
+or `(failed message)`. A failure after writing says so explicitly.
+
+`edit:save-file!` supplies this mode choice and runs this head's pre-save
+hooks before the request and post-save hooks after successful adoption.
+Detached legacy local output uses `document:save-output!` with its text and
+facts, then adopts the returned facts against its local review. It creates
+no shared shadow buffer. If its previously saved file changed externally,
+visit that file as a shared document to merge it; local output cannot merge.
+Restored backups detect their mode from their original path and first line.
+
 `(store:find-file canonical-path)` looks up the shared
 buffer's id or returns `#f`. `(store:visit! actor name lines facts)` requires
 a canonical `file` fact and returns two values: id and whether it was created.

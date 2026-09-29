@@ -197,7 +197,9 @@
          (find-mode "scheme")))
 
   (define (detected-mode b)
-    (or (detect-mode (head:buffer-file b) (head:buffer-line b 0))
+    (or (detect-mode (or (head:buffer-file b)
+                       (head:buffer-fact b 'source-file #f))
+          (head:buffer-line b 0))
         (scratch-mode b)))
 
   (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."

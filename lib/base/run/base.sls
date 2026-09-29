@@ -286,6 +286,10 @@
        ;; This connection's worker performs I/O; the base lifecycle loop and
        ;; other heads keep running. No model/store writer spans the read.
        (apply document:acquire! actor args)]
+      [(document-save)
+       (control!) (arity 3) (apply document:save! actor args)]
+      [(document-save-output)
+       (control!) (arity 4) (apply document:save-output! actor args)]
       [(document-reload document-reread document-check)
        (control!) (arity 1)
        (case operation

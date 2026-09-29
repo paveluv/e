@@ -88,7 +88,7 @@
     set-repaint-hook! set-review-viewer! set-root!
     set-window-buffer! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
-    store-history! store-reload! store-reread! store-reset!
+    store-history! store-reset!
     store-resolve! store-resolve-picks! store-rewrite!
     sync-foreign-edits! tile! tool-buffer! transfer-split!
     typed-text ui-actor view-append! view-buffer? view-replace!
@@ -2103,38 +2103,6 @@
        (let-values ([(status detail)
                      (guard (ex [else (values 'blocked 'store-unavailable)])
                        (store:rewrite! ui-actor (buffer-store-id b) disabled 'any))])
-         (when (eq? status 'applied)
-           (sync-store-buffer! b)
-           (flush-ui-audit! (buffer-store-id b)))
-         (values status detail))]))
-
-  (edoc "Reload a shared buffer from its file through the store as one undoable action belonging to this head, preserving earlier undo history and adopting the result: (values status detail), applied with (revision conflicts), refused, or nothing for a local buffer."
-        (b buffer "the buffer")
-        (lines (or list vector) "the disk's lines")
-        (facts list "the facts to commit: base, stamp, trailing, stale"))
-  (define (store-reload! b lines facts)
-    (cond
-      [(not (buffer-store-id b)) (values 'nothing #f)]
-      [else
-       (let-values ([(status detail)
-                     (guard (ex [else (values 'refused 'store-unavailable)])
-                       (store:reload! ui-actor (buffer-store-id b) lines facts 'any))])
-         (when (eq? status 'applied)
-           (sync-store-buffer! b)
-           (flush-ui-audit! (buffer-store-id b)))
-         (values status detail))]))
-
-  (edoc "Reread a shared buffer from its file through the store, the disk's text one undoable edit of this head's settling the pending conflicts, adopting the result: (values status detail), applied with the revision, refused, or nothing for a local buffer."
-        (b buffer "the buffer")
-        (lines (or list vector) "the disk's lines")
-        (facts list "the facts to commit"))
-  (define (store-reread! b lines facts)
-    (cond
-      [(not (buffer-store-id b)) (values 'nothing #f)]
-      [else
-       (let-values ([(status detail)
-                     (guard (ex [else (values 'refused 'store-unavailable)])
-                       (store:reread! ui-actor (buffer-store-id b) lines facts 'any))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))
