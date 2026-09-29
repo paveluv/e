@@ -834,6 +834,11 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   the middle; paging outward at an already reached edge selects that edge.
   This replaces `page-window!` and `page-window-fraction!`. The temporary
   two-argument form operates on the legacy current window.
+- Expression motion, marking, killing and transposition take the same explicit
+  view: for example, `(edit:forward-expression! id)`, `(edit:mark-form! id)` and
+  `(edit:transpose-expressions! id)`. Their ordinary Control-Meta bindings work
+  inside nested editors. All views share expression analysis by immutable text
+  snapshot. The `expression:` query API now accepts line vectors, not buffers.
 
 Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
 use those commands. Shift-arrows extend selection; Control-Space sets the
@@ -850,6 +855,6 @@ refuse instead of clamping an edit to different text. Read-only sources remain
 navigable. Empty insertion and deletion at a document boundary are inert.
 
 Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; expression and bulk-region commands, mode indentation,
+still use their existing host; bulk-region commands, mode indentation,
 search/conflict decorations and window chrome have not
 yet moved to the nested editor.

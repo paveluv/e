@@ -1,10 +1,10 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export create-view! delete! history! insert! move! page! paste! register! scroll! select! set-mark! transfer!)
+  (export create-view! delete! expression! history! insert! move! page! paste! register! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
-          (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head head) head:)
-          (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
+          (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head expression) expression:)
+          (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head mode) mode:) (prefix (head render) render:)
           (prefix (head text-control) text-control:) (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
@@ -257,16 +257,21 @@
               [else (loop start (+ end 1) out)])) typing?))))
 
   (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish."
-        (id model "editor view") (operation (one-of copy cut line) "transfer") (publish procedure "(text accumulate?)"))
+        (id model "editor view") (operation (one-of copy cut line forward backward) "transfer") (publish procedure "(text accumulate?)"))
   (define (transfer! id operation publish)
-    (unless (memq operation '(copy cut line)) (error 'transfer! "invalid transfer"))
+    (unless (memq operation '(copy cut line forward backward)) (error 'transfer! "invalid transfer"))
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([s (state d)] [p (car s)] [old (text-control:basis-text source d)]
-             [selection (if (eq? operation 'line)
-                          (list p (let ([end (string-length (vector-ref old (car p)))])
-                                    (if (< (cdr p) end) (cons (car p) end) (adjacent old p 'right)))) s)]
+             [selection (case operation
+                          [(line) (list p (let ([end (string-length (vector-ref old (car p)))])
+                                            (if (< (cdr p) end) (cons (car p) end) (adjacent old p 'right))))]
+                          [(forward backward)
+                           (let-values ([(start end) ((if (eq? operation 'forward) expression:forward expression:backward) old p)])
+                             (unless start (refuse "No expression in that direction"))
+                             (list p (if (eq? operation 'forward) end start)))]
+                          [else s])]
              [span (text-source:span selection)] [m (mounted id)] [join? (continues? m source d 'kill)])
-        (unless (or (eq? operation 'line) (cadddr s)) (refuse "The mark is not set"))
+        (unless (or (memq operation '(line forward backward)) (cadddr s)) (refuse "The mark is not set"))
         (unless (text:span-empty? span)
           (let ([text (text:to-string (list->vector (text:extract old span)) #f)])
             (if (eq? operation 'copy)
@@ -283,6 +288,38 @@
                     (when (and after (text-control:current? id source d)
                             (equal? after (typing-basis (interaction:snapshot id))))
                       (mount-group-set! m (list 'kill after #f))))))))))))
+
+  (edoc "Operate on Scheme expressions in an explicit editor, sharing immutable source analysis across views. Motions and marks use current mirrored text; transposition is admitted against its captured revision."
+        (id model "editor view") (operation (one-of forward backward up down next previous start end mark form transpose) "expression operation"))
+  (define (expression! id operation)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (if (eq? operation 'transpose)
+        (let* ([old (text-control:basis-text source d)] [p (car (state d))])
+          (let-values ([(as ae) (expression:backward old p)] [(bs be) (expression:forward old p)])
+            (unless (and as bs (not (equal? as bs))) (refuse "No two expressions around the caret"))
+            (let-values ([(lines trailing?) (text:from-string (string-append (expression:text old bs be)
+                                                                (expression:text old ae bs) (expression:text old as ae)))])
+              (replace! id source d (list as be) (append (vector->list lines) (if trailing? '("") '())) #f))))
+        (let* ([ps (points source d)] [lines (text-control:lines source)] [marked? (cadddr (state d))])
+          (unless ps (refuse "Editor selection history is unavailable"))
+          (let* ([p (car ps)] [anchor (cadr ps)]
+                 [from (if (and (eq? operation 'mark) marked? (or (< (car p) (car anchor))
+                                                                (and (= (car p) (car anchor)) (< (cdr p) (cdr anchor))))) anchor p)])
+            (let-values ([(a b)
+                          (case operation
+                            [(forward mark) (expression:forward lines from)] [(backward) (expression:backward lines p)]
+                            [(up) (expression:container lines p)] [(next) (expression:next-list lines p)]
+                            [(previous) (expression:previous-list lines p)] [(form) (expression:top-level lines p)]
+                            [(down) (values (expression:down lines p) #f)] [(start) (values (expression:form-start lines p) #f)]
+                            [(end) (values (expression:form-end lines p) #f)]
+                            [else (error 'expression! "invalid operation" operation)])])
+              (unless a (refuse "No expression in that direction"))
+              (let ([next (if (memq operation '(forward next)) b a)])
+                (publish! id source d
+                  (list (if (eq? operation 'mark) p next)
+                    (cond [(memq operation '(mark form)) b] [marked? anchor] [else next]) (caddr ps))
+                  (or marked? (and (memq operation '(mark form)) #t)) #t)
+                (mount-goal-set! (mounted id) #f))))))))
 
   (edoc "Page an allocated editor by a fraction of its height, retaining mark activity and the desired display column. At an already reached edge, move the caret to that edge."
         (id model "editor view") (direction integer "negative up, positive down") (fraction integer "positive page divisor"))
@@ -388,4 +425,8 @@
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)
                             (keymap:call (apply (cdr (assq (cadr b) commands)) (cons widget:target (cddr b))))))
       '(("C-_" undo) ("C-M-_" redo) ("C-k" kill-line) ("C-w" kill-region) ("M-w" copy-region) ("C-y" yank)
-        ("PAGEUP" page -1 1) ("PAGEDOWN" page 1 1) ("M-v" page -1 1) ("C-v" page 1 1)))))
+        ("PAGEUP" page -1 1) ("PAGEDOWN" page 1 1) ("M-v" page -1 1) ("C-v" page 1 1)
+        ("C-M-f" forward-expression) ("C-M-b" backward-expression) ("C-M-u" up-expression) ("C-M-d" down-expression)
+        ("C-M-n" next-list) ("C-M-p" previous-list) ("C-M-a" beginning-of-form) ("C-M-e" end-of-form)
+        ("C-M-@" mark-expression) ("C-M-h" mark-form) ("C-M-t" transpose-expressions)
+        ("C-M-k" kill-expression) ("C-M-BACKSPACE" backward-kill-expression)))))

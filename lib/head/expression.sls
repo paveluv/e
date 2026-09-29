@@ -1,4 +1,4 @@
-;; expression.sls -- the Scheme expressions of a buffer, by position.
+;; expression.sls -- the Scheme expressions of a text snapshot, by position.
 ;;
 ;; Chez's annotated reader gives the span of every complete datum in a
 ;; buffer's text, at every depth; an unreadable stretch, an unfinished
@@ -13,8 +13,7 @@
 (elibrary (head expression)
   (export backward container down form-end form-start forward next-list previous-list spans text
           top-level)
-  (import (chezscheme)
-          (prefix (head head) head:))
+  (import (chezscheme))
 
   ;; A span is #(start end compound?), in character offsets; compound
   ;; spans are lists and vectors, the rest atoms.
@@ -62,36 +61,34 @@
                      (let ([resume (+ (token-start source at sfd) 1)])
                        (read-all resume (open-string-input-port (substring source (min resume n) n)) acc))]))))))
 
-  ;; Per buffer, the analysis of its text at a revision:
-  ;; #(revision source line-starts spans)
+  ;; Shared across views of an immutable snapshot; old snapshots remain valid.
+  ;; #(source line-starts spans)
   (define analyses (make-weak-eq-hashtable))
 
-  (define (analysis b)
-    (let ([revision (head:buffer-revision b)] [known (hashtable-ref analyses b #f)])
-      (if (and known (eqv? (vector-ref known 0) revision))
-          known
-          (let* ([lines (head:buffer-lines b)] [count (vector-length lines)] [starts (make-vector count 0)]
-                 [source (let loop ([row 0] [offset 0] [parts '()])
-                           (if (= row count)
-                               (apply string-append (reverse parts))
-                               (let ([line (vector-ref lines row)])
-                                 (vector-set! starts row offset)
-                                 (loop (+ row 1) (+ offset (string-length line) 1)
-                                       (if (= row (- count 1)) (cons line parts) (cons "\n" (cons line parts)))))))]
-                 [fresh (vector revision source starts (spans source))])
-            (hashtable-set! analyses b fresh)
-            fresh))))
+  (define (analysis lines)
+    (or (hashtable-ref analyses lines #f)
+        (let* ([count (vector-length lines)] [starts (make-vector count 0)]
+               [source (let loop ([row 0] [offset 0] [parts '()])
+                         (if (= row count)
+                             (apply string-append (reverse parts))
+                             (let ([line (vector-ref lines row)])
+                               (vector-set! starts row offset)
+                               (loop (+ row 1) (+ offset (string-length line) 1)
+                                     (if (= row (- count 1)) (cons line parts) (cons "\n" (cons line parts)))))))]
+               [fresh (vector source starts (spans source))])
+          (hashtable-set! analyses lines fresh)
+          fresh)))
 
   (define (offset-of a position)
     ;; the character offset of a (row . col), clamped into its row
-    (let* ([starts (vector-ref a 2)] [count (vector-length starts)] [source (vector-ref a 1)]
+    (let* ([starts (vector-ref a 1)] [count (vector-length starts)] [source (vector-ref a 0)]
            [row (max 0 (min (car position) (- count 1)))]
            [line-end (if (= row (- count 1)) (string-length source) (- (vector-ref starts (+ row 1)) 1))])
       (min (+ (vector-ref starts row) (max 0 (cdr position))) line-end)))
 
   (define (position-of a offset)
     ;; the (row . col) of a character offset
-    (let* ([starts (vector-ref a 2)] [count (vector-length starts)])
+    (let* ([starts (vector-ref a 1)] [count (vector-length starts)])
       (let loop ([row 0])
         (if (or (= row (- count 1)) (< offset (vector-ref starts (+ row 1))))
             (cons row (- offset (vector-ref starts row)))
@@ -179,91 +176,91 @@
           (and (pair? tops) (car (last-pair tops))))))
 
   (define (edges b position pick)
-    (let* ([a (analysis b)] [s (pick (vector-ref a 3) (offset-of a position))])
+    (let* ([a (analysis b)] [s (pick (vector-ref a 2) (offset-of a position))])
       (if s
           (values (position-of a (span-start s)) (position-of a (span-end s)))
           (values #f #f))))
 
-  (edoc "The expression a backward move from a position in a buffer crosses, as (values start end) positions, or (values #f #f) without one: the atom around the position, else the last expression ending by it inside the enclosing one."
-        (b buffer "the buffer")
+  (edoc "The expression a backward move from a position in a text snapshot crosses, as (values start end) positions, or (values #f #f) without one: the atom around the position, else the last expression ending by it inside the enclosing one."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (backward b position)
     (edges b position crossed-backward))
 
-  (edoc "The expression a forward move from a position in a buffer crosses, as (values start end) positions, or (values #f #f) without one: the atom around the position, else the first expression starting at or after it inside the enclosing one."
-        (b buffer "the buffer")
+  (edoc "The expression a forward move from a position in a text snapshot crosses, as (values start end) positions, or (values #f #f) without one: the atom around the position, else the first expression starting at or after it inside the enclosing one."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (forward b position)
     (edges b position crossed-forward))
 
-  (edoc "The top-level form around a position in a buffer, as (values start end) positions, or (values #f #f) in a buffer without one: the form holding the position, its edges included, else the next one after it, else the last one before it."
-        (b buffer "the buffer")
+  (edoc "The top-level form around a position in a text snapshot, as (values start end) positions, or (values #f #f) in a text snapshot without one: the form holding the position, its edges included, else the next one after it, else the last one before it."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (top-level b position)
     (edges b position top-level-around))
 
-  (edoc "The list or vector around a position in a buffer, as (values start end) positions, or (values #f #f) at top level."
-        (b buffer "the buffer")
+  (edoc "The list or vector around a position in a text snapshot, as (values start end) positions, or (values #f #f) at top level."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (container b position)
     (edges b position container-around))
 
-  (edoc "The position just inside the next list or vector at a position's level in a buffer, atoms skipped, or #f without one."
-        (b buffer "the buffer")
+  (edoc "The position just inside the next list or vector at a position's level in a text snapshot, atoms skipped, or #f without one."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (returns (or pair #f))
         (effects internal))
   (define (down b position)
-    (let* ([a (analysis b)] [s (compound-forward (vector-ref a 3) (offset-of a position))])
+    (let* ([a (analysis b)] [s (compound-forward (vector-ref a 2) (offset-of a position))])
       (and s (position-of a (+ (span-start s) 1)))))
 
-  (edoc "The next list or vector at a position's level in a buffer, atoms skipped, as (values start end) positions, or (values #f #f) without one."
-        (b buffer "the buffer")
+  (edoc "The next list or vector at a position's level in a text snapshot, atoms skipped, as (values start end) positions, or (values #f #f) without one."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (next-list b position)
     (edges b position compound-forward))
 
-  (edoc "The previous list or vector at a position's level in a buffer, atoms skipped, as (values start end) positions, or (values #f #f) without one."
-        (b buffer "the buffer")
+  (edoc "The previous list or vector at a position's level in a text snapshot, atoms skipped, as (values start end) positions, or (values #f #f) without one."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (effects internal))
   (define (previous-list b position)
     (edges b position compound-backward))
 
-  (edoc "The start of the last top-level form beginning before a position in a buffer, or #f."
-        (b buffer "the buffer")
+  (edoc "The start of the last top-level form beginning before a position in a text snapshot, or #f."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (returns (or pair #f))
         (effects internal))
   (define (form-start b position)
     (let* ([a (analysis b)] [offset (offset-of a position)])
-      (let loop ([tops (top-level-spans (vector-ref a 3))] [best #f])
+      (let loop ([tops (top-level-spans (vector-ref a 2))] [best #f])
         (cond [(and (pair? tops) (< (span-start (car tops)) offset)) (loop (cdr tops) (car tops))]
               [best (position-of a (span-start best))]
               [else #f]))))
 
-  (edoc "The end of the first top-level form ending after a position in a buffer, or #f."
-        (b buffer "the buffer")
+  (edoc "The end of the first top-level form ending after a position in a text snapshot, or #f."
+        (b vector "immutable source lines")
         (position pair "(row . col)")
         (returns (or pair #f))
         (effects internal))
   (define (form-end b position)
     (let* ([a (analysis b)] [offset (offset-of a position)]
-           [s (find (lambda (t) (> (span-end t) offset)) (top-level-spans (vector-ref a 3)))])
+           [s (find (lambda (t) (> (span-end t) offset)) (top-level-spans (vector-ref a 2)))])
       (and s (position-of a (span-end s)))))
 
-  (edoc "The text of a buffer between two positions, rows joined by newlines."
-        (b buffer "the buffer")
+  (edoc "The text of a text snapshot between two positions, rows joined by newlines."
+        (b vector "immutable source lines")
         (start pair "(row . col)")
         (end pair "(row . col)")
         (returns string)
         (effects internal))
   (define (text b start end)
     (let ([a (analysis b)])
-      (substring (vector-ref a 1) (offset-of a start) (offset-of a end))))
+      (substring (vector-ref a 0) (offset-of a start) (offset-of a end))))
 )

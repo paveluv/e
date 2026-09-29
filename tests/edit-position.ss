@@ -166,7 +166,7 @@
      (head:goto! '(0 . 2))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 0) '("Q"))
+         (foreign! formatted (text:make-span 0 0 0 0) '("Q"))
          (head:before-frame!)
          '("ABC" "tail")))
      (set! token
@@ -185,7 +185,7 @@
      (head:with-buffer conflict (mode:choose! "position-format"))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 1 0 2) '("R"))
+         (foreign! conflict (text:make-span 0 1 0 2) '("R"))
          (head:before-frame!)
          '("ABC")))
      (check 'format-refuses-even-after-head-adoption (refused? format-buffer!) #t)
@@ -200,7 +200,7 @@
      (head:goto! '(0 . 3))
      (mode:register-indenter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 0) '("pre" ""))
+         (foreign! indented (text:make-span 0 0 0 0) '("pre" ""))
          (head:before-frame!)
          '(6 #f)))
      (indent-buffer!)

@@ -335,10 +335,10 @@
 
   ;; Both are provided per mode by modules and consumed by edit's
   ;; indentation and formatting commands.  An indenter maps rows to where
-  ;; their text should start: (proc buffer from to) -> one entry per row
+  ;; their text should start: (proc source from to) over a mode:source snapshot -> one entry per row
   ;; of from..to -- #f leaving a row alone, a column, or an ascending list
   ;; of columns when several indentations are valid.  A formatter rewrites
-  ;; rows wholesale: (proc buffer from to) -> the replacement lines, or #f
+  ;; rows wholesale: (proc source from to) over a mode:source snapshot -> the replacement lines, or #f
   ;; when the rows cannot be formatted.
   (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
   (define formatters (kernel:make-registry))  ; entries (mode proc)
@@ -355,7 +355,7 @@
   (define (indenter-entry name)
     (inherited-entry indenters name))
 
-  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
+  (edoc "Register a mode's indenter: (proc source from to) over a mode:source snapshot gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
         (name mode "the mode")
         (proc procedure "the indenter")
         (tab boolean "whether TAB indents"))
@@ -364,7 +364,7 @@
       [(name proc) (register-indenter! name proc #t)]
       [(name proc tab) (kernel:registry-add! indenters (list name proc tab))]))
 
-  (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
+  (edoc "Register a mode's formatter: (proc source from to) over a mode:source snapshot gives the replacement lines, or #f when the rows cannot be formatted."
         (name mode "the mode")
         (proc procedure "the formatter"))
   (define (register-formatter! name proc)
@@ -378,7 +378,7 @@
       (unless entry (error 'indent-on-tab! "no indenter for mode" name))
       (kernel:registry-add! tab-overrides (list name flag))))
 
-  (edoc "A mode's indenter, (proc buffer from to), or #f."
+  (edoc "A mode's indenter, (proc source from to) over a mode:source snapshot, or #f."
         (name string "the mode's name")
         (returns (or procedure #f)))
   (define (indenter name)
@@ -395,7 +395,7 @@
             [else (let ([m (find-mode name)])
                     (and m (mode-parent m) (indent-on-tab? (mode-parent m))))])))
 
-  (edoc "A mode's formatter, (proc buffer from to), or #f."
+  (edoc "A mode's formatter, (proc source from to) over a mode:source snapshot, or #f."
         (name string "the mode's name")
         (returns (or procedure #f)))
   (define (formatter name)

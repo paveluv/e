@@ -179,19 +179,13 @@
   ;;; Indentation and formatting ------------------------------------------------
 
   ;; The engine is the pure (scheme-format) library, shared with the
-  ;; standalone scheme-format tool; these adapters feed it buffer lines.
-
-  (define (buffer-vector b)
-    (let* ([n (head:buffer-line-count b)]
-           [v (make-vector n)])
-      (do ([i 0 (+ i 1)]) ((= i n) v)
-        (vector-set! v i (head:buffer-line b i)))))
+  ;; standalone scheme-format tool; callbacks consume immutable source lines.
 
   (define (scheme-indent b from to)
-    (scheme-format:indent-lines (buffer-vector b) from to))
+    (scheme-format:indent-lines (mode:source-lines b) from to))
 
   (define (scheme-format b from to)
-    (scheme-format:lines (buffer-vector b) from to))
+    (scheme-format:lines (mode:source-lines b) from to))
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)

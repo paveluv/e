@@ -213,7 +213,7 @@
      (head:goto! '(0 . 2))
      (mode:register-indenter! "conflict-indent"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 4) '("R"))
+         (foreign! indented (text:make-span 0 0 0 4) '("R"))
          '(6)))
      (check 'indent-overlap-refuses (refused? indent-buffer!) #t)
      (check 'refused-indent-keeps-foreign-text (text-of indented) '("Rc"))

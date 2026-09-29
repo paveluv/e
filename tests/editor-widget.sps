@@ -143,6 +143,17 @@
   (check 'editor-stale-copy-and-cut-refuse-without-losing-either-text
     (list (refused? (lambda () (copy-region! a))) (refused? (lambda () (kill-region! a))) (copy-text) (store:line source 2))
     '(#t #t "keep" "gXi"))
+  (store:reset! '(base test) source '("(a b)" "(c d)"))
+  (text-source:open! actor source) (select! a '(0 . 0) '(0 . 0))
+  (key "C-M-d") (key "C-M-@") (key "C-M-@")
+  (check 'editor-expression-mark-extends-without-moving-caret (list-head (state a) 2) '((0 . 1) (0 . 4)))
+  (select! a '(0 . 3) '(0 . 3)) (key "C-M-t")
+  (check 'editor-expression-transposition-is-one-undoable-edit
+    (list (store:line source 0) (car (state a)) (begin (undo! a) (store:line source 0))) '("(b a)" (0 . 4) "(a b)"))
+  (select! a '(0 . 1) '(0 . 1)) (key "C-M-k") (key "C-M-k")
+  (check 'editor-expression-kills-accumulate-through-canonical-bindings (list (store:line source 0) (copy-text)) '("()" "a b"))
+  (select! a '(1 . 5) '(1 . 5)) (key "C-M-BACKSPACE")
+  (check 'editor-backward-expression-cut-keeps-other-rows (list (store:line source 0) (store:line source 1) (copy-text)) '("()" "" "(c d)"))
   (store:reset! '(base test) source '("replacement"))
   (text-source:forget! source) (text-source:open! actor source)
   (check 'editor-unknown-selection-history-refuses-until-explicit-selection

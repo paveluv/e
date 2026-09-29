@@ -101,5 +101,9 @@ Modes register indentation and formatting independently:
 (mode:register-formatter! "mode-name" formatter)
 ```
 
+Both callbacks receive `(source from to)`, where `source` is a `mode:source`
+snapshot. Read its immutable lines with `mode:source-lines` and declared mode
+facts with `mode:source-fact`; no buffer or current window is needed.
+
 This keeps the editing commands generic while allowing language modules to own
 their layout policy.

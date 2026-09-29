@@ -406,15 +406,23 @@
     (set! point-row (max 0 (min point-row (- (vlen) 1))))
     (set! point-col (max 0 (min point-col (string-length (current-display-line))))))
 
-  (edoc "Move point forward over one expression: the atom around point, else the next expression inside the enclosing one; the C-M-f of Emacs.")
-  (define (forward-expression!)
-    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
-      (if end (head:goto! end) (set-message! "No expression after point"))))
+  (edoc "Move point forward over one expression: the atom around point, else the next expression inside the enclosing one; the C-M-f of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define forward-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if end (head:goto! end) (set-message! "No expression after point")))]
+      [(id) (editor:expression! id 'forward)]))
 
-  (edoc "Move point backward over one expression: the atom around point, else the last expression ending by it inside the enclosing one; the C-M-b of Emacs.")
-  (define (backward-expression!)
-    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
-      (if start (head:goto! start) (set-message! "No expression before point"))))
+  (edoc "Move point backward over one expression: the atom around point, else the last expression ending by it inside the enclosing one; the C-M-b of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define backward-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if start (head:goto! start) (set-message! "No expression before point")))]
+      [(id) (editor:expression! id 'backward)]))
 
   (define (position-before? a b)
     (or (< (car a) (car b)) (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
@@ -430,83 +438,127 @@
         (changed!))))
 
   (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs."
-        (edits))
-  (define (kill-expression!)
-    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
-      (if end (kill-between! (head:point) end #f) (set-message! "No expression after point"))))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define kill-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if end (kill-between! (head:point) end #f) (set-message! "No expression after point")))]
+      [(id) (editor:transfer! id 'forward publish-view-kill!)]))
 
   (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs."
-        (edits))
-  (define (backward-kill-expression!)
-    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
-      (if start (kill-between! start (head:point) #t) (set-message! "No expression before point"))))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define backward-kill-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if start (kill-between! start (head:point) #t) (set-message! "No expression before point")))]
+      [(id) (editor:transfer! id 'backward (lambda (text accumulate?) (publish-view-kill! text accumulate? #t)))]))
 
-  (edoc "Set the mark at the end of the next expression and activate it, point staying; with the mark active beyond point, extend it by one more expression; the C-M-SPC of Emacs.")
-  (define (mark-expression!)
-    (let* ([point (head:point)] [mark (cons mark-row mark-col)]
-           [from (if (and mark-active? (position-before? point mark)) mark point)])
-      (let-values ([(start end) (expression:forward (head:current-buffer) from)])
-        (cond [(not end) (set-message! "No expression after point")]
-              [(head:buffer-selectable? (head:current-buffer))
-               (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
-               (set! message "Mark set")]))))
+  (edoc "Set the mark at the end of the next expression and activate it, point staying; with the mark active beyond point, extend it by one more expression; the C-M-SPC of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define mark-expression!
+    (case-lambda
+      [()
+       (let* ([point (head:point)] [mark (cons mark-row mark-col)]
+              [from (if (and mark-active? (position-before? point mark)) mark point)])
+         (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) from)])
+           (cond [(not end) (set-message! "No expression after point")]
+             [(head:buffer-selectable? (head:current-buffer))
+              (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+              (set! message "Mark set")])))]
+      [(id) (editor:expression! id 'mark)]))
 
-  (edoc "Mark the top-level form around point: point at its start, the mark at its end; the C-M-h of Emacs.")
-  (define (mark-form!)
-    (let-values ([(start end) (expression:top-level (head:current-buffer) (head:point))])
-      (cond [(not start) (set-message! "No top-level form in the buffer")]
-            [(head:buffer-selectable? (head:current-buffer))
-             (head:goto! start)
-             (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
-             (set! message "Mark set")])))
+  (edoc "Mark the top-level form around point: point at its start, the mark at its end; the C-M-h of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define mark-form!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer)) (head:point))])
+         (cond [(not start) (set-message! "No top-level form in the buffer")]
+           [(head:buffer-selectable? (head:current-buffer))
+            (head:goto! start)
+            (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+            (set! message "Mark set")]))]
+      [(id) (editor:expression! id 'form)]))
 
-  (edoc "Move point up out of the enclosing list or vector, to its start; the C-M-u of Emacs.")
-  (define (up-expression!)
-    (let-values ([(start end) (expression:container (head:current-buffer) (head:point))])
-      (if start (head:goto! start) (set-message! "Not inside an expression"))))
+  (edoc "Move point up out of the enclosing list or vector, to its start; the C-M-u of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define up-expression!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:container (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if start (head:goto! start) (set-message! "Not inside an expression")))]
+      [(id) (editor:expression! id 'up)]))
 
-  (edoc "Move point down into the next list or vector, just past its opening delimiter; the C-M-d of Emacs.")
-  (define (down-expression!)
-    (let ([inside (expression:down (head:current-buffer) (head:point))])
-      (if inside (head:goto! inside) (set-message! "No list after point"))))
+  (edoc "Move point down into the next list or vector, just past its opening delimiter; the C-M-d of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define down-expression!
+    (case-lambda
+      [()
+       (let ([inside (expression:down (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if inside (head:goto! inside) (set-message! "No list after point")))]
+      [(id) (editor:expression! id 'down)]))
 
-  (edoc "Move point over the next list or vector, skipping atoms; the C-M-n of Emacs.")
-  (define (next-list!)
-    (let-values ([(start end) (expression:next-list (head:current-buffer) (head:point))])
-      (if end (head:goto! end) (set-message! "No list after point"))))
+  (edoc "Move point over the next list or vector, skipping atoms; the C-M-n of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define next-list!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:next-list (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if end (head:goto! end) (set-message! "No list after point")))]
+      [(id) (editor:expression! id 'next)]))
 
-  (edoc "Move point back over the previous list or vector, skipping atoms; the C-M-p of Emacs.")
-  (define (previous-list!)
-    (let-values ([(start end) (expression:previous-list (head:current-buffer) (head:point))])
-      (if start (head:goto! start) (set-message! "No list before point"))))
+  (edoc "Move point back over the previous list or vector, skipping atoms; the C-M-p of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define previous-list!
+    (case-lambda
+      [()
+       (let-values ([(start end) (expression:previous-list (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if start (head:goto! start) (set-message! "No list before point")))]
+      [(id) (editor:expression! id 'previous)]))
 
-  (edoc "Move point to the start of the last top-level form beginning before point, the enclosing one included; the C-M-a of Emacs.")
-  (define (beginning-of-form!)
-    (let ([start (expression:form-start (head:current-buffer) (head:point))])
-      (if start (head:goto! start) (set-message! "No top-level form before point"))))
+  (edoc "Move point to the start of the last top-level form beginning before point, the enclosing one included; the C-M-a of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define beginning-of-form!
+    (case-lambda
+      [()
+       (let ([start (expression:form-start (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if start (head:goto! start) (set-message! "No top-level form before point")))]
+      [(id) (editor:expression! id 'start)]))
 
-  (edoc "Move point to the end of the first top-level form ending after point, the enclosing one included; the C-M-e of Emacs.")
-  (define (end-of-form!)
-    (let ([end (expression:form-end (head:current-buffer) (head:point))])
-      (if end (head:goto! end) (set-message! "No top-level form after point"))))
+  (edoc "Move point to the end of the first top-level form ending after point, the enclosing one included; the C-M-e of Emacs."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define end-of-form!
+    (case-lambda
+      [()
+       (let ([end (expression:form-end (head:buffer-lines (head:current-buffer)) (head:point))])
+         (if end (head:goto! end) (set-message! "No top-level form after point")))]
+      [(id) (editor:expression! id 'end)]))
 
   (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs."
-        (edits))
-  (define (transpose-expressions!)
-    (let ([b (head:current-buffer)] [point (head:point)])
-      (let-values ([(as ae) (expression:backward b point)] [(bs be) (expression:forward b point)])
-        (if (or (not as) (not bs) (equal? as bs))
-            (set-message! "No two expressions around point")
-            (let ([before (text-between (car as) (cdr as) (car ae) (cdr ae))]
-                  [between (text-between (car ae) (cdr ae) (car bs) (cdr bs))]
-                  [after (text-between (car bs) (cdr bs) (car be) (cdr be))])
-              (replace-region-text! as be (string-append after between before))
-              (head:goto! be))))))
+        (edits)
+        (id model "editor view; omission is the legacy window adapter"))
+  (define transpose-expressions!
+    (case-lambda
+      [()
+       (let ([b (head:current-buffer)] [point (head:point)])
+         (let-values ([(as ae) (expression:backward (head:buffer-lines b) point)] [(bs be) (expression:forward (head:buffer-lines b) point)])
+           (if (or (not as) (not bs) (equal? as bs))
+             (set-message! "No two expressions around point")
+             (let ([before (text-between (car as) (cdr as) (car ae) (cdr ae))]
+                   [between (text-between (car ae) (cdr ae) (car bs) (cdr bs))]
+                   [after (text-between (car bs) (cdr bs) (car be) (cdr be))])
+               (replace-region-text! as be (string-append after between before))
+               (head:goto! be)))))]
+      [(id) (editor:expression! id 'transpose)]))
 
   (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs."
         (edits))
   (define (indent-expression!)
-    (let-values ([(start end) (expression:forward (head:current-buffer) (head:point))])
+    (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
       (cond [(not end) (set-message! "No expression after point")]
             [(< (car start) (car end))
              (when (indent-rows! (+ (car start) 1) (car end))
@@ -777,8 +829,9 @@
     (let* ([action (head:last-command)] [procedure (if (keymap:call-action? action) (keymap:call-action-procedure action) action)])
       (and (memq procedure (list kill-line! kill-region! kill-expression! backward-kill-expression!)) #t)))
 
-  (define (publish-view-kill! text accumulate?)
-    (replace-copy-text! (if (and accumulate? (killing?)) (string-append (copy-text) text) text) "kill"))
+  (define (publish-view-kill! text accumulate? . prepend?)
+    (replace-copy-text! (if (and accumulate? (killing?))
+                          (if (and (pair? prepend?) (car prepend?)) (string-append text (copy-text)) (string-append (copy-text) text)) text) "kill"))
 
   (define (kill! text . before?)
     ;; consecutive kills accumulate into the copy buffer, a backward kill
@@ -1282,6 +1335,9 @@
     (let ([m (mode:name-of (head:window-buffer current-window))])
       (and m (registered m))))
 
+  (define (mode-source b lines)
+    (mode:source lines (map (lambda (key) (cons key (head:buffer-fact b key #f))) (mode:required-facts (mode:of b)))))
+
   (define (leading-blanks s)
     (let loop ([i 0])
       (if (and (< i (string-length s))
@@ -1371,7 +1427,7 @@
                  [wanted (head:point)] [selected (head:mark)]
                  [last (min to (- (vector-length v) 1))]
                  [cols (let settle ([r from]
-                                    [cs (indent b from last)]
+                                    [cs (indent (mode-source b v) from last)]
                                     [acc '()])
                          (if (null? cs)
                              (reverse acc)
@@ -1400,7 +1456,7 @@
                  [wanted (head:point)] [selected (head:mark)]
                  [row (car wanted)]
                  [lead (leading-blanks (vector-ref (car source) row))]
-                 [cols (indent b row row)]
+                 [cols (indent (mode-source b (car source)) row row)]
                  [col (and (pair? cols)
                            (cycle-stops (car cols) lead))])
             (when col
@@ -1470,7 +1526,7 @@
                 [v (car source)]
                 [wanted (head:point)]
                 [last (min to (- (vector-length v) 1))]
-                [lines (format-lines b from last)])
+                [lines (format-lines (mode-source b v) from last)])
            (cond
              [(not lines) (set! message "Cannot format these lines") #f]
              [(and (or (< last (- (vector-length v) 1)) trailing-newline?)
@@ -1717,7 +1773,12 @@
   (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet.")
   (define (init!)
     (editor:register! (list (cons 'undo undo!) (cons 'redo redo!) (cons 'page page!) (cons 'paste paste-into-buffer!)
-                        (cons 'kill-line kill-line!) (cons 'kill-region kill-region!) (cons 'copy-region copy-region!) (cons 'yank yank!)))
+                        (cons 'kill-line kill-line!) (cons 'kill-region kill-region!) (cons 'copy-region copy-region!) (cons 'yank yank!)
+                        (cons 'forward-expression forward-expression!) (cons 'backward-expression backward-expression!)
+                        (cons 'up-expression up-expression!) (cons 'down-expression down-expression!)
+                        (cons 'next-list next-list!) (cons 'previous-list previous-list!) (cons 'beginning-of-form beginning-of-form!) (cons 'end-of-form end-of-form!)
+                        (cons 'mark-expression mark-expression!) (cons 'mark-form mark-form!) (cons 'transpose-expressions transpose-expressions!)
+                        (cons 'kill-expression kill-expression!) (cons 'backward-kill-expression backward-kill-expression!)))
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
     ;; Presentation mode is captured with the record, not read on delivery.
