@@ -5,19 +5,18 @@
 ;; the stable identity of a visited file), reading, modification stamps,
 ;; permission-preserving writes, the line/trailing-newline algebra a
 ;; file's text and a buffer's line vector convert through, and
-;; completion over a directory listing.  No dialogs and no bookkeeping: what to do when
-;; the disk disagrees with a buffer is the commands' decision; this
-;; module only reads, compares and writes.
+;; completion over a directory listing. No dialogs or buffer bookkeeping;
+;; (service document) composes these operations with the base store.
 ;;
-;; This iteration's attached heads run on the same SSH host and call
-;; this module directly; a future remote transport needs a file service.
+;; Visiting, creation and explicit reload run in the base. Save commands
+;; still use these disk primitives from same-host heads.
 ;; Exported names
 ;; drop the module stem: (file:read path), (file:lines text),
 ;; (file:write! path lines trailing?).
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service file)
-  (export abbreviate absolute add-post-save-hook! add-pre-save-hook! base-name call-with-port
+  (export abbreviate absolute add-create-hook! add-post-save-hook! add-pre-save-hook! base-name call-with-port
           (rename (path:canonical canonical)) checksum complete completion create!
           data-directory directory-part ends-in-newline? (rename (path:expand expand)) lines
           make-directories! read read-state run-post-save-hooks! run-pre-save-hooks! stamp
@@ -29,7 +28,7 @@
           (prefix (foundation text) text:)
           (prefix (service log) log:)
           (prefix (sys path) path:)
-          (prefix (only (sys sys) canonical-file-path) sys:))
+          (prefix (only (sys sys) canonical-file-path file-identity) sys:))
 
   ;; Discard consent is the same for local and shared buffers. Compare the
   ;; captured text outside its writer lock; an unreadable disk is not clean.
@@ -219,24 +218,32 @@
       dir))
 
   (edoc "Create a directory and its missing parents; an existing directory is fine, a file in the way is an error."
-        (path string "the directory"))
-  (define (make-directories! path)
+        (path string "the directory")
+        (checks (list-of procedure) "optional guard called before each creation")
+        (returns list "identity of the resulting directory"))
+  (define (make-directories! path . checks)
+    (unless (<= (length checks) 1) (error 'make-directories! "expected at most one guard"))
     ;; Existing directories (including links to them) are fine. A file or
     ;; dangling link is an error, never something to replace. A concurrent
     ;; mkdir is fine too, provided the resulting path is a directory.
     (let create ([path (path:canonical (path:expand path))])
-      (unless (file-directory? path)
-        (when (file-exists? path #f) (error 'make-directories! "not a directory" path))
-        (create (path:canonical (directory-part path)))
-        (guard (ex [(and (i/o-file-already-exists-error? ex) (file-directory? path)) (void)]
-                   [else (raise ex)])
-          (create! (absolute "" path)))))
-    (void))
+      (if (file-directory? path) (sys:file-identity path)
+        (begin
+          (when (file-exists? path #f) (error 'make-directories! "not a directory" path))
+          (let* ([parent (path:canonical (directory-part path))] [identity (create parent)])
+            (for-each (lambda (check!) (check!)) checks)
+            (unless (and identity (equal? identity (sys:file-identity parent)))
+              (error 'make-directories! "parent directory changed" parent))
+            (guard (ex [(and (i/o-file-already-exists-error? ex) (file-directory? path) (not (file-symbolic-link? path)))
+                        (sys:file-identity path)]
+                     [else (raise ex)])
+              (create! (absolute "" path))))))))
 
   ;;; Reading and writing ---------------------------------------------------------
 
   (edoc "Create an empty file, or a directory for a trailing slash, exclusively; an existing target raises the already-exists condition."
-        (path string "the path"))
+        (path string "the path")
+        (returns list "identity of the created entry"))
   (define (create! path)
     ;; A trailing slash requests a directory; both kinds create exclusively.
     ;; Chez's mkdir needs its existing-directory error normalized to the
@@ -253,10 +260,14 @@
           (dynamic-wind disable-interrupts
             (lambda () (close-port (open-file-output-port path)))
             enable-interrupts))
-      (log:add! 'file:create!
-        (string-append (if directory? "Created directory " "Created file ")
-                       (if directory? (absolute "" path) path))))
-    (void))
+      (let* ([identity (sys:file-identity path)] [created (if identity (car identity) path)])
+        (log:add! 'file:create!
+          (string-append (if directory? "Created directory " "Created file ")
+                         (if directory? (absolute "" created) created)))
+        (run-hooks! create-hooks created)
+        (unless (and identity (equal? identity (sys:file-identity path)))
+          (error 'create! "created entry changed" path))
+        identity)))
 
   (edoc "Open a file for reading or replacing and call use with the port, closing it across exceptions too; output restores the file's permissions."
         (path file "the file")
@@ -369,6 +380,11 @@
   ;; successful write (the module reload lives there).  Each receives
   ;; the path being written; a raising hook reports to the log and the
   ;; save goes on.
+  (define create-hooks (kernel:make-registry))
+
+  (edoc "Register a notification after each successful exclusive creation, including every parent directory; receives the canonical path."
+        (proc procedure "(hook path)"))
+  (define (add-create-hook! proc) (kernel:registry-add! create-hooks proc))
   (define pre-save-hooks (kernel:make-registry))
   (define post-save-hooks (kernel:make-registry))
 
@@ -385,7 +401,7 @@
   (define (run-hooks! hooks path)
     (for-each (lambda (p)
                 (guard (ex [else (log:add! 'file:run-hooks!
-                                   (format "Save hook failed: ~a"
+                                   (format "File hook failed: ~a"
                                            (kernel:condition-text ex)))])
                   (p path)))
               (kernel:registry-items hooks)))

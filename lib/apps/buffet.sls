@@ -3,7 +3,7 @@
 (elibrary (apps buffet)
   (export choose! create! delete! init! kill! next! open! previous!)
   (import (chezscheme) (prefix (foundation string) string:)
-          (prefix (head control) control:) (prefix (head document) document:)
+          (prefix (head catalogue-host) catalogue-host:) (prefix (head control) control:)
           (prefix (head entry) entry:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head table) table:)
@@ -28,7 +28,7 @@
   (define (create! commands . shared)
     (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
     (let* ([query (if (pair? shared) (car shared)
-                    (car (catalogue:create-query! head:ui-actor (document:create-source! 'persistent))))]
+                    (car (catalogue:create-query! head:ui-actor (catalogue-host:create-source! 'persistent))))]
            [r (collection:summary query)]
            [filter (and r (find (lambda (ref) (eq? (car ref) 'buffer)) (get (get r 'value '()) 'owned '())))])
       (unless filter (error 'create! "expected a catalogue query with an editable filter" query))
@@ -76,10 +76,10 @@
     (let* ([row (selected-row id selection basis)] [ref (car row)])
       (unless (eq? (caddr row) 'live) (error 'kill! "choose a live document"))
       (if (eq? (car ref) 'buffer)
-        (let ([b (document:resolve! ref)])
+        (let ([b (catalogue-host:resolve! ref)])
           (archive! row 'trash)
           (when b (head:forget-buffer! b)))
-        (unless (document:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
+        (unless (catalogue-host:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
 
   (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
         (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
@@ -103,13 +103,13 @@
       (entry:delete! entry 'all)
       (widget:focus! host entry)
       (widget:pump!)
-      (table:select! table (document:reference previous))
+      (table:select! table (catalogue-host:reference previous))
       app))
 
   (define (switch! direction)
     (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
-           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (document:reference (head:current-buffer)) direction)]
-           [b (and ref (document:resolve! ref))])
+           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (head:current-buffer)) direction)]
+           [b (and ref (catalogue-host:resolve! ref))])
       (when b
         (if (equal? (head:buffer-fact b 'tool-key #f) "*buffet*") (open!) (head:show-buffer! b)))))
 

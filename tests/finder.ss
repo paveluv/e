@@ -12,13 +12,14 @@
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
              (prefix (head paint) paint:) (prefix (head keymap) keymap:)
-             (prefix (head document) document:)
+             (prefix (head catalogue-host) catalogue-host:)
              (prefix (foundation string) string:) (prefix (foundation text) text:)
              (prefix (foundation path-filter) path-filter:)
              (prefix (service log) log:) (prefix (service filesystem) filesystem:)
+             (prefix (service document) document:) (prefix (service file) file:)
              (prefix (state collection) collection:) (prefix (state model) model:)
              (prefix (state view) view:) (prefix (state store) store:)
-             (prefix (sys glyph) glyph:) (prefix (test) test:))
+             (prefix (sys glyph) glyph:) (prefix (sys sys) sys:) (prefix (test) test:))
      (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (finder:init!) (edit:init!)
      (define check test:check)
      (define root (format "/tmp/e-files-~a-~a" (get-process-id) (random 1000000)))
@@ -179,7 +180,8 @@
      (filter! (path "race"))
      (call-with-output-file (path "race") (lambda (p) (display "preserve" p)))
      (press! "RET")
-     (check 'creation-race-never-truncates-the-winner (edit:buffer-text (head:current-buffer)) "preserve")
+     (check 'creation-race-refuses-stale-proposal
+       (list (and (head:buffer-named "race") #t) (call-with-input-file (path "race") get-string-all)) '(#f "preserve"))
      (finder:open!) (settle!)
      ;; The same composition works unmounted from a window with an explicit
      ;; host command; it never finds or replaces the current window itself.
@@ -195,7 +197,7 @@
          (let* ([v (get (collection:summary q) 'value)] [key (list 'path (path "zeta.txt") 'file)])
            (finder:choose! other #f (list q (get v 'generation) key) (get v 'basis)))
          (check 'embedded-finder-delivers-reference-without-window-placement
-           (list (eq? before (head:current-buffer)) (equal? destination (document:reference (head:buffer-named "zeta.txt")))) '(#t #t)))
+           (list (eq? before (head:current-buffer)) (equal? destination (catalogue-host:reference (head:buffer-named "zeta.txt")))) '(#t #t)))
        (widget:unmount! other) (widget:unmount! receiver))
      (for-each (lambda (name) (delete-file (path name))) (append names '("new/inner 日本語/note.txt" "race")))
      (for-each (lambda (name) (delete-directory (path name))) (append '("new/inner 日本語" "new" "only") (reverse directories)))

@@ -11,6 +11,7 @@
           (prefix (foundation text) text:)
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
+          (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service filesystem) filesystem:)
           ;; Startup also publishes these modules into base configuration.
@@ -36,7 +37,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -254,11 +255,11 @@
        (arity 2)
        (call-with-values (lambda () (policy:session-rewrite! session (car args) (cadr args))) list)]
       [(reload)
-       (arity 3)
-       (call-with-values (lambda () (policy:session-reload! session (car args) (cadr args) (caddr args))) list)]
+       (unless (<= 3 (length args) 4) (error 'wire "expected buffer, lines, facts and optional review"))
+       (call-with-values (lambda () (apply policy:session-reload! session args)) list)]
       [(reread)
-       (arity 3)
-       (call-with-values (lambda () (policy:session-reread! session (car args) (cadr args) (caddr args))) list)]
+       (unless (<= 3 (length args) 4) (error 'wire "expected buffer, lines, facts and optional review"))
+       (call-with-values (lambda () (apply policy:session-reread! session args)) list)]
       [(resolve)
        (arity 3)
        (call-with-values (lambda () (policy:session-resolve! session (car args) (cadr args) (caddr args))) list)]
@@ -279,6 +280,22 @@
        (if (eq? operation 'history) (apply store:history args)
            (map (lambda (entry) (cons (text:span->datum (car entry)) (cdr entry)))
              (apply store:blame args)))]
+      [(acquire)
+       (control!)
+       (unless (<= 1 (length args) 2) (error 'wire "expected path and optional creation witness"))
+       ;; This connection's worker performs I/O; the base lifecycle loop and
+       ;; other heads keep running. No model/store writer spans the read.
+       (apply document:acquire! actor args)]
+      [(document-save)
+       (control!) (arity 3) (apply document:save! actor args)]
+      [(document-save-output)
+       (control!) (arity 4) (apply document:save-output! actor args)]
+      [(document-reload document-reread document-check)
+       (control!) (arity 1)
+       (case operation
+         [(document-check) (document:check! actor (car args))]
+         [else (call-with-values
+                 (lambda () ((if (eq? operation 'document-reload) document:reload! document:reread!) actor (car args))) list)])]
       [(create visit reset rename delete discard properties)
        (control!)
        (case operation

@@ -15,7 +15,7 @@
   '(begin
      (import (except (head edit) init!)
              (prefix (head head) head:)
-             (prefix (head document) document:)
+             (prefix (head catalogue-host) catalogue-host:)
              (prefix (state store) store:)
              (prefix (state model) model:)
              (prefix (state connection) connection:) (prefix (core port) port:)

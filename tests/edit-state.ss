@@ -15,6 +15,7 @@
              (prefix (state store) store:)
              (prefix (core property) property:)
              (prefix (foundation text) text:)
+             (prefix (service document) document:)
              (prefix (service file) file:)
              (prefix (service log) log:)
              (prefix (foundation string) string:)
@@ -321,7 +322,7 @@
                              (set! observed
                                (let-values ([(text revision facts) (store:snapshot-state id)])
                                  (list text revision
-                                   (property:select facts '(file base stamp trailing mode mode-auto wrap modified)))))
+                                   (property:select facts '(file base stamp trailing modified)))))
                              (set! opened
                                (if (eq? effect 'revisit)
                                    (begin (visit-file! target) (head:current-buffer))
@@ -341,13 +342,10 @@
                      (list (equal? observed
                              (list lines 0
                                (list (cons 'file target) (cons 'base (or content ""))
-                                     (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing)
-                                     (cons 'mode mode) '(mode-auto . #t) '(wrap . default) '(modified . #f))))
-                           (eq? opened (head:current-buffer)) kept?
-                           (equal? (reverse events)
-                             (case effect [(edit) '(create edit)]
-                               [(revisit) '(create property edit)]
-                               [(metadata) '(create rename property property property property)] [else '(create)]))
+                                     (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing) '(modified . #f))))
+                           (eq? opened (head:current-buffer))
+                           (and kept? (or (eq? effect 'metadata) (equal? (mode:name-of opened) mode)))
+                           (= 1 (length (filter (lambda (event) (eq? event 'create)) events)))
                            (equal? (and (file-exists? target) (file:read target)) (or content ""))
                            (if (memq effect '(edit revisit))
                                (begin (store:undo! bot id) (head:before-frame!)
@@ -513,7 +511,7 @@
                                           (equal? (vector-ref (car (state b)) 0) "later ordinary line")
                                           (not (head:buffer-trailing b))))
                                  (and (equal? before (state b)) (equal? name (head:buffer-name b))
-                                      (let ([message (log:datum (car (log:entries 'edit:save-file! 1)))])
+                                      (let ([message (log:datum (car (log:entries (if shared? 'document:save-document! 'edit:save-file!) 1)))])
                                         (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
                                              (string:suffix? "saved baseline was not updated." message))))))))
                    (lambda ()
@@ -545,7 +543,33 @@
                                      (if (eq? operation 'edit) (insert-text! "edited ") (visit-file! path))))])
                      (list (car result) (property:matches? updates (caddr (state b)))))))
                '(edit visit))
-             '((#t #t) (#t #t))))
+             '((#t #t) (#t #t)))
+           ;; Reuse the same read fixture: the service must carry its
+           ;; pre-I/O review through explicit reads and save's automatic merge.
+           (check 'base-document-reads-refuse-concurrent-text-and-file-changes
+             (map
+               (lambda (operation change)
+                 (let* ([b (fresh "reviewed reload" #t)] [id (head:buffer-store-id b)] [newer #f])
+                   (head:store-reset! b '("mine")
+                     (list (cons 'file path) (cons 'base (if (eq? operation 'save) "old\n" (file:text disk #t)))))
+                   (let ([result
+                          (interrupt-during!
+                            (lambda ()
+                              (case change
+                                [(text) (insert! id 0 "concurrent ")]
+                                [(file) (store:set-properties! bot id '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))])
+                              (set! newer (call-with-values (lambda () (store:snapshot-state id)) list)))
+                            (lambda () (set-timer 10000)
+                              (case operation
+                                [(save)
+                                 (let ([reply (document:save! head:ui-actor id path '("mine" #f))])
+                                   (list (car reply) (and (string:search (cadr reply) "stale-review" 0 (string-length (cadr reply))) #t)))]
+                                [else (call-with-values
+                                        (lambda () ((if (eq? operation 'reload) document:reload! document:reread!) head:ui-actor id)) list)])))])
+                     (list result (equal? newer (call-with-values (lambda () (store:snapshot-state id)) list))))))
+               '(reload reread save save) '(text file text file))
+             '(((#t (refused stale-review)) #t) ((#t (refused stale-review)) #t)
+               ((#t (refused #t)) #t) ((#t (refused #t)) #t))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
      ;; Before the input reader runs no question can be answered: the prompts

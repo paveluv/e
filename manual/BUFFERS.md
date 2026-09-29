@@ -828,22 +828,65 @@ work on either kind. A local buffer's facts and generated text stay in the head 
 produce no store notifications; local points and selections are not
 published to other actors.
 
-Opening a file publishes its loaded text, disk baseline, path and detected
-mode together at revision 0. A create subscriber's later edits, undo history
-and mode choices survive opening. A missing file starts empty with its path
-and detected mode, and acquires a disk baseline on its first successful save.
+Opening a file reads and admits its text, disk baseline and canonical path
+in the base. A missing file and its missing parent directories are created
+immediately; each actual creation is logged once. The adopting head detects
+the mode, preserving any explicit mode chosen before adoption. A create
+subscriber's later edits and undo history survive opening.
 Overlapping visits, including a callback reopening the same path, reuse the
 same shared buffer and preserve edits made before the first visit returns.
 
-For extension code, `(store:find-file canonical-path)` looks up the shared
+For extension code, `(document:acquire! actor absolute-path)` acquires a
+file without selecting a window: `(directory path)` for a directory, or
+`(buffer id admitted? path diagnostic)` for a file. The optional diagnostic
+describes a disk review that could not be applied; shared work is retained.
+Ordinary commands use `edit:visit-file!`, optionally supplying a
+`(lambda (kind value) ...)` destination receiving a directory path or adopted
+head buffer. File reads and creation run in the base's connection worker,
+outside its lifecycle dispatcher and store locks. External disk changes
+merge undoably; concurrent text or file-fact changes refuse a stale review.
+
+`(document:reload! actor id)` rereads a shared document's file in the base
+and merges it as one undoable action. `(document:reread! actor id)` replaces
+the text and settles pending conflicts, also undoably. Both return status
+and detail: `applied` with `(revision conflicts)` for reload, or the revision
+for reread. A concurrent edit or change to the reviewed file facts returns
+`refused` with `stale-review`; unreadable files raise. Neither operation
+requires an editor window or discards earlier undo history.
+
+`(document:check! actor id)` checks for changed disk content using the saved
+stamp as a hint. Equal content updates only the reviewed stamp. Its boolean
+result can schedule a reload after an editing action, but does not authorize
+reusing an old disk observation. An unreadable or unvisited file returns
+`#f`. These operations share the acquisition service's base worker boundary;
+heads receive results and ordinary text deltas, not a disk-text round trip.
+
+`(document:save! actor id canonical-path '(first-line mode-name))` saves
+a shared document without requiring a window. The last argument carries a
+reviewed first line and the head's detected mode name (or `#f`) for Save As;
+an inconsistent first line refuses adoption. The base owns file reads,
+undoable merge/reread decisions, backups, writing and atomic publication of
+the file, baseline, name and mode. Text edited during writing remains dirty;
+concurrent changes to the reviewed file facts refuse baseline publication.
+The result is `(saved message)`, `(unchanged message)`, `(refused message)`
+or `(failed message)`. A failure after writing says so explicitly.
+
+`edit:save-file!` supplies this mode choice and runs this head's pre-save
+hooks before the request and post-save hooks after successful adoption.
+Detached legacy local output uses `document:save-output!` with its text and
+facts, then adopts the returned facts against its local review. It creates
+no shared shadow buffer. If its previously saved file changed externally,
+visit that file as a shared document to merge it; local output cannot merge.
+Restored backups detect their mode from their original path and first line.
+
+`(store:find-file canonical-path)` looks up the shared
 buffer's id or returns `#f`. `(store:visit! actor name lines facts)` requires
 a canonical `file` fact and returns two values: id and whether it was created.
 Lookup and creation happen together; a reused buffer keeps all its existing
 state. Prepare disk text and initial facts before calling it.
-`(head:visit-file! name lines facts)` uses the same head defaults as
-`head:new-buffer!` and returns the adopted buffer plus that creation flag.
-The ordinary `edit:visit-file!` command also performs the usual disk-change review
-when it reuses a buffer. Local file buffers remain local to their head.
+Use `document:acquire!` for files; `store:visit!` is the lower-level admission
+primitive for already prepared content. Visiting always uses the shared file
+identity; manually constructed local buffers are not file-identity owners.
 
 `(store:create! actor name lines [facts])` returns a store id. The optional
 fact alist publishes atomically with the content, before the create event.

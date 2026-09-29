@@ -28,6 +28,7 @@
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
+             (prefix (service document) document:)
              (prefix (service file) file:)
              (prefix (service log) log:)
              (prefix (state store) store:)
@@ -227,6 +228,7 @@
      ;; brings back; a plain save keeps the previous version too, and a
      ;; version the backups already hold is not kept twice
      (define path3 (string-append dir "/other.txt"))
+     (mode:register! "saved-text" '(".txt") '() #f)
      (file:write! path3 (file:lines "keep me\n") #t)
      (define scratch (head:new-buffer! "scratch-save"))
      (head:show-buffer! scratch)
@@ -234,9 +236,9 @@
      (insert-text! "new text")
      (define (backups-of path) (filter (lambda (entry) (string=? (cadr entry) path)) (backups)))
      (check 'a-save-as-over-a-file-backs-up-what-it-held
-       (let* ([logged (length (log:entries 'edit:save-file!))]
+       (let* ([logged (length (log:entries 'document:save-document!))]
               [saved (save-file! path3)] [on-disk (file:read path3)] [entry (car (backups-of path3))]
-              [messages (log:entries 'edit:save-file!)])
+              [messages (log:entries 'document:save-document!)])
          (list saved on-disk (head:buffer-file scratch) (car entry) (list-ref entry 4) (and (list-ref entry 3) #t)
                (and (find (lambda (t) (string=? (car t) "other.txt.bak")) (trash)) #t)
                (- (length messages) logged) (log:format-entry (car messages))))
@@ -262,11 +264,36 @@
      (check 'restore-brings-a-backup-back-as-a-buffer
        (let* ([restored (restore! "other.txt.bak")])
          (list (eq? restored (head:current-buffer)) (vector->list (head:buffer-lines restored)) (head:buffer-file restored)
+               (mode:name-of restored)
                (map car (backups-of path3))))
-       '(#t ("keep me") #f ("other.txt.bak<3>" "other.txt.bak<2>")))
+       '(#t ("keep me") #f "saved-text" ("other.txt.bak<3>" "other.txt.bak<2>")))
      (for-each kill-buffer! (list (head:current-buffer) fourth third scratch))
      (head:show-buffer! b)
      (delete-file path3)
+
+     ;; Backup creation is an observable store commit. A subscriber can
+     ;; replace the target even with equal bytes; its new identity must win.
+     (let* ([id (store:create! head:ui-actor "guarded save" '#("replacement"))]
+            [held (string-append path3 ".held")] [replaced? #f]
+            [token (store:subscribe! #f
+                     (lambda (event)
+                       (when (and (eq? (car event) 'create)
+                                  (let ([backup (store:property (cadr event) 'backup #f)])
+                                    (and backup (equal? (car backup) path3))))
+                         (rename-file path3 held)
+                         (file:write! path3 '#("same bytes") #t)
+                         (set! replaced? #t))))])
+       (dynamic-wind
+         (lambda () (file:write! path3 '#("same bytes") #t))
+         (lambda ()
+           (check 'save-refuses-stale-mode-and-replaced-disk-witnesses
+             (let* ([stale (document:save! head:ui-actor id path3 '("old first line" "saved-text"))]
+                    [replaced (document:save! head:ui-actor id path3 '("replacement" "saved-text"))])
+               (list (car stale) (car replaced) replaced? (file:read path3) (store:property id 'file #f)))
+             '(refused refused #t "same bytes\n" #f)))
+         (lambda ()
+           (store:unsubscribe! token) (store:delete! head:ui-actor id)
+           (for-each (lambda (p) (when (file-exists? p) (delete-file p))) (list path3 held)))))
 
      ;; the cursor crosses a reread on its line, and its undo back: the disk
      ;; adds a line at the top, the cursor moves down a line and returns

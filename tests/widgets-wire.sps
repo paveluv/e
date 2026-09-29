@@ -149,8 +149,16 @@
 
 ;; Exercise the real head bridge and connection-owned cleanup without another
 ;; terminal process. The provider sees raw local metadata, never fitted text.
-(let* ([source (head-read a '(begin (kernel:load-modules! '("document")) (document:create-source! 'transient)))]
-       [ref (head-read a '(let ([b (head:register-view! "catalogue-wire" void)]) (document:reference b)))]
+;; Load before compiling expressions that refer to the newly imported names.
+(for-each
+  (lambda (screen)
+    (head-read screen
+      '(let ([failures (kernel:load-modules! '("catalogue-host"))])
+         (unless (null? failures)
+           (error 'catalogue-host-load (format "~s" (map (lambda (p) (cons (car p) (kernel:condition-text (cdr p)))) failures)))) #t)))
+  (list a b))
+(let* ([source (head-read a '(catalogue-host:create-source! 'transient))]
+       [ref (head-read a '(let ([b (head:register-view! "catalogue-wire" void)]) (catalogue-host:reference b)))]
        [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)]
        [temporary (connect)])
   (define (count query)
@@ -162,8 +170,8 @@
   (rpc head 'model-watch (list query))
   (test:await 'catalogue-wire-local (lambda () (equal? (count query) 1)))
   (test:check 'catalogue-wire-cannot-resolve-another-heads-token
-    (head-read b `(begin (kernel:load-modules! '("document")) (document:resolve! ',ref))) #f)
-  (head-read a `(begin (head:forget-buffer! (document:resolve! ',ref)) #t))
+    (head-read b `(catalogue-host:resolve! ',ref)) #f)
+  (head-read a `(begin (head:forget-buffer! (catalogue-host:resolve! ',ref)) #t))
   (test:await 'catalogue-wire-removal (lambda () (equal? (count query) 0)))
   (hello temporary '(head "catalogue-wire"))
   (receive temporary)
@@ -204,7 +212,7 @@
     (let* ([v (value)] [p (rpc head 'collection-range query (cdr (assq 'generation v)) 0 2 '(name))]
            [r (find (lambda (r) (eq? (caadr r) 'path)) (list-ref p 4))])
       (list (cdr (assq 'count v)) (caddr (assq 'name (caddr r))))) '(2 "file-query.sls"))
-  (let* ([before (head-read a '(document:reference (head:current-buffer)))]
+  (let* ([before (head-read a '(catalogue-host:reference (head:current-buffer)))]
          [host (head-read a `(begin
                                (kernel:load-modules! '("finder"))
                                (let* ([host (window:tool! "finder-wire"
@@ -222,7 +230,7 @@
                       (list (equal? (widget:focused ',host) (widget:descendant table 'filter 'entry))
                         (and selection (car (caddr selection)))))) '(#t path))
     (head-read a `(let ([b (widget:host ',host)])
-                    (head:show-buffer! (document:resolve! ',before)) (head:forget-buffer! b) #t)))
+                    (head:show-buffer! (catalogue-host:resolve! ',before)) (head:forget-buffer! b) #t)))
   (let* ([packet (rpc head 'model-read (list query))] [r (caddar (cadr packet))])
     (rpc head 'model-unwatch (list query))
     (rpc head 'model-retire query (cdr (assq 'revision r)))))

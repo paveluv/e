@@ -18,11 +18,11 @@
   (define kind (model:register-kind! 'filesystem-source 1 recipe?))
   (define columns '((name "Name" string) (path "Path" string) (kind "Kind" symbol) (link "Link" boolean)
                     (size "Size" integer) (modified "Modified" integer) (created "Created" integer)
-                    (permissions "Permissions" integer) (count "Count" integer) (exact "Exact count" boolean)))
+                    (permissions "Permissions" integer) (count "Count" integer) (exact "Exact count" boolean)
+                    (proposal "Creation basis" datum)))
   (define sortable '(name size modified created permissions count))
   (define metadata '(size modified created permissions))
   (define lock (make-mutex))
-  (define admin (make-mutex))
   (define ready (make-condition))
   (define pending (make-hashtable equal-hash equal?))
   (define order '())
@@ -30,13 +30,15 @@
   (define epoch 0)
   (define cache #f) ; touched only by the filesystem worker
   (define cache-epoch -1)
+  (define invalidated '())
+  (define reset-cache? #t)
   (define existence (make-hashtable equal-hash equal?))
   (define jobs (make-hashtable equal-hash equal?))
   (define tracked (make-hashtable equal-hash equal?))
   (define-record-type job
     (fields source query epoch cancelled? publish
       (mutable plan) (mutable index) (mutable positions) (mutable overlay)
-      (mutable skipped) (mutable done?) (mutable completion) (mutable intent) wanted (mutable enriching?)))
+      (mutable skipped) (mutable done?) (mutable completion) (mutable intent) wanted (mutable enriching?) (mutable proposal)))
   (define (obsolete? job)
     (or ((job-cancelled? job)) (with-mutex lock (not (= epoch (job-epoch job))))))
   (define (enqueue! key run)
@@ -87,7 +89,12 @@
   (define (inventory!)
     (let ([current (with-mutex lock epoch)])
       (unless (= cache-epoch current)
-        (if cache (directory:clear! cache) (set! cache (directory:make-cache #f)))
+        (let-values ([(reset? paths) (with-mutex lock
+                                       (let ([reset? reset-cache?] [paths invalidated])
+                                         (set! reset-cache? #f) (set! invalidated '()) (values reset? paths)))])
+          (if (not cache) (set! cache (directory:make-cache #f))
+            (if reset? (directory:clear! cache)
+              (for-each (lambda (path) (directory:invalidate! cache path #t)) paths))))
         ;; Recovered sources may retain inventory without ever starting a query.
         (for-each (lambda (id) (with-mutex lock (hashtable-set! tracked id #t))) (model:ids 'filesystem-source))
         (hashtable-clear! existence) (set! cache-epoch current))))
@@ -111,7 +118,7 @@
   (define (needs-metadata? e)
     (and (not (directory:missing? e)) (not (directory:entry-mode e)) (not (eq? (directory:entry-kind e) 'unavailable))))
   (define (key e) (list (if (directory:missing? e) 'proposal 'path) (directory:entry-path e) (directory:entry-kind e)))
-  (define (raw entry plan enriched)
+  (define (raw entry plan enriched proposal)
     (let* ([e (or enriched entry)] [path (directory:entry-path entry)] [name (file:base-name path)]
            [full (directory:filter-path entry)] [start (- (string-length path) (string-length name))]
            [relative (directory:relative-path entry (file-query:plan-root plan))]
@@ -123,6 +130,7 @@
       (list (key entry)
         (append (list (cons 'name name) (cons 'path path) (cons 'kind (directory:entry-kind e))
                   (cons 'link (directory:entry-link? e)) (cons 'exact (directory:entry-complete? entry)))
+          (if (directory:missing? entry) (list (cons 'proposal (cons (directory:entry-kind entry) proposal))) '())
           (filter values (map (lambda (c) (let ([v (file-query:value (if (eq? c 'count) entry e) c)]) (and v (cons c v))))
                            '(size modified created permissions count))))
         (append (list (cons 'depth (length (filter (lambda (c) (char=? c #\/)) (string->list relative)))))
@@ -161,13 +169,13 @@
   (define (publish! job)
     (unless (obsolete? job)
       (let* ([index (job-index job)] [entries (file-query:index-entries index)] [n (vector-length entries)]
-             [plan (job-plan job)] [positions (job-positions job)] [overlay (job-overlay job)]
+             [plan (job-plan job)] [positions (job-positions job)] [overlay (job-overlay job)] [proposal (job-proposal job)]
              [choice (file-query:index-choice index)])
         ((job-publish job)
          (collection:make-result
            (map (lambda (c) (if (eq? (car c) 'count)
                               (list 'count (if (null? (file-query:plan-keys plan)) "Entries" "Matches") 'integer) c)) columns) n
-           (lambda (i) (raw (vector-ref entries i) plan (overlay-ref overlay 0 n i)))
+           (lambda (i) (raw (vector-ref entries i) plan (overlay-ref overlay 0 n i) proposal))
            (lambda (key) (hashtable-ref positions key #f))
            (lambda (at direction offset) (and (> n 0) (max 0 (min (- n 1) (+ at (if (eq? direction 'forward) offset (- offset)))))))
            (list (cons 'complete (job-done? job)) (cons 'default (if choice (list (key choice)) '())) (cons 'sortable sortable)
@@ -177,7 +185,7 @@
            (lambda (ordinals columns) (demand! job index overlay ordinals columns))) #f))))
 
   (define (start! source query cancelled? publish)
-    (let ([job (make-job source query (with-mutex lock epoch) cancelled? publish #f #f #f #f 0 #f '() 0 (make-eqv-hashtable) #f)])
+    (let ([job (make-job source query (with-mutex lock epoch) cancelled? publish #f #f #f #f 0 #f '() 0 (make-eqv-hashtable) #f #f)])
       (with-mutex lock
         (hashtable-set! jobs (field query 'id) job)
         (hashtable-set! tracked (field query 'id) #t) (hashtable-set! tracked (field source 'id) #t))
@@ -188,6 +196,8 @@
                  [plan (file-query:plan (field query 'filter) (field v 'home) (field v 'hidden)
                          (lambda (path directory?) (check!) (exists? path directory?)))])
             (job-plan-set! job plan)
+            (when (file-query:plan-proposed plan)
+              (job-proposal-set! job (list (file-query:plan-root plan) (sys:file-identity (file-query:plan-root plan)))))
             (directory:scan! cache (file-query:plan-root plan) (file-query:plan-keys plan) (file-query:plan-hidden? plan)
               (and (exists (lambda (s) (memq (car s) metadata)) (field query 'sort)) #t)
               (lambda () (check!) (obsolete? job))
@@ -208,10 +218,9 @@
         (persistence (one-of transient persistent) "restart policy") (returns row-source))
   (define (create-source! actor home hidden? persistence)
     (unless (and (absolute? home) (boolean? hidden?)) (error 'create-source! "invalid filesystem context"))
-    (with-mutex admin
-      (let ([id (model:create! actor 'filesystem-source 1 'session persistence '()
-                  (list (cons 'home home) (cons 'hidden hidden?) (cons 'epoch (with-mutex lock epoch))))])
-        (with-mutex lock (hashtable-set! tracked id #t)) id)))
+    (let ([id (model:create! actor 'filesystem-source 1 'session persistence '()
+                (list (cons 'home home) (cons 'hidden hidden?) (cons 'epoch (with-mutex lock epoch))))])
+      (with-mutex lock (hashtable-set! tracked id #t)) id))
 
   (edoc "Create a filesystem query owning its supplied persistent source and an internal editable filter; views borrow these resources."
         (actor actor "creator") (source row-source "unshared persistent filesystem source") (text string "initial rooted filter")
@@ -236,16 +245,26 @@
   (edoc "Invalidate the shared filesystem inventory and restart its queries. External filesystem changes become visible only on refresh."
         (actor actor "caller"))
   (define (refresh! actor)
-    (with-mutex admin
-      (with-mutex lock (set! epoch (+ epoch 1)))
-      (let retry ()
-        (let ([records (filter values (map model:snapshot (model:ids 'filesystem-source)))])
-          (unless (null? records)
-            (let-values ([(status ignored)
-                          (model:commit! actor
-                            (map (lambda (r) (list (field r 'id) (field r 'revision) (field r 'references)
-                                               (map (lambda (p) (if (eq? (car p) 'epoch) (cons 'epoch (+ 1 (cdr p))) p)) (field r 'value)))) records))])
-              (when (eq? status 'stale) (retry))))))))
+    (invalidate! actor #f))
+
+  (define (invalidate! actor path)
+    ;; Model commits deliver callbacks. Hold only the short inventory mutex;
+    ;; a subscriber may itself acquire a file or create a filesystem source.
+    (with-mutex lock
+      (set! epoch (+ epoch 1))
+      (cond [(not path) (set! reset-cache? #t) (set! invalidated '())]
+        [(and cache (not reset-cache?)) (set! invalidated (cons path invalidated))]))
+    (let retry ()
+      (let ([records (filter values (map model:snapshot (model:ids 'filesystem-source)))])
+        (unless (null? records)
+          (let-values ([(status ignored)
+                        (model:commit! actor
+                          (map (lambda (r) (list (field r 'id) (field r 'revision) (field r 'references)
+                                             (map (lambda (p) (if (eq? (car p) 'epoch) (cons 'epoch (+ 1 (cdr p))) p)) (field r 'value)))) records))])
+            (when (eq? status 'stale) (retry)))))))
+
+  (define creation-hook
+    (file:add-create-hook! (lambda (path) (invalidate! '(base filesystem) path))))
 
   (edoc "Queue completion for a complete readable generation, returning an intent number or false. The same index publishes details.completion as (pending intent), (ready intent text), or (unavailable intent diagnostic). Match both intent and collection basis, then apply text only to the unchanged requesting filter revision."
         (actor actor "caller") (query row-source "filesystem query") (generation integer "shown generation") (returns (or integer #f)))

@@ -4,7 +4,7 @@
   (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
-          (prefix (head document) document:) (prefix (head edit) edit:)
+          (prefix (head catalogue-host) catalogue-host:) (prefix (head edit) edit:)
           (prefix (head entry) entry:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head table) table:)
@@ -110,7 +110,7 @@
   (define (selected-row id selection basis)
     (unless (and (list? selection) (= (length selection) 3) (equal? (car selection) (query id)))
       (error 'choose! "selection belongs to another query"))
-    (let ([r (collection:lookup (car selection) (cadr selection) (caddr selection) '(path kind))])
+    (let ([r (collection:lookup (car selection) (cadr selection) (caddr selection) '(path kind proposal))])
       (unless (and (eq? (car r) 'ready) (equal? (caddr r) basis) (pair? (list-ref r 4)))
         (error 'choose! "the selected result changed"))
       (car (list-ref r 4))))
@@ -129,14 +129,12 @@
         (unless (memq (ready cells 'kind) '(file directory)) (error 'choose! "choose a regular file or directory" path))
         (unless (or directory? (assq 'open (widget:commands id))) (error 'choose! "no open command is connected"))
         (if (and directory? (not proposed?)) (navigate! id path)
-          (let ([ok (edit:visit-file! (if directory? (string-append path "/") path)
-                      (lambda (kind value)
-                        (case kind
-                          [(directory) (navigate! id value)]
-                          [(buffer) (widget:invoke! id 'open (document:reference value))])))])
-            ;; File acquisition will own targeted invalidation. Until then,
-            ;; refresh through the inventory API after explicit creation.
-            (when proposed? (filesystem:refresh! head:ui-actor)) ok)))))
+          (edit:visit-file! (if directory? (string-append path "/") path)
+            (lambda (kind value)
+              (case kind
+                [(directory) (navigate! id value)]
+                [(buffer) (widget:invoke! id 'open (catalogue-host:reference value))]))
+            (and proposed? (ready cells 'proposal)))))))
 
   (edoc "Toggle this Finder query's explicit hidden-entry policy without discarding shared filesystem inventory."
         (id model "Finder view"))

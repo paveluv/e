@@ -383,23 +383,27 @@
         (s (record session) "the session")
         (id integer "the buffer")
         (lines (or list vector) "the disk's lines")
-        (facts list "the facts to commit"))
-  (define (session-reload! s id lines facts)
+        (facts list "the facts to commit")
+        (review (list-of any) "optional coherent (revision . facts) review"))
+  (define (session-reload! s id lines facts . review)
+    (unless (<= (length review) 1) (error 'session-reload! "expected at most one reviewed state"))
     (call-as-session s
       (lambda ()
         (session-mutate! s 'reload id
-          (lambda (actor access) (store:reload! actor id (datum:copy lines) (datum:copy facts) access))))))
+          (lambda (actor access) (apply store:reload! actor id (datum:copy lines) (datum:copy facts) access review))))))
 
   (edoc "Reread a shared buffer from its file as a session: the disk's text as one undoable edit of the session's, the pending conflicts settled: (values status detail), applied with the revision, or refused."
         (s (record session) "the session")
         (id integer "the buffer")
         (lines (or list vector) "the disk's lines")
-        (facts list "the facts to commit"))
-  (define (session-reread! s id lines facts)
+        (facts list "the facts to commit")
+        (review (list-of any) "optional coherent (revision . facts) review"))
+  (define (session-reread! s id lines facts . review)
+    (unless (<= (length review) 1) (error 'session-reread! "expected at most one reviewed state"))
     (call-as-session s
       (lambda ()
         (session-mutate! s 'reread id
-          (lambda (actor access) (store:reread! actor id (datum:copy lines) (datum:copy facts) access))))))
+          (lambda (actor access) (apply store:reread! actor id (datum:copy lines) (datum:copy facts) access review))))))
 
   (edoc "Settle a reload conflict as a session: (values status detail), as store:resolve! gives them."
         (s (record session) "the session")
