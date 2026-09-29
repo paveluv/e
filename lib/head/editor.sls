@@ -80,8 +80,10 @@
         (let-values ([(source d) (text-control:context id 'editor)])
           (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
                  [name (store:property document 'mode #f)] [mode (and name (mode:find name))]
-                 [facts (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode))]
-                 [signature (list mode (and mode (mode:render mode)) (and mode (mode:row-styles mode)) (and mode (mode:styles mode)))])
+                 [facts (cons (cons 'wrap (store:property document 'wrap 'default))
+                          (map (lambda (key) (cons key (store:property document key #f))) (remq 'wrap (mode:required-facts mode))))]
+                 [signature (list mode (and mode (mode:render mode)) (and mode (mode:row-styles mode)) (and mode (mode:styles mode))
+                              (text-layout:wrap-lines) (text-layout:scroll-margin))])
             (unless (equal? (widget:focused id) id) (mount-group-set! m #f))
             ;; Metadata acquisition is on the service path, never paint or motion.
             (unless (and (equal? signature (mount-mode m)) (equal? facts (mount-facts m)))
@@ -91,7 +93,15 @@
     (let* ([m (mounted id)] [lines (text-control:lines source)]
            [frame (render:prepare #f #f lines (text-control:revision source) '())])
       (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m)))
-        (annotations id source inputs))))
+        (annotations id source inputs)
+        (if (mount-mode m) (list-ref (mount-mode m) 4) (text-layout:wrap-lines))
+        (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)))))
+  (define (layout-width data d width)
+    (let* ([own (option d 'wrap 'default)]
+           [source (mode:source-fact (list-ref data 3) 'wrap 'default)]
+           [setting (if (eq? own 'default) source own)])
+      (and (if (eq? setting 'default) (list-ref data 6) setting) (max 1 width))))
+
   (define (contexts id d)
     (let ([signature (mount-mode (mounted id))])
       (append (mode:key-contexts (and signature (car signature)) #f) '(widget-editor))))
@@ -105,16 +115,16 @@
   ;; addresses, horizontal cells and desired columns never enter the view.
   (define (project data d width height reveal?)
     (let* ([source (cadr data)] [lines (text-control:lines source)] [frame (caddr data)]
-           [ps (points source d)] [wrap (and (option d 'wrap #t) (max 1 width))]
+           [ps (points source d)] [wrap (layout-width data d width)]
            [ps (and ps (map (lambda (p) (snap lines frame p)) ps))])
       (if (not ps) (list data #f '(0 . 0) 0 width height)
         (let-values ([(caret top left) (text-layout:scroll lines frame wrap width height 0
-                                         (address lines wrap (caddr ps)) 0 (car ps) 0)])
+                                         (address lines wrap (caddr ps)) 0 (car ps) (list-ref data 7))])
           (list data ps (if reveal? top (address lines wrap (caddr ps))) left width height)))))
   (define (viewport data d width height range)
     (let* ([m (mounted (car data))] [dimensions (cons width height)]
            [g (project data d width height #f)] [source (cadr data)] [lines (text-control:lines source)]
-           [top (caddr g)] [left (cadddr g)] [wrap (and (option d 'wrap #t) (max 1 width))]
+           [top (caddr g)] [left (cadddr g)] [wrap (layout-width data d width)]
            [frame (render:prepare (caddr data) #f lines (text-control:revision source)
                     (list (cons (car top) (+ (car top) height))))]
            [data (cons* (car data) source frame (cdddr data))] [cache (make-eqv-hashtable)])
@@ -183,7 +193,7 @@
   (define (caret projection d width height)
     (and (cadr projection)
       (let* ([data (car projection)] [lines (text-control:lines (cadr data))])
-        (text-layout:locate lines (caddr data) (and (option d 'wrap #t) (max 1 width))
+        (text-layout:locate lines (caddr data) (layout-width data d width)
           (caddr projection) (cadddr projection) (caadr projection)))))
 
   (define (geometry id source d reveal?)
@@ -197,7 +207,7 @@
            [ps (map (lambda (p) (snap (text-control:lines source) frame p)) ps)])
       (when (mount-dimensions m)
         (let* ([proposed (descriptor:with d (list (cons 'state (append ps (list marked?))) (cons 'basis (text-control:revision source))))]
-               [g (geometry id source proposed reveal?)] [wrap (and (option d 'wrap #t) (max 1 (list-ref g 4)))])
+               [g (geometry id source proposed reveal?)] [wrap (layout-width (car g) d (list-ref g 4))])
           (set! ps (list (car ps) (cadr ps) (text-layout:anchor (text-control:lines source) wrap (caddr g))))))
       (append ps (list marked?))))
   (define (publish! id source d ps marked? reveal?)
@@ -236,8 +246,8 @@
                                        (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (adjacent lines p direction))]
                        [(home) (cons (car p) 0)] [(end) (cons (car p) (string-length (vector-ref lines (car p))))]
                        [(start) '(0 . 0)] [(finish) (let ([r (- (vector-length lines) 1)]) (cons r (string-length (vector-ref lines r))))]
-                       [else (let* ([g (geometry id source d #f)] [frame (caddr (car g))] [width (list-ref g 4)]
-                                    [wrap (and (option d 'wrap #t) (max 1 width))]
+                       [else (let* ([g (geometry id source d #f)] [data (car g)] [frame (caddr data)] [width (list-ref g 4)]
+                                    [wrap (layout-width data d width)]
                                     [goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 p)))])
                                (mount-goal-set! m goal)
                                (text-layout:move lines frame wrap p (if (eq? direction 'up) -1 1) goal))])])
@@ -492,7 +502,7 @@
               (integer? fraction) (exact? fraction) (> fraction 0)) (error 'page! "invalid page direction or divisor"))
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([g (geometry id source d #f)] [ps (cadr g)] [lines (text-control:lines source)]
-             [frame (caddr (car g))] [wrap (and (option d 'wrap #t) (max 1 (list-ref g 4)))] [m (mounted id)])
+             [frame (caddr (car g))] [wrap (layout-width (car g) d (list-ref g 4))] [m (mounted id)])
         (unless ps (refuse "Editor selection history is unavailable"))
         (let ([goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 (car ps))))]
               [marked? (cadddr (editor-state:state d))])
@@ -532,7 +542,7 @@
     (unless (and (integer? rows) (exact? rows)) (error 'scroll! "expected displayed rows"))
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([g (geometry id source d #f)] [ps (cadr g)] [data (car g)] [lines (text-control:lines source)]
-             [width (and (option d 'wrap #t) (max 1 (list-ref g 4)))])
+             [width (layout-width (car g) d (list-ref g 4))])
         (unless ps (refuse "Editor selection history is unavailable"))
         (let ([top (text-layout:move lines (caddr data) width (text-layout:anchor lines width (caddr g)) rows 0)])
           (publish! id source d (list (car ps) (cadr ps) top) (cadddr (editor-state:state d)) #f)
@@ -542,7 +552,7 @@
     (let* ([g (widget:frame-data frame)] [data (car g)] [d (widget:frame-descriptor frame)] [ps (cadr g)])
       (if (not ps) '()
         (let* ([lines (text-control:lines (cadr data))] [width (caddr (widget:frame-rect frame))]
-               [p (snap lines (caddr data) (text-layout:hit lines (caddr data) (and (option d 'wrap #t) (max 1 width)) (caddr g) (cadddr g) (max 0 x) (max 0 y)))]
+               [p (snap lines (caddr data) (text-layout:hit lines (caddr data) (layout-width data d width) (caddr g) (cadddr g) (max 0 x) (max 0 y)))]
                [id (widget:frame-id frame)] [current (points (cadr data) (interaction:snapshot id))])
           (append (list (list '(click primary ()) (keymap:call select! id p p))
                     (list '(wheel up ()) (keymap:call scroll! id -3)) (list '(wheel down ()) (keymap:call scroll! id 3)))

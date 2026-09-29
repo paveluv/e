@@ -132,6 +132,7 @@
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
           (prefix (state view) view:)
@@ -227,7 +228,7 @@
       (mutable width)
       ;; soft-wrap long lines onto continuation rows instead of
       ;; scrolling horizontally
-      (mutable wrap)
+      (mutable wrap window-wrap-raw window-wrap-raw-set!)
       ;; line numbers beside an edit buffer's text: #t, #f, or default for
       ;; the head's line-numbers parameter
       (mutable line-numbers)
@@ -261,7 +262,7 @@
       (when (and source (not (app-facts b)))
         (let* ([old (window-editor w)]
                [id (or old (editor-state:create! ui-actor source
-                             (list (cons 'wrap (eq? (window-wrap w) #t)))) )])
+                             (list (cons 'wrap (window-wrap-raw w)))) )])
           (let-values ([(status d) (interaction:claim! ui-actor id)])
             (unless (eq? status 'applied) (error 'ensure-window-editor! "cannot claim editor" id status))
             (unless old
@@ -281,11 +282,36 @@
           (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))
             (list (cadddr state)))))))
 
+  (edoc "The text wrapping preference of this placement: default follows the source and head preference. Editor preferences belong to the retained view."
+        (w window "outer placement") (returns (or boolean (one-of default))))
+  (define (window-wrap w)
+    (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+      (if d (cond [(assq 'wrap (view:options d)) => cdr] [else 'default]) (window-wrap-raw w))))
+
+  (edoc "Set a placement's wrapping preference; an editor view is configured through its current ownership lease."
+        (w window "outer placement") (setting (or boolean (one-of default)) "wrapping policy"))
+  (define (window-wrap-set! w setting)
+    (unless (memq setting '(default #t #f)) (error 'window-wrap-set! "expected default, #t or #f" setting))
+    (unless (eq? setting (window-wrap w))
+      (let ([id (window-editor w)])
+        (if (not id) (window-wrap-raw-set! w setting)
+          (begin
+            (interaction:flush!)
+            (let* ([d (interaction:snapshot id)] [packet (model:snapshots (list id))]
+                   [record (caddr (car (cadr packet)))]
+                   [options (cons (cons 'wrap setting) (remp (lambda (p) (eq? (car p) 'wrap)) (view:options d)))])
+              (unless (and (equal? id (window-editor w)) record)
+                (error 'window-wrap-set! "editor placement changed"))
+              (let-values ([(status rows)
+                            (interaction:arrange! ui-actor
+                              (list (list id (cdr (assq 'revision record)) (view:children d) options))
+                              (list (list id (view:generation d))))])
+                (unless (eq? status 'applied) (error 'window-wrap-set! "editor preference changed" status)))))))))
+
   (define (editor-references? entries)
     (and (list? entries)
          (for-all (lambda (p) (and (pair? p) (integer? (car p)) (exact? (car p)) (> (car p) 0)
-                                   (list? (cdr p)) (= (length (cdr p)) 2) (eq? (cadr p) 'model)
-                                   (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))) entries)
+                                   (model:reference? (cdr p)))) entries)
          (= (length entries) (length (fold-left (lambda (xs p) (if (memv (car p) xs) xs (cons (car p) xs))) '() entries)))))
 
   (define (restore-window-editors! w entries)

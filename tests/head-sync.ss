@@ -428,6 +428,7 @@
        (head:window-pcol-set! one 2)
        (head:buffer-mark-col-set! source 1)
        (head:buffer-marked-set! source #t)
+       (head:window-wrap-set! one #f)
        (let* ([first (head:window-editor one)]
               [two (head:make-window source 0 0 0 0 2 10 0 40 'default)]
               [second (head:window-editor two)])
@@ -441,6 +442,8 @@
            (list (equal? first second) (equal? first (head:window-editor one))
              (view:state (interaction:snapshot first)) (view:state (interaction:snapshot second)))
            '(#f #t ((0 . 2) (0 . 1) (0 . 0) #t) ((1 . 2) (0 . 1) (0 . 0) #f)))
+         (check 'placement-wrap-preference-survives-switching
+           (list (head:window-wrap one) (head:window-wrap two)) '(#f default))
          (head:checkpoint!)
          (let ([state (actor:checkpoint head:ui-actor)])
            (check 'checkpoint-retains-views-not-copied-window-anchors

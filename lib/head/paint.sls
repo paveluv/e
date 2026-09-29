@@ -27,10 +27,10 @@
           line-breaks line-segments mark-size-dirty! page-size paint! place-cursor!
           point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
           region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
-          screen-live? screen-rows scroll-margin scroll-window! set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
+          screen-live? screen-rows (rename (text-layout:scroll-margin scroll-margin)) scroll-window! set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
           show-message! show-prompt-message! terminal-size! update-echo-geometry!
           update-terminal-title! valid-hyperlink? view-invalidate! view-overflows? visual-bell!
-          window-layout window-position window-screen-position window-wrapped? wrap-lines
+          window-layout window-position window-screen-position window-wrapped? (rename (text-layout:wrap-lines wrap-lines))
           wrap-width)
   (import (rnrs)
           (rnrs mutable-strings)
@@ -385,12 +385,6 @@
                    [(= row er) (cons 0 ec)]
                    [else (cons 0 line-length)])))))
 
-  ;; Whether windows soft-wrap by default -- for config.e; a window
-  ;; toggled by hand (window:toggle-wrap!, C-x t) keeps its own setting.
-  (edoc "Whether windows soft-wrap long lines by default; a window toggled by hand keeps its own setting."
-        (value boolean))
-  (define wrap-lines (make-parameter #t))
-
   (edoc "A buffer's wrap fact: default, #t, #f, clean or (clean . columns), shared by every window and head showing it."
         (b buffer "the buffer")
         (returns (or (one-of default #t #f clean) pair)))
@@ -411,7 +405,7 @@
            [x (cond [(head:app-buffer? b) fact]
                     [(not (eq? own 'default)) own]
                     [else fact])])
-      (and (not (render:header (head:window-rendition w))) (if (eq? x 'default) (wrap-lines) x))))
+      (and (not (render:header (head:window-rendition w))) (if (eq? x 'default) (text-layout:wrap-lines) x))))
 
   (edoc "Whether a window's buffer wraps cleanly: no continuation marks, the full width."
         (w window "the window")
@@ -1190,14 +1184,6 @@
       (cons (max (head:buffer-sticky-lines (head:window-buffer w)) (head:window-top w)) (head:window-topseg w))
       (cons prow pcol)))
 
-  ;; The minimal visual distance kept between the cursor and the
-  ;; window's top and bottom edges: scrolling starts that early, and
-  ;; the cursor enters the zone only where the view cannot scroll any
-  ;; further (the ends of the buffer).  Configurable in config.e.
-  (edoc "The rows kept between the cursor and a window's top and bottom edges while scrolling."
-        (value integer))
-  (define scroll-margin (make-parameter 8 (lambda (v) (max 0 v))))
-
   (define (decide-scrollbar! w height)
     ;; An auto scrollbar appears only while the whole content overflows the
     ;; window, judged at the full content width: a bar takes a column, which
@@ -1238,7 +1224,7 @@
         (let-values ([(point top left)
                       (text-layout:scroll v (head:window-rendition w) (and (window-wrapped? w) (wrap-width w))
                         (head:window-content-width w) (- height sticky) sticky
-                        (cons (head:window-top w) (head:window-topseg w)) (head:window-left w) point (scroll-margin))])
+                        (cons (head:window-top w) (head:window-topseg w)) (head:window-left w) point (text-layout:scroll-margin))])
           (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top)) (head:window-left-set! w left)))))
 
   ;; The cache holds, per screen row, the key describing what that row

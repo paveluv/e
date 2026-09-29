@@ -797,8 +797,11 @@ preserves focus and selection, and bubbles only its unconsumed remainder.
 
 `(edit:create-view! actor document-id options)` creates an unmounted `editor`
 view over an existing store document. Mount it directly, compose it with
-other views, or pass its root to `window:show-widget!`. Options are `()` for
-wrapping or `((wrap . #f))` for unwrapped text. The `text` output port exposes
+other views, or pass its root to `window:show-widget!`. With `()` or
+`((wrap . default))`, wrapping follows the document's `wrap` fact, then
+`paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
+Caret movement uses the same `paint:scroll-margin` as ordinary windows.
+The `text` output port exposes
 single-line sources, like Entry; multiline sources do not satisfy that
 string-field contract. [examples/editor.e](../examples/editor.e) places wrapped and
 unwrapped editors side by side over one document.

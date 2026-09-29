@@ -1,10 +1,18 @@
 ;; TUI text geometry over an explicit source. No windows, views or device I/O.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-layout)
-  (export anchor breaks column distance hit locate move overflows? page scroll segment)
+  (export anchor breaks column distance hit locate move overflows? page scroll scroll-margin segment wrap-lines)
   (import (chezscheme) (prefix (head render) render:))
 
   (define wrap-cache (make-weak-eq-hashtable))
+
+  (edoc "Whether text views soft-wrap by default; an explicit view or source preference takes precedence."
+        (value boolean))
+  (define wrap-lines (make-parameter #t))
+
+  (edoc "The rows kept between the caret and the edges while revealing it, bounded by the available viewport."
+        (value integer))
+  (define scroll-margin (make-parameter 8 (lambda (v) (max 0 v))))
 
   (edoc "Reuse immutable soft-wrap boundaries for a line at a resolved cell width."
         (line string "source line") (width integer "positive cell width") (returns vector) (effects internal))
