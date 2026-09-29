@@ -228,6 +228,31 @@
     (check 'editor-annotations-without-history-are-withheld
       (face (body (show! 27) 0) 1 2) #f)
     (interaction:bind! actor root (map (lambda (id) (list id 'annotations (list producer 'ranges) #f)) (list a b))))
+  (store:reset! '(base test) source '("aa bb cc"))
+  (text-source:open! actor source) (select! a '(0 . 8) '(0 . 0))
+  (let ([old (basis a)])
+    (store:edit! '(agent "rewrite") source (caddr old) (text:make-span 0 3 0 5) '("BBB"))
+    (text-source:open! actor source)
+    (check 'editor-bulk-rewrite-skips-stale-ranges-and-groups-history
+      (list (rewrite-regions! a old '(((0 . 0) (0 . 2) "AAA") ((0 . 3) (0 . 5) "discard") ((0 . 6) (0 . 8) "C")))
+        (text) (car (state a)) (begin (undo! a) (text))) '(2 #("AAA BBB C") (0 . 9) #("aa BBB cc"))))
+  (let ([old (basis a)])
+    (check 'editor-bulk-rewrite-validates-all-ranges-before-editing
+      (list (refused? (lambda () (rewrite-regions! a old '(((0 . 0) (0 . 2) "lost") ((0 . 1) (0 . 3) "bad")))))
+        (text)) '(#t #("aa BBB cc"))))
+  (store:reset! '(base test) source '("aa bb cc"))
+  (text-source:open! actor source) (select! a '(0 . 8) '(0 . 8))
+  (let ([old (basis a)] [once? #f] [token #f])
+    (set! token (store:subscribe! source (lambda (event)
+                                           (when (and (not once?) (eq? (car event) 'edit))
+                                             (set! once? #t)
+                                             (let-values ([(lines revision) (store:snapshot source)])
+                                               (store:edit! '(agent "rewrite-race") source revision (text:make-span 0 3 0 5) '("FOREIGN")))
+                                             (text-source:open! actor source) (select! a '(0 . 4) '(0 . 4))))))
+    (check 'editor-bulk-rewrite-keeps-interleaved-text-and-new-selection
+      (list (rewrite-regions! a old '(((0 . 0) (0 . 2) "A") ((0 . 3) (0 . 5) "lost") ((0 . 6) (0 . 8) "C")))
+        (text) (car (state a))) '(2 #("A FOREIGN C") (0 . 3)))
+    (store:unsubscribe! token))
   (store:reset! '(base test) source '("replacement"))
   (text-source:forget! source) (text-source:open! actor source)
   (check 'editor-unknown-selection-history-refuses-until-explicit-selection

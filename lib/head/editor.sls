@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export create-view! delete! expression! format! history! insert! move! page! paste! register! replace-region! scroll! select! set-mark! transfer!)
+  (export basis create-view! delete! expression! format! history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -281,6 +281,72 @@
   (define (current-source source)
     (let ([m (text-control:mirror source)])
       (list (cons 'id (list 'buffer (text-source:id m))) (cons 'revision (text-source:revision m)) (cons 'value (text-source:lines m)))))
+
+  (edoc "Borrow an explicit editor's immutable text basis for a later bulk rewrite, without remote reads."
+        (id model "editor view") (returns list "(lines document-id revision)"))
+  (define (basis id)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (list (text-control:lines source) (text-source:id (text-control:mirror source)) (text-control:revision source))))
+
+  (edoc "Rewrite ordered disjoint ranges computed against a captured basis, preserving selection and sharing one undo action. Concurrently changed ranges are skipped; missing history or a changed view owner refuses the remaining work."
+        (id model "editor view") (basis list "(immutable-lines document-id revision)")
+        (regions list "(start end replacement-string) entries in basis order") (returns integer "ranges changed"))
+  (define (rewrite-regions! id basis regions)
+    (let-values ([(initial original) (text-control:context id 'editor)])
+      (let ([document (text-source:id (text-control:mirror initial))])
+        (unless (and (list? basis) (= (length basis) 3) (vector? (car basis)) (> (vector-length (car basis)) 0)
+                  (equal? document (cadr basis)) (integer? (caddr basis)) (exact? (caddr basis)) (>= (caddr basis) 0)
+                  (list? regions)) (error 'rewrite-regions! "expected this editor's basis and ordered ranges"))
+        (let ([regions
+               (let validate ([rest regions] [end '(0 . 0)])
+                 (if (null? rest) '()
+                   (let ([r (car rest)])
+                     (unless (and (list? r) (= (length r) 3) (position? (car r)) (position? (cadr r)) (string? (caddr r))
+                               (text:position<=? end (car r)) (text:position<=? (car r) (cadr r)))
+                       (error 'rewrite-regions! "expected ordered disjoint ranges" r))
+                     (let ([span (text-source:span r)])
+                       (text:extract (car basis) span)
+                       (let-values ([(lines trailing?) (text:from-string (caddr r))])
+                         (cons (cons span (append (vector->list lines) (if trailing? '("") '())))
+                           (validate (cdr rest) (cadr r))))))))])
+          (if (null? regions) 0
+            (let* ([reload? (document:check! head:ui-actor document)]
+                   [context (list (list 'editor head:ui-actor id (gensym->unique-string (gensym))) "Rewrite text")]
+                   [count
+                    ;; Work backwards: our own edits cannot shift earlier
+                    ;; ranges. Only interleaved changes before their end need
+                    ;; to traverse the remaining list.
+                    (let loop ([regions (reverse regions)] [from (caddr basis)] [count 0])
+                      (if (null? regions) count
+                        (let-values ([(source d) (text-control:context id 'editor 'current)])
+                          (unless (text-control:current? id initial original) (refuse "The editor source or owner changed"))
+                          (let* ([revision (text-control:revision source)] [mirror (text-control:mirror source)]
+                                 [changes (text-source:changes mirror from revision)])
+                            (unless changes (refuse "The rewrite's text history is unavailable"))
+                            (let* ([last (caar regions)]
+                                   [changes (let skip ([rest changes])
+                                              (if (null? rest) '()
+                                                (let ([start (text:span-start (text:delta-span (car rest)))] [end (text:span-end last)])
+                                                  (if (or (text:position<? end start)
+                                                          (and (text:position=? end start) (not (text:span-empty? last))))
+                                                    (skip (cdr rest)) rest))))]
+                                   [regions (if (null? changes) regions
+                                              (filter values (map (lambda (r)
+                                                                    (let ([span (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (car r) changes)])
+                                                                      (and span (cons span (cdr r))))) regions)))])
+                              (if (null? regions) count
+                                (let* ([r (car regions)] [old (text-control:lines source)] [ps (points source d)])
+                                  (unless ps (refuse "Editor selection history is unavailable"))
+                                  (if (equal? (text:extract old (car r)) (cdr r))
+                                    (loop (cdr regions) revision count)
+                                    (let-values ([(proposed delta) (text:apply-edit old (car r) (cdr r))])
+                                      (mount-group-set! (mounted id) #f) (mount-goal-set! (mounted id) #f)
+                                      (text-control:submit! id source d old revision (car r) (cdr r) context
+                                        (map (lambda (p) (text:rebase-position p delta)) ps)
+                                        (lambda (ps) (next-state id (current-source source) d ps (cadddr (state d)) #t)))
+                                      (loop (cdr regions) revision (+ count 1)))))))))))])
+              (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document))
+              count))))))
   (define (rewrite! id source d old proposed positions properties label)
     (let-values ([(span replacement) (text:difference old proposed)])
       (let* ([document (text-source:id (text-control:mirror source))] [m (mounted id)]

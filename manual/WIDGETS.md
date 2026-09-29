@@ -852,6 +852,15 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   same undo action. Providers compute against a captured `mode:source`.
 - `edit:replace-region-text! id start end text` replaces an explicit range at
   the view's declared text basis, with the caret following the accepted edit.
+- `edit:basis id` captures `(immutable-lines document-id revision)` for
+  computing a bulk change. `edit:rewrite-regions! id basis ranges` accepts
+  ordered, disjoint `(start end replacement-string)` entries in that basis.
+  It validates the whole proposal before editing, preserves selection and
+  groups accepted edits into one undo action. Replacements run from the end,
+  avoiding repeated coordinate shifts. Concurrently changed ranges are
+  skipped; missing history or changed ownership refuses the remaining work.
+  Already accepted edits remain undoable. Use a one-element range list for
+  one rewrite; the redundant `edit:rewrite-region!` export is removed.
 
 Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
 use those commands. Shift-arrows extend selection; Control-Space sets the
@@ -885,6 +894,5 @@ overrides annotations, which override syntax styles. Annotation data contains
 no display geometry.
 
 Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; bulk-region commands,
-search/conflict decorations and window chrome have not
+still use their existing host; search/conflict producers and window chrome have not
 yet moved to the nested editor.

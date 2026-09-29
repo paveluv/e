@@ -23,9 +23,10 @@
   (define (lines source) (cdr (assq 'value source)))
 
   (edoc "Read an explicit text control's invocation source and descriptor; require its kind and schema without resolving a window."
-        (id model "mounted text control") (kind symbol "required kind"))
-  (define (context id kind)
-    (let-values ([(source d inputs) (widget:context id)])
+        (id model "mounted text control") (kind symbol "required kind")
+        (mode (list-of symbol) "current bypasses a retained action basis"))
+  (define (context id kind . mode)
+    (let-values ([(source d inputs) (apply widget:context id mode)])
       (unless (and d (eq? (view:kind d) kind) (= (view:schema d) 1)) (error 'text-control "unexpected text view" id kind))
       (mirror source)
       (values source d)))

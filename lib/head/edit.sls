@@ -27,7 +27,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head edit)
-  (export answer! backspace! backups backward-expression! backward-kill-expression! beginning-of-buffer! beginning-of-form!
+  (export answer! backspace! backups backward-expression! backward-kill-expression! basis beginning-of-buffer! beginning-of-form!
           beginning-of-line! buffer-clean? buffer-text
           call-as-one-edit! copy-region! copy-text copy-text! (rename (editor:create-view! create-view!)) current-batch current-region
           (rename (editor:delete! delete!)) delete-forward! delete-trashed! down-expression! empty-trash! end-of-buffer! end-of-form! end-of-line! format-buffer!
@@ -41,7 +41,7 @@
           (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
           quit! redo! redraw-command! region-text reload! replace-region-text! reread! restore!
-          rewrite-region! rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
+          rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
           set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! undo-scope up-expression!
           visit-file! with-region
           yank!)
@@ -160,6 +160,11 @@
   (define edit-mark (make-parameter #f))
   (define edit-source (make-parameter #f))
   (define (edit-basis-for b) (or (edit-source) (head:edit-basis b)))
+
+  (edoc "Borrow immutable text with its document identity and revision for a later bulk rewrite."
+        (id model "explicit editor view; omission uses the legacy current buffer") (returns list "(lines document-id revision)"))
+  (define basis
+    (case-lambda [() (head:edit-basis (head:current-buffer))] [(id) (editor:basis id)]))
 
   ;;; Small utilities -------------------------------------------------------
 
@@ -937,31 +942,35 @@
     (parameterize ([edit-source basis] [edit-point (head:point)])
       (replace-region-text! start end text)))
 
-  (edoc "Replace several ordered ranges of the current buffer with texts computed against a basis, one structural edit each in the current undo group, point kept where it was: the ranges are in the basis's coordinates, disjoint and in the text's order, and each later one is carried across the changes the store reports after an edit, this head's own and other actors', a range whose text changed under it being skipped."
+  (edoc "Rewrite ordered disjoint ranges computed against edit:basis. An explicit editor preserves its selection and groups accepted replacements into one undo action, applying them from the end so earlier coordinates stay stable. Ranges changed concurrently are skipped; lost history or ownership refuses the remaining work. The two-argument form is the legacy current-window adapter."
+        (id model "explicit editor view; omission is the legacy window adapter")
         (basis list "the edit basis the ranges were computed against")
         (regions (list-of list) "(start end text) each, in the text's order")
         (returns integer "how many ranges were replaced")
         (edits))
-  (define (rewrite-regions! basis regions)
-    (define (span-of region)
-      (text:make-span (car (car region)) (cdr (car region)) (car (cadr region)) (cdr (cadr region))))
-    (define (carry regions changes)
-      ;; the ranges still to replace, mapped through the changes since the
-      ;; last basis, those a change touched dropped
-      (filter values
-        (map (lambda (region)
-               (let ([span (fold-left (lambda (span change) (and span (text:rebase-span span (caddr change))))
-                                      (car region) changes)])
-                 (and span (cons span (cdr region)))))
+  (define rewrite-regions!
+    (case-lambda
+      [(id basis regions) (editor:rewrite-regions! id basis regions)]
+      [(basis regions)
+       (define (span-of region)
+         (text:make-span (car (car region)) (cdr (car region)) (car (cadr region)) (cdr (cadr region))))
+       (define (carry regions changes)
+         ;; the ranges still to replace, mapped through the changes since the
+         ;; last basis, those a change touched dropped
+         (filter values
+           (map (lambda (region)
+                  (let ([span (fold-left (lambda (span change) (and span (text:rebase-span span (caddr change))))
+                                         (car region) changes)])
+                    (and span (cons span (cdr region)))))
              regions)))
-    (let ([b (head:window-buffer current-window)])
-      (let loop ([regions (map (lambda (region) (cons (span-of region) (caddr region))) regions)] [basis basis] [n 0])
-        (if (null? regions) n
-            (let ([span (car (car regions))] [text (cdr (car regions))])
-              (rewrite-region! basis (text:span-start span) (text:span-end span) text)
-              (let-values ([(lines revision changes) (head:snapshot-since b (caddr basis))])
-                (unless changes (error 'rewrite-regions! "the changes since the basis are no longer available"))
-                (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1))))))))
+       (let ([b (head:window-buffer current-window)])
+         (let loop ([regions (map (lambda (region) (cons (span-of region) (caddr region))) regions)] [basis basis] [n 0])
+           (if (null? regions) n
+             (let ([span (car (car regions))] [text (cdr (car regions))])
+               (rewrite-region! basis (text:span-start span) (text:span-end span) text)
+               (let-values ([(lines revision changes) (head:snapshot-since b (caddr basis))])
+                 (unless changes (error 'rewrite-regions! "the changes since the basis are no longer available"))
+                 (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1)))))))]))
 
   (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates. An explicit view refuses if the selected text changed."
         (id model "editor view; omission is the legacy window adapter"))
