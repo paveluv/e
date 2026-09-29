@@ -102,11 +102,19 @@ For widget bindings, `C-x TAB` substitutes the receiving view's ID for
 The ID addresses that view while it remains mounted. Describing a binding
 never invokes its argument producers.
 
-For a table action, bind the key to `table:activate!` with a named command.
+For a table action, bind the key to `table:invoke!` with a named command.
+Omit the name for the default `activate` command, as Enter does:
+
+```scheme
+(table:invoke! (model 110))          ; default action, opening a row in Buffet
+(table:invoke! (model 110) 'trash)   ; invoke the table's trash connection
+(table:invoke! (model 110) 'delete)  ; invoke the table's delete connection
+```
+
 Buffet's `C-k`, for example, is displayed as:
 
 ```scheme
-(table:activate! (widget:descendant (model 109) 'table) 'trash)
+(table:invoke! (widget:descendant (model 109) 'table) 'trash)
 ```
 
 The table supplies its hovered or selected row and result basis to the
@@ -114,8 +122,8 @@ connected action. Bindings shows the full registered forwarding chain below
 the key, with each operation's own documentation:
 
 ```scheme
-(table:activate! (widget:descendant (model 109) 'table) 'trash)
-  → (table:activate! (model 110) 'trash)
+(table:invoke! (widget:descendant (model 109) 'table) 'trash)
+  → (table:invoke! (model 110) 'trash)
     → (widget:invoke! (model 110) 'trash selection basis)
       → (widget:act! (model 109) 'kill selection basis)
         → (buffet:kill! (model 109) selection basis)

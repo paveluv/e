@@ -90,7 +90,7 @@
           (test:check 'table-pending-keeps-viewport-but-revokes-selection
             (list (equal? before (cdr (widget:frame-lines pending)))
               (equal? (car frame) (car (widget:frame-lines pending)))
-              (selection) (test:raises? (lambda () (table:activate! table))) (= reads snapshot-reads))
+              (selection) (test:raises? (lambda () (table:invoke! table))) (= reads snapshot-reads))
             '(#t #t #f #t #t)))
         (set! defer? #f) (publication) (set! publication #f)
         ;; The summary can arrive before its row page. Neither transition

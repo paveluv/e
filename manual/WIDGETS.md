@@ -36,7 +36,7 @@ column without a heading; use `((identity . name))` to keep `name` when fitting
 a narrow pane, independently of its position among the columns. The default
 identity is the first column. `set-columns!` retains that identity.
 The table composes sticky headings and a normal scroll view;
-it does not allocate a view for each row. `table:select!`, `move!`, `activate!`,
+it does not allocate a view for each row. `table:select!`, `move!`, `invoke!`,
 `sort-by!`, `toggle-sort!` and `set-columns!` are the same operations used by
 keyboard and mouse. F1–F12 use `table:toggle-visible-sort!` to address visible
 headings by zero-based position. Wheel movement scrolls
@@ -97,8 +97,8 @@ or queued for later execution. `lookup` also lets domain actions validate a
 row and its result basis without separate rank and range requests.
 
 `table:emphasize!` supplies a host's current document key without changing
-selection or sending interaction updates. `table:activate!` invokes the
-composition's `activate` command (or an explicitly supplied command name).
+selection or sending interaction updates. `table:invoke!` invokes the
+composition's named command, defaulting to `activate` when the name is omitted.
 The control validates and adopts its hovered or selected row before supplying
 the selection and result basis to the connected action. Domain actions must
 also validate authoritative object versions; selection validation is not a

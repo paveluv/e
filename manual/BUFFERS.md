@@ -608,7 +608,7 @@ for `entry:insert!`, `entry:delete!` and the other normal entry operations.
 All these operations take explicit view IDs. The table's logical state holds
 its `(collection generation key)` selection and result basis.
 
-`table:activate!` invokes the selected row's `activate` command, connected to
+`table:invoke!` invokes the selected row's `activate` command, connected to
 `buffet:choose!` for opening or restoring the document through its host.
 `C-k` invokes the table's `trash` command, connected to `buffet:kill!`;
 `C-x D` invokes `delete`, connected to `buffet:delete!`. Each receives the

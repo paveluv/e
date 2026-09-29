@@ -2,7 +2,7 @@
 ;; remains here until those apps adopt the composable controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export activate! choose! create! cycle-sort emphasize! heading init! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
+  (export choose! create! cycle-sort emphasize! heading init! invoke! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
@@ -365,11 +365,11 @@
       (session-pending-set! s intent)
       (when (ready? v) (seek! s (session-pending s) v)) (repaint! s)))
 
-  (edoc "Adopt the hovered row, if any, and activate the selection through the explicit command binding; pending or stale rows refuse."
+  (edoc "Invoke a named command on the hovered or selected row, passing its selection and result basis. The default command is activate; pending or stale rows refuse."
         (id model "table or descendant") (command (list-of symbol) "optional command binding, default activate") (returns any))
-  (define (activate! id . command)
+  (define (invoke! id . command)
     (unless (or (null? command) (and (= (length command) 1) (symbol? (car command))))
-      (error 'activate! "expected an optional command name"))
+      (error 'invoke! "expected an optional command name"))
     (let* ([s (runtime id)] [intent (session-pending s)]
            [explicit? (and intent (eq? (car intent) 'key) (= (length intent) 3)
                         (or (null? command) (eq? (car command) 'activate)))]
@@ -390,7 +390,7 @@
       (let ([selection (selected s)] [basis (get (view:state (descriptor s)) 'basis '())])
         (unless (and (ready? v) selection (not (session-pending s))
                   (equal? (car selection) (session-query s)) (= (cadr selection) (get v 'generation 0)))
-          (error 'activate! "selection is pending or unavailable"))
+          (error 'invoke! "selection is pending or unavailable"))
         (widget:invoke! (root id) (if (null? command) 'activate (car command)) selection basis))))
 
   (edoc "Set shared collection sorting using raw column values; selection remains local." (id model "table") (keys list "(column ascending-or-descending) entries"))
@@ -589,7 +589,7 @@
       (unless row (error 'choose! "displayed row is no longer available" selection))
       (save-selection! s (cadr selection) (caddr selection) (get current 'basis '()) (car row))
       (session-hovered-set! s #f) (repaint! s)
-      (when (assq 'activate (widget:commands (session-id s))) (activate! (session-id s)))))
+      (when (assq 'activate (widget:commands (session-id s))) (invoke! (session-id s)))))
 
   (define (pointer-hit f x y)
     (let* ([v (widget:frame-data f)] [s (runtime (widget:frame-id f))]
@@ -648,7 +648,7 @@
                 (widget:register! kind 1
                   (append (layout:container 'y)
                     (list (cons 'prepare data) (cons 'service service!) (cons 'release release!) (cons 'contexts '(widget-table)) (cons 'busy? busy?)
-                      (cons 'actions (list (cons 'select select!) (cons 'move move!) (cons 'activate activate!)
+                      (cons 'actions (list (cons 'select select!) (cons 'move move!) (cons 'invoke invoke!)
                                        (cons 'emphasize emphasize!) (cons 'sort-by sort-by!) (cons 'toggle-sort toggle-sort!) (cons 'set-columns set-columns!))))))) '(table list))
     (for-each (lambda (kind)
                 (widget:register! kind 1
@@ -656,5 +656,5 @@
                     (if (eq? kind 'table-body) (list (cons 'focus #t) (cons 'anchor anchor) (cons 'locate locate)) '())))) '(table-heading table-body))
     (for-each (lambda (p) (keymap:bind-default! 'widget-table (car p) (keymap:call move! widget:target (cdr p))))
       '(("UP" . previous) ("DOWN" . next) ("HOME" . first) ("END" . last) ("PGUP" . page-previous) ("PGDN" . page-next)))
-    (keymap:bind-default! 'widget-table "RET" (keymap:call activate! widget:target))
+    (keymap:bind-default! 'widget-table "RET" (keymap:call invoke! widget:target))
     (for-each (lambda (i) (keymap:bind-default! 'widget-table (format "F~a" (+ i 1)) (keymap:call toggle-visible-sort! widget:target i))) (iota 12))))

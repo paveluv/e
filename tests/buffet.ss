@@ -77,18 +77,19 @@
              (not (string:search text "(widget:target)" 0 (string-length text)))
              (not (string:search text "Unavailable target." 0 (string-length text)))
              (equal? focus (widget:focused (root)))) '(#t #t #t #t #t)))
-       (test:check 'archive-keys-show-table-activation-with-a-model-literal
+       (test:check 'table-command-keys-show-model-literals-and-omit-the-default-command
          (map (lambda (keys)
                 (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'buffet keys)))
-                  (list (cons widget:target (app))))) '(("C-k") ("C-x" "D")))
-         (map (lambda (command) (format "(table:activate! (widget:descendant (model ~a) 'table) '~a)" (cadr (app)) command))
-           '(trash delete)))
+                  (list (cons widget:target (app))))) '(("RET") ("C-k") ("C-x" "D")))
+         (cons (format "(table:invoke! (widget:descendant (model ~a) 'table))" (cadr (app)))
+           (map (lambda (command) (format "(table:invoke! (widget:descendant (model ~a) 'table) '~a)" (cadr (app)) command))
+             '(trash delete))))
        (test:check 'archive-binding-exposes-every-forwarding-step
          (map cadr
            (keymap:action-trace (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("C-k"))))
              (list (cons widget:target (app)))))
-         (list (format "(table:activate! (widget:descendant (model ~a) 'table) 'trash)" (cadr (app)))
-           (format "(table:activate! (model ~a) 'trash)" (cadr (table)))
+         (list (format "(table:invoke! (widget:descendant (model ~a) 'table) 'trash)" (cadr (app)))
+           (format "(table:invoke! (model ~a) 'trash)" (cadr (table)))
            (format "(widget:invoke! (model ~a) 'trash selection basis)" (cadr (table)))
            (format "(widget:act! (model ~a) 'kill selection basis)" (cadr (app)))
            (format "(buffet:kill! (model ~a) selection basis)" (cadr (app)))))
