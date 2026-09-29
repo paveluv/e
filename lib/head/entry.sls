@@ -1,7 +1,7 @@
 ;; A single-line control over authored text, with selection owned by its view.
 (import (only (foundation edoc) elibrary))
 (elibrary (head entry)
-  (export delete! init! insert! move! redo! select! undo!)
+  (export delete! init! insert! move! redo! register-policy! register-presentation! select! set-text! undo!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation text) text:)
@@ -42,14 +42,44 @@
   (define (selection source d)
     (let ([steps (changes source (or (view:basis d) (revision source)))])
       (and steps (map (lambda (p) (fold-left text:rebase-position p steps)) (state d)))))
+  (define presentations (kernel:make-registry car))
+  (define policies (kernel:make-registry car))
+  (define presentation-changes (kernel:registry-observe! presentations (lambda (removed added) (widget:invalidate!))))
+
+  (edoc "Register a pure text editing policy. Given proposed single-line text and a character caret, return (text caret). A view selects it with its policy (name schema) option. This operates on logical text, independent of display projection."
+        (name symbol "policy name") (schema integer "positive version") (normalize procedure "pure text and caret normalization"))
+  (define (register-policy! name schema normalize)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? normalize))
+      (error 'register-policy! "invalid entry policy"))
+    (kernel:registry-add! policies (cons (list name schema) normalize)))
+
+  (edoc "Register a pure entry projection: (text context) returns one (display roles) pair per source grapheme. Roles are symbols. Painting, caret, selection and mouse hits share this mapping; edits address the original text."
+        (name symbol "presentation name") (schema integer "positive version") (project procedure "pure grapheme formatter"))
+  (define (register-presentation! name schema project)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? project))
+      (error 'register-presentation! "invalid entry presentation"))
+    (kernel:registry-add! presentations (cons (list name schema) project)))
+
   (define (data id source inputs)
     (source-buffer source)
-    (let* ([lines (source-lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")])
-      (list source line
-        (let loop ([parts (glyph:clusters line)] [chars 0] [cells 0] [out '((0 . 0))])
-          (if (null? parts) (reverse out)
-            (let ([chars (+ chars (caar parts))] [cells (+ cells (cdar parts))])
-              (loop (cdr parts) chars cells (cons (cons chars cells) out))))))))
+    (let* ([lines (source-lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")]
+           [profile (assq 'presentation (view:options (interaction:snapshot id)))]
+           [definition (and profile (kernel:registry-find presentations (lambda (p) (equal? (cdr profile) (car p)))))]
+           [context (assq 'context inputs)] [parts (glyph:clusters line)]
+           [display (and definition ((cdr definition) line (if (and context (eq? (cadr context) 'ready)) (caddr context) '())))])
+      (when (and profile (not definition)) (error 'entry "entry presentation is unavailable" (cdr profile)))
+      (when (and definition
+              (not (and (list? display) (= (length display) (length parts))
+                     (for-all (lambda (p) (and (list? p) (= (length p) 2) (string? (car p))
+                                            (positive? (string-length (car p))) (list? (cadr p)) (for-all symbol? (cadr p)))) display))))
+        (error 'entry "invalid grapheme projection"))
+      (let loop ([parts parts] [display display] [chars 0] [cells 0] [edges '((0 . 0))] [out '()] [spans '()])
+        (if (null? parts) (list source (apply string-append (reverse out)) (reverse edges) (reverse spans))
+          (let* ([end (+ chars (caar parts))] [text (if display (caar display) (substring line chars end))]
+                 [width (glyph:cells text)] [roles (if display (cadar display) '())])
+            (loop (cdr parts) (and display (cdr display)) end (+ cells width)
+              (cons (cons end (+ cells width)) edges) (cons text out)
+              (if (null? roles) spans (cons (list cells (+ cells width) roles) spans))))))))
   (define (edge edges value which)
     (let loop ([rest (cdr edges)] [previous (car edges)])
       (if (or (null? rest) (> (which (car rest)) value)) previous
@@ -71,7 +101,12 @@
       (if points
         (let* ([start (offset points width)] [a (- (cdar points) start)] [b (- (cdadr points) start)]
                [left (max 0 (min a b))] [right (min width (max a b))])
-          (if (> right left) (list (list (list left 0 (- right left) 1) 'selection)) '()))
+          (append
+            (filter values
+              (map (lambda (span)
+                     (let ([a (max 0 (- (car span) start))] [b (min width (- (cadr span) start))])
+                       (and (< a b) (list (list a 0 (- b a) 1) (caddr span))))) (cadddr data)))
+            (if (> right left) (list (list (list left 0 (- right left) 1) 'selection)) '())))
         (list (list (list 0 0 width 1) 'ghost)))))
   (define (caret data d width height)
     (let ([points (project data d)])
@@ -130,10 +165,25 @@
           [old (basis-text source d)])
       (unless (single-line? old) (refuse "Entry selection refers to a multiline source"))
       (unless (and (equal? (car selection) (cadr selection)) (string=? replacement ""))
-        (head:store-edit! b (span selection) (list replacement) #f
-          (list (cons (lambda (point revision)
-                        (interaction:set-state! head:ui-actor id revision (list point point))) 'end))
-          (list old (head:buffer-store-id b) basis)))))
+        (let* ([profile (assq 'policy (view:options d))]
+               [policy (and profile (kernel:registry-find policies (lambda (p) (equal? (cdr profile) (car p)))))]
+               [proposed (and profile
+                              (let-values ([(lines delta) (text:apply-edit old (span selection) (list replacement))])
+                                (unless policy (error 'entry "entry policy is unavailable" (cdr profile)))
+                                (let* ([text (vector-ref lines 0)] [caret (cdr (text:delta-new-end delta))]
+                                       [next ((cdr policy) text caret)])
+                                  (unless next (error 'entry "invalid normalized text or caret"))
+                                  (and (not (equal? next (list text caret))) next))))])
+          (when (and proposed
+                     (not (and (list? proposed) (= (length proposed) 2) (string? (car proposed))
+                            (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list (car proposed))))
+                            (integer? (cadr proposed)) (exact? (cadr proposed)) (<= 0 (cadr proposed) (string-length (car proposed))))))
+            (error 'entry "invalid normalized text or caret"))
+          (head:store-edit! b (if proposed (text:make-span 0 0 0 (string-length (vector-ref old 0))) (span selection))
+            (list (if proposed (car proposed) replacement)) (and proposed (list #f "Edit entry" (cons 'revision basis)))
+            (list (cons (lambda (point revision)
+                          (interaction:set-state! head:ui-actor id revision (list point point))) (if proposed (cons 0 (cadr proposed)) 'end)))
+            (list old (head:buffer-store-id b) basis))))))
 
   (edoc "Insert text once, replacing the entry selection through the shared edit journal. Multiline input is refused whole."
         (id model "entry view") (text string "committed text"))
@@ -141,6 +191,21 @@
     (unless (and (string? text) (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list text))))
       (refuse "Entry does not accept multiline text"))
     (let-values ([(source d) (context id)]) (replace! id source d (state d) text)))
+
+  (edoc "Replace an entry's whole text as one undoable edit and move its caret to the end. An optional exact source revision refuses stale asynchronous proposals, including edits at the old endpoints."
+        (id model "entry view") (text string "single-line replacement") (expected (list-of integer) "optional exact source revision"))
+  (define (set-text! id text . expected)
+    (unless (and (string? text) (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list text))) (<= (length expected) 1))
+      (error 'set-text! "expected single-line text and at most one revision"))
+    (let-values ([(source d) (context id)])
+      (unless (single-line? (source-lines source)) (refuse "Entry requires a single-line source"))
+      (when (and (pair? expected) (not (equal? (car expected) (revision source)))) (refuse "Entry text changed"))
+      (let* ([b (source-buffer source)] [line (vector-ref (source-lines source) 0)] [rev (revision source)])
+        (if (string=? line text) (select! id (string-length text) (string-length text))
+          (head:store-edit! b (text:make-span 0 0 0 (string-length line)) (list text)
+            (list #f "Replace entry text" (cons 'revision rev))
+            (list (cons (lambda (point revision) (interaction:set-state! head:ui-actor id revision (list point point))) 'end))
+            (list (source-lines source) (head:buffer-store-id b) rev))))))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
         (id model "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
@@ -215,10 +280,10 @@
   (define (init!)
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
-        (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (max 1 (cdr (car (reverse (caddr data)))))))))
+        (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (+ 1 (cdr (car (reverse (caddr data)))))))))
         (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (list (cons 'insert insert!) (cons 'select select!) (cons 'move move!)
-                         (cons 'delete delete!) (cons 'undo undo!) (cons 'redo redo!)))))
+                         (cons 'delete delete!) (cons 'set-text set-text!) (cons 'undo undo!) (cons 'redo redo!)))))
     (for-each (lambda (binding)
                 (keymap:bind-default! 'widget-entry (car binding)
                   (keymap:call move! widget:target (cadr binding) (caddr binding))))

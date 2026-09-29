@@ -12,6 +12,7 @@
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
+          (prefix (service filesystem) filesystem:)
           ;; Startup also publishes these modules into base configuration.
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
@@ -35,7 +36,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -141,6 +142,11 @@
       [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
       [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
       [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
+      [(filesystem-source) (control!) (arity 3) (apply filesystem:create-source! actor args)]
+      [(filesystem-query) (control!) (arity 2) (apply filesystem:create-query! actor args)]
+      [(filesystem-configure) (control!) (arity 3) (call-with-values (lambda () (apply filesystem:configure! actor args)) list)]
+      [(filesystem-refresh) (control!) (arity 0) (filesystem:refresh! actor) #t]
+      [(filesystem-complete) (control!) (arity 2) (apply filesystem:complete! actor args)]
       [(collection-create) (control!)
        (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
        (apply collection:create! actor args)]
@@ -633,13 +639,17 @@
                                                          (eq? (car id) 'model) (integer? (cadr id))
                                                          (exact? (cadr id)) (> (cadr id) 0))) ids))
           (error 'wire "expected tagged model ids" ids)))
+      (define (models-demand!)
+        (let* ([ids (with-mutex out-lock (map (lambda (n) (list 'model n)) (vector->list (hashtable-keys model-ids))))]
+               [old model-token])
+          (set! model-token
+            (and (pair? ids) (parameterize ([kernel:registering-module owner]) (model:subscribe! ids model-event!))))
+          (when old (model:unsubscribe! old))))
       (define (models-watch! ids)
         ;; Subscribe before reading: a racing commit is in one or both.
         (check-model-ids ids)
-        (unless model-token
-          (parameterize ([kernel:registering-module owner])
-            (set! model-token (model:subscribe! #f model-event!))))
         (with-mutex out-lock (for-each (lambda (id) (hashtable-set! model-ids (cadr id) #t)) ids))
+        (models-demand!)
         (model:snapshots ids))
       (define (watch!)
         (unless changes
@@ -784,7 +794,8 @@
                                  (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
                                  (let ([ids (cadddr message)])
                                    (check-model-ids ids)
-                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids)))
+                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
+                                   (models-demand!))
                                  #t]
                                 [(status)
                                  (unless (= (length message) 3) (error 'wire "status takes no arguments"))

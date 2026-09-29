@@ -648,6 +648,27 @@
      ;; The visible frame owns hit geometry, including across partial output
      ;; and uncertain terminal writes. No extra test process or timing wait.
      (widget:init!) (interaction:init!) (window:init!)
+     ;; A partial overlay must not mutate the full-width child's lent style
+     ;; row or an earlier frame, including when that child is cached.
+     (widget:register! 'style-row 1
+       (list (cons 'render (lambda (s d w h r) (list (make-string w #\x))))
+         (cons 'decorate (lambda (s d w h r) (list (list (list 0 0 w h) (cdr (assq 'face (view:options d)))))))))
+     (widget:register! 'style-overlay 1
+       (list (cons 'layout (lambda (d w h measure locate)
+                             (map (lambda (child rect) (list (cadr child) rect))
+                               (view:children d) (list (list 0 0 w h) '(1 0 2 1)))))))
+     (let* ([a (view:create! head:ui-actor #f 'style-row 1 '((face . header)) '())]
+            [b (view:create! head:ui-actor #f 'style-row 1 '((face . bold)) '())]
+            [root (view:create! head:ui-actor #f 'style-overlay 1 '() '())])
+       (define (styles f) (vector->list (widget:frame-styles f 0 (car (widget:frame-lines f)))))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'full a 'fit) (list 'overlay b 'fit)) '())) '())
+       (widget:mount! root 'style-sharing)
+       (let ([first (widget:prepare! root 5 1)])
+         (widget:prepare! root 5 1)
+         (check 'composited-style-rows-preserve-cached-children-and-older-frames
+           (list (styles first) (styles (car (widget:frame-children first))))
+           '((header bold bold header header) (header header header header header))))
+       (widget:unmount! root))
      (model:register-kind! 'frame-test 1 string?)
      (let* ([w (head:current-window)] [was (head:current-buffer)]
             [source (model:create! head:ui-actor 'frame-test 1 'session 'persistent '() "a\nb\nc\nd\ne")]

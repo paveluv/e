@@ -38,8 +38,8 @@
                           (min (- count (if (or (< count 1000) (even? count)) 1 2)) (max (if (< count 1000) 0 1) (+ first (* step sign offset)))))))
                     (if (< count 1000) '() '((default 3)))) #f))))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 10000000)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [a (range:acquire! query void)] [b (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [a (range:acquire! query void)] [b (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! a g 0 32 '(name) '())
     (range:request! b g 16 32 '(name) '())
     (page query g 0 48)
@@ -56,8 +56,8 @@
                   (map (lambda (span) (list (+ 1 (cadr span)) (+ 1 (caddr span)) 'mark))
                     (cond [(assq 'matches attributes) => cdr] [else '()])))))))
     (let* ([table (table:create! actor query '(size name) '((identity . name) (presentation range-fixture 1)))] [before reads])
-      (define (show width)
-        (let ([frame (widget:prepare! table width 10)]) (widget:present! (list (list frame 0 0))) frame))
+      (define (show width . height)
+        (let ([frame (widget:prepare! table width (if (null? height) 10 (car height)))]) (widget:present! (list (list frame 0 0))) frame))
       (define (selection) (field (view:state (interaction:snapshot table)) 'selection))
       (define (await-key key)
         (test:await (list 'indexed-table key)
@@ -77,6 +77,16 @@
         (test:check 'table-wide-reopen-restores-metadata-with-bounded-formatting-and-view-count
           (list (substring line 0 4) (length (view:tree table)) (= reads fresh) (< (- reads before) 300))
           '("   1" 4 #t #t)))
+      (let* ([before (widget:frame-lines (show 300))] [fresh reads]
+             [grown (widget:frame-lines (show 300 12))])
+        (test:check 'table-height-growth-uses-cached-rows-without-blanking-or-fetching
+          (list (equal? before (list-head grown 10))
+            (string:prefix? "  10" (list-ref grown 11)) (= reads fresh)
+            (equal? before (list-head (widget:frame-lines (show 300 80)) 10))) '(#t #t #t #t))
+        (show 300 12)
+        (widget:pointer! '(pointer press primary ()) 2 10)
+        (test:check 'table-newly-exposed-cached-row-is-clickable (caddr (selection)) 9)
+        (table:move! table 'first) (await-key 1))
       (let ([before (selection)])
         (widget:pointer! '(pointer press primary ()) 2 1)
         (test:check 'table-sections-cannot-be-selected-by-pointer (selection) before))
@@ -99,6 +109,17 @@
         (test:check 'table-new-summary-keeps-viewport-until-page-arrives
           (equal? before (cdr (widget:frame-lines (show 300)))) #t)
         (await-key 1))
+      (widget:pointer! '(scroll 0 70 line) 2 2)
+      (test:await 'table-scrolled-refresh
+        (lambda () (show 300) (widget:pump!) (range:pump!)
+          (= (- (cadr (widget:frame-rect (body (show 300))))) 69)))
+      (let* ([before (widget:frame-rect (body (show 300)))] [r (model:snapshot source)])
+        (model:commit! actor (list (list source (field r 'revision) '() 10000001)))
+        (test:await 'table-refreshed-count
+          (lambda () (= (field (field (collection:summary query) 'value) 'count) 10000001)))
+        (await-key 1)
+        (test:check 'table-background-generation-retains-scroll-away-from-selection
+          (cadr (widget:frame-rect (body (show 300)))) (cadr before)))
       (table:move! table 'next) (await-key 3)
       (table:move! table 'page-next) (await-key 13)
       (let ([before reads])
@@ -110,7 +131,7 @@
     (range:request! a g 64 32 '(name) '())
     (range:pump!) (test:await 'range-held entered)
     (let ([r (model:snapshot source)])
-      (model:commit! actor (list (list source (field r 'revision) '() 10000001))))
+      (model:commit! actor (list (list source (field r 'revision) '() 10000002))))
     (let* ([s (ready query)] [next (generation s)])
       (range:request! a next 64 32 '(name) '())
       (range:request! b next 64 16 '(name) '())
@@ -119,20 +140,20 @@
         (test:check 'range-late-old-generation-cannot-replace-current-pages
           (list (cadr p) (caddr (car (caddr (car (list-ref p 4)))))
             (range:read query g 64 1 '(name)))
-          (list next "1:64" '(pending)))))
+          (list next "2:64" '(pending)))))
     (range:release! a) (range:release! b)
     (test:check 'range-last-release-ends-local-read-ownership
       (test:raises? (lambda () (range:summary query))) #t))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 9)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [token (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [token (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! token g 0 9 '(name) '())
     (test:check 'range-short-byte-limited-page-fetches-its-remainder
       (length (list-ref (page query g 0 9) 4)) 9)
     (range:release! token))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 160)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [token (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [token (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! token g 0 160 '(name) '())
     (test:await 'range-bounded-overload
       (lambda () (range:pump!) (eq? (car (range:read query g 0 160 '(name))) 'unavailable)))

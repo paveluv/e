@@ -1,8 +1,13 @@
 ;; Compact index and cancellation contracts; no new runner or wall-clock sleep.
 (let ()
   (define actor '(head "collections"))
+  (define demands '())
+  (define (retain! id)
+    (unless (assoc id demands)
+      (set! demands (cons (cons id (model:subscribe! (list id) void)) demands))))
   (define (field r k) (cdr (assq k r)))
   (define (ready id)
+    (retain! id)
     (test:await 'collection-ready
       (lambda () (let ([s (collection:summary id)])
                    (not (eq? (field (field s 'value) 'status) 'pending)))))
@@ -59,6 +64,7 @@
             (collection:register! 'indexed-fixture 1
               (lambda (r query cancelled? publish!) (started (list (field query 'id) cancelled? publish!))))))))
     (define (request query)
+      (retain! query)
       (test:await 'provider-dispatched (lambda () (and (started) (equal? (car (started)) query))))
       (let ([job (cdr (started))]) (started #f) job))
     (define (index n complete?)
@@ -107,6 +113,29 @@
                   (equal? s (ready query))
                   (test:raises? (lambda () (collection:configure! actor query (field s 'revision) '((sort (absent ascending)))))))
                 '(#f #t #t))))
+          (parameterize ([kernel:registering-module 'second-query-reader])
+            (model:subscribe! (list query) void))
+          (model:unsubscribe! (cdr (assoc query demands)))
+          (set! demands (remp (lambda (p) (equal? query (car p))) demands))
+          (test:check 'collection-one-remaining-reader-keeps-upstream-and-job
+            (list (model:demanded? source) ((car latest))) '(#t #f))
+          (kernel:retract-module! 'second-query-reader)
+          (test:check 'collection-last-owner-release-cancels-and-drops-upstream-demand
+            (list (model:demanded? query) (model:demanded? source) ((car latest))
+              ((cadr latest) (index 8 #t) #f) (field (field (collection:summary query) 'value) 'status))
+            '(#f #f #t #f pending))
+          (let ([staged #f])
+            (guard (ex [else (void)])
+              (kernel:call-with-registration-update
+                (lambda () (model:subscribe! (list query) void)
+                  (set! staged (model:demanded? query)) (error 'fixture "rollback"))))
+            (test:check 'collection-staged-or-rolled-back-reader-does-not-demand-work
+              (list staged (model:demanded? query)) '(#f #f)))
+          (collection:configure! actor query (field (collection:summary query) 'revision) '((filter . "idle edit")))
+          (set! latest (request query))
+          ((cadr latest) (index 4 #t) #f)
+          (test:check 'collection-reacquisition-rebuilds-current-retained-recipe
+            (let ([v (field (ready query) 'value)]) (list (field v 'input-filter) (field v 'count))) '("idle edit" 4))
           (register-provider!)
           (let ([replacement (request query)])
             ((cadr replacement) (index 2 #t) #f)
@@ -114,4 +143,5 @@
               (list ((car latest)) ((cadr latest) (index 4 #t) #f) (field (field (ready query) 'value) 'count)) '(#t #f 2))
             (model:retire! actor source (field (model:snapshot source) 'revision))
             (test:check 'collection-source-retirement-invalidates-result-and-publisher
-              (list (field (field (ready query) 'value) 'status) ((cadr replacement) (index 6 #t) #f)) '(unavailable #f))))))))
+              (list (field (field (ready query) 'value) 'status) ((cadr replacement) (index 6 #t) #f)) '(unavailable #f)))))))
+  (for-each (lambda (p) (model:unsubscribe! (cdr p))) demands))

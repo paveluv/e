@@ -21,7 +21,7 @@
   (edoc "Install the shared collection ports after the portable row types have initialized.")
   (define (init!)
     (let ([ports '((input source row-source (value source)) (input filter string (value filter))
-                   (output rows row-source (id)) (output count integer (value count)))])
+                   (output rows row-source (id)) (output count integer (value count)) (output summary list (value)))])
       (unless (equal? ports (port:describe '(model collection 1)))
         (parameterize ([kernel:registering-module 'row]) (port:register! '(model collection 1) ports))))
     (for-each

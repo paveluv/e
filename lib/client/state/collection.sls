@@ -10,7 +10,7 @@
   (define (create-source! actor columns rows persistence)
     (client:request 'collection-source columns rows persistence))
 
-  (edoc "Create a shared filter/sort query over an indexed source."
+  (edoc "Create a shared filter/sort recipe over an indexed source. Scoped model subscriptions, including mounted tables, retain its prepared work; an unobserved recipe stays idle."
         (actor actor "connection supplies attribution") (source row-source "row provider") (filter string "provider filter")
         (sort list "compound keys") (persistence (one-of transient persistent) "restart policy")
         (resources (list-of list) "optional owned references; requires persistent query") (returns list))

@@ -27,7 +27,7 @@
       (filter (lambda (p) (not (assq (car p) v))) changes)))
   (define recipe-fields '(source filter sort status generation count columns basis diagnostic))
   (define result-fields '(complete default details sortable))
-  (define (recipe? v)
+  (define (configured? v)
     (and (list? v) (for-all pair? v)
       (or (equal? (map car v) recipe-fields) (equal? (map car v) (append recipe-fields result-fields))
         (and (equal? (map car v) (append recipe-fields result-fields '(owned)))
@@ -36,6 +36,11 @@
       (row:source? (field v 'source)) (string? (field v 'filter)) (list? (field v 'sort))
       (memq (field v 'status) '(pending ready unavailable))
       (natural? (field v 'generation)) (natural? (field v 'count)) (list? (field v 'columns))))
+  (define (recipe? v)
+    (and (list? v) (for-all pair? v)
+      (<= (length (filter (lambda (p) (eq? (car p) 'input-filter)) v)) 1)
+      (string? (get v 'input-filter ""))
+      (configured? (filter (lambda (p) (not (eq? (car p) 'input-filter))) v))))
   (define registrations
     (begin (row:init!) (model:register-kind! 'collection 1 recipe?)
       (model:register-kind! 'collection-vector 1
@@ -43,24 +48,25 @@
                       (let loop ([i 0]) (or (= i (vector-length (cadr v)))
                                           (and (row:valid? (car v) (vector-ref (cadr v) i)) (loop (+ i 1))))))))))
   (define-record-type (result %make-result result?)
-    (fields columns count at locate seek complete default details sortable))
+    (fields columns count at locate seek complete default details sortable demand))
   (define-record-type publication (fields generation basis result))
   ;; A ticket is unique even if input A changes to B and back to A.
-  (define-record-type job (fields id key serial mutex))
+  (define-record-type job (fields id key serial mutex (mutable subscription)))
   (define (scalar? type)
     (exists (lambda (parent) (edoc:type-compatible? type parent)) '(number string boolean)))
   (define (bounded? value limit)
     (guard (ex [else #f]) (<= (bytevector-length (wire:encode value)) limit)))
 
-  (edoc "Make an immutable prepared index. Callbacks read only this snapshot: row-at ordinal, locate key, seek ordinal direction offset. Seek includes its origin, skips ineligible rows and clamps at selectable ends. Options are complete, default (zero or one key), details and sortable column names."
+  (edoc "Make an immutable prepared index. Callbacks read only this snapshot: row-at ordinal, locate key, seek ordinal direction offset. Seek includes its origin, skips ineligible rows and clamps at selectable ends. Options are complete, default (zero or one key), details and sortable column names. Optional demand queues background enrichment for a bounded list of ordinals and columns; it must return promptly without I/O."
         (columns list "raw column contracts") (count integer "display rows, including sections")
         (row-at procedure "ordinal -> raw row") (locate procedure "key -> ordinal or false")
         (seek procedure "ordinal forward|backward nonnegative-offset -> selectable ordinal or false")
-        (options list "portable summary facts") (returns any))
-  (define (make-result columns count row-at locate seek options)
+        (options list "portable summary facts") (demand (list-of procedure) "optional nonblocking metadata demand callback") (returns any))
+  (define (make-result columns count row-at locate seek options . demand)
     (unless (and (row:columns? columns) (natural? count) (procedure? row-at) (procedure? locate) (procedure? seek)
               (list? options) (for-all (lambda (p) (and (pair? p) (memq (car p) result-fields))) options)
-              (distinct? (map car options)) (bounded? (list columns options) 16384))
+              (distinct? (map car options)) (bounded? (list columns options) 16384)
+              (<= (length demand) 1) (for-all procedure? demand))
       (error 'make-result "invalid prepared collection"))
     (let ([complete (get options 'complete #t)] [default (get options 'default '())]
           [details (get options 'details '())]
@@ -69,7 +75,7 @@
                 (list? sortable) (for-all (lambda (c) (assq c columns)) sortable) (distinct? sortable))
         (error 'make-result "invalid result options" options))
       (%make-result (datum:copy columns) count row-at locate seek complete
-        (datum:copy default) (datum:copy details) (datum:copy sortable))))
+        (datum:copy default) (datum:copy details) (datum:copy sortable) (and (pair? demand) (car demand)))))
 
   (edoc "Register base preparation for a source kind. Start receives source-envelope, query (id/filter/sort), cancelled? and publish! (result diagnostic); it queues work and returns promptly. Publish an immutable result or false plus a diagnostic. Only the current ticket can publish."
         (kind symbol "source kind") (schema integer "source schema") (start procedure "nonblocking provider dispatch"))
@@ -124,14 +130,15 @@
                                  (cons 'sortable (if result (result-sortable result) '()))))])
                   ;; The immutable index precedes its compact summary. A failed
                   ;; revision guard restores only the publication we replaced.
-                  (with-mutex lock (hashtable-set! results id next))
-                  (let-values ([(status ignored) (model:commit! '(base collection)
-                                                   (list (list id (field r 'revision) (field r 'references) value)))])
-                    (unless (eq? status 'applied)
-                      (with-mutex lock
-                        (when (eq? next (hashtable-ref results id #f))
-                          (if old (hashtable-set! results id old) (hashtable-delete! results id)))))
-                    (if (eq? status 'stale) (retry) (eq? status 'applied)))))))))))
+                  (and (with-mutex lock
+                         (and (eq? job (hashtable-ref desired id #f)) (begin (hashtable-set! results id next) #t)))
+                    (let-values ([(status ignored) (model:commit! '(base collection)
+                                                     (list (list id (field r 'revision) (field r 'references) value)))])
+                      (unless (eq? status 'applied)
+                        (with-mutex lock
+                          (when (eq? next (hashtable-ref results id #f))
+                            (if old (hashtable-set! results id old) (hashtable-delete! results id)))))
+                      (if (eq? status 'stale) (retry) (eq? status 'applied))))))))))))
   (define envelopes (make-hashtable equal-hash equal?))
   (define (source-envelope id)
     (let* ([revision (model:revision id)] [old (with-mutex lock (hashtable-ref envelopes id #f))])
@@ -160,6 +167,12 @@
                  (lambda (result diagnostic) (publish! job result diagnostic))))))
           (schedule! (job-id job)))
         (loop))))
+  (define (release! id idle?)
+    (let ([job (with-mutex lock
+                 (and (or (not idle?) (not (model:demanded? id)))
+                   (let ([job (hashtable-ref desired id #f)])
+                     (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id) job)))])
+      (when (and job (job-subscription job)) (model:unsubscribe! (job-subscription job)))))
   (define (schedule! id)
     (let ([r (query-record id)])
       (if (not r)
@@ -167,30 +180,51 @@
                [resources (with-mutex lock
                             (let ([refs (hashtable-ref owned id '())])
                               (when deleted? (hashtable-delete! owned id))
-                              (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id) refs))])
+                              refs))])
+          (release! id #f)
           (when deleted?
             (for-each (lambda (ref)
                         (if (eq? (car ref) 'buffer)
                           (when (store:exists? (cadr ref)) (store:delete! '(base collection) (cadr ref)))
                           (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)))
-        (let* ([key (input-key r)]
-               [job (with-mutex lock
-                      (hashtable-set! owned id (get (field r 'value) 'owned '()))
-                      (let ([old (hashtable-ref desired id #f)])
-                        (and (or (not old) (not (equal? key (job-key old))))
-                          (begin (set! serial (+ serial 1))
-                            (let ([job (make-job id key serial (make-mutex))])
-                              (hashtable-set! desired id job) job)))))])
-          (when job
-            (let ([v (field r 'value)])
-              (unless (eq? (field v 'status) 'pending)
-                (model:commit! '(base collection)
-                  (list (list id (field r 'revision) (field r 'references) (set-fields v '((status . pending))))))))
-            (with-mutex lock
-              (when (eq? job (hashtable-ref desired id #f))
-                (hashtable-set! pending id job)
-                (unless worker? (set! worker? #t) (fork-thread work!))
-                (condition-signal ready))))))))
+        (begin
+          (with-mutex lock (hashtable-set! owned id (get (field r 'value) 'owned '())))
+          (if (not (model:demanded? id)) (release! id #t)
+            (let* ([key (input-key r)] [previous #f]
+                   [job (with-mutex lock
+                          (let ([old (hashtable-ref desired id #f)])
+                            (and (model:demanded? id) (or (not old) (not (equal? key (job-key old))))
+                              (begin (set! serial (+ serial 1))
+                                (set! previous old)
+                                (let ([job (make-job id key serial (make-mutex) #f)])
+                                  (hashtable-set! desired id job) job)))))])
+              (when job
+                ;; Derived queries retain their upstream models for exactly the
+                ;; lifetime of their own demand. Acquire before releasing the old
+                ;; subscription so unchanged dependencies never briefly go idle.
+                (let* ([dependencies (remp (lambda (ref) (or (equal? id ref) (not (row:source? ref))))
+                                       (append (if (eq? (caar key) 'ready) (list (cadar key)) '())
+                                         (map car (apply append (list-ref key 4)))))]
+                       [token (kernel:call-with-runtime-registrations
+                                (lambda () (model:subscribe! dependencies (lambda (notice) (void)))))])
+                  (job-subscription-set! job token)
+                  (unless (with-mutex lock (eq? job (hashtable-ref desired id #f))) (model:unsubscribe! token)))
+                (when (and previous (job-subscription previous)) (model:unsubscribe! (job-subscription previous)))
+                (let publish-pending ()
+                  (let ([r (current? job)])
+                    (when r
+                      (let* ([v (field r 'value)] [filter (cadr key)]
+                             [changes (append (list '(status . pending) (cons 'basis (list id (job-serial job)))
+                                                '(complete . #f) '(details) '(default))
+                                        (if (eq? (car filter) 'ready) (list (cons 'input-filter (cadr filter))) '()))])
+                        (let-values ([(status ignored) (model:commit! '(base collection)
+                                                         (list (list id (field r 'revision) (field r 'references) (set-fields v changes))))])
+                          (when (eq? status 'stale) (publish-pending)))))))
+                (with-mutex lock
+                  (when (eq? job (hashtable-ref desired id #f))
+                    (hashtable-set! pending id job)
+                    (unless worker? (set! worker? #t) (fork-thread work!))
+                    (condition-signal ready))))))))))
   (define (rescan!)
     (for-each schedule! (model:ids 'collection))
     (let ([ids (with-mutex lock (vector->list (hashtable-keys owned)))])
@@ -215,10 +249,14 @@
               (when (exists (lambda (id) (member id ids)) dependencies) (schedule! id)))) jobs)
         (prune-envelopes!))))
 
-  (edoc "Rebuild prepared query indexes after recovery; persisted records hold recipes, never provider captures.")
+  (edoc "Recover query ownership and rebuild indexes with active demand; saved recipes alone never start providers.")
   (define (init!) (rescan!))
   (define notices
     (list (model:subscribe! #f (lambda (notice) (invalidate! (cadr notice))))
+      (model:observe-demand!
+        (lambda (ids)
+          (for-each (lambda (id) (when (with-mutex lock (hashtable-contains? owned id)) (schedule! id))) ids)
+          (prune-envelopes!)))
       (store:subscribe! #f (lambda (event) (invalidate! (list (list 'buffer (cadr event))))))
       (port:observe! (lambda () (with-mutex lock (set! contract-generation (+ contract-generation 1))) (rescan!)))
       (kernel:registry-observe! providers
@@ -230,7 +268,7 @@
   (define (create-source! actor columns rows persistence)
     (model:create! actor 'collection-vector 1 'session persistence '() (list columns rows)))
 
-  (edoc "Create a query whose provider owns filtering and ordering; result work runs at the base."
+  (edoc "Create a query whose provider owns filtering and ordering. Scoped model subscriptions retain its work; creating or recovering an unobserved recipe does not start a provider."
         (actor actor "creator") (source row-source "source model") (filter string "provider filter")
         (sort list "compound keys") (persistence (one-of transient persistent) "restart policy")
         (resources (list-of list) "optional owned resource references, retired with a persistent query") (returns list))
@@ -341,10 +379,12 @@
               (let ([row ((result-at source) (vector-ref order i))])
                 (hashtable-set! positions (car row) i)
                 (when (row:selectable? row) (set! eligible (cons i eligible)))))
-            (make-result columns n (lambda (i) ((result-at source) (vector-ref order i)))
+            (apply make-result columns n (lambda (i) ((result-at source) (vector-ref order i)))
               (lambda (key) (hashtable-ref positions key #f))
               (indexed-seek n (and (not (= (length eligible) n)) (list->vector (reverse eligible))))
-              (list (cons 'complete (result-complete source)))))))))
+              (list (cons 'complete (result-complete source)))
+              (if (result-demand source)
+                (list (lambda (ordinals columns) ((result-demand source) (map (lambda (i) (vector-ref order i)) ordinals) columns))) '())))))))
   (define (flat-work!)
     (let loop ()
       (let ([item (with-mutex flat-lock
@@ -385,7 +425,9 @@
         (let* ([r (publication-result p)] [end (min (result-count r) (+ start (min 256 count)))]
                [start (min start end)] [basis (publication-basis p)]
                [header (bytevector-length (wire:encode (list 'ready generation basis start '() (result-count r))))])
-          (define (reply rows) (list 'ready generation basis start (reverse rows) (result-count r)))
+          (define (reply rows)
+            (when (and (pair? rows) (result-demand r)) ((result-demand r) (map car rows) columns))
+            (list 'ready generation basis start (reverse rows) (result-count r)))
           (unless (for-all (lambda (c) (assq c (result-columns r))) columns) (error 'range "unknown column" columns))
           (let loop ([i start] [rows '()] [bytes header])
             (if (= i end) (reply rows)

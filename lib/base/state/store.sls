@@ -1339,6 +1339,7 @@
              [properties (datum:copy (property:context-undo context))]
              [commit-facts (datum:copy (property:context-commit context))]
              [expected (and context (datum:copy (property:context-expected context)))]
+             [reviewed-revision (property:context-revision context)]
              [labels (datum:copy (property:context-labels context))]
              [outcome
               (transact! actor
@@ -1353,6 +1354,8 @@
                                          (text:normalize-span span)
                                          (map entry-delta since)))])
                        (cond
+                         [(and reviewed-revision (not (and b (= reviewed-revision (buffer-revision b)))))
+                          (list 'stale 'revision-changed)]
                          [(and expected (not (and b (property:matches? expected (current-properties b)))))
                           (list 'stale 'property-changed)]
                          [(not since) (list 'stale 'basis-too-old)]

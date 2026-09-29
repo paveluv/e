@@ -14,8 +14,8 @@
   (let* ([who head:ui-actor]
          [source (collection:create-source! who '((name "Filename" string))
                    (list->vector (map (lambda (name) (list name (list (cons 'name name)) '())) filenames)) 'persistent)]
-         [query (collection:create! who source "" '() 'persistent)]
-         [needle (store:create! who "widget filter" '(""))]
+         [needle (store:create! who "widget filter" '("") '((internal . #t)))]
+         [query (collection:create! who source "" '() 'persistent (list source (list 'buffer needle)))]
          [answer (store:create! who "widget answer" '(""))]
          [filter (control:create-filter! who (list 'buffer needle) "Filter:" "")]
          [output (view:create! who (list 'buffer answer) 'entry 1 '() '((0 . 0) (0 . 0)))]

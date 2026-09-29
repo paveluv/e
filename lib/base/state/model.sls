@@ -3,7 +3,7 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! export ids import! metadata register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! demanded? export ids import! metadata observe-demand! register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void gensym format)
           (prefix (core identity) identity:)
@@ -109,7 +109,7 @@
       (lambda (removed added)
         (mutate! (lambda () (with-mutex (state-lock data) (changed! #f)))))))
 
-  (edoc "Subscribe to model invalidations: (procedure (generation ids-or-#f)); #f means rescan. Subscribe before reading snapshots; their watermark covers any earlier notices."
+  (edoc "Subscribe to model invalidations: (procedure (generation ids-or-#f)); #f means rescan. Explicit IDs retain derived work; a global observer does not. Subscribe before reading snapshots; their watermark covers any earlier notices."
         (ids (or list #f) "tagged model ids, or #f for all") (procedure procedure "the bounded invalidation callback")
         (returns any))
   (define (subscribe! ids procedure)
@@ -122,6 +122,26 @@
         (token any "the subscription token"))
   (define (unsubscribe! token)
     (kernel:registry-remove! (state-subscriptions data) (lambda (entry) (eq? token (subscription-token entry)))))
+
+  (edoc "Whether a committed, explicitly scoped subscription retains a model's derived work. Global invalidation observers do not demand every model."
+        (id model "model reference") (returns boolean))
+  (define (demanded? id)
+    (require-id id)
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (and (kernel:registry-find (state-subscriptions data)
+               (lambda (s) (and (subscription-ids s) (member id (subscription-ids s))))) #t))))
+
+  (edoc "Observe changes to explicitly scoped model subscriptions, including owner cleanup. Callback receives affected IDs and reads demanded? for their current aggregate demand; it must not block."
+        (procedure procedure "IDs -> void") (returns any))
+  (define (observe-demand! procedure)
+    (unless (procedure? procedure) (error 'observe-demand! "expected a procedure"))
+    (kernel:registry-observe! (state-subscriptions data)
+      (lambda (removed added)
+        (let ([ids (fold-left (lambda (out s)
+                                (fold-left (lambda (out id) (if (member id out) out (cons id out))) out (or (subscription-ids s) '())))
+                     '() (append removed added))])
+          (unless (null? ids) (procedure ids))))))
 
   (edoc "A coherent batch: (generation ((id available? envelope-or-#f) ...)); predicates run outside the writer on captured values."
         (ids list "tagged model ids in result order") (returns list))

@@ -274,6 +274,25 @@ display-row `count`, `complete`, `default`, `details` and `sortable`. `default`
 is an empty or single-key list, so a false key is unambiguous. `details` holds
 domain facts such as a match count distinct from the number of display rows.
 Supported sorts are validated when configuring a prepared query.
+Tables retain selection by default. The `selection-policy` option `suggest`
+adopts a provider's default after filter changes, unless the view has newer
+explicit navigation pending; Finder uses this to select a nested file match.
+The summary's `input-filter` is the resolved text driving the current job;
+`filter` remains the configured fallback used when its input is disconnected.
+A changed input gets a fresh `basis` while pending, before rows are published.
+
+Prepared work follows explicit subscriptions. A mounted table retains its
+query through the existing model/range subscriptions; several views of one
+query share one preparation. An API consumer without a visible table can
+retain it with `(model:subscribe! (list query) callback)` and release the
+returned token with `model:unsubscribe!`. A global `#f` invalidation observer
+does not retain every query. Subscribe before waiting for a ready summary.
+
+Releasing the last reader cancels preparation, completion and enrichment and
+discards the query's runtime index. It preserves the recipe, filter, selection
+and shared filesystem inventory. Reacquiring demand rebuilds from those
+retained resources. Creation and recovery alone do not start providers.
+Derived queries retain their upstream models while they are demanded.
 
 Register a provider in the base with `collection:register!`:
 
@@ -304,6 +323,12 @@ zero finds the eligible row at or beyond the origin in the chosen direction.
 Callbacks read prepared indexes only: no scanning, waiting, filesystem I/O
 or formatting. Results must remain immutable after publication.
 
+An optional final `demand` procedure receives `(ordinals columns)` for the
+bounded rows actually returned by a range read. It only queues background
+enrichment and returns promptly; it performs no filesystem I/O or waiting.
+Publish enriched cells as a new immutable generation sharing the existing
+ordering. Queries over prepared queries forward demand to the original index.
+
 Raw row attributes are a validated alist: `selectable` (boolean), `depth`
 (nonnegative logical level), `roles` (semantic symbols), `matches`
 (`(column start end)` spans in raw strings), `creation` (`file` or `directory`),
@@ -318,6 +343,41 @@ share the reply budget. A range contains at most 256 rows and 512 KiB; cells
 over 64 KiB become unavailable, while an oversized key/attribute row makes
 the range unavailable. Heads use the shared `range:` cache, queuing misses
 on the pump. Painting, hover and cached navigation perform no remote work.
+
+### Filesystem sources
+
+`filesystem:create-source!` takes an actor, absolute home directory, hidden-entry
+boolean and persistence. Sources share a cached filesystem inventory in the
+base; their collection queries keep independent filters and compound sorts.
+`filesystem:create-query!` takes actor, an unshared persistent source and initial
+filter text. It returns `(query filter-buffer-reference)` and gives the query
+ownership of that source and internal filter buffer. Views borrow these resources.
+
+The filter uses Finder's rooted, non-overlapping literal path keys. Prepared
+rows retain hierarchy, exact path identities, raw metadata and match spans.
+Keys distinguish observed `(path absolute-path kind)` from uncreated
+`(proposal absolute-path kind)` entries. Summary `details` includes `root`, a
+raw-character `missing` span or false, `matches`, `unreadable`, `hidden` and
+`completion`. Creation rows and intermediate ancestors are display rows;
+they do not inflate the match count. Names-only searches avoid file metadata
+reads; requesting metadata columns queues enrichment. Metadata sorts acquire
+the required facts before publishing their order.
+
+`filesystem:configure!` changes the hidden option against a source revision.
+`filesystem:refresh!` invalidates the shared inventory and restarts its queries.
+Filesystem watches are disabled, so external changes require refresh. Scanning,
+sorting and completion share a separate cooperative queue, allowing other
+filesystem queries and in-memory collections to progress.
+
+`filesystem:complete!` takes actor, query and shown generation, and queues
+completion only for a complete readable match set, returning an intent number
+or false. The same query basis publishes `completion` as `(pending intent)`,
+`(ready intent text)` or `(unavailable intent diagnostic)`. The host must match
+the intent and query basis and retain the requesting filter revision, applying
+the proposed text as one guarded edit only while all remain current.
+Reading a result never edits the filter or executes an
+activation. Typing, refresh, newer requests and source retirement supersede
+obsolete work. The head receives a bounded proposal, never the full match set.
 
 Connect a shared query's filter to its text buffer, not to a particular entry
 view. For example, with `filter-source` a `(buffer id)` reference:
@@ -366,7 +426,7 @@ Base and head port declarations must agree. A differing or absent declaration
 makes its endpoint unavailable; restoring the matching declaration reacquires
 its dependencies. Change the contract schema when changing a nominal type's
 meaning, and load its implementation in both runtimes. Persistent collection
-recipes rebuild their indexes after a base restart.
+recipes rebuild their indexes on demand after a base restart.
 
 For a small experiment, register a derived text kind in `base-config.e`:
 
@@ -542,11 +602,27 @@ Its state is `(caret anchor)`, each a `(row . character-index)` source position;
 the descriptor's basis identifies their revision. For an initial empty
 selection use `'((0 . 0) (0 . 0))`. Multiple entries share text and undo history
 while keeping independent selection. `entry:insert!`, `delete!`, `move!`,
-`select!`, `undo!` and `redo!` all take an explicit view ID. They are also the
+`select!`, `set-text!`, `undo!` and `redo!` all take an explicit view ID. They are also the
 registered actions, reached by normal keys, committed paste and click/drag.
 Tab and Shift-Tab cycle visible accepting children inside the current modal
 scope; `(widget:focus-next! view-id [backward?])` is the same host operation.
 Undo follows `edit:undo-scope`, or an explicit scope supplied to `entry:undo!`.
+`(entry:set-text! entry text [revision])` replaces the whole field as one
+undoable edit. With a revision it refuses any intervening source edit,
+including endpoint insertions. This is the safe application boundary for an
+asynchronous completion proposal.
+
+An entry's `(presentation name schema)` option selects a pure formatter
+registered with `entry:register-presentation!`. The formatter receives raw
+text and its `context` input and returns one `(display roles)` pair per source
+grapheme. Rendering, caret, selection and pointer hits use the same mapping.
+Finder uses it for conjunction separators and italic missing path components;
+the source still contains ordinary spaces. Its `context` input is connected
+to the collection's `summary` output, without polling or copying result rows.
+An independent `(policy name schema)` option selects a logical text-edit
+normalizer registered with `entry:register-policy!`: `(text caret) → (text caret)`.
+This handles typed leading paths without encoding terminal coordinates.
+Programmatic whole-field replacements already supply their intended text.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or
@@ -591,6 +667,10 @@ no adapter buffers and share batched source subscriptions.
 `window:show-widget!` supplies the existing-window adapter. Showing a root
 in a second window, including an ordinary window split, forks its descriptors
 while sharing sources. Reopening a hidden root reuses its adapter and state.
+The window adapter unmounts hidden roots before the next frame, after the
+invoking action has returned. A restored hidden adapter stays unmounted until
+shown. Embedded hosts manage their mounts explicitly with `widget:mount!`
+and `widget:unmount!`; window visibility never releases an embedded host.
 `widget:arrange!` stages source demand before committing an owned topology
 change. Fence interaction before reading expected parent revisions; a stale
 revision refuses the batch. Reordering preserves child identities; unlinking releases their
@@ -599,7 +679,8 @@ mounts without deleting their descriptors or data.
 `widget:unmount!`, or killing the adapter buffer, fences publication, releases
 subscriptions and relinquishes the owner generation. It keeps the underlying
 model and descriptor. Detach checkpoints retain widget IDs, not generated
-text. Reattach claims those views and restores acknowledged state. A missing
+text. Disconnect also releases connection-owned subscriptions, including
+explicit API demand. Reattach claims visible views and restores acknowledged state. A missing
 renderer or unavailable model produces a placeholder with actions disabled;
 installing the definition makes the existing mount usable.
 Resume acquires retained text history for saved selections before painting,

@@ -31,17 +31,29 @@
     ;; after deletion, when their base-owned facts no longer exist.
     (and (not (head:buffer-store-id b)) (head:buffer-fact b 'widget-id #f)))
 
+  (define mounted '()) ; window-hosted roots only; embedded hosts manage themselves
+  (define (mount-buffer! b)
+    (let ([id (buffer-widget b)])
+      (when id
+        (widget:mount! id b)
+        (unless (assoc id mounted) (set! mounted (cons (cons id b) mounted))))) b)
+  (define (release-hidden!)
+    ;; Run after placement/actions, so hiding the invoking app cannot release
+    ;; its context midway through a command. Work depends on mounted windows,
+    ;; not on the number of retained buffers or views.
+    (let ([visible (map head:window-buffer (head:windows))])
+      (for-each (lambda (p) (unless (memq (cdr p) visible) (widget:unmount! (car p)))) mounted)
+      (set! mounted (filter (lambda (p) (memq (cdr p) visible)) mounted))))
+
   (define (widget-buffer! id)
     (cond [(find (lambda (b) (equal? id (buffer-widget b))) (head:buffers))
-           => (lambda (b) (widget:mount! id b) b)]
+           => values]
       [else (kernel:call-with-runtime-registrations
               (lambda ()
                 (let* ([d (view:snapshot id)] [options (if d (view:options d) '())]
                        [name (and options (assq 'name options))]
-                       [b (head:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))] [attached? #f])
-                  (guard (ex [else (when attached? (widget:unmount! id)) (head:forget-buffer! b) (raise ex)])
-                    (widget:mount! id b)
-                    (set! attached? #t)
+                       [b (head:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))])
+                  (guard (ex [else (head:forget-buffer! b) (raise ex)])
                     (head:register-app! b
                       (lambda ()
                         (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
@@ -90,7 +102,9 @@
            [b (document:resolve! ref)])
       (unless b (error 'open-document! "document is unavailable" ref))
       (widget:keep-host-focus!)
-      (head:with-window target (head:show-buffer! b))))
+      (let ([targets (linked 'target target)])
+        (for-each (lambda (w) (head:with-window w (head:show-buffer! b)))
+          (if (null? targets) (list target) targets)))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
         (id model "window-tool view"))
@@ -100,16 +114,16 @@
                 (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
       (when b (head:with-window w (head:show-buffer! b)))))
 
-  (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view can be shown or forked normally."
+  (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view is mounted for the caller's action and can be shown or forked. Hidden mounts are released at the next frame."
         (name string "tool name without brackets") (build procedure "commands -> app view") (returns list))
   (define (tool! name build)
     (let* ([key (string-append "*" name "*")] [old (head:find-tool-buffer key)])
-      (if old (buffer-widget old)
+      (if old (buffer-widget (mount-buffer! old))
         (let* ([options (list (cons 'name (string-append "<" name ">")) (cons 'tool-key key) '(recency . behind))]
                [host (view:create! head:ui-actor #f 'window-tool 1 options '())]
                [app (build (list (list 'open host 'open-document '()) (list 'return host 'return '())))])
           (view:arrange! head:ui-actor (list (list host 0 (list (list 'app app '(grow 1))) options)) '())
-          (widget-buffer! host) host))))
+          (mount-buffer! (widget-buffer! host)) host))))
 
   (define (tool-service! id frame)
     (let* ([d (interaction:snapshot id)] [app (cadr (assq 'app (view:children d)))])
@@ -118,6 +132,13 @@
           (and (not (eq? (head:current-buffer) (widget:host id))) (document:reference (head:current-buffer)))))))
 
   (define (init-widget-host!)
+    ;; Definition reload keeps runtime mounts. Rediscover only at installation;
+    ;; the per-frame release pass never enumerates the document catalogue.
+    (set! mounted
+      (filter values
+        (map (lambda (b)
+               (let ([id (buffer-widget b)])
+                 (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (head:buffers))))
     (widget:register! 'window-tool 1
       (append (layout:container 'y)
         (list (cons 'service tool-service!) (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!))))))
@@ -129,11 +150,13 @@
       (lambda (w b peers)
         (let ([id (buffer-widget b)] [old (buffer-widget (head:window-buffer w))])
           (when (and old (not (eq? b (head:window-buffer w)))) (widget:cancel! old 'hidden))
-          (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) peers))
-            (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
-            b))))
+          (mount-buffer! (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) peers))
+                           (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
+                           b)))))
+    (head:add-pre-redraw-hook! release-hidden!)
     (head:add-buffer-kill-hook!
-      (lambda (b) (let ([id (buffer-widget b)]) (when id (widget:unmount! id)))))
+      (lambda (b) (let ([id (buffer-widget b)])
+                    (when id (widget:unmount! id) (set! mounted (remp (lambda (p) (equal? id (car p))) mounted))))))
     (head:register-resume! 'widget
       (lambda (b positions) (values (list (buffer-widget b)) '()))
       (lambda (reference positions) (values (widget-buffer! (car reference)) '()))))

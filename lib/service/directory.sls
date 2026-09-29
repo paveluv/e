@@ -195,7 +195,18 @@
                                                                      (hashtable-set! (cache-entries cache) path entry) entry))
                   (make-entry path kind #f #f #f #f #f #f #f '()))))
         (define (publish entries done?)
-          (check!) (publish! entries failures done?))
+          ;; A cooperative scan can retain branches built before a visible
+          ;; range demanded their metadata. Seal each publication with what
+          ;; the cache knows now, without doing any filesystem work. Otherwise
+          ;; every partial tree turns ready cells back into pending cells and
+          ;; makes heads fetch and enrich the same paths again.
+          (define (seal entry)
+            (check!)
+            (let* ([known (hashtable-ref (cache-entries cache) (entry-path entry) entry)]
+                   [children (map seal (entry-matches entry))])
+              (if (and (eq? known entry) (for-all eq? children (entry-matches entry))) entry
+                (with-count known (entry-count entry) (entry-complete? entry) children))))
+          (check!) (publish! (map seal entries) failures done?))
         (define (tick!)
           (check!)
           (when (time>=? (current-time 'time-monotonic) next-update)
