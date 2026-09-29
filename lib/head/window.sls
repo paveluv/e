@@ -90,7 +90,9 @@
            [b (document:resolve! ref)])
       (unless b (error 'open-document! "document is unavailable" ref))
       (widget:keep-host-focus!)
-      (head:with-window target (head:show-buffer! b))))
+      (let ([targets (linked 'target target)])
+        (for-each (lambda (w) (head:with-window w (head:show-buffer! b)))
+          (if (null? targets) (list target) targets)))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
         (id model "window-tool view"))

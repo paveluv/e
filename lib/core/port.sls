@@ -175,7 +175,7 @@
     (kernel:call-with-runtime-registrations
       (lambda ()
         (register! '(buffer text 1) '((output text string (source-text))))
-        (register! '(view entry 1) '((output text string (source-text))))
+        (register! '(view entry 1) '((output text string (source-text)) (input context list (options context))))
         (register! '(view filter 1) '((output text string (source-text))))
         (register! '(view label 1) '((input text string (options text))))
         (register! '(view action-text 1) '((input text string (options text)) (input enabled boolean (options enabled))))))))

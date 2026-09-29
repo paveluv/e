@@ -144,7 +144,7 @@
               (distinct? (map car columns))) (error 'register-presentation! "invalid column presentation"))
     (kernel:registry-add! presentations (cons (list name schema) columns)))
   (define-record-type session
-    (fields id query token (mutable generation) (mutable pending) (mutable ordinal)
+    (fields id query token (mutable generation) (mutable filter) (mutable pending) (mutable ordinal)
       (mutable hovered) (mutable signature) (mutable neighbors) (mutable previous) (mutable display) (mutable fitting)))
   (define (get xs key fallback) (cond [(and xs (assq key xs)) => cdr] [else fallback]))
 
@@ -274,11 +274,16 @@
         (when (and old (not (equal? query (session-query old)))) (release! id) (set! old #f))
         (when query
           (let* ([s (or old (let ([s (make-session id query (range:acquire! query (lambda ()
-                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f 0 #f #f '() (view:state d) #f #f)])
+                                                                                    (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))) #f #f #f 0 #f #f '() (view:state d) #f #f)])
                               (hashtable-set! sessions id s) s))]
                  [v (metadata s)] [g (get v 'generation 0)] [selection (selected s)])
             (when (and (ready? v) (not (equal? (session-generation s) g)))
               (session-generation-set! s g)
+              (when (and (eq? (get (view:options d) 'selection-policy 'retain) 'suggest) (pair? (get v 'default '()))
+                      (not (equal? (session-filter s) (get v 'input-filter (get v 'filter ""))))
+                      (not (and (session-pending s) (memq 'explicit (session-pending s)))))
+                (session-pending-set! s (if (pair? (get v 'default '())) (list 'key (car (get v 'default '()))) '(ordinal 0))))
+              (session-filter-set! s (get v 'input-filter (get v 'filter "")))
               (unless (session-pending s)
                 (let ([choice (or selection (get (session-previous s) 'selection #f))])
                   (session-pending-set! s
@@ -306,20 +311,21 @@
 
   (edoc "Create a table, or a single-column list, over a base collection. Each view keeps its own selection and geometry."
         (actor datum "creator") (query row-source "collection") (columns list "stable column names")
-        (configuration (list-of list) "optional alist: kind table|list, identity column (defaults to first), presentation (name schema)") (returns model "root view"))
+        (configuration (list-of list) "optional alist: kind table|list, identity column, presentation (name schema), selection-policy retain|suggest after filter changes") (returns model "root view"))
   (define (create! actor query columns . configuration)
     (unless (and (list? columns) (pair? columns) (for-all symbol? columns) (distinct? columns)
               (<= (length configuration) 1)) (error 'create! "invalid table columns/options"))
     (let* ([config (if (null? configuration) '() (car configuration))]
-           [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation)))) config)
+           [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation selection-policy)))) config)
                     (distinct? (map car config)))]
            [kind (and valid (get config 'kind 'table))] [identity (and valid (get config 'identity (car columns)))]
            [profile (and valid (get config 'presentation #f))])
       (unless (and (memq kind '(table list)) (memq identity columns)
+                (memq (get config 'selection-policy 'retain) '(retain suggest))
                 (or (eq? kind 'table) (= (length columns) 1))
                 (or (not profile) (and (list? profile) (= (length profile) 2) (symbol? (car profile)) (natural? (cadr profile)) (> (cadr profile) 0))))
         (error 'create! "invalid table presentation" config))
-      (let* ([options (append (list (cons 'columns columns) (cons 'identity identity)) (if profile (list (cons 'presentation profile)) '()))]
+      (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain))) (if profile (list (cons 'presentation profile)) '()))]
              [root (view:create! actor query kind 1 options '((selection . #f) (basis)))]
              [heading (and (eq? kind 'table) (view:create! actor #f 'table-heading 1 '() '()))]
              [scroll (view:create! actor #f 'scroll 1 '() #f)]
@@ -395,9 +401,17 @@
 
   (edoc "Set shared collection sorting using raw column values; selection remains local." (id model "table") (keys list "(column ascending-or-descending) entries"))
   (define (sort-by! id keys)
-    (let* ([s (runtime id)] [r (range:summary (session-query s))])
-      (let-values ([(status records) (collection:configure! head:ui-actor (session-query s) (get r 'revision #f) (list (cons 'sort keys)))])
-        (unless (eq? status 'applied) (error 'sort-by! "collection changed; retry" status)))))
+    (define (recipe r)
+      (let ([v (get r 'value '())]) (map (lambda (key) (get v key #f)) '(source filter input-filter sort))))
+    (let* ([s (runtime id)] [original (range:summary (session-query s))])
+      (let retry ([r original] [attempts 4])
+        (let-values ([(status records) (collection:configure! head:ui-actor (session-query s) (get r 'revision #f) (list (cons 'sort keys)))])
+          (unless (eq? status 'applied)
+            (let ([current (collection:summary (session-query s))])
+              ;; Metadata may advance the revision without changing input.
+              ;; Never retry over another user's filter or sorting change.
+              (if (and (eq? status 'stale) (> attempts 0) (equal? (recipe current) (recipe original)))
+                (retry current (- attempts 1)) (error 'sort-by! "collection changed; retry" status))))))))
 
   (edoc "Cycle a stable column through ascending, descending and off, preserving compound priority." (id model "table") (column symbol "column name"))
   (define (toggle-sort! id column)
@@ -464,24 +478,38 @@
                   (if (and (pair? out) (equal? rs (caddar out)) (= at (+ (caar out) (cadar out))))
                     (cons (list (caar out) (+ (cadar out) (cdar ps)) rs) (cdr out))
                     (cons (list at (cdar ps) rs) out))))))))))
+  (define (creation-display display width)
+    (let ([text (car display)])
+      (if (or (< width 10) (<= (glyph:cells text) width)) display
+        (let loop ([parts (glyph:clusters (substring text 0 (- (string-length text) 9)))] [chars 0] [cells 0])
+          (if (or (null? parts) (> (+ cells (cdar parts)) (- width 10)))
+            (cons (string-append (substring text 0 chars) "… [create]")
+              (append (filter values (map (lambda (span)
+                                            (let ([end (min chars (cadr span))])
+                                              (and (< (car span) end) (list (car span) end (caddr span))))) (cdr display)))
+                (list (list (+ chars 1) (+ chars 10) 'ghost))))
+            (loop (cdr parts) (+ chars (caar parts)) (+ cells (cdar parts))))))))
   (define (fit s v width)
     (let* ([cs (columns s v)] [n (length cs)] [names (map car cs)]
            [options (view:options (descriptor s))] [identity (get options 'identity (and (pair? names) (car names)))]
            [keep (let ([tail (memq identity names)]) (if tail (- n (length tail)) 0))]
            [profile (get options 'presentation #f)]
            [definition (and profile (kernel:registry-find presentations (lambda (p) (equal? profile (car p)))))]
-           [rules (if definition (cdr definition) '())] [cache (make-eq-hashtable)]
+           [rules (if definition (cdr definition) '())] [cache (make-eq-hashtable)] [fitted '()]
            [keys (filter values (map (lambda (k) (let ([tail (memq (car k) names)])
                                                    (and tail (cons (- n (length tail)) (eq? (cadr k) 'descending))))) (get v 'sort '())))]
            [alignment (list->vector (map (lambda (c) (cond [(assq (car c) rules) => caddr]
                                                        [(memq (caddr c) '(integer number)) 'right] [(eq? (car c) identity) 'text] [else 'tail])) cs))]
            [t (make (list->vector (map cadr cs))
-                (list->vector (map (lambda (c) (cond [(eq? (car c) identity) 1] [(assq (car c) rules) => cadr] [else (max 4 (glyph:cells (cadr c)))])) cs))
+                (list->vector (map (lambda (c) (cond [(assq (car c) rules) => cadr] [(eq? (car c) identity) 1] [else (max 4 (glyph:cells (cadr c)))])) cs))
                 keep (reverse (remv keep (iota n))) alignment)])
       (define (present row i)
         (let ([cells (or (hashtable-ref cache row #f) (let ([cells (make-vector n #f)]) (hashtable-set! cache row cells) cells))])
           (or (vector-ref cells i)
-            (let ([display (cell row (list-ref names i) (assq (list-ref names i) rules) identity width)])
+            (let* ([display (cell row (list-ref names i) (assq (list-ref names i) rules) identity width)]
+                   [span (assv i fitted)]
+                   [display (if (and span (= i keep) (get (cadddr row) 'creation #f))
+                              (creation-display display (- (caddr span) (cadr span))) display)])
               (vector-set! cells i display) display))))
       (define (styles row span base)
         (let ([i (car span)]) (cell-styles (present row i) (- (caddr span) (cadr span)) (vector-ref alignment i) base)))
@@ -504,6 +532,7 @@
           ;; space its names need instead of crowding out file paths.
           (vector-set! natural (- n 1) (max width (vector-ref natural (- n 1))))
           (let-values ([(format spans) (layout t keys natural (lambda (row i) (car (present row i))) width)])
+            (set! fitted spans) (hashtable-clear! cache)
             (values format spans styles))))))
   ;; Frame data retains exact shown row keys and provenance for pointer hits.
   (define emphasis (make-hashtable equal-hash equal?))

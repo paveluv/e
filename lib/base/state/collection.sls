@@ -27,7 +27,7 @@
       (filter (lambda (p) (not (assq (car p) v))) changes)))
   (define recipe-fields '(source filter sort status generation count columns basis diagnostic))
   (define result-fields '(complete default details sortable))
-  (define (recipe? v)
+  (define (configured? v)
     (and (list? v) (for-all pair? v)
       (or (equal? (map car v) recipe-fields) (equal? (map car v) (append recipe-fields result-fields))
         (and (equal? (map car v) (append recipe-fields result-fields '(owned)))
@@ -36,6 +36,11 @@
       (row:source? (field v 'source)) (string? (field v 'filter)) (list? (field v 'sort))
       (memq (field v 'status) '(pending ready unavailable))
       (natural? (field v 'generation)) (natural? (field v 'count)) (list? (field v 'columns))))
+  (define (recipe? v)
+    (and (list? v) (for-all pair? v)
+      (<= (length (filter (lambda (p) (eq? (car p) 'input-filter)) v)) 1)
+      (string? (get v 'input-filter ""))
+      (configured? (filter (lambda (p) (not (eq? (car p) 'input-filter))) v))))
   (define registrations
     (begin (row:init!) (model:register-kind! 'collection 1 recipe?)
       (model:register-kind! 'collection-vector 1
@@ -183,10 +188,16 @@
                             (let ([job (make-job id key serial (make-mutex))])
                               (hashtable-set! desired id job) job)))))])
           (when job
-            (let ([v (field r 'value)])
-              (unless (eq? (field v 'status) 'pending)
-                (model:commit! '(base collection)
-                  (list (list id (field r 'revision) (field r 'references) (set-fields v '((status . pending))))))))
+            (let publish-pending ()
+              (let ([r (current? job)])
+                (when r
+                  (let* ([v (field r 'value)] [filter (cadr key)]
+                         [changes (append (list '(status . pending) (cons 'basis (list id (job-serial job)))
+                                            '(complete . #f) '(details) '(default))
+                                    (if (eq? (car filter) 'ready) (list (cons 'input-filter (cadr filter))) '()))])
+                    (let-values ([(status ignored) (model:commit! '(base collection)
+                                                     (list (list id (field r 'revision) (field r 'references) (set-fields v changes))))])
+                      (when (eq? status 'stale) (publish-pending)))))))
             (with-mutex lock
               (when (eq? job (hashtable-ref desired id #f))
                 (hashtable-set! pending id job)

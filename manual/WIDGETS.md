@@ -274,6 +274,12 @@ display-row `count`, `complete`, `default`, `details` and `sortable`. `default`
 is an empty or single-key list, so a false key is unambiguous. `details` holds
 domain facts such as a match count distinct from the number of display rows.
 Supported sorts are validated when configuring a prepared query.
+Tables retain selection by default. The `selection-policy` option `suggest`
+adopts a provider's default after filter changes, unless the view has newer
+explicit navigation pending; Finder uses this to select a nested file match.
+The summary's `input-filter` is the resolved text driving the current job;
+`filter` remains the configured fallback used when its input is disconnected.
+A changed input gets a fresh `basis` while pending, before rows are published.
 
 Register a provider in the base with `collection:register!`:
 
@@ -583,11 +589,27 @@ Its state is `(caret anchor)`, each a `(row . character-index)` source position;
 the descriptor's basis identifies their revision. For an initial empty
 selection use `'((0 . 0) (0 . 0))`. Multiple entries share text and undo history
 while keeping independent selection. `entry:insert!`, `delete!`, `move!`,
-`select!`, `undo!` and `redo!` all take an explicit view ID. They are also the
+`select!`, `set-text!`, `undo!` and `redo!` all take an explicit view ID. They are also the
 registered actions, reached by normal keys, committed paste and click/drag.
 Tab and Shift-Tab cycle visible accepting children inside the current modal
 scope; `(widget:focus-next! view-id [backward?])` is the same host operation.
 Undo follows `edit:undo-scope`, or an explicit scope supplied to `entry:undo!`.
+`(entry:set-text! entry text [revision])` replaces the whole field as one
+undoable edit. With a revision it refuses any intervening source edit,
+including endpoint insertions. This is the safe application boundary for an
+asynchronous completion proposal.
+
+An entry's `(presentation name schema)` option selects a pure formatter
+registered with `entry:register-presentation!`. The formatter receives raw
+text and its `context` input and returns one `(display roles)` pair per source
+grapheme. Rendering, caret, selection and pointer hits use the same mapping.
+Finder uses it for conjunction separators and italic missing path components;
+the source still contains ordinary spaces. Its `context` input is connected
+to the collection's `summary` output, without polling or copying result rows.
+An independent `(policy name schema)` option selects a logical text-edit
+normalizer registered with `entry:register-policy!`: `(text caret) → (text caret)`.
+This handles typed leading paths without encoding terminal coordinates.
+Programmatic whole-field replacements already supply their intended text.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or

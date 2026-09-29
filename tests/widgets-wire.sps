@@ -188,5 +188,24 @@
     (let* ([v (value)] [p (rpc head 'collection-range query (cdr (assq 'generation v)) 0 2 '(name))]
            [r (find (lambda (r) (eq? (caadr r) 'path)) (list-ref p 4))])
       (list (cdr (assq 'count v)) (caddr (assq 'name (caddr r))))) '(2 "file-query.sls"))
+  (let* ([before (head-read a '(document:reference (head:current-buffer)))]
+         [host (head-read a `(begin
+                               (kernel:load-modules! '("finder"))
+                               (let* ([host (window:tool! "finder-wire"
+                                              (lambda (commands) (finder:create! commands ,root ',query)))]
+                                      [b (window:show-widget! (head:current-window) host)])
+                                 (head:show-buffer! b) host)))])
+    (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
+    (head-send! a "\t")
+    (head-wait 'finder-widget-wire-completed a
+      (lambda () (equal? (head-read a `(let-values ([(text revision) (store:snapshot ,(cadadr pair))]) text))
+                   (vector (string-append (current-directory) "/lib/service/file-query.sls")))))
+    (test:check 'finder-client-entry-table-and-base-completion-compose
+      (head-read a `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
+                           [selection (cdr (assq 'selection (view:state (interaction:snapshot table))))])
+                      (list (equal? (widget:focused ',host) (widget:descendant table 'filter 'entry))
+                        (and selection (car (caddr selection)))))) '(#t path))
+    (head-read a `(let ([b (widget:host ',host)])
+                    (head:show-buffer! (document:resolve! ',before)) (head:forget-buffer! b) #t)))
   (let* ([packet (rpc head 'model-read (list query))] [r (caddar (cadr packet))])
     (rpc head 'model-retire query (cdr (assq 'revision r)))))

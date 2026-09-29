@@ -9,7 +9,7 @@ resets the filter to that directory's full path.
 `C-x f` has no default binding.
 
 The first line is the filter, followed by an italic `[N matches]` count.
-Spaces in the filter appear as ` ∧ ` (logical AND), so `sls m19` is shown as `sls ∧ m19`.
+Separating spaces in the filter appear as ` ∧ ` (logical AND), so `sls m19` is shown as `sls ∧ m19`. Spaces inside quoted paths stay literal.
 One Backspace removes the whole ` ∧ ` separator.
 This is only a display convention; typing, matching and completion use spaces.
 Connecting directories and creation suggestions do not inflate that count. A trailing `+` means the
@@ -23,7 +23,7 @@ expands to home; otherwise a missing initial `/` is supplied automatically.
 Directory lookup follows the filesystem's spelling; filtering names ignores
 case. Missing path components, and the path after them, appear in italics in
 the normal text color. Existence checks run in the worker and are cached until
-`C-r`. Narrow panes elide the filter's start and retain its editable tail.
+`C-r`. Narrow panes scroll the entry horizontally to keep its caret visible.
 
 The list contains child directories first, then files. Enter or click a
 directory to enter it; Right does the same for a selected directory. Left
@@ -45,6 +45,7 @@ Esc or C-g returns to the document from which this window opened the app.
 | `C-u` | Clear the whole filter; show root's immediate children. |
 | `Tab` | Complete a unique directory path with `/`; otherwise expand the filter without changing its matches. |
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
+| `C-b` / `C-f` | Move the filter caret by one grapheme. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
 | `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
 | `C-r` | Rescan the directory with the current filter and settings. |
@@ -164,7 +165,7 @@ not an atomic filesystem snapshot; cancellation takes effect between filesystem
 operations.
 
 Dotfiles and dot directories are excluded by default. `M-.` includes them;
-`(finder:show-hidden #t)` enables them in configuration. Directory symlinks
+`(finder:show-hidden #t)` enables them for newly created queries in configuration. Directory symlinks
 are marked `@/` and can be entered explicitly. Recursive searches do not
 follow them, so links cannot create loops or duplicate entire subtrees. Files
 inside a link can be reached by entering that directory; a typed path through
@@ -196,26 +197,41 @@ Sorting uses numeric sizes, permissions, counts and full timestamps including
 nanoseconds. It never compares formatted size or time labels. Unknown values
 come first in ascending order and last in descending order. Equal keys fall
 back to path order. Metadata is obtained without reading file contents.
-Linux uses `statx`; unavailable fields show `—`. On other supported systems,
+Linux uses `statx`; pending and unavailable fields stay blank. On other supported systems,
 the current fallback supplies type, permissions and modification time, with
 size and creation time unknown. Inode-change time is never labeled Created.
 
 ## The app as an API
 
-The finder pane is driven entirely through `finder:` commands, so M-x or
-an agent can do everything a key does. Every key of the pane is bound in
-the `finder` context to one of them: `finder:choose!` for Enter, `enter!`,
-`parent!`, `next-row!`, `previous-row!`, `page-down!`, `page-up!`,
-`first-row!`, `last-row!`, `erase!`, `clear-filter!`,
-`(toggle-sort-column! n)` for `F1` to `F6`, `toggle-hidden!`, `refresh!`,
-`complete!`, `return!` and `paste-filter!`, and typing itself is the context's
-`SELF-INSERT` binding, `(extend-filter! text)` with the character typed, so
-`C-x TAB` lists them all, typing as `any character`, and `C-h k` describes
-one. Beside the keys, `(filter! text)` sets the filter that typing grows, `(select! path)` makes a listed entry the
-choice, `(chosen)` is the choice's path, `(entries)` lists what is shown as
-literals, `(file "path")` and `(directory "path")`, including creation suggestions. `choose!` creates a missing choice through `edit:visit-file!`, `(location)` is the directory shown, and `(sorts)` the
-sort order as `(column . descending?)` pairs; `open-directory!` opens the
-pane on a directory.
+Finder composes the shared entry, table and scroll widgets. `finder:open!`
+returns its app model; `widget:descendant` finds the controls:
+
+```scheme
+(define browser (finder:open!))
+(define paths (widget:descendant browser 'table))
+(define input (widget:descendant browser 'table 'filter 'entry))
+(entry:set-text! input "/work/ sls")
+(table:sort-by! paths '((modified descending) (name ascending)))
+(table:move! paths 'next)
+(table:invoke! paths 'activate)
+```
+
+`finder:navigate!`, `parent!`, `enter!`, `complete!` and `toggle-hidden!`
+take the app model. `filesystem:refresh!` takes the actor and clears the
+shared inventory; other queries using that inventory also refresh.
+`C-x TAB` opens Bindings, showing the public calls and their forwarding chains.
+`C-h k` describes an individual binding. Filter editing supports the entry's
+ordinary selection and undo APIs; completion is one undoable, revision-guarded
+replacement and cannot overwrite newer typing.
+
+For embedding, `finder:create!` takes explicit host commands and an initial
+directory. An optional existing filesystem query shares the filter and sort.
+It never chooses a destination window: the host's `open` command receives a
+document reference. Directory navigation stays within the app. File creation
+and visiting use `edit:visit-file!`, whose two-argument form accepts a
+`(kind value)` destination handler (`directory` with a path, or `buffer` with
+the admitted buffer). Its ordinary one-argument form still opens in the
+current window.
 
 ## Windows and heads
 
@@ -230,7 +246,8 @@ gets the same tint and a muted dotted underline, taking precedence over the
 keyboard choice. Headings keep their own background and use bold text with
 the same dotted underline.
 Hovering does not move the keyboard choice or scroll the list. Normal browsing
-hides the cursor and disables text selection. The status bar shows the pane's
+shows a caret only in the editable filter; table rows are not editable text.
+The status bar shows the pane's
 name only; `C-x TAB` lists its keys.
 
 A chosen file, by Enter or by a click, opens in the focused window, and the

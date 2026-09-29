@@ -81,3 +81,22 @@
   (check 'command-discovery-follows-rewiring
     (list-ref (car (cadddr (car (widget:command-bindings button)))) 4) entry:insert!)
   (widget:unmount! root) (widget:invalidate!))
+
+;; Exact-revision proposals must refuse even endpoint edits, which ordinary
+;; range rebasing intentionally accepts. Successful replacements remain undoable.
+(let* ([actor head:ui-actor] [source (store:create! actor "entry proposal" '("abc"))]
+       [id (view:create! actor (list 'buffer source) 'entry 1 '() '((0 . 3) (0 . 3)))])
+  (widget:mount! id 'entry-proposal)
+  (widget:prepare! id 20 1)
+  (let-values ([(old revision) (store:snapshot source)])
+    (store:edit! '(agent "entry") source revision (text:make-span 0 3 0 3) '("X"))
+    (let-values ([(status reason) (store:edit! actor source revision (text:make-span 0 0 0 3) '("expanded")
+                                    (list #f "Completion" (cons 'revision revision)))])
+      (check 'entry-proposal-refuses-changed-endpoint (list status reason) '(stale revision-changed)))
+    (head:sync-foreign-edits! source)
+    (check 'entry-api-refuses-old-completion-revision
+      (refused? (lambda () (entry:set-text! id "expanded" revision))) #t))
+  (entry:set-text! id "new") (entry:undo! id)
+  (let-values ([(text revision) (store:snapshot source)])
+    (check 'entry-replacement-preserves-prior-history (vector-ref text 0) "abcX"))
+  (widget:unmount! id))

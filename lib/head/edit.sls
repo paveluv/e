@@ -995,41 +995,46 @@
 
   (edoc "Visit a file, creating missing parents and an empty file on disk before opening its buffer. A trailing slash creates directories only; existing directories open in Finder. Existing files and shared buffers are reused, never overwritten. Each new path is logged."
         (path file "the path to visit; a trailing slash requests a directory")
+        (destination procedure "(kind value) handler: directory and canonical path, or buffer and admitted buffer; one argument uses the current window")
         (returns boolean "whether the path was opened"))
-  (define (visit-file! path)
-    (define (visit-buffer! path)
-      ;; Admit the complete disk baseline before showing the buffer. Shared
-      ;; identity wins over creation, preserving unsaved and recovered work.
-      (let ([path (file:visit-path path)])
-        (let-values ([(b created?)
-                      (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
-                                                 (equal? (head:buffer-file b) path))) buffers)
-                             => (lambda (b) (values b #f))]
-                        [else (file-buffer path)])])
-          (head:show-buffer! b)
-          (log:add! 'edit:visit-file!
-            (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
-            created?)
-          (unless created?
-            (let-values ([(text revision facts) (head:buffer-state b)])
-              (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
-                (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
-                  ;; Reopening compares content even if a stamp is unchanged.
-                  (let ([disk (guard (ex [else #f]) (read-disk path))])
-                    (cond
-                      [(and disk (string=? (car disk) base))
-                       (head:buffer-facts-set! b
-                         (list (cons 'stamp (cdr disk)))
-                         (property:select facts '(file base stamp)))]
-                      [disk (reopen-changed-file! b path disk)]
-                      [else
-                       (log:add! 'edit:visit-file! (format "Cannot reread ~a" path))])))))))))
-    (guard (ex [else
-                (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
-      (let ([full (file:canonical (file:expand path))])
-        (if (or (string:suffix? "/" path) (file-directory? full))
-            (begin (file:make-directories! full) (head:open-directory! full))
-            (visit-buffer! full))) #t))
+  (define visit-file!
+    (case-lambda
+      [(path) (visit-file! path (lambda (kind value) (case kind [(directory) (head:open-directory! value)] [(buffer) (head:show-buffer! value)])))]
+      [(path destination)
+       (define (visit-buffer! path)
+         ;; Admit the complete disk baseline before showing the buffer. Shared
+         ;; identity wins over creation, preserving unsaved and recovered work.
+         (let ([path (file:visit-path path)])
+           (let-values ([(b created?)
+                         (cond [(find (lambda (b) (and (not (head:buffer-store-id b))
+                                                    (equal? (head:buffer-file b) path))) buffers)
+                                => (lambda (b) (values b #f))]
+                           [else (file-buffer path)])])
+             (destination 'buffer b)
+             (log:add! 'edit:visit-file!
+               (cons (if created? (if (head:buffer-base b) "Loaded" "New file:") "Visited") path)
+               created?)
+             (unless created?
+               (let-values ([(text revision facts) (head:buffer-state b)])
+                 (let ([base (cond [(assq 'base facts) => cdr] [else #f])])
+                   (when (and base (equal? path (cond [(assq 'file facts) => cdr] [else #f])))
+                     ;; Reopening compares content even if a stamp is unchanged.
+                     (let ([disk (guard (ex [else #f]) (read-disk path))])
+                       (cond
+                         [(and disk (string=? (car disk) base))
+                          (head:buffer-facts-set! b
+                            (list (cons 'stamp (cdr disk)))
+                            (property:select facts '(file base stamp)))]
+                         [disk (reopen-changed-file! b path disk)]
+                         [else
+                          (log:add! 'edit:visit-file! (format "Cannot reread ~a" path))])))))))))
+       (unless (procedure? destination) (error 'visit-file! "expected a destination handler"))
+       (guard (ex [else
+                   (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
+         (let ([full (file:canonical (file:expand path))])
+           (if (or (string:suffix? "/" path) (file-directory? full))
+               (begin (file:make-directories! full) (destination 'directory full))
+             (visit-buffer! full))) #t)]))
 
   (define (refuse! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))

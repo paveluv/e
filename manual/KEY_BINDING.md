@@ -39,9 +39,9 @@ you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` 
 pop-up to browse or copy from it like any buffer, and the `↓` on its status
 line puts it away, as `(bindings:hide!)` does. `(bindings:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and
-`C-x TAB` pages it there. An app binds its keys in its
-mode's context to its own commands, `finder:choose!` for Enter in
-`<finder>` say, so they list like any others, run from M-x and are described
+`C-x TAB` pages it there. Apps bind keys in their contexts to public commands.
+In `<finder>`, Enter invokes the table's `activate` connection and the listing
+traces it to `finder:choose!`. These commands run from M-x and are described
 by `C-h k`; an app that captures keys, the terminal, lists its toggle and a
 row saying what it takes. In the pop-up itself, an app's there, the conflicts browser's say, it lists that app's keys and keeps to them while the pop-up stays current.
 
@@ -80,7 +80,9 @@ argument, so completion asks for it:
 
 ```scheme
 (keymap:bind! "C-x k" (keymap:call edit:kill-buffer! head:current-buffer))
-(keymap:bind! "F2" (keymap:call finder:toggle-sort-column! 2))
+(keymap:bind! 'finder "F2"
+  (keymap:call table:toggle-sort!
+    (keymap:call widget:descendant widget:target 'table) 'size))
 (keymap:bind! "C-c a" (keymap:prefill edit:answer!))
 ```
 

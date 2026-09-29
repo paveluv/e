@@ -1,7 +1,7 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export backup-value? context-commit context-expected context-labels context-undo (rename (validate-edit-context edit-context)) edit-keys flags flags<? matches? select
+  (export backup-value? context-commit context-expected context-labels context-revision context-undo (rename (validate-edit-context edit-context)) edit-keys flags flags<? matches? select
           (rename (validate-properties validate)) validate-expected
           (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
@@ -125,7 +125,7 @@
                        (not (assq entry facts))))
                  expected)))
 
-  (edoc "Check an edit context, (key label . options): a group key and label, then an alist among undo facts, commit facts, expected facts and labels, no fact key in two sets."
+  (edoc "Check an edit context, (key label . options): a group key and label, then an alist among undo facts, commit facts, expected facts, labels and an optional exact revision guard; no fact key in two sets."
         (context any "the context, or #f"))
   (define (validate-edit-context context)
     ;; Undo facts travel with the inverse.  Commit facts describe external
@@ -137,17 +137,20 @@
                 (and (list? context) (>= (length context) 2)
                      (or (not (cadr context)) (string? (cadr context)))
                      (for-all (lambda (option)
-                                (and (pair? option) (memq (car option) '(undo commit expected labels))))
+                                (and (pair? option) (memq (car option) '(undo commit expected labels revision))))
                               (cddr context))
                      (let unique ([options (cddr context)])
                        (or (null? options)
                            (and (not (assq (caar options) (cdr options))) (unique (cdr options)))))))
       (error 'validate-edit-context
-             "expected (key label . options), the options among undo, commit, expected and labels" context))
+             "expected (key label . options), the options among undo, commit, expected, labels and revision" context))
     (when context
       (writable-properties
         (append (validate-properties (context-undo context)) (validate-properties (context-commit context))))
       (validate-expected (context-expected context))
+      (let ([revision (context-revision context)])
+        (unless (or (not revision) (and (integer? revision) (exact? revision) (>= revision 0)))
+          (error 'validate-edit-context "expected a nonnegative revision or false" revision)))
       (let ([labels (context-labels context)])
         (unless (and (list? labels) (for-all (lambda (label) (and (pair? label) (symbol? (car label)))) labels))
           (error 'validate-edit-context "expected labels as an alist with symbol keys" labels))))
@@ -171,6 +174,10 @@
         (context any "the context, or #f")
         (returns any))
   (define (context-expected context) (context-option context 'expected #f))
+
+  (edoc "An edit context's exact revision guard, or false to allow ordinary rebasing."
+        (context any "edit context") (returns (or integer #f)))
+  (define (context-revision context) (context-option context 'revision #f))
 
   (edoc "An edit context's labels for the log entry, (batch . id) among them; none without."
         (context any "the context, or #f")

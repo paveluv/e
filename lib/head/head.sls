@@ -1990,6 +1990,7 @@
                 (let ([reason (case info
                                 [(read-only) "the buffer is read-only"]
                                 [(property-changed) "the buffer's reviewed facts changed"]
+                                [(revision-changed) "the reviewed text changed"]
                                 [(overlap) "another edit overlaps this change"]
                                 [else "the edit's revision is no longer available"])])
                   (guard (ex [else (void)]) (sync-store-buffer! b))
@@ -2001,6 +2002,9 @@
                                       (format "Edit not applied: ~a" reason)))))))
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
+            (when (and (property:context-revision context)
+                    (not (= (property:context-revision context) (content-revision b))))
+              (raise (condition (kernel:make-refusal) (make-message-condition "Edit not applied: the reviewed text changed"))))
             (unless (local-facts-match? b (property:context-expected context))
               (raise (condition (kernel:make-refusal)
                                 (make-message-condition "Edit not applied: the buffer's reviewed facts changed"))))

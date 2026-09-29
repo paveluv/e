@@ -60,7 +60,7 @@
 ;; (scheme-format:tab-width 2)           ; tabs widen to this many spaces (#f keeps tabs)
 ;; (scheme-format:intrusive #f)   ; #t: also fold whitespace and reflow lines
 ;; (scheme-format:width 100)      ; target columns for intrusive formatting
-;; (finder:show-hidden #f)        ; #t: include hidden entries in Finder
+;; (finder:show-hidden #f)        ; #t: include hidden entries in new Finder queries
 ;; (terminal:scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (terminal:shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
 ;; Partial capture is the default: C-x and M-x reach e. C-] or ●/◐ toggles capture.

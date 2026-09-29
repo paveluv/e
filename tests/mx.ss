@@ -59,7 +59,7 @@
        (lambda (case)
          (check (list 'settle-in-string (car case)) (settled (car case)) (cons (cadr case) (string-length (cadr case)))))
        '(("(visit-file! \"manual/" "(visit-file! \"manual/")
-         ("(visit-file! \"manual/EVAL.md" "(visit-file! \"manual/EVAL.md\")")
+         ("(visit-file! \"manual/EVAL.md" "(visit-file! \"manual/EVAL.md\"")
          ("(display \"manual/EVAL.md" "(display \"manual/EVAL.md")))
      ;; an input that does not read is never settled
      (check 'an-unreadable-input-is-left-alone (settled "(head:current-window]") '("(head:current-window]" . 21))
@@ -209,7 +209,7 @@
                (extensions (string-append "(visit-file! \"" scratch-dir "/quo"))
                (settled (string-append "(visit-file! \"" quoted "\""))
                (read (open-input-string (string-append "(visit-file! \"" quoted "\")")))))
-       (let ([quoted (string-append scratch-dir "/quo\\\"te.txt")] [closed (string-append "(visit-file! \"" scratch-dir "/quo\\\"te.txt\")")])
+       (let ([quoted (string-append scratch-dir "/quo\\\"te.txt")] [closed (string-append "(visit-file! \"" scratch-dir "/quo\\\"te.txt\"")])
          (list (list (string-append "(file \"" scratch-dir "/a b.txt\")"))
                (list quoted) (list quoted)
                (list (string-append "(file \"" quoted "\")"))
@@ -242,7 +242,7 @@
        '(#t #t #t #t))
      (check 'a-completed-value-settles-its-form
        (list (settled "(head:show-buffer! (buffer \"*scratch*\")") (settled "(visit-file! \"manual/EVAL.md\""))
-       '(("(head:show-buffer! (buffer \"*scratch*\"))" . 40) ("(visit-file! \"manual/EVAL.md\")" . 30)))
+       '(("(head:show-buffer! (buffer \"*scratch*\"))" . 40) ("(visit-file! \"manual/EVAL.md\"" . 29)))
 
 
      ;; A string at an argument whose type spells its values as literals
