@@ -208,7 +208,8 @@
          (let-values ([(start count) (viewport-demand s v)])
            (let ([r (range:read (session-query s) (get v 'generation 0) start count (requested-columns s v))])
              (case (car r)
-               [(ready) (session-display-set! s (list v start (list-ref r 4) (selected s)))]
+               [(ready) (session-display-set! s (list v start (list-ref r 4)
+                                                  (or (selected s) (and old (cadddr old)))))]
                [(unavailable)
                 (session-display-set! s (list (cons '(status . unavailable) (filter (lambda (p) (not (eq? (car p) 'status))) v)) start #f #f))])))])
       (unless (equal? old (session-display s)) (repaint! s))))
@@ -234,6 +235,11 @@
     (when (selected s)
       (interaction:set-state! head:ui-actor (session-id s) #f '((selection . #f) (basis)))
       (repaint! s)))
+  (define (reconcile-choice s key v)
+    (let* ([display (session-display s)] [old (and display (car display))])
+      (if (and old (equal? (get old 'sort '()) (get v 'sort '()))
+            (equal? (get old 'input-filter (get old 'filter "")) (get v 'input-filter (get v 'filter ""))))
+        (list 'key key 'retain) (list 'key key))))
   (define (seek! s intent v)
     (session-pending-set! s intent)
     (let* ([generation (get v 'generation 0)] [count (get v 'count 0)] [names (requested-columns s v)]
@@ -260,7 +266,8 @@
              (let ([row (car (list-ref page 4))])
                (if (get (cadddr row) 'selectable #t)
                  (begin (save-selection! s generation (cadr row) (caddr page) ordinal)
-                   (widget:reveal! (body s) (list (session-query s) generation (cadr row))))
+                   (unless (memq 'retain intent)
+                     (widget:reveal! (body s) (list (session-query s) generation (cadr row)))))
                  (if navigation (error 'table "provider selected an ineligible row" (cadr row)) (seek! s '(ordinal 0) v))))
              (begin (mark-pending! s) (range:request! (session-token s) generation ordinal 1 names '()))))]
         [else (mark-pending! s)
@@ -287,13 +294,13 @@
               (unless (session-pending s)
                 (let ([choice (or selection (get (session-previous s) 'selection #f))])
                   (session-pending-set! s
-                    (if (and choice (equal? (car choice) query)) (list 'key (caddr choice))
+                    (if (and choice (equal? (car choice) query)) (reconcile-choice s (caddr choice) v)
                       (if (pair? (get v 'default '())) (list 'key (car (get v 'default '()))) '(ordinal 0)))))))
             (unless (ready? v) (mark-pending! s))
             (when (ready? v)
               (when (and (not (session-pending s)) (> (get v 'count 0) 0)
                       (or (not selection) (not (= (cadr selection) g))))
-                (session-pending-set! s (if selection (list 'key (caddr selection)) '(ordinal 0))))
+                (session-pending-set! s (if selection (reconcile-choice s (caddr selection) v) '(ordinal 0))))
               (when (session-pending s) (seek! s (session-pending s) v))
               (unless (session-pending s)
                 (let-values ([(start count) (viewport-demand s v)])
@@ -377,7 +384,7 @@
     (unless (or (null? command) (and (= (length command) 1) (symbol? (car command))))
       (error 'invoke! "expected an optional command name"))
     (let* ([s (runtime id)] [intent (session-pending s)]
-           [explicit? (and intent (eq? (car intent) 'key) (= (length intent) 3)
+           [explicit? (and intent (eq? (car intent) 'key) (memq 'explicit intent)
                         (or (null? command) (eq? (car command) 'activate)))]
            [barrier (and explicit? (model:snapshots (list (session-query s))))]
            [v (metadata s)] [hover (hovered-row s)])
@@ -489,7 +496,7 @@
                                               (and (< (car span) end) (list (car span) end (caddr span))))) (cdr display)))
                 (list (list (+ chars 1) (+ chars 10) 'ghost))))
             (loop (cdr parts) (+ chars (caar parts)) (+ cells (cdar parts))))))))
-  (define (fit s v width)
+  (define (fit s v width rows)
     (let* ([cs (columns s v)] [n (length cs)] [names (map car cs)]
            [options (view:options (descriptor s))] [identity (get options 'identity (and (pair? names) (car names)))]
            [keep (let ([tail (memq identity names)]) (if tail (- n (length tail)) 0))]
@@ -516,8 +523,7 @@
       (when (and profile (not definition)) (error 'table "column presentation is unavailable" profile))
       (if (zero? n) (values (lambda (row) "") '() styles)
         (let* ([basis (list definition cs)] [old (session-fitting s)]
-               [natural (if (and old (equal? (car old) basis)) (vector-copy (cadr old)) (make-vector n 0))]
-               [display (session-display s)] [rows (if display (or (caddr display) '()) '())])
+               [natural (if (and old (equal? (car old) basis)) (vector-copy (cadr old)) (make-vector n 0))])
           ;; Measure only the retained viewport. Remember observed maxima so
           ;; filtering and scrolling do not repeatedly squeeze the columns.
           ;; These are head-local measurements, never provider/wire widths.
@@ -525,7 +531,7 @@
             (lambda (i)
               (vector-set! natural i
                 (fold-left (lambda (size row) (max size (glyph:cells (car (present row i)))))
-                  (max (vector-ref natural i) (vector-ref (table-minimum t) i) (glyph:cells (heading t keys i))) rows)))
+                  (max (vector-ref natural i) (vector-ref (table-minimum t) i) (glyph:cells (heading t keys i))) (or rows '()))))
             (iota n))
           (session-fitting-set! s (list basis (vector-copy natural)))
           ;; The last column receives spare room; identity only asks for the
@@ -549,11 +555,17 @@
     (let* ([s (hashtable-ref sessions (root id) #f)] [current (and s (metadata s))]
            [display (and s (session-display s))] [v (if display (car display) current)]
            [pending? (or (not (ready? current)) (not display) (not (= (get v 'generation -1) (get current 'generation 0))))]
-           [rows (and display (list? (caddr display)) (<= (cadr display) (car clip))
-                   (<= (min (get v 'count 0) (+ (car clip) (min 256 (cdr clip)))) (+ (cadr display) (length (caddr display))))
-                   (filter (lambda (r) (<= (car clip) (car r) (- (+ (car clip) (cdr clip)) 1))) (caddr display)))]
-           [selection (and s (if (and pending? display) (cadddr display) (selected s)))])
-      (let-values ([(format spans styles) (if (and s (pair? (columns s v))) (fit s v width) (values (lambda (row) "") '() (lambda args '())))])
+           ;; Geometry can change after service, before the next paint. Read
+           ;; the new extent from the local cache without scheduling I/O.
+           ;; If it is incomplete, retain every overlapping shown row rather
+           ;; than replacing the entire body with a pending placeholder.
+           [cached (and s display (range:read (session-query s) (get v 'generation 0)
+                                    (car clip) (min 256 (cdr clip)) (requested-columns s v)))]
+           [rows (if (and cached (eq? (car cached) 'ready)) (list-ref cached 4)
+                   (and display (list? (caddr display))
+                     (filter (lambda (r) (<= (car clip) (car r) (- (+ (car clip) (min 256 (cdr clip))) 1))) (caddr display))))]
+           [selection (and s (or (selected s) (and display (cadddr display))))])
+      (let-values ([(format spans styles) (if (and s (pair? (columns s v))) (fit s v width rows) (values (lambda (row) "") '() (lambda args '())))])
         (make-visible s v rows (if pending? 'pending 'ready) spans format styles
           selection (and s (or (hovered-row s)
                              (let ([h (session-hovered s)]) (and (pair? h) (eq? (car h) 'column) h))))
@@ -570,9 +582,13 @@
            (list ((visible-format v) #f))]
       [(not (visible-rows v)) (list (glyph:fit (if (or (eq? (visible-status v) 'unavailable) (not (visible-metadata v)) (eq? (get (visible-metadata v) 'status #f) 'unavailable))
                                                    "[Unavailable rows]" "[Pending rows]") width))]
-      [(null? (visible-rows v))
+      [(and (null? (visible-rows v)) (zero? (get (visible-metadata v) 'count 0)))
        (list (glyph:fit (get (view:options (descriptor (visible-session v))) 'empty-text "No matches") width))]
-      [else (map (visible-format v) (visible-rows v))]))
+      [else
+       (let loop ([rows (visible-rows v)] [at (car clip)] [out '()])
+         (cond [(null? rows) (reverse out)]
+           [(< at (caar rows)) (loop rows (+ at 1) (cons (make-string width #\space) out))]
+           [else (loop (cdr rows) (+ at 1) (cons ((visible-format v) (car rows)) out))]))]))
   (define (measure id d axis cross child)
     (if (eq? axis 'x) '(1 1)
       (if (eq? (view:kind d) 'table-heading) '(1 1)
@@ -610,11 +626,13 @@
   (edoc "Choose an explicitly identified displayed row and activate it if the table has an activate command. Refuse a stale result or a row no longer displayed; no deferred activation is queued."
         (id model "table or descendant") (selection list "(collection generation key)"))
   (define (choose! id selection)
-    (let* ([s (runtime id)] [current (metadata s)] [display (session-display s)]
-           [row (and (row:selection? selection) display (ready? current)
+    (let* ([s (runtime id)] [current (metadata s)]
+           [frame (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
+           [shown (and frame (widget:frame-data frame))]
+           [row (and (row:selection? selection) shown (ready? current)
                   (equal? (car selection) (session-query s)) (= (cadr selection) (get current 'generation -1))
-                  (= (cadr selection) (get (car display) 'generation -1))
-                  (find (lambda (row) (and (equal? (cadr row) (caddr selection)) (get (cadddr row) 'selectable #t))) (or (caddr display) '())))])
+                  (= (cadr selection) (get (visible-metadata shown) 'generation -1))
+                  (find (lambda (row) (and (equal? (cadr row) (caddr selection)) (get (cadddr row) 'selectable #t))) (or (visible-rows shown) '())))])
       (unless row (error 'choose! "displayed row is no longer available" selection))
       (save-selection! s (cadr selection) (caddr selection) (get current 'basis '()) (car row))
       (session-hovered-set! s #f) (repaint! s)

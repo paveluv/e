@@ -502,8 +502,9 @@
               (lambda (line row)
                 (let ([old (vector-ref canvas (+ row y))])
                   (vector-set! canvas (+ row y)
-                    (string-append (glyph:slice old 0 x) line
-                      (glyph:slice old (+ x (caddr area)) (- width x (caddr area)))))))
+                    (if (and (zero? x) (= (caddr area) width)) line
+                      (string-append (glyph:slice old 0 x) line
+                        (glyph:slice old (+ x (caddr area)) (- width x (caddr area))))))))
               (frame-lines child) (iota (length (frame-lines child)))))) children)
       (vector->list canvas)))
   (define (style-cells clip rect decorations)
@@ -519,15 +520,21 @@
                         (vector-set! (vector-ref rows (- y (cadr clip))) (- x (car clip)) (cadr p)))))) decorations)
       rows))
   (define (composite-styles clip cells children)
-    (let ([rows (vector-map vector-copy cells)])
+    ;; Prepared style rows are immutable. Full-width children can lend their
+    ;; rows directly; only a partial overlay needs to copy the row it changes.
+    (let ([rows (if (null? children) cells (vector-copy cells))])
       (for-each (lambda (child)
                   (let* ([c (frame-clip child)] [x (- (car c) (car clip))] [y (- (cadr c) (cadr clip))]
                          [count (length (frame-lines child))])
                     (do ([row 0 (+ row 1)]) ((= row count))
                       (let ([from (and (< row (vector-length (frame-cells child))) (vector-ref (frame-cells child) row))]
-                            [to (vector-ref rows (+ row y))])
-                        (do ([col 0 (+ col 1)]) ((= col (caddr c)))
-                          (vector-set! to (+ col x) (and from (vector-ref from col)))))))) children)
+                            [at (+ row y)])
+                        (if (and (zero? x) (= (caddr c) (caddr clip)))
+                          (vector-set! rows at (or from (make-vector (caddr clip) #f)))
+                          (let ([to (vector-copy (vector-ref rows at))])
+                            (do ([col 0 (+ col 1)]) ((= col (caddr c)))
+                              (vector-set! to (+ col x) (and from (vector-ref from col))))
+                            (vector-set! rows at to))))))) children)
       rows))
 
   (edoc "Read a prepared row's styles as source-character styles for the TUI window adapter."
