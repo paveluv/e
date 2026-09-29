@@ -182,7 +182,9 @@
   (define (decorate projection d width height range)
     (if (not (cadr projection)) (list (list (list 0 0 width 1) 'ghost))
       (let* ([data (car projection)] [lines (text-control:lines (cadr data))] [frame (caddr data)]
-             [selected (and (cadddr (state d)) (text-source:span (cadr projection)))])
+             [selected (and (cadddr (state d)) (text-source:span (cadr projection)))]
+             [highlights (if (equal? (widget:focused (car data)) (car data))
+                           (mode:highlights (list-ref data 3) (list-ref data 4) (caadr projection)) '())])
         (define (paint-range span face r y left)
           (if (<= (car (text:span-start span)) r (car (text:span-end span)))
             (let* ([a (if (= r (car (text:span-start span))) (cdr (text:span-start span)) 0)]
@@ -202,6 +204,7 @@
                                     [j (let run ([j (+ i 1)]) (if (and (< j (min end (vector-length styles))) (equal? style (vector-ref styles j))) (run (+ j 1)) j))])
                                (loop j (if (or (not style) (eq? style 'plain)) out (cons (list (list (- i left) y (- j i) 1) style) out)))))) '())
                        (apply append (map (lambda (p) (paint-range (car p) (cadr p) r y left)) (row-annotations (list-ref data 5) r)))
+                       (apply append (map (lambda (p) (paint-range (text:datum->span (car p)) (cadr p) r y left)) highlights))
                        (if selected (paint-range selected 'selection r y left) '())))))
             (list-ref projection 6))))))
   (define (caret projection d width height)

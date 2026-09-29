@@ -893,6 +893,13 @@ Painting uses an index of visible ranges; navigation reuses it. Selection
 overrides annotations, which override syntax styles. Annotation data contains
 no display geometry.
 
+`mode:add-highlighter!` registers a pure `(source mode caret)` callback for
+cheap context-sensitive highlighting. It returns the same `(span face)` pairs,
+at the supplied source revision, and runs only for the focused editor.
+Callbacks use explicit `mode:source` text; they must avoid I/O and keep work
+bounded. The matching-bracket extension uses this interface, including in
+nested editors. Tool results acquired asynchronously use `annotations` instead.
+
 Nested editors currently provide these core commands. Ordinary editor windows
 still use their existing host; search/conflict producers and window chrome have not
 yet moved to the nested editor.

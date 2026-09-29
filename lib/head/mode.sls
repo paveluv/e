@@ -18,10 +18,10 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export add-context! (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
+  (export add-context! (rename (add-mode-extension! add-extension!)) add-highlighter! (rename (assign-current-mode! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
-          indent indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
+          highlights indent indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
           key-context key-contexts line-styles
           memoize-analysis mode? (rename (mode-name name))
           (rename (buffer-mode-name name-of)) (rename (mode-of of))
@@ -36,6 +36,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head render) render:))
@@ -60,6 +61,33 @@
         (source (record presentation-source) "presentation snapshot") (key symbol "fact") (fallback any "value when absent") (returns any))
   (define (source-fact source key fallback)
     (cond [(assq key (source-facts source)) => cdr] [else fallback]))
+
+  (define highlighters (kernel:make-registry))
+
+  (edoc "Register a pure context highlighter, owned by its module. It receives (source mode caret) and returns ((span-datum face) ...) in logical characters. Use bounded computation and no I/O; asynchronous tool results belong in annotation inputs."
+        (proc procedure "explicit presentation callback"))
+  (define (add-highlighter! proc)
+    (unless (procedure? proc) (error 'add-highlighter! "expected a procedure"))
+    (kernel:registry-add! highlighters proc))
+
+  (edoc "Compute logical context highlights for a focused text view. Invalid or raising providers contribute nothing, and deferred app displays do not invoke text highlighters."
+        (source (record presentation-source) "borrowed text and declared facts") (mode any "resolved mode or false")
+        (caret position "logical caret") (returns list "((span-datum face) ...)"))
+  (define (highlights source mode caret)
+    (let ([lines (source-lines source)])
+      (if (not (vector? lines)) '()
+        (apply append
+          (map (lambda (proc)
+                 (guard (ex [else '()])
+                   (let ([ranges (proc source mode caret)])
+                     (if (and (list? ranges)
+                           (for-all (lambda (r)
+                                      (and (list? r) (= (length r) 2) (symbol? (cadr r))
+                                        (let ([s (text:datum->span (car r))])
+                                          (for-all (lambda (p) (and (< (car p) (vector-length lines))
+                                                                 (<= (cdr p) (string-length (vector-ref lines (car p))))))
+                                            (list (text:span-start s) (text:span-end s)))))) ranges)) ranges '()))))
+            (kernel:registry-items highlighters))))))
 
   ;;; The registry ------------------------------------------------------------
 

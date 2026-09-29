@@ -41,6 +41,7 @@
                 current-time add-duration make-time time<?)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
@@ -539,14 +540,28 @@
   (define (add-highlighter! proc)
     (kernel:registry-add! highlighters proc))
 
+  (define (mode-highlights)
+    ;; The ordinary-window boundary adapts logical source spans to the old
+    ;; painter protocol. Providers themselves never see a window or buffer.
+    (let* ([b (head:current-buffer)] [lines (head:window-text (head:current-window))])
+      (if (or (head:app-buffer? b) (not (vector? lines))) '()
+        (apply append
+          (map (lambda (p)
+                 (let* ([s (text:datum->span (car p))] [start (text:span-start s)] [end (text:span-end s)])
+                   (let loop ([row (car start)] [out '()])
+                     (if (> row (car end)) (reverse out)
+                       (loop (+ row 1) (cons (list row (if (= row (car start)) (cdr start) 0)
+                                               (if (= row (car end)) (cdr end) (+ 1 (string-length (vector-ref lines row)))) (cadr p)) out))))))
+            (mode:highlights (vector-ref (mode-info b lines) 4) (mode:of b) (head:point)))))))
+
   (edoc "Every highlighter's ranges for this frame, the hovered hyperlink included; a raising highlighter contributes none."
         (returns list))
   (define (highlight-ranges)
     (fold-left (lambda (acc h) (append (guard (ex [else '()]) (h)) acc))
-      (hover-ranges
-        (lambda (w row column)
-          (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
-            (line-hyperlinks (head:window-buffer w) row (head:window-line w row) (head:window-rendition w)))))
+      (append (mode-highlights) (hover-ranges
+                                  (lambda (w row column)
+                                    (find (lambda (link) (<= (car link) column (- (cadr link) 1)))
+                                      (line-hyperlinks (head:window-buffer w) row (head:window-line w row) (head:window-rendition w))))))
       (kernel:registry-items highlighters)))
 
   (edoc "The highlight range under the mouse pointer: a hit query (hit window row column) gives (start end ...) or #f, painted with the face a chooser gives the hit, else hover."
