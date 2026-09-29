@@ -240,13 +240,13 @@
   (define depth-row (mode:memoize-analysis analyze-depth))
   (define rainbow-row (mode:memoize-analysis analyze-rainbow))
 
-  (define (rendered b row line)
-    (or (cluster-row b row) line))
+  (define (rendered source row line)
+    (or (cluster-row source row) line))
 
-  (define (depth-rendered b row line)
-    (or (depth-row b row) line))
+  (define (depth-rendered source row line)
+    (or (depth-row source row) line))
 
-  (define (rainbow-styles b row line)
+  (define (rainbow-styles source row line)
     ;; The scheme styles with the paren cells recolored by depth --
     ;; copied first: the base vector belongs to the style cache.
     (let ([styles (let ([s (scheme-styles line)])
@@ -259,7 +259,7 @@
       (for-each (lambda (o)
                   (when (< (car o) (vector-length styles))
                     (vector-set! styles (car o) (cdr o))))
-                (or (rainbow-row b row) '()))
+                (or (rainbow-row source row) '()))
       styles))
 
   (define (scheme-styles s)

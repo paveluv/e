@@ -677,6 +677,12 @@ convert a viewport address to a logical text position before persisting it.
 Changing width recomputes segments from that logical anchor. Ordinary paging
 and distant-caret scrolling inspect a viewport-sized part of the source.
 
+Mode renderers also accept explicit sources. Construct `mode:source` from the
+presentation text and the facts listed by `mode:required-facts`. Render and
+row-style callbacks receive that snapshot, a row and its line, without a
+buffer or window. Text-only `mode:memoize-analysis` providers share work
+between presentations of the same text. See [mode presentation](MODULES.md#modes).
+
 This example runs in a head without any base configuration. It builds a row
 inside a column, inside an overlay and a scroll viewport. Make the host narrow
 or short to exercise clipping; click either entry to edit their common source.

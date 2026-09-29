@@ -143,9 +143,9 @@
       (append (layout:container 'y)
         (list (cons 'service tool-service!) (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!))))))
     (mode:register! "widget" '() '() #f #f
-      (lambda (buffer row line)
-        (let* ([id (buffer-widget buffer)] [f (and id (widget:prepared id))])
-          (and f (widget:frame-styles f row line)))))
+      (lambda (source row line)
+        (let* ([id (mode:source-fact source 'widget-id #f)] [f (and id (widget:prepared id))])
+          (and f (widget:frame-styles f row line)))) '(widget-id))
     (head:add-buffer-placement-hook!
       (lambda (w b peers)
         (let ([id (buffer-widget b)] [old (buffer-widget (head:window-buffer w))])

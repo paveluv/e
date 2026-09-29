@@ -75,7 +75,7 @@
     ;; The bracket at point and its partner, as (row start end) ranges;
     ;; empty when neither applies.
     (let* ([b (head:current-buffer)]
-           [styles-of (mode:line-styles b)]
+           [styles-of (mode:line-styles (mode:of b))]
            [pt (head:point)]
            [row (car pt)]
            [line (head:buffer-line b row)]

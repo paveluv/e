@@ -173,8 +173,8 @@
 
   (define scheme-row (mode:memoize-analysis analyze))
 
-  (define (scheme-row-styles b row line)
-    (scheme-row b row))
+  (define (scheme-row-styles source row line)
+    (scheme-row source row))
 
   ;;; Indentation and formatting ------------------------------------------------
 

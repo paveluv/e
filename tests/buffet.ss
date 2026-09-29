@@ -97,10 +97,12 @@
        (let ([width (paint:screen-cols)])
          (define (italic-text width)
            (paint:set-screen-cols! width) (paint:window-layout) (head:before-frame!)
-           (let* ([b (head:window-buffer (head:popup))] [styler (mode:row-styles (mode:of b))])
+           (let* ([b (head:window-buffer (head:popup))] [m (mode:of b)] [styler (mode:row-styles m)]
+                  [source (mode:source (head:buffer-lines b)
+                            (map (lambda (k) (cons k (head:buffer-fact b k #f))) (mode:required-facts m)))])
              (apply string-append
                (map (lambda (line row)
-                      (let ([styles (styler b row line)])
+                      (let ([styles (styler source row line)])
                         (if (not styles) ""
                           (list->string
                             (filter (lambda (c) (not (char-whitespace? c)))

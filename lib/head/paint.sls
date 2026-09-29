@@ -332,13 +332,16 @@
   (define (current-shadow) (or (preparing-shadow) shown-shadow))
   (define editor-name "e")
 
-  (define (mode-info b)
-    ;; #(name render row-styler line-styler) for b's mode, plain without one
+  (define (mode-info b lines)
+    ;; The legacy window supplies only declared presentation facts. Modes
+    ;; receive this window's text projection, never its mutable buffer record.
     (let ([m (mode:of b)])
       (vector (and m (mode:name m))
               (and m (mode:render m))
               (and m (mode:row-styles m))
-              (mode:line-styles b))))
+              (mode:line-styles m)
+              (mode:source lines
+                (map (lambda (key) (cons key (head:buffer-fact b key #f))) (mode:required-facts m))))))
 
   ;; a store change under this seat's buffers invalidates painted rows
   (define repaint-hooked
@@ -812,7 +815,7 @@
                         (if (eq? (head:window-scrollbar? w) 'left) 1 0))]
            [content-x (+ gutter-x gutter-width)]
            [content-width (head:window-content-width w)]
-           [info (mode-info b)]
+           [info (mode-info b v)]
            [styles-of (vector-ref info 3)]
            [mode-tag (vector-ref info 0)]
            [current? (eq? w (head:current-window))])
@@ -833,7 +836,7 @@
                        [width (render:width frame i (string-length line))]
                        [replacement (and (not data)
                                          (let ([r (vector-ref info 1)])
-                                           (and r (guard (ex [else #f]) (r b i line)))))]
+                                           (and r (guard (ex [else #f]) (r (vector-ref info 4) i line)))))]
                        [wrapped? (and (>= i sticky) wrap?)]
                        [breaks (and wrapped? (line-breaks w line))]
                        [slice-left (if wrapped?
@@ -863,7 +866,7 @@
                                 (if data (values (car data) (cadr data))
                                     (render:present frame i line replacement
                                       (or (let ([f (vector-ref info 2)])
-                                            (and f (guard (ex [else #f]) (f b i line))))
+                                            (and f (guard (ex [else #f]) (f (vector-ref info 4) i line))))
                                           (styles-of line))))])
                     (paint! row content-x
                             (list i line shown span marks links slice-left

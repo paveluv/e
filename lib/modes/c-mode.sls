@@ -147,8 +147,8 @@
 
   (define c-row (mode:memoize-analysis analyze))
 
-  (define (c-row-styles b row line)
-    (c-row b row))
+  (define (c-row-styles source row line)
+    (c-row source row))
 
   (edoc "Register the c mode for .c and .h files and tcc scripts.")
   (define (init!)

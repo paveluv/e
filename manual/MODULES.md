@@ -236,7 +236,8 @@ line styles, rendering, row styles, indentation, formatting and the Tab
 policy, follows the parent's current registration, including after a reload,
 and keys are looked up in its own context first, then the parent's, then the
 global map. Optional arguments after the endings give the submode its own
-line styles, render transform and row styles, as `mode:register!` takes them:
+line styles, render transform and row styles, followed by optional presentation
+fact names. Inherited callbacks retain their own fact requirements.
 Pretty Scheme's displays are submodes of Scheme that override only their
 presentation. Local indenter and formatter registrations override inherited
 ones. The new mode keeps its own suffix and interpreter detection. The parent
@@ -488,9 +489,31 @@ needs nothing, since `(file "notes.txt")` is `"notes.txt"`. Completion
 spells an argument's options as literals, a reminder of the type at that
 position, and writes the whole literal on Tab.
 
-Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives a
-snapshot vector of lines and returns per-row results, recomputed once per
-buffer revision.
+Whole-text presentation callbacks receive `(source row line)`. The source is
+an explicit snapshot made by `(mode:source lines facts)`, with immutable text
+and a list of `(name . value)` facts. It contains no buffer or window.
+`mode:source-lines` reads the text; `mode:source-fact` reads a supplied fact
+with a fallback. Callbacks must treat both as read-only.
+
+An optional final list in `mode:register!` declares the facts needed by its
+render and row-style callbacks. For example:
+
+```scheme
+(mode:register! "annotated" '() '() #f #f annotated-row-styles '(annotations))
+```
+
+The host captures only `(mode:required-facts resolved-mode)`, alongside the
+text it will present. Derived modes retain requirements from effective
+inherited callbacks; replacing a callback also replaces its requirements.
+This keeps rendering independent of store lookups and mutable host records.
+`(mode:line-styles resolved-mode)` supplies the cached single-line styler.
+
+Stateful syntax analysis uses `mode:memoize-analysis`. The analyzer receives
+an owned vector of immutable lines and returns per-row results. Its returned
+`(source row)` provider shares the analysis across snapshots of the same
+immutable text, so multiple presentations need only one analysis. New text
+gets a new result; retained old snapshots remain valid. Use this helper only
+for text-dependent analysis, not analysis that also depends on source facts.
 
 Styler vectors use source character positions. Every cell of a glyph uses its
 leading character's style. An optional display transform must preserve the

@@ -289,8 +289,8 @@
         (vector-set! v 1 'chrome))
       v))
 
-  (define (row-styles b row line)
-    (let* ([rows (head:buffer-fact b 'symbolic-spans '#())]
+  (define (row-styles source row line)
+    (let* ([rows (or (mode:source-fact source 'symbolic-spans #f) '#())]
            [ranges (if (< row (vector-length rows)) (vector-ref rows row) '())])
       (and (pair? ranges)
         (let ([v (styles line)])
@@ -579,7 +579,7 @@
 
   (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
   (define (init!)
-    (mode:register! "bindings" '() '() styles #f row-styles)
+    (mode:register! "bindings" '() '() styles #f row-styles '(symbolic-spans))
     (head:register-resume! 'bindings (lambda (b positions) (values #f positions)) (lambda args #f))
     (keymap:bind-default! "C-x TAB" show!)
     (keymap:bind-default! "C-x S-TAB" page-up!)

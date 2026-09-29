@@ -87,7 +87,7 @@
                (char=? (string-ref (line-at (+ at 1)) 0) #\space)))
        '(#t #t #t #t))
      (check 'the-keys-of-a-group-are-joined-by-a-line-in-the-margin
-       (let* ([at (index-of "M-q")] [styles (mode:line-styles (view))])
+       (let* ([at (index-of "M-q")] [styles (mode:line-styles (mode:of (view)))])
          (list (substring (line-at at) 0 2) (substring (line-at (+ at 1)) 0 2) (vector-ref (styles (line-at at)) 1)
                (substring (line-at (index-of "RET")) 0 2)))
        '(" ╷" " ╵" chrome "  "))
@@ -117,7 +117,7 @@
          (list calls (keymap:run! action) calls (eval (read (open-input-string text))))
          '(0 (5 (a b)) 1 (5 (a b)))))
      (check 'section-titles-are-bold-and-rows-plain
-       (let ([styles (mode:line-styles (view))])
+       (let ([styles (mode:line-styles (mode:of (view)))])
          (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))
        '(bold plain))
      (check 'the-whole-listing-is-in-the-buffer (> (length (lines)) (head:popup-rows)) #t)

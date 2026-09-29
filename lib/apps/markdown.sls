@@ -796,8 +796,8 @@
   (define (rendering-input r) (vector-ref r 7))
   (define (rendering-revision r) (vector-ref r 8))
 
-  (define (view-row-styles b row line)
-    (let ([r (rendering-of b)])
+  (define (view-row-styles source row line)
+    (let ([r (mode:source-fact source 'markdown-rendering #f)])
       (and r (<= 0 row) (< row (vector-length (rendering-styles r)))
            (vector-ref (rendering-styles r) row))))
 
@@ -1094,7 +1094,7 @@
   (define (init!)
     (register-md-faces!)
     (mode:register! "markdown-view" '() '() (lambda (line) #f)
-                    #f view-row-styles)
+                    #f view-row-styles '(markdown-rendering))
     (paint:add-hyperlinker! view-row-links)
     (paint:add-highlighter! link-hint)
     (head:add-pre-redraw-hook! refit-views!)
