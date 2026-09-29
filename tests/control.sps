@@ -5,7 +5,7 @@
        [button (view:create! actor #f 'action-text 1
                  (list '(text . "Replace") '(enabled . #t) (list 'commands (list 'activate entry 'insert '("new")))) '())]
        [root (view:create! actor #f 'column 1 '() '())])
-  (define (line) (vector-ref (head:buffer-lines (head:buffer-of-store-id source)) 0))
+  (define (line) (vector-ref (text-source:lines (text-source:lookup source)) 0))
   (define (show!) (let ([f (widget:prepare! root 40 3)]) (widget:present! (list (list f 0 0))) f))
   (define (rebind! action)
     (interaction:flush!)
@@ -100,3 +100,31 @@
   (let-values ([(text revision) (store:snapshot source)])
     (check 'entry-replacement-preserves-prior-history (vector-ref text 0) "abcX"))
   (widget:unmount! id))
+
+;; No buffer/window is materialized for a field. A callback may close or
+;; remount it after commit; the accepted edit cannot place an old caret in
+;; that newer mount. Both routes reuse the same mirror and journal.
+(check 'entry-commit-does-not-resurrect-a-closed-or-reclaimed-selection
+  (map
+    (lambda (remount?)
+      (let* ([actor head:ui-actor]
+             [source (store:create! actor "independent entry" '("abc") '((internal . #t)))]
+             [id (view:create! actor (list 'buffer source) 'entry 1 '() '((0 . 3) (0 . 3)))]
+             [fired? #f])
+        (widget:mount! id 'independent-entry)
+        (let ([mirror (text-source:lookup source)]
+              [token (store:subscribe! source
+                       (lambda (event)
+                         (when (and (not fired?) (eq? (car event) 'edit))
+                           (set! fired? #t) (widget:unmount! id)
+                           (when remount? (widget:mount! id 'independent-entry) (entry:select! id 0 0)))))])
+          (dynamic-wind void
+            (lambda ()
+              (entry:insert! id "X")
+              (list fired? (store:line source 0) (not (head:buffer-of-store-id source))
+                (eq? mirror (text-source:lookup source))
+                (if remount? (view:state (interaction:snapshot id))
+                  (refused? (lambda () (entry:insert! id "lost"))))))
+            (lambda () (store:unsubscribe! token) (when remount? (widget:unmount! id)))))))
+    '(#f #t))
+  '((#t "abcX" #t #t #t) (#t "abcX" #t #t ((0 . 0) (0 . 0)))))

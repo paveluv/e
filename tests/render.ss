@@ -6,7 +6,8 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (head render) render:) (prefix (head layout) layout:) (prefix (state surface) surface:)
+     (import (prefix (head render) render:) (prefix (head text-layout) text-layout:)
+             (prefix (head layout) layout:) (prefix (state surface) surface:)
              (prefix (head head) head:) (prefix (state store) store:) (prefix (foundation text) text:)
              (prefix (head paint) paint:) (prefix (service vt) vt:)
              (prefix (head edit) edit:)
@@ -77,6 +78,47 @@
                      (and style (string:search style "44" 0 (string-length style)) #t)))))
          '((0 1 " |right" #f) (0 3 "界é|right" 2) (1 3 " éZ|right" 1)))
        '((" |right" #f) ("界é|right" #t) (" éZ|right" #t)))
+     ;; The same source at two widths, without any editor/window state.
+     ;; Expected hits cover continuation rows, blank space and wide graphemes.
+     (let* ([lines '#("ab cd ef" "界e\x301;z" "" "tail")]
+            [frame (render:prepare #f #f lines 0 '((0 . 4)))])
+       (test:check 'explicit-text-layout-shares-motion-and-hit-geometry
+         (list
+           (map (lambda (c) (apply text-layout:move lines frame c))
+             '((4 (0 . 1) 1 1) (4 (0 . 7) 1 1) (4 (1 . 3) -1 3) (#f (0 . 1) 1 1) (#f (1 . 3) 1 1)))
+           (map (lambda (c) (apply text-layout:hit lines frame c))
+             '((4 (0 . 1) 0 1 0) (4 (0 . 1) 0 1 2) (4 (0 . 1) 0 4 2) (4 (3 . 0) 0 1 2)))
+           (text-layout:locate lines frame 4 '(0 . 1) 0 '(1 . 3))
+           (text-layout:distance lines 4 '(1 . 0) '(0 . 4))
+           (text-layout:anchor lines 4 '(0 . 1)))
+         '(((0 . 4) (1 . 0) (0 . 8) (1 . 0) (2 . 0))
+           ((0 . 4) (1 . 0) (1 . 4) (4 . 1)) (3 . 2) -2 (0 . 3)))
+       (test:check 'explicit-viewport-scroll-and-page-edges
+         (list
+           (call-with-values (lambda () (text-layout:scroll lines frame 4 4 3 0 '(0 . 0) 0 '(3 . 2) 1)) list)
+           (call-with-values (lambda () (text-layout:scroll lines frame #f 2 2 0 '(0 . 3) 0 '(1 . 3) 0)) list)
+           (map (lambda (top)
+                  (call-with-values (lambda () (text-layout:page lines frame 4 0 3 top 1 1 1)) list))
+             '((0 . 0) (1 . 0)))
+           (call-with-values (lambda () (text-layout:scroll '#("") #f 1 0 0 0 '(0 . 0) 0 '(3 . 10) 8)) list))
+         '(((3 . 2) (1 . 0) 0) ((1 . 3) (0 . 0) 2)
+           (((1 . 0) (2 . 0)) ((1 . 0) (3 . 1))) ((0 . 0) (0 . 0) 0))))
+     (let* ([reads 0] [lines (render:defer 10000000 (lambda (row) (set! reads (+ reads 1)) "abcdefgh"))])
+       (test:check 'distant-caret-and-page-work-is-bounded-by-viewport
+         (list
+           (call-with-values
+             (lambda () (text-layout:scroll lines #f 4 4 5 0 '(0 . 0) 0 '(9999999 . 7) 1)) list)
+           (< reads 40)
+           (begin
+             (set! reads 0)
+             (call-with-values (lambda () (text-layout:page lines #f 4 0 5 '(0 . 0) 1 1 1)) list))
+           (< reads 30)
+           (begin
+             (set! reads 0)
+             (call-with-values (lambda () (text-layout:scroll lines #f 4 4 5 1 '(9999997 . 1) 0 '(0 . 7) 1)) list))
+           (< reads 30))
+         '(((9999999 . 7) (9999997 . 1) 0) #t ((2 . 1) (3 . 5)) #t ((0 . 7) (1 . 0) 0) #t)))
+
      (define uri "https://wide.example")
      (define clusters '((clusters (1 . 2) (2 . 1) (1 . 1))))
      (define lines (make-vector 50 "abc"))
@@ -347,7 +389,7 @@
        (head:goto! '(9999990 . 0))
        (head:refresh-renditions!)
        (painted)
-       (edit:page-window! -1 2)
+       (edit:page! -1 2)
        (edit:move-vertical! -1)
        (paint:buffer-line-hyperlinks view 9999990)
        (head:view-replace! view (render:prefix text '("Header")) '() '()
@@ -369,6 +411,7 @@
      (test:check 'half-open-clipping-and-composition-preserve-whole-clusters
        (list (layout:intersect '(0 0 2 2) '(2 1 3 3))
          (layout:contains? '(0 0 2 2) 2 1) (layout:contains? '(0 0 0 2) 0 1)
-         (map (lambda (c) (apply glyph:slice c)) '(("界éZ" 1 2) ("界éZ" 0 1) ("界éZ" 2 3))))
-       '((2 1 0 1) #f #f (" é" " " "éZ ")))
+         (map (lambda (c) (apply glyph:slice c)) '(("界éZ" 1 2) ("界éZ" 0 1) ("界éZ" 2 3)
+                                                   ("abcd" 1 2) ("abcd" 3 3) ("abcd" 6 2) ("" 0 0))))
+       '((2 1 0 1) #f #f (" é" " " "éZ " "bc" "d  " "  " "")))
      (test:finish! 'render)))

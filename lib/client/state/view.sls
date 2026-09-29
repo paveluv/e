@@ -14,7 +14,8 @@
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
     (rename (descriptor:state state)) tree)
-  (import (chezscheme) (prefix (core client) client:) (prefix (core descriptor) descriptor:))
+  (import (chezscheme) (prefix (core client) client:) (prefix (core descriptor) descriptor:)
+          (prefix (state model) model:))
 
   (edoc "Create a persistent view using this connection's identity; source is a model/buffer reference or #f for a container."
         (actor actor "connection attribution") (source datum "source reference") (kind symbol "widget kind")
@@ -34,7 +35,9 @@
 
   (edoc "Read a canonical view descriptor from the base. Rendering uses interaction:snapshot instead."
         (id model "view id") (returns (or list #f)) (effects remote))
-  (define (snapshot id) (client:request 'view-read id))
+  (define (snapshot id)
+    (unless (model:reference? id) (error 'snapshot "expected a model reference" id))
+    (client:request 'view-read id))
 
   (edoc "Claim an unowned tree; return status and (id . descriptor) entries."
         (actor actor "connection attribution") (id model "view id"))

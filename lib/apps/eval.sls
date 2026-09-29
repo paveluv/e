@@ -1272,19 +1272,19 @@
   (define (evaluate-span! start end label)
     ;; the buffer text between two positions, evaluated and reported as
     ;; the exchange it is: the expression, then its result
-    (let ([text (expression:text (head:current-buffer) start end)])
+    (let ([text (expression:text (head:buffer-lines (head:current-buffer)) start end)])
       (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
       (void)))
 
   (edoc "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result; the C-x C-e of Emacs.")
   (define (eval-last-expression!)
-    (let-values ([(start end) (expression:backward (head:current-buffer) (head:point))])
+    (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
       (unless start (error 'eval:last-expression! "no expression before point"))
       (evaluate-span! start end "(eval:last-expression!)")))
 
   (edoc "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result; the C-M-x of Emacs.")
   (define (eval-top-level-form!)
-    (let-values ([(start end) (expression:top-level (head:current-buffer) (head:point))])
+    (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer)) (head:point))])
       (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
       (evaluate-span! start end "(eval:top-level-form!)")))
 

@@ -14,13 +14,15 @@
 (eval
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:)
-             (prefix (head window) window:) (prefix (foundation text) text:)
+             (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
              (prefix (state model) model:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define (settled text) (eval:settle-completion text (string-length text)))
 
      (for-each

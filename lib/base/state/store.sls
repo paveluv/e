@@ -1066,7 +1066,7 @@
     (locked
       (lambda ()
         (let* ([b (buffer-of 'snapshot-since id)]
-               [entries (entries-since b basis)])
+               [entries (and basis (entries-since b basis))])
           (values (buffer-text b) (buffer-revision b)
                   (and entries
                        (map change-data entries)))))))

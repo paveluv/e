@@ -14,6 +14,7 @@
 (evaluate!
   '(begin
      (import (except (head edit) init!)
+             (prefix (only (head edit) init!) edit:)
              (prefix (head head) head:)
              (prefix (head catalogue-host) catalogue-host:)
              (prefix (state store) store:)
@@ -23,7 +24,7 @@
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
-             (prefix (head entry) entry:) (prefix (foundation text) text:)
+             (prefix (head entry) entry:) (prefix (head text-source) text-source:) (prefix (foundation text) text:)
              (prefix (head control) control:) (prefix (core descriptor) descriptor:)
              (prefix (head table) table:)
              (prefix (foundation string) string:)
@@ -34,10 +35,13 @@
              (prefix (state actor) actor:) (prefix (state surface) surface:) (prefix (head render) render:)
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
              (prefix (head dispatch) dispatch:)
+             (prefix (apps paren) paren:)
+             (prefix (apps pretty-scheme) pretty-scheme:)
              (prefix (apps git-view) git-view:)
              (prefix (apps log-view) log-view:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define refused? test:raises?)
      (define (store-ids) (list-sort < (store:buffer-list)))
 
@@ -570,7 +574,7 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!)
+     (entry:init!)
      ;; Widget host hooks must leave shared buffers alone after their store
      ;; records disappear, whether hidden or still shown in a window.
      (let* ([was (head:current-buffer)]
@@ -837,7 +841,7 @@
            (list (refused? (lambda () (entry:insert! a "lost"))) (string=? before (line))) '(#t #t)))
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
-         (list (widget:caret (widget:prepared root)) (head:buffer-read-only (head:buffer-of-store-id source))
+         (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)
                (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
        (widget:unmount! root) (widget:invalidate!))
 
@@ -878,6 +882,7 @@
        (head:forget-buffer! b) (head:show-buffer! previous))
 
      (include "tests/control.sps")
+     (include "tests/editor-widget.sps")
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")

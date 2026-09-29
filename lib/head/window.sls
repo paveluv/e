@@ -16,6 +16,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (head catalogue-host) catalogue-host:)
+          (prefix (head editor) editor:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -41,9 +42,26 @@
     ;; Run after placement/actions, so hiding the invoking app cannot release
     ;; its context midway through a command. Work depends on mounted windows,
     ;; not on the number of retained buffers or views.
-    (let ([visible (map head:window-buffer (head:windows))])
-      (for-each (lambda (p) (unless (memq (cdr p) visible) (widget:unmount! (car p)))) mounted)
-      (set! mounted (filter (lambda (p) (memq (cdr p) visible)) mounted))))
+    (let ([visible (map head:window-widget (head:windows))])
+      (for-each (lambda (p) (unless (member (car p) visible) (widget:unmount! (car p)))) mounted)
+      (set! mounted (filter (lambda (p) (member (car p) visible)) mounted))))
+
+  (define (mount-window! w)
+    (let ([id (head:window-editor w)])
+      ;; A document remains the actual window buffer. The window is merely
+      ;; an opaque host slot for its retained editor view.
+      (for-each (lambda (p)
+                  (when (or (and (eq? (cdr p) w) (not (equal? (car p) id)))
+                          (and (equal? (car p) id) (not (eq? (cdr p) w))))
+                    (widget:unmount! (car p)))) mounted)
+      (set! mounted (filter (lambda (p)
+                              (if (eq? (cdr p) w) (equal? (car p) id) (not (equal? (car p) id)))) mounted))
+      (when id
+        (unless (assoc id mounted)
+          (widget:mount! id w)
+          (set! mounted (cons (cons id w) mounted))
+          (widget:prepare! id (if (paint:window-wrapped? w) (paint:wrap-width w) (head:window-content-width w)) (head:window-size w)))
+        (widget:set-active! id (eq? w (head:current-window))))))
 
   (define (widget-buffer! id)
     (cond [(find (lambda (b) (equal? id (buffer-widget b))) (head:buffers))
@@ -135,17 +153,20 @@
     ;; Definition reload keeps runtime mounts. Rediscover only at installation;
     ;; the per-frame release pass never enumerates the document catalogue.
     (set! mounted
-      (filter values
-        (map (lambda (b)
-               (let ([id (buffer-widget b)])
-                 (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (head:buffers))))
+      (append (filter values
+                (map (lambda (b)
+                       (let ([id (buffer-widget b)])
+                         (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (head:buffers)))
+        (filter values (map (lambda (w)
+                              (let ([id (head:window-editor w)])
+                                (and id (guard (ex [else #f]) (and (eq? (widget:host id) w) (cons id w)))))) (head:windows)))))
     (widget:register! 'window-tool 1
       (append (layout:container 'y)
         (list (cons 'service tool-service!) (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!))))))
     (mode:register! "widget" '() '() #f #f
-      (lambda (buffer row line)
-        (let* ([id (buffer-widget buffer)] [f (and id (widget:prepared id))])
-          (and f (widget:frame-styles f row line)))))
+      (lambda (source row line)
+        (let* ([id (mode:source-fact source 'widget-id #f)] [f (and id (widget:prepared id))])
+          (and f (widget:frame-styles f row line)))) '(widget-id))
     (head:add-buffer-placement-hook!
       (lambda (w b peers)
         (let ([id (buffer-widget b)] [old (buffer-widget (head:window-buffer w))])
@@ -154,6 +175,11 @@
                            (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
                            b)))))
     (head:add-pre-redraw-hook! release-hidden!)
+    (head:set-window-mounter! mount-window!)
+    (head:set-point-mover!
+      (lambda (w p)
+        (let ([id (and (head:window-widget w) (head:window-editor w))])
+          (and id (begin (editor:move! id p) #t)))))
     (head:add-buffer-kill-hook!
       (lambda (b) (let ([id (buffer-widget b)])
                     (when id (widget:unmount! id) (set! mounted (remp (lambda (p) (equal? id (car p))) mounted))))))
@@ -204,8 +230,12 @@
         [(eq? w (head:current-window)) #t]
         [else
          (head:dispatch-app-event! "BLUR")
+         (let ([id (head:window-widget (head:current-window))])
+           (when id (widget:set-active! id #f) (widget:cancel! id 'blur)))
          (head:set-current! w)
          (head:dispatch-app-event! "FOCUS")
+         (let ([id (head:window-widget w)])
+           (when id (widget:set-active! id #t) (widget:key-scopes! id "")))
          #t])))
 
   (edoc "Select the next window in layout order, the pop-up among them while it is shown; the window now selected."

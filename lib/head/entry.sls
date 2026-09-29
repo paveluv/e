@@ -6,22 +6,17 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation text) text:)
           (prefix (only (head edit) undo-scope) edit:)
-          (prefix (head head) head:)
+          (prefix (only (head head) ui-actor) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
+          (prefix (head text-control) text-control:)
+          (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
   (define (refuse message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
-  (define (source-buffer source)
-    (let ([id (and source (cdr (assq 'id source)))])
-      (unless (and (pair? id) (eq? (car id) 'buffer))
-        (error 'entry "expected a text buffer source" id))
-      (or (head:buffer-of-store-id (cadr id)) (error 'entry "source is unavailable" id))))
-  (define (revision source) (cdr (assq 'revision source)))
-  (define (source-lines source) (cdr (assq 'value source)))
   (define (single-line? lines) (= (vector-length lines) 1))
   (define (state d)
     (let ([s (view:state d)])
@@ -31,17 +26,9 @@
         (error 'entry "expected (caret anchor) text positions" s))
       s))
   (define (changes source basis)
-    (let-values ([(lines rev changes) (head:snapshot-since (source-buffer source) basis)])
-      (and changes (<= basis (revision source))
-        (map caddr (filter (lambda (row) (<= (car row) (revision source))) changes)))))
-  (define (span s)
-    (let ([a (car s)] [b (cadr s)])
-      (if (or (< (car a) (car b)) (and (= (car a) (car b)) (<= (cdr a) (cdr b))))
-        (text:make-span (car a) (cdr a) (car b) (cdr b))
-        (text:make-span (car b) (cdr b) (car a) (cdr a)))))
+    (text-source:changes (text-control:mirror source) basis (text-control:revision source)))
   (define (selection source d)
-    (let ([steps (changes source (or (view:basis d) (revision source)))])
-      (and steps (map (lambda (p) (fold-left text:rebase-position p steps)) (state d)))))
+    (text-source:rebase (state d) (changes source (or (view:basis d) (text-control:revision source)))))
   (define presentations (kernel:make-registry car))
   (define policies (kernel:make-registry car))
   (define presentation-changes (kernel:registry-observe! presentations (lambda (removed added) (widget:invalidate!))))
@@ -61,8 +48,8 @@
     (kernel:registry-add! presentations (cons (list name schema) project)))
 
   (define (data id source inputs)
-    (source-buffer source)
-    (let* ([lines (source-lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")]
+    (text-control:mirror source)
+    (let* ([lines (text-control:lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")]
            [profile (assq 'presentation (view:options (interaction:snapshot id)))]
            [definition (and profile (kernel:registry-find presentations (lambda (p) (equal? (cdr profile) (car p)))))]
            [context (assq 'context inputs)] [parts (glyph:clusters line)]
@@ -86,12 +73,12 @@
         (loop (cdr rest) (car rest)))))
   (define (project data d)
     (let ([s (selection (car data) d)])
-      (and (single-line? (source-lines (car data))) s
+      (and (single-line? (text-control:lines (car data))) s
         (for-all (lambda (p) (zero? (car p))) s)
         (map (lambda (p) (edge (caddr data) (cdr p) car)) s))))
   (define (offset points width) (max 0 (- (cdar points) (max 0 (- width 1)))))
   (define (message source)
-    (if (single-line? (source-lines source)) "[Selection history unavailable]" "[Single-line field: source has multiple lines]"))
+    (if (single-line? (text-control:lines source)) "[Selection history unavailable]" "[Single-line field: source has multiple lines]"))
   (define (render data d width height range)
     (if (or (> (car range) 0) (zero? (cdr range))) '()
       (let ([points (project data d)])
@@ -112,10 +99,7 @@
     (let ([points (project data d)])
       (and points (> width 0) (> height 0) (cons (- (cdar points) (offset points width)) 0))))
   (define (context id)
-    (let-values ([(source d inputs) (widget:context id)])
-      (unless (and d (eq? (view:kind d) 'entry) (= (view:schema d) 1)) (error 'entry "expected an entry view" id))
-      (source-buffer source)
-      (values source d)))
+    (text-control:context id 'entry))
 
   (edoc "Select a range in an entry's text source; caret and anchor are character indices, snapped to whole graphemes."
         (id model "entry view") (caret integer "active end") (anchor integer "fixed end"))
@@ -123,9 +107,9 @@
     (unless (and (integer? caret) (exact? caret) (>= caret 0) (integer? anchor) (exact? anchor) (>= anchor 0))
       (error 'select! "expected nonnegative character indices" caret anchor))
     (let-values ([(source d) (context id)])
-      (unless (single-line? (source-lines source)) (refuse "Entry requires a single-line source"))
+      (unless (single-line? (text-control:lines source)) (refuse "Entry requires a single-line source"))
       (let ([edges (caddr (data id source '()))])
-        (interaction:set-state! head:ui-actor id (revision source)
+        (interaction:set-state! head:ui-actor id (text-control:revision source)
           (map (lambda (n) (cons 0 (car (edge edges n car)))) (list caret anchor))))))
 
   (edoc "Move an entry caret by grapheme or to an endpoint, optionally extending its selection."
@@ -137,7 +121,7 @@
     (let-values ([(source d) (context id)])
       (let* ([data (data id source '())]
              [points (or (project data d)
-                       (and (single-line? (source-lines source)) (memq direction '(home end))
+                       (and (single-line? (text-control:lines source)) (memq direction '(home end))
                          (not (and (pair? extend) (car extend))) '((0 . 0) (0 . 0))))]
              [edges (map car (caddr data))])
         (unless points (refuse "Entry selection history is unavailable"))
@@ -150,25 +134,19 @@
                                   (or (find (lambda (n) (> n a)) edges) a))])])
           (select! id next (if selecting? b next))))))
 
-  (define (basis-text source d)
-    (let ([steps (changes source (or (view:basis d) (revision source)))])
-      (unless steps (refuse "Entry selection history is unavailable"))
-      ;; Reconstruct the declared basis, not a new intent over changed text.
-      ;; The store checks the original span against every intervening edit.
-      (fold-left (lambda (lines delta)
-                   (let ([inverse (text:invert-delta delta)])
-                     (let-values ([(lines ignored) (text:apply-edit lines (text:delta-span inverse) (text:delta-inserted inverse))]) lines)))
-        (source-lines source) (reverse steps))))
+  (define (submit! id source d old basis span replacement context desired)
+    (text-control:submit! id source d old basis span replacement context (list desired)
+      (lambda (points) (list (car points) (car points)))))
   (define (replace! id source d selection replacement)
-    (unless (single-line? (source-lines source)) (refuse "Entry requires a single-line source"))
-    (let ([b (source-buffer source)] [basis (or (view:basis d) (revision source))]
-          [old (basis-text source d)])
+    (unless (single-line? (text-control:lines source)) (refuse "Entry requires a single-line source"))
+    (let ([basis (or (view:basis d) (text-control:revision source))]
+          [old (text-control:basis-text source d)])
       (unless (single-line? old) (refuse "Entry selection refers to a multiline source"))
       (unless (and (equal? (car selection) (cadr selection)) (string=? replacement ""))
         (let* ([profile (assq 'policy (view:options d))]
                [policy (and profile (kernel:registry-find policies (lambda (p) (equal? (cdr profile) (car p)))))]
                [proposed (and profile
-                              (let-values ([(lines delta) (text:apply-edit old (span selection) (list replacement))])
+                              (let-values ([(lines delta) (text:apply-edit old (text-source:span selection) (list replacement))])
                                 (unless policy (error 'entry "entry policy is unavailable" (cdr profile)))
                                 (let* ([text (vector-ref lines 0)] [caret (cdr (text:delta-new-end delta))]
                                        [next ((cdr policy) text caret)])
@@ -179,11 +157,11 @@
                             (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list (car proposed))))
                             (integer? (cadr proposed)) (exact? (cadr proposed)) (<= 0 (cadr proposed) (string-length (car proposed))))))
             (error 'entry "invalid normalized text or caret"))
-          (head:store-edit! b (if proposed (text:make-span 0 0 0 (string-length (vector-ref old 0))) (span selection))
-            (list (if proposed (car proposed) replacement)) (and proposed (list #f "Edit entry" (cons 'revision basis)))
-            (list (cons (lambda (point revision)
-                          (interaction:set-state! head:ui-actor id revision (list point point))) (if proposed (cons 0 (cadr proposed)) 'end)))
-            (list old (head:buffer-store-id b) basis))))))
+          (submit! id source d old basis
+            (if proposed (text:make-span 0 0 0 (string-length (vector-ref old 0))) (text-source:span selection))
+            (list (if proposed (car proposed) replacement))
+            (and proposed (list #f "Edit entry" (cons 'revision basis)))
+            (if proposed (cons 0 (cadr proposed)) 'end))))))
 
   (edoc "Insert text once, replacing the entry selection through the shared edit journal. Multiline input is refused whole."
         (id model "entry view") (text string "committed text"))
@@ -198,14 +176,13 @@
     (unless (and (string? text) (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list text))) (<= (length expected) 1))
       (error 'set-text! "expected single-line text and at most one revision"))
     (let-values ([(source d) (context id)])
-      (unless (single-line? (source-lines source)) (refuse "Entry requires a single-line source"))
-      (when (and (pair? expected) (not (equal? (car expected) (revision source)))) (refuse "Entry text changed"))
-      (let* ([b (source-buffer source)] [line (vector-ref (source-lines source) 0)] [rev (revision source)])
+      (unless (single-line? (text-control:lines source)) (refuse "Entry requires a single-line source"))
+      (when (and (pair? expected) (not (equal? (car expected) (text-control:revision source)))) (refuse "Entry text changed"))
+      (let* ([line (vector-ref (text-control:lines source) 0)] [rev (text-control:revision source)])
         (if (string=? line text) (select! id (string-length text) (string-length text))
-          (head:store-edit! b (text:make-span 0 0 0 (string-length line)) (list text)
-            (list #f "Replace entry text" (cons 'revision rev))
-            (list (cons (lambda (point revision) (interaction:set-state! head:ui-actor id revision (list point point))) 'end))
-            (list (source-lines source) (head:buffer-store-id b) rev))))))
+          (submit! id source d (text-control:lines source) rev
+            (text:make-span 0 0 0 (string-length line)) (list text)
+            (list #f "Replace entry text" (cons 'revision rev)) 'end)))))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
         (id model "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
@@ -213,7 +190,7 @@
     (unless (memq direction '(backward forward all)) (error 'delete! "invalid direction" direction))
     (let-values ([(source d) (context id)])
       (if (or (eq? direction 'all) (equal? (car (state d)) (cadr (state d))))
-        (let* ([old (basis-text source d)]
+        (let* ([old (text-control:basis-text source d)]
                [line (and (single-line? old) (vector-ref old 0))])
           (unless line (refuse "Entry selection refers to a multiline source"))
           (let* ([edges (fold-left (lambda (out cluster) (cons (+ (car out) (car cluster)) out)) '(0) (glyph:clusters line))]
@@ -227,14 +204,7 @@
 
   (define (history! id direction scope)
     (let-values ([(source d) (context id)])
-      (let* ([b (source-buffer source)] [basis (or (view:basis d) (revision source))])
-        (let-values ([(status detail) (head:store-history! b direction scope)])
-          (when (eq? status 'applied)
-            (let-values ([(text revision steps) (head:snapshot-since b basis)])
-              (when steps
-                (interaction:set-state! head:ui-actor id revision
-                  (map (lambda (p) (fold-left text:rebase-position p (map caddr steps))) (state d))))))
-          (values status detail)))))
+      (text-control:history! id source d direction scope (state d) values)))
 
   (edoc "Undo an entry's source using the editor's undo-scope, with an optional explicit mine, all or (actor identity) scope."
         (id model "entry view") (scope (list-of any) "scope override, at most one"))
@@ -254,8 +224,8 @@
       (if (not points) '()
         (let* ([at (car (edge (caddr data) (+ x (offset points (caddr (widget:frame-rect f)))) cdr))]
                [d (interaction:snapshot id)] [current (project data d)]
-               [steps (changes (car data) (or (view:basis d) (revision (car data))))]
-               [extend? (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (span (state d)) steps))])
+               [steps (changes (car data) (or (view:basis d) (text-control:revision (car data))))]
+               [extend? (and current steps (fold-left (lambda (s delta) (and s (text:rebase-span s delta))) (text-source:span (state d)) steps))])
           (append (list (list '(click primary ()) (keymap:call select! id at at)))
             (if extend?
               (map (lambda (gesture) (list gesture (keymap:call select! id at (caadr current)))) '((click primary (shift)) (drag primary ()))) '()))))))

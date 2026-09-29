@@ -642,6 +642,47 @@ than overwriting unseen text. No operation switches the current editor buffer.
 If the selection's history has expired, Home or End establishes a new caret
 at the corresponding endpoint; typing cannot silently reuse an unknown range.
 
+Entry and the ordinary editor use one `text-source:` mirror and edit path.
+Mounting an entry does not create a legacy buffer or borrow a window.
+Closing or reclaiming its mount fences delayed selection updates: a text
+edit that already committed survives, but its caret cannot overwrite a new
+mount's state.
+
+For text consumers, `(text-source:open! actor document-id [basis])` acquires
+the shared mirror outside painting, optionally retaining a saved selection's
+history. `lookup`, `lines`, `revision` and `snapshot` read adopted state
+without I/O. `snapshot` returns text, revision and the exact delta chain;
+missing history is `#f`. `changes`, `rebase` and `basis-text` handle logical
+endpoints and retained edit intent, independent of terminal cells or widgets.
+The mirror keeps a bounded history and shares immutable text across views.
+
+`(text-source:edit! actor basis span replacement context positions)` admits
+a document edit without a mounted view. `basis` is `(old-text document-id
+revision)`, `context` is the store's edit context, and desired result positions
+are `start`, `end` or `(row . column)` pairs. It returns text, revision, changes,
+projected positions and the committed revision. The presentation adopts that
+receipt with `text-source:adopt!`; only a still-current view receives the
+projected selection. `text-source:history!` steps the document's existing
+attributed undo/redo journal. File I/O remains in `document:`. Entry commands
+add their single-line policy and explicit view selection to this common path.
+
+TUI text consumers can import `(head text-layout)` for the editor's shared
+wrapping, vertical motion, paging, scroll margins and hit-coordinate mapping.
+These helpers take explicit source lines, a `render:` frame and resolved
+geometry; they never select a window or perform terminal I/O. `locate` and
+`hit` share whole-grapheme geometry. `scroll` and `page` return a proposed
+viewport and caret, leaving interaction publication to the caller. Their
+`(line . wrapped-segment)` addresses belong to the head; use `anchor` to
+convert a viewport address to a logical text position before persisting it.
+Changing width recomputes segments from that logical anchor. Ordinary paging
+and distant-caret scrolling inspect a viewport-sized part of the source.
+
+Mode renderers also accept explicit sources. Construct `mode:source` from the
+presentation text and the facts listed by `mode:required-facts`. Render and
+row-style callbacks receive that snapshot, a row and its line, without a
+buffer or window. Text-only `mode:memoize-analysis` providers share work
+between presentations of the same text. See [mode presentation](MODULES.md#modes).
+
 This example runs in a head without any base configuration. It builds a row
 inside a column, inside an overlay and a scroll viewport. Make the host narrow
 or short to exercise clipping; click either entry to edit their common source.
@@ -730,6 +771,10 @@ its focus in the base; inactive roots retain it. Modal overlays confine focus
 and consume input even when their contents are empty.
 
 Definitions list ordinary `contexts` and optional `capture-contexts`.
+`contexts` may also be a read-only `(id descriptor)` procedure returning
+context symbols from already acquired state. Routing and binding inspection
+use the same provider; it must not perform I/O. A context change cancels an
+unfinished chord.
 Captures are checked from outermost ancestor first; ordinary bindings bubble
 from the focused leaf. A `full` capture stops unhandled input; a `partial`
 capture can list first-key tokens in `yield`. Bind named actions through
@@ -741,9 +786,144 @@ outer host. Paste uses the text path alone. Chords advance one event at a
 time, and focus, definition or binding changes invalidate their pending
 suffix. Prompt readers use the same resolver.
 
-Pointer callbacks receive `(pointer phase button modifiers x y)` in their
-allocation's coordinates. `widget:event-frame` supplies the shown source
+Pointer callbacks receive `(pointer phase button modifiers x y [click-count])`
+in their allocation's coordinates. Backends can append a click count;
+omission means one press. The editor exposes word selection as a
+`double-click` binding. `widget:event-frame` supplies the shown source
 basis; `widget:capture!` keeps motion and release on that target outside its
 rectangle. Blur, removal and failed output cancel capture. The TUI decodes
 device button codes before routing. Wheel movement changes scroll anchors,
 preserves focus and selection, and bubbles only its unconsumed remainder.
+
+## Multiline editor views
+
+`(edit:create-view! actor document-id options)` creates an unmounted `editor`
+view over an existing store document. Mount it directly, compose it with
+other views, or pass its root to `window:show-widget!`. With `()` or
+`((wrap . default))`, wrapping follows the document's `wrap` fact, then
+`paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
+`((read-only . #t))` prevents edits and undo through this view without making
+the shared document read-only. Selection and copying remain available.
+Caret movement uses the same `paint:scroll-margin` as ordinary windows.
+The `text` output port exposes
+single-line sources, like Entry; multiline sources do not satisfy that
+string-field contract. [examples/editor.e](../examples/editor.e) places wrapped and
+unwrapped editors side by side over one document.
+
+Each view owns `(caret anchor top marked?)`, with all three positions expressed
+as zero-based `(row . character)` pairs at the descriptor's text basis.
+Widths, wrapped segments and desired display columns remain in the head.
+Ordinary document windows also retain a separate editor view for each
+document they visit. Switching away and back restores that window's selection;
+splitting creates an independent selection over the same text. The outer
+checkpoint retains view identities, so resume reuses their saved state.
+Ordinary windows route keyboard input, mouse selection and body painting
+through these same editor widgets, while keeping the actual document as
+their buffer. Gutters, scrollbars and status bars belong to the outer host.
+Current-window editing, formatting and undo commands use that window's editor
+view. `edit:call-as-one-edit!` groups commands across ordinary and nested views:
+one undo step per document, with a common batch and the outermost scope's label.
+Mode metadata is acquired outside painting; warm navigation and
+resizing use the shared mirror without requesting text or publishing geometry.
+
+The canonical commands take an explicit view, including `(model N)` at M-x:
+
+- `edit:select! id caret anchor` establishes a selection, or clears it when
+  the endpoints agree. It also recovers from unavailable selection history.
+- `edit:move! id direction [extend]` accepts `left`, `right`, `up`, `down`,
+  `home`, `end`, `start`, `finish` or an absolute `(row . character)` position.
+  Absolute movement clamps and reveals the new caret. Up/Down follow displayed rows and require
+  an allocation. Omitted `extend` follows mark activity.
+- `edit:set-mark! id active` starts selection at the caret or collapses it.
+- `edit:insert! id text` and `edit:delete! id direction` use the source journal;
+  deletion directions are `backward` and `forward`. Consecutive insertions and
+  corrections share a labeled undo group, bounded to twenty edits; movement
+  or a source change ends the run.
+- `edit:paste! id text` inserts multiline text as one undo action, separate
+  from surrounding typing. Terminal paste also normalizes CR/LF line endings.
+- `edit:copy-region! id`, `edit:kill-region! id`, `edit:kill-line! id` and
+  `edit:yank! id` use the ordinary copy buffer and optional system clipboard.
+  Copying works on read-only documents. Copy and cut refuse a changed selection;
+  a refused cut leaves the copy buffer unchanged. Consecutive keyboard kills
+  accumulate only while the same view's interaction and source remain current.
+- `edit:undo! id`, `edit:redo! id` and `edit:undo-actor! actor id` preserve
+  actor attribution and the existing overlap protection. `undo-scope` still
+  defaults to `mine`; explicit view calls return journal status and detail.
+- `edit:scroll! id rows` changes the logical top without changing selection
+  and returns any unconsumed scroll distance for an enclosing viewport.
+- `edit:page! id direction fraction` pages by displayed rows, retaining the
+  desired column and mark. Direction is negative up or positive down; fraction
+  is a positive divisor of the allocated height. A page lands the caret in
+  the middle; paging outward at an already reached edge selects that edge.
+  This replaces `page-window!` and `page-window-fraction!`. The temporary
+  two-argument form operates on the current window.
+- Expression motion, marking, killing and transposition take the same explicit
+  view: for example, `(edit:forward-expression! id)`, `(edit:mark-form! id)` and
+  `(edit:transpose-expressions! id)`. Their ordinary Control-Meta bindings work
+  inside nested editors. All views share expression analysis by immutable text
+  snapshot. The `expression:` query API now accepts line vectors, not buffers.
+- Indentation and formatting accept a view too: `edit:indent-line!`,
+  `edit:indent-region!`, `edit:indent-buffer!`, `edit:indent-expression!`,
+  `edit:format-region!` and `edit:format-buffer!`. Tab uses the mode's existing
+  opt-in and cycles indentation stops. Transformations preserve the logical
+  selection; formatting the last line records the final-newline flag in the
+  same undo action. Providers compute against a captured `mode:source`.
+- `edit:replace-region-text! id start end text` replaces an explicit range of
+  the current mirrored text, with the caret following the accepted edit.
+  Use a captured basis for ranges computed before other commands.
+- `edit:basis id` captures `(immutable-lines document-id revision)` for
+  computing a bulk change. `edit:rewrite-regions! id basis ranges` accepts
+  ordered, disjoint `(start end replacement-string)` entries in that basis.
+  It validates the whole proposal before editing, preserves selection and
+  groups accepted edits into one undo action. Replacements run from the end,
+  avoiding repeated coordinate shifts. Concurrently changed ranges are
+  skipped; missing history or changed ownership refuses the remaining work.
+  Already accepted edits remain undoable. Use a one-element range list for
+  one rewrite; the redundant `edit:rewrite-region!` export is removed.
+
+Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
+use those commands. Shift-arrows extend selection; Control-Space sets the
+mark and C-g clears it. Return inserts a newline, Backspace/Delete remove
+whole graphemes, and C-_/C-M-_ undo/redo. Mouse presses and drags select using
+the shown frame; the wheel scrolls even when the host is inactive. PageUp/M-v
+and PageDown/C-v page the editor. M-w copies the region, C-w cuts it, C-k kills
+to the line end (or kills the newline there), and C-y yanks the copy buffer.
+
+Entry and editor share guarded mutation and history settlement. A committed
+edit survives a callback that closes its view, but cannot overwrite a newly
+claimed view or a newer selection. Missing history and overlapping edits
+refuse instead of clamping an edit to different text. Read-only sources remain
+navigable. Empty insertion and deletion at a document boundary are inert.
+
+The head starts interaction publication with
+`interaction:start! actor wake-on-failure`. The publisher itself has no window
+or screen dependency. The default head wires publication to frame boundaries
+and lifecycle fences; extensions do not need a separate initializer.
+
+Mode-specific editing bindings precede the editor's defaults and include
+inherited mode contexts. Pretty Scheme's bracket-closing commands accept an
+explicit view and use its source and caret. Mode contexts are cached outside
+key routing, so discovering or dispatching a binding performs no remote reads.
+
+The `annotations` input accepts `()` or
+`(document-id revision ((span face) ...))`, where each span is
+`(start-row start-character end-row end-character)` and each face is a semantic
+style symbol, for example `match` or `conflict-disk`. Connect a model output
+through the ordinary port protocol, or supply a fixed `annotations` option.
+One batch can decorate several views of the same document at different widths.
+The editor rebases ranges through retained changes, withholding overlapping
+ranges, another document's annotations, or annotations whose history is gone.
+Painting uses an index of visible ranges; navigation reuses it. Selection
+overrides annotations, which override syntax styles. Annotation data contains
+no display geometry.
+
+`mode:add-highlighter!` registers a pure `(source mode caret)` callback for
+cheap context-sensitive highlighting. It returns the same `(span face)` pairs,
+at the supplied source revision, and runs only for the focused editor.
+Callbacks use explicit `mode:source` text; they must avoid I/O and keep work
+bounded. The matching-bracket extension uses this interface, including in
+nested editors. Tool results acquired asynchronously use `annotations` instead.
+
+Nested editors currently provide these core commands. Ordinary editor windows
+still use their existing host; search/conflict producers and window chrome have not
+yet moved to the nested editor.

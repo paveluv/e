@@ -3,40 +3,91 @@
 ;; A buffer's mode NAME is a store property every head reads; a mode
 ;; record is this head's registry object for that name: the file-name
 ;; endings and #! interpreters it claims, its line styler, and
-;; optionally a display transform and a buffer-aware row styler.
+;; optionally a display transform and a whole-source row styler.
 ;; Detection turns a path and a first line into a mode; the memoized
 ;; stylers answer per-line and per-row questions without re-analysis
 ;; -- line styles keyed by line-string identity (edits replace
-;; strings, never mutate them), whole-buffer analyses by revision.
+;; strings, never mutate them), whole-text analyses by immutable text identity.
 ;;
 ;; The painter imports this module directly, and the head's adopt
 ;; hook is installed here: a foreign buffer adopted without a mode
 ;; fact gets detection.  Exported names drop the module stem:
 ;; (mode:register! "scheme" '(".ss") '("scheme") styler),
-;; (mode:of b), ((mode:styles m) line).
+;; (mode:of b), ((mode:line-styles m) line). Presentation callbacks
+;; consume mode:source snapshots rather than head buffer records.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export add-context! (rename (add-mode-extension! add-extension!)) (rename (assign-current-mode! assign!))
+  (export add-context! (rename (add-mode-extension! add-extension!)) add-highlighter! (rename (assign-current-mode! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
-          indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
-          key-context key-contexts (rename (buffer-line-styles line-styles))
-          (rename (memoize-buffer-analysis memoize-analysis)) mode? (rename (mode-name name))
+          highlights indent indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
+          key-context key-contexts line-styles
+          memoize-analysis mode? (rename (mode-name name))
           (rename (buffer-mode-name name-of)) (rename (mode-of of))
           (rename (refresh-buffer-modes! refresh!)) (rename (register-mode! register!))
-          register-formatter! register-indenter! (rename (mode-render render))
-          (rename (mode-row-styles row-styles)) (rename (mode-styles styles)))
+          register-formatter! register-indenter! (rename (mode-render render)) required-facts
+          (rename (mode-row-styles row-styles)) source source-fact source-lines (rename (mode-styles styles)))
   (import (rnrs)
           (only (chezscheme) record-writer)
           (only (chezscheme)
                 make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
-                vector-copy void)
+                list-head vector-copy void)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (head head) head:)
-          (prefix (head keymap) keymap:))
+          (prefix (head keymap) keymap:)
+          (prefix (head render) render:))
+
+  ;; Mode callbacks receive explicit text and only the facts they declare.
+  ;; Neither the snapshot nor its analysis cache owns a buffer or window.
+  (edoc "Read-only source input shared by text presentations."
+        (lines any "immutable vector or deferred text") (facts list "declared presentation facts"))
+  (define-record-type (presentation-source %make-source presentation-source?)
+    (fields (immutable lines source-lines) (immutable facts source-facts)))
+
+  (edoc "Capture immutable presentation text and the mode's declared facts, without a buffer or window. Callbacks borrow these values read-only; geometry and document mutation belong to their host."
+        (lines any "immutable vector or deferred text") (facts list "declared (name . value) inputs")
+        (returns (record presentation-source)))
+  (define (source lines facts)
+    (unless (and (or (vector? lines) (render:deferred? lines))
+              (list? facts) (for-all (lambda (p) (and (pair? p) (symbol? (car p)))) facts))
+      (error 'source "expected text and named facts"))
+    (%make-source lines facts))
+
+  (edoc "Read an explicitly supplied presentation fact; undeclared facts use the fallback. No store or host lookup is performed."
+        (source (record presentation-source) "presentation snapshot") (key symbol "fact") (fallback any "value when absent") (returns any))
+  (define (source-fact source key fallback)
+    (cond [(assq key (source-facts source)) => cdr] [else fallback]))
+
+  (define highlighters (kernel:make-registry))
+
+  (edoc "Register a pure context highlighter, owned by its module. It receives (source mode caret) and returns ((span-datum face) ...) in logical characters. Use bounded computation and no I/O; asynchronous tool results belong in annotation inputs."
+        (proc procedure "explicit presentation callback"))
+  (define (add-highlighter! proc)
+    (unless (procedure? proc) (error 'add-highlighter! "expected a procedure"))
+    (kernel:registry-add! highlighters proc))
+
+  (edoc "Compute logical context highlights for a focused text view. Invalid or raising providers contribute nothing, and deferred app displays do not invoke text highlighters."
+        (source (record presentation-source) "borrowed text and declared facts") (mode any "resolved mode or false")
+        (caret position "logical caret") (returns list "((span-datum face) ...)"))
+  (define (highlights source mode caret)
+    (let ([lines (source-lines source)])
+      (if (not (vector? lines)) '()
+        (apply append
+          (map (lambda (proc)
+                 (guard (ex [else '()])
+                   (let ([ranges (proc source mode caret)])
+                     (if (and (list? ranges)
+                           (for-all (lambda (r)
+                                      (and (list? r) (= (length r) 2) (symbol? (cadr r))
+                                        (let ([s (text:datum->span (car r))])
+                                          (for-all (lambda (p) (and (< (car p) (vector-length lines))
+                                                                 (<= (cdr p) (string-length (vector-ref lines (car p))))))
+                                            (list (text:span-start s) (text:span-end s)))))) ranges)) ranges '()))))
+            (kernel:registry-items highlighters))))))
 
   ;;; The registry ------------------------------------------------------------
 
@@ -54,28 +105,23 @@
         (extensions (list-of string) "the file-name endings it claims")
         (interpreters (list-of string) "the #! interpreter names it claims")
         (styles (or procedure #f) "line to per-column style symbols, or #f for unstyled")
-        (render (or procedure #f) "(render buffer row line) giving a same-length display transform, or #f")
-        (row-styles (or procedure #f) "(row-styles buffer row line) giving a styles vector, or #f for the plain styles")
+        (render (or procedure #f) "(render source row line) giving a same-length display transform, or #f")
+        (row-styles (or procedure #f) "(row-styles source row line) giving a styles vector, or #f for the plain styles")
+        (facts list "named inputs required by these presentation callbacks")
         (parent (or mode #f) "the parent of a derived mode"))
   (define-record-type mode
     (fields name extensions interpreters (immutable styles own-styles)
-            ;; optional display transform: (render buffer row line) ->
+            ;; optional display transform: (render source row line) ->
             ;; a string of the SAME character length, or a same-length vector
             ;; of strings whose concatenation meets that contract. Character
             ;; to cell geometry must match the source (including clusters).
             ;; Invalid substitutions paint source; character styles project
             ;; to every cell of the leading character's glyph.
             (immutable render own-render)
-            ;; optional buffer-aware styling: (row-styles buffer row
+            ;; optional whole-source styling: (row-styles source row
             ;; line) -> a styles vector, or #f for the plain styles
             ;; function.  Uncached here -- the mode memoizes.
-            (immutable row-styles own-row-styles) parent)
-    (protocol (lambda (new)
-                (case-lambda
-                  [(n e i s) (new n e i s #f #f #f)]
-                  [(n e i s r) (new n e i s r #f #f)]
-                  [(n e i s r rs) (new n e i s r rs #f)]
-                  [(n e i s r rs p) (new n e i s r rs p)]))))
+            (immutable row-styles own-row-styles) facts parent))
 
   (define modes (kernel:make-registry))
 
@@ -98,37 +144,42 @@
 
   (define mode-extension-additions (kernel:make-registry))
 
-  (edoc "Register a mode, and re-resolve every open buffer's mode at once: its name, the file-name endings it claims, the interpreters of a #! line, a line styles function, then optionally a render transform and a buffer-aware row-styles procedure."
+  (define (argument xs n fallback) (if (< n (length xs)) (list-ref xs n) fallback))
+  (define (check-presentation! extra slots)
+    (unless (and (<= (length extra) (+ slots 1))
+              (for-all (lambda (p) (or (not p) (procedure? p))) (list-head extra (min slots (length extra))))
+              (let ([facts (argument extra slots '())])
+                (and (list? facts) (for-all symbol? facts))))
+      (error 'mode "expected presentation procedures followed by optional fact names" extra)))
+
+  (edoc "Register a mode and re-resolve open buffers. Render and row-style callbacks receive an explicit mode:source snapshot, row and line; their optional fact names declare the metadata the host supplies."
         (name string "the mode's name")
         (extensions (list-of string) "the file-name endings")
         (interpreters (list-of string) "the #! interpreter names")
         (styles (or procedure #f) "line to styles vector, or #f")
-        (extra (list-of (or procedure #f)) "a render transform, then a row-styles procedure"))
+        (extra (list-of (or procedure #f (list-of symbol))) "optional render transform, row-styles procedure and fact names"))
   (define (register-mode! name extensions interpreters styles . extra)
-    ;; extra: an optional render transform, then an optional
-    ;; buffer-aware row-styles procedure (see the mode record).
+    (check-presentation! extra 2)
     (kernel:registry-add! modes
       (make-mode name extensions interpreters styles
-                 (and (pair? extra) (car extra))
-                 (and (pair? extra) (pair? (cdr extra)) (cadr extra))))
+                 (argument extra 0 #f) (argument extra 1 #f) (argument extra 2 '()) #f))
     (refresh-buffer-modes!))
 
   (edoc "Register a submode: a distinct mode with a parent, following the parent's current styles, rendering, row styles, indentation, formatting, Tab policy and key bindings except where its own optional styles, render transform and row styles override them; endings belong only to the new mode, the parent may register later, and a cycle is refused."
         (name string "the new mode name")
         (parent string "the parent mode's name")
         (extensions (list-of string) "the new mode's file endings")
-        (extra (list-of (or procedure #f)) "own line styles, then a render transform, then a row-styles procedure"))
+        (extra (list-of (or procedure #f (list-of symbol))) "optional own line styles, render transform, row-styles procedure and fact names"))
   (define (derive! name parent extensions . extra)
+    (check-presentation! extra 3)
     (let walk ([next parent] [seen (list name)])
       (when (member next seen) (error 'derive! "cyclic mode derivation" name parent))
       (let ([m (find-mode next)])
         (when (and m (mode-parent m)) (walk (mode-parent m) (cons next seen)))))
     (kernel:registry-add! modes
       (make-mode name extensions '()
-                 (and (pair? extra) (car extra))
-                 (and (pair? extra) (pair? (cdr extra)) (cadr extra))
-                 (and (pair? extra) (pair? (cdr extra)) (pair? (cddr extra)) (caddr extra))
-                 parent))
+                 (argument extra 0 #f) (argument extra 1 #f) (argument extra 2 #f)
+                 (argument extra 3 '()) parent))
     (refresh-buffer-modes!))
 
   (define (presentation m get)
@@ -147,6 +198,15 @@
   (edoc "A mode's effective row styler, following its current parent, or #f."
         (m (record mode) "the mode") (returns (or procedure #f)))
   (define (mode-row-styles m) (presentation m own-row-styles))
+
+  (edoc "The distinct fact names needed by a mode's effective render and row-style callbacks. Inherited callbacks retain their requirements; overridden callbacks drop theirs."
+        (m (or (record mode) #f) "resolved mode") (returns list))
+  (define (required-facts m)
+    (define (needs m get)
+      (cond [(not m) '()] [(get m) (mode-facts m)]
+        [(mode-parent m) (needs (find-mode (mode-parent m)) get)] [else '()]))
+    (fold-left (lambda (out name) (if (memq name out) out (append out (list name)))) '()
+      (append (needs m own-render) (needs m own-row-styles))))
 
   (edoc "Give an existing mode another file-name ending, as a registry entry that config reload retracts."
         (name mode "the mode")
@@ -266,20 +326,23 @@
     (fold-right (lambda (entry acc) (if (guard (ex [else #f]) ((cdr entry) b)) (cons (car entry) acc) acc))
                 '() (kernel:registry-items state-contexts)))
 
-  (edoc "The keymap contexts of a buffer, nearest first: those it has by its state, registered with add-context!, then its mode's and its parents', each named after its mode; a capture context needs a live app."
-        (b buffer "the buffer")
+  (edoc "Read a resolved mode's contexts and inherited contexts, nearest first, excluding capturing contexts unless allowed. The one-argument legacy buffer adapter prepends state contexts and allows capture only for live apps."
+        (m any "resolved mode or #f")
+        (b buffer "legacy one-argument buffer adapter")
+        (capture? boolean "whether capturing mode contexts are eligible")
         (returns (list-of symbol)))
-  (define (key-contexts b)
-    (append
-      (state-contexts-of b)
-      (let loop ([m (mode-of b)] [acc '()])
-        (if (not m)
-            (reverse acc)
-            (loop (and (mode-parent m) (find-mode (mode-parent m)))
-                  (let ([context (string->symbol (mode-name m))])
-                    (if (or (not (keymap:context-capture context)) (head:app-buffer? b))
-                        (cons context acc)
-                        acc)))))))
+  (define key-contexts
+    (case-lambda
+      [(b) (append (state-contexts-of b) (key-contexts (mode-of b) (head:app-buffer? b)))]
+      [(m capture?)
+       (let loop ([m m] [acc '()])
+         (if (not m)
+           (reverse acc)
+           (loop (and (mode-parent m) (find-mode (mode-parent m)))
+                 (let ([context (string->symbol (mode-name m))])
+                   (if (or (not (keymap:context-capture context)) capture?)
+                       (cons context acc)
+                       acc)))))]))
 
   (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
         (b (list-of buffer) "the buffer, at most one")
@@ -303,10 +366,10 @@
 
   ;; Both are provided per mode by modules and consumed by edit's
   ;; indentation and formatting commands.  An indenter maps rows to where
-  ;; their text should start: (proc buffer from to) -> one entry per row
+  ;; their text should start: (proc source from to) over a mode:source snapshot -> one entry per row
   ;; of from..to -- #f leaving a row alone, a column, or an ascending list
   ;; of columns when several indentations are valid.  A formatter rewrites
-  ;; rows wholesale: (proc buffer from to) -> the replacement lines, or #f
+  ;; rows wholesale: (proc source from to) over a mode:source snapshot -> the replacement lines, or #f
   ;; when the rows cannot be formatted.
   (define indenters (kernel:make-registry))   ; entries (mode proc tab?)
   (define formatters (kernel:make-registry))  ; entries (mode proc)
@@ -323,7 +386,7 @@
   (define (indenter-entry name)
     (inherited-entry indenters name))
 
-  (edoc "Register a mode's indenter: (proc buffer from to) gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
+  (edoc "Register a mode's indenter: (proc source from to) over a mode:source snapshot gives each row's column, its list of stops, or #f to leave it; tab says whether TAB runs it, on when omitted."
         (name mode "the mode")
         (proc procedure "the indenter")
         (tab boolean "whether TAB indents"))
@@ -332,7 +395,7 @@
       [(name proc) (register-indenter! name proc #t)]
       [(name proc tab) (kernel:registry-add! indenters (list name proc tab))]))
 
-  (edoc "Register a mode's formatter: (proc buffer from to) gives the replacement lines, or #f when the rows cannot be formatted."
+  (edoc "Register a mode's formatter: (proc source from to) over a mode:source snapshot gives the replacement lines, or #f when the rows cannot be formatted."
         (name mode "the mode")
         (proc procedure "the formatter"))
   (define (register-formatter! name proc)
@@ -346,11 +409,41 @@
       (unless entry (error 'indent-on-tab! "no indenter for mode" name))
       (kernel:registry-add! tab-overrides (list name flag))))
 
-  (edoc "A mode's indenter, (proc buffer from to), or #f."
+  (edoc "A mode's indenter, (proc source from to) over a mode:source snapshot, or #f."
         (name string "the mode's name")
         (returns (or procedure #f)))
   (define (indenter name)
     (let ([entry (indenter-entry name)]) (and entry (cadr entry))))
+
+  (edoc "Compute indentation and logical positions against an immutable source, without editing. Cycle chooses the next stop and pads blank lines; otherwise use the nearest stop and leave blank lines unchanged. Returns proposed lines and positions, or false lines without an indenter."
+        (name (or mode #f) "mode") (source (record presentation-source) "source snapshot") (from integer "first row") (to integer "last row")
+        (cycle? boolean "cycle stops") (positions list "logical positions to preserve") (effects internal))
+  (define (indent name source from to cycle? positions)
+    (define (leading line)
+      (let loop ([i 0]) (if (and (< i (string-length line)) (memv (string-ref line i) '(#\space #\tab))) (loop (+ i 1)) i)))
+    (define (column? n) (and (integer? n) (exact? n) (>= n 0)))
+    (let* ([proc (and name (indenter name))] [lines (source-lines source)] [last (min to (- (vector-length lines) 1))])
+      (if (not proc) (values #f positions)
+        (let ([columns (proc source from last)] [out lines])
+          (unless (and (list? columns) (<= (length columns) (+ 1 (- last from)))
+                    (for-all (lambda (c) (or (not c) (column? c) (and (list? c) (pair? c) (for-all column? c)))) columns))
+            (error 'indent "invalid indenter result" columns))
+          (let loop ([row from] [columns columns])
+            (when (pair? columns)
+              (let* ([line (vector-ref lines row)] [lead (leading line)] [stops (car columns)]
+                     [column (if (pair? stops)
+                               (if cycle? (or (find (lambda (n) (> n lead)) stops) (car stops))
+                                 (fold-left (lambda (best n) (if (< (abs (- n lead)) (abs (- best lead))) n best)) (car stops) (cdr stops))) stops)]
+                     [next (if (and column (or cycle? (< lead (string-length line))))
+                             (string-append (make-string column #\space) (substring line lead (string-length line))) line)])
+                (unless (string=? next line)
+                  (when (eq? out lines) (set! out (vector-copy lines)))
+                  (vector-set! out row next))
+                (when (and column (or cycle? (< lead (string-length line))))
+                  (set! positions (map (lambda (p) (if (= (car p) row)
+                                                     (cons row (if (<= (cdr p) lead) column (+ (cdr p) (- column lead)))) p)) positions)))
+                (loop (+ row 1) (cdr columns)))))
+          (values out positions)))))
 
   (edoc "Whether TAB runs a mode's indenter."
         (name string "the mode's name")
@@ -363,7 +456,7 @@
             [else (let ([m (find-mode name)])
                     (and m (mode-parent m) (indent-on-tab? (mode-parent m))))])))
 
-  (edoc "A mode's formatter, (proc buffer from to), or #f."
+  (edoc "A mode's formatter, (proc source from to) over a mode:source snapshot, or #f."
         (name string "the mode's name")
         (returns (or procedure #f)))
   (define (formatter name)
@@ -380,13 +473,12 @@
 
   (define style-cache (make-weak-eq-hashtable))
 
-  (edoc "The memoized line styles function of a buffer's mode; every line plain without one, and a raising mode styles plain."
-        (b buffer "the buffer")
+  (edoc "The memoized line styler of an explicitly resolved mode, or plain without one. A raising mode styles plain."
+        (m (or (record mode) #f) "resolved mode")
         (returns procedure)
         (effects internal))
-  (define (buffer-line-styles b)
-    ;; The line-styles function of b's mode; unstyled without one.
-    (let* ([m (mode-of b)] [styler (and m (mode-styles m))])
+  (define (line-styles m)
+    (let ([styler (and m (mode-styles m))])
       (if styler
           (lambda (s)
             (let ([hit (eq-hashtable-ref style-cache s #f)])
@@ -400,24 +492,16 @@
                     styles))))
           no-styles)))
 
-  (edoc "Turn a whole-buffer analyzer into a row provider that reruns it at most once per buffer revision."
-        (analyze procedure "(analyze buffer) giving the analysis")
+  (edoc "Memoize a text-only analyzer across presentations of the same immutable text. The returned (source row) provider needs no buffer or window. The analyzer receives an owned vector of borrowed immutable lines and returns a row vector."
+        (analyze procedure "(analyze lines) giving the analysis")
         (returns procedure))
-  (define (memoize-buffer-analysis analyze)
-    ;; Turn a whole-buffer analyzer into a row provider.  Buffer content has
-    ;; one revision stamp, so validation is O(1) and analysis runs at most
-    ;; once between edits, however many visible rows ask for its result.
+  (define (memoize-analysis analyze)
     (let ([cache (make-weak-eq-hashtable)])
-      (lambda (b row)
-        (let* ([revision (head:buffer-revision b)]
-               [hit (eq-hashtable-ref cache b #f)])
-          (unless (and hit (= (car hit) revision))
-            (set! hit
-              (cons revision (analyze (vector-copy (head:buffer-lines b)))))
-            (eq-hashtable-set! cache b hit))
-          (let ([product (cdr hit)])
-            (and (< row (vector-length product))
-                 (vector-ref product row)))))))
+      (lambda (source row)
+        (let* ([lines (source-lines source)] [hit (eq-hashtable-ref cache lines #f)]
+               [product (or hit (analyze (vector-copy (render:lines-vector lines))))])
+          (unless hit (eq-hashtable-set! cache lines product))
+          (and (<= 0 row) (< row (vector-length product)) (vector-ref product row))))))
 
   (edoc "Re-resolve every buffer's mode: a buffer with a mode keeps it by name, picking up a reloaded record; a buffer without one that follows detection takes the mode detection now finds.")
   (define (refresh-buffer-modes!)

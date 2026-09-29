@@ -180,7 +180,7 @@
      (head:goto! '(0 . 2))
      (check 'paging-keeps-cell-column-outside-the-demanded-rows
        (steps (lambda (direction)
-                (page-window-fraction! direction 1)
+                (page! direction 1)
                 (let ([p (head:point)])
                   (list (car p) (cdr p)
                     (cdr (paint:window-screen-position w (car p) (cdr p))))))

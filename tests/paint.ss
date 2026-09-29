@@ -14,6 +14,7 @@
 (evaluate!
   '(begin
      (import (prefix (head paint) paint:) (prefix (head widget) widget:)
+             (prefix (head edit) edit:) (prefix (head dispatch) dispatch:)
              (prefix (head entry) entry:) (prefix (state store) store:)
              (prefix (head interaction) interaction:) (prefix (head window) window:)
              (prefix (state model) model:) (prefix (state view) view:)
@@ -647,7 +648,7 @@
 
      ;; The visible frame owns hit geometry, including across partial output
      ;; and uncertain terminal writes. No extra test process or timing wait.
-     (widget:init!) (interaction:init!) (window:init!)
+     (widget:init!) (window:init!)
      ;; A partial overlay must not mutate the full-width child's lent style
      ;; row or an earlier frame, including when that child is cached.
      (widget:register! 'style-row 1
@@ -723,5 +724,55 @@
          (check 'unchanged-entry-text-still-updates-selection-and-caret
            (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
        (head:show-buffer! was) (head:forget-buffer! b))
+     ;; Ordinary documents use the same editor projection as embedded ones;
+     ;; source identity, wrapped input, outer chrome and resume agree.
+     (edit:init!)
+     (let* ([w (head:current-window)] [b (head:new-buffer! "hosted editor")])
+       (head:buffer-lines-set! b (list->vector (cons (make-string 180 #\a) (make-list 30 "界éz"))))
+       (head:show-buffer! b) (head:window-line-numbers-set! w #t)
+       (paint:set-screen-cols! 100) (paint:set-screen-rows! 24)
+       (let* ([other (window:split-right!)] [a (head:window-editor w)] [c (head:window-editor other)])
+         (window:focus! w) (painted paint:redraw!)
+         (dispatch:key! "DOWN") (painted paint:redraw!)
+         (check 'ordinary-split-uses-independent-editor-roots-and-wrapped-input
+           (list (eq? b (head:window-buffer w)) (eq? b (head:window-buffer other))
+             (not (equal? a c)) (car (view:state (interaction:snapshot a)))
+             (car (view:state (interaction:snapshot c))))
+           (list #t #t #t (cons 0 (paint:wrap-width w)) '(0 . 0)))
+         (let ([at (paint:window-screen-position w 0 3)])
+           (widget:pointer! '(pointer press primary ()) (- (cdr at) 1) (- (car at) 1))
+           (widget:pointer! '(pointer release primary ()) (- (cdr at) 1) (- (car at) 1)))
+         (edit:scroll! a 3)
+         (let ([top (caddr (view:state (interaction:snapshot a)))])
+           (painted paint:redraw!)
+           (check 'ordinary-pointer-and-scroll-retain-widget-geometry
+             (list (car (view:state (interaction:snapshot a)))
+               (equal? top (caddr (view:state (interaction:snapshot a))))) '((0 . 3) #t)))
+         (edit:select! a '(1 . 1) '(1 . 1)) (painted paint:redraw!)
+         (let ([at (paint:window-screen-position w 1 1)])
+           (widget:pointer! '(pointer press primary () 2) (- (cdr at) 1) (- (car at) 1))
+           (widget:pointer! '(pointer release primary ()) (- (cdr at) 1) (- (car at) 1)))
+         (head:set-window-buffer! (head:popup) b)
+         (check 'ordinary-word-selection-and-read-only-popup-survive-hosting
+           (list (list-head (view:state (interaction:snapshot a)) 2)
+             (test:raises? (lambda () (edit:insert! (head:window-editor (head:popup)) "denied"))))
+           '(((1 . 4) (1 . 0)) #t))
+         (window:clear-pop-up!)
+         (edit:end-of-buffer!) (painted paint:redraw!)
+         (let ([bottom (car (view:state (interaction:snapshot a)))]
+               [top (head:window-top w)])
+           (head:goto! '(2 . 4)) (edit:beginning-of-line!) (painted paint:redraw!)
+           (check 'current-window-api-and-search-jumps-use-editor-reveal
+             (list bottom (> top 0) (car (view:state (interaction:snapshot a)))
+               (let ([p (paint:window-screen-position w 2 0)]) (<= 1 (car p) (head:window-size w))))
+             '((30 . 4) #t (2 . 0) #t)))
+         (head:checkpoint!)
+         (check 'ordinary-resume-rehosts-retained-editor-roots
+           (and (head:resume!)
+             (begin (painted paint:redraw!)
+               (for-all (lambda (id)
+                          (and (find (lambda (w) (equal? id (head:window-widget w))) (head:windows))
+                            (find (lambda (p) (equal? id (widget:frame-id (car p)))) (widget:shown)))) (list a c))) #t)
+           #t)))
      (test:finish! 'paint))
   (interaction-environment))

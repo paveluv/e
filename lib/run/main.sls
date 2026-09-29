@@ -261,7 +261,7 @@
             '("bindings" "blame" "buffet" "c-mode" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
               "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "render" "scheme-format"
-              "scheme-mode" "search" "style" "table" "terminal" "tty" "window"))))
+              "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "window"))))
       (load-config!)
       ;; Config loads the local view providers before resolving their plain
       ;; descriptors. An explicit file still opens in the restored selection,

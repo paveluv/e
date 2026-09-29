@@ -12,7 +12,8 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
              (prefix (head mode) mode:)
@@ -20,6 +21,7 @@
 
      (define bot '(agent conflict-test))
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
@@ -213,7 +215,7 @@
      (head:goto! '(0 . 2))
      (mode:register-indenter! "conflict-indent"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 4) '("R"))
+         (foreign! indented (text:make-span 0 0 0 4) '("R"))
          '(6)))
      (check 'indent-overlap-refuses (refused? indent-buffer!) #t)
      (check 'refused-indent-keeps-foreign-text (text-of indented) '("Rc"))

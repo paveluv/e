@@ -11,7 +11,8 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (apps search) search:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
@@ -20,6 +21,7 @@
 
      (define bot '(agent position-test))
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer! head:new-buffer!) name)])
@@ -65,7 +67,7 @@
      (check 'saved-point-follows-content
             (cons (head:buffer-spot-row b) (head:buffer-spot-col b)) '(2 . 1))
      (check 'saved-viewport-follows-content (head:buffer-spot-top b) 2)
-     (check 'mark-follows-content (bmark b) '(2 . 1))
+     (check 'completed-insertion-collapses-the-view-mark (bmark b) '(1 . 4))
      (head:before-frame!)
      (check 'queued-events-do-not-shift-again (head:point) '(1 . 4))
      (check 'published-point-matches-adopted-point
@@ -156,7 +158,7 @@
      (foreign! structural (text:make-span 0 0 0 0) '("S"))
      (replace-region-text! '(0 . 2) '(0 . 4) "x\ny")
      (check 'replacement-follows-rebased-end (head:point) '(1 . 1))
-     (check 'replacement-preserves-newer-prefix (text-of structural) '("SRQx" "ycdef"))
+     (check 'explicit-range-addresses-current-mirrored-text (text-of structural) '("SRx" "ybcdef"))
 
      ;; Formatter output and its point keep their original snapshot even
      ;; when the provider pumps a frame and an after-commit observer does too.
@@ -166,7 +168,7 @@
      (head:goto! '(0 . 2))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 0) '("Q"))
+         (foreign! formatted (text:make-span 0 0 0 0) '("Q"))
          (head:before-frame!)
          '("ABC" "tail")))
      (set! token
@@ -185,7 +187,7 @@
      (head:with-buffer conflict (mode:choose! "position-format"))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 1 0 2) '("R"))
+         (foreign! conflict (text:make-span 0 1 0 2) '("R"))
          (head:before-frame!)
          '("ABC")))
      (check 'format-refuses-even-after-head-adoption (refused? format-buffer!) #t)
@@ -200,7 +202,7 @@
      (head:goto! '(0 . 3))
      (mode:register-indenter! "position-format"
        (lambda (b from to)
-         (foreign! b (text:make-span 0 0 0 0) '("pre" ""))
+         (foreign! indented (text:make-span 0 0 0 0) '("pre" ""))
          (head:before-frame!)
          '(6 #f)))
      (indent-buffer!)
@@ -215,7 +217,7 @@
      (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
      (search:replace! "a" "ZZ")
      (check 'replace-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
-     (check 'replace-projects-preserved-point (head:point) '(0 . 2))
+     (check 'replace-projects-preserved-point (head:point) '(0 . 3))
 
      ;; Append is an insertion for shared and local buffers.  It cannot
      ;; reset shared history or make an empty local buffer zero lines long.

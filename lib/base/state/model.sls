@@ -3,7 +3,7 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! demanded? export ids import! metadata observe-demand! register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! demanded? export ids import! metadata observe-demand! reference? register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void gensym format)
           (prefix (core identity) identity:)
@@ -31,8 +31,13 @@
   (define (positive-integer? n) (and (natural? n) (> n 0)))
   (define (tagged? value tag)
     (and (list? value) (= (length value) 2) (eq? (car value) tag) (positive-integer? (cadr value))))
+
+  (edoc "Whether a value is a tagged model reference; this checks its spelling, not availability."
+        (value any "candidate identity") (returns boolean))
+  (define (reference? value) (and (tagged? value 'model) #t))
+
   (edoc-type model "a model reference, spelled (model number); operations validate existence and kind"
-    (predicate (lambda (v) (tagged? v 'model))) (portable #t) (within list)
+    (predicate reference?) (portable #t) (within list)
     (complete (lambda (partial) (map (lambda (row) (cons (car row) (symbol->string (cadr row)))) (metadata))))
     (write (lambda (id) (format "(model ~a)" (cadr id)))))
   (define (scope? value)
@@ -61,7 +66,7 @@
          (guard (ex [else #f])
            (and ((definition-accepts? definition) (datum:copy (field entry 'value))) #t))))
   (define (require-id id)
-    (unless (tagged? id 'model) (error 'model "expected (model positive-integer)" id))
+    (unless (reference? id) (error 'model "expected (model positive-integer)" id))
     (cadr id))
   (define (record-of id) (hashtable-ref (state-records data) (require-id id) #f))
   (define (read-records ids)

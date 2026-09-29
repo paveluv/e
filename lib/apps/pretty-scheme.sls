@@ -24,7 +24,10 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (service doc) doc:))
+          (prefix (head text-control) text-control:)
+          (prefix (head widget) widget:)
+          (prefix (service doc) doc:)
+          (prefix (state view) view:))
 
   ;;; Clusters ------------------------------------------------------------------
 
@@ -228,25 +231,17 @@
 
   ;;; The mode ------------------------------------------------------------------
 
-  (define (buffer-vector b)
-    ;; The buffer's lines as a vector of (shared) strings, through the
-    ;; public accessors.
-    (let* ([n (head:buffer-line-count b)]
-           [v (make-vector n)])
-      (do ([i 0 (+ i 1)]) ((= i n) v)
-        (vector-set! v i (head:buffer-line b i)))))
-
   (define cluster-row (mode:memoize-analysis analyze))
   (define depth-row (mode:memoize-analysis analyze-depth))
   (define rainbow-row (mode:memoize-analysis analyze-rainbow))
 
-  (define (rendered b row line)
-    (or (cluster-row b row) line))
+  (define (rendered source row line)
+    (or (cluster-row source row) line))
 
-  (define (depth-rendered b row line)
-    (or (depth-row b row) line))
+  (define (depth-rendered source row line)
+    (or (depth-row source row) line))
 
-  (define (rainbow-styles b row line)
+  (define (rainbow-styles source row line)
     ;; The scheme styles with the paren cells recolored by depth --
     ;; copied first: the base vector belongs to the style cache.
     (let ([styles (let ([s (scheme-styles line)])
@@ -259,7 +254,7 @@
       (for-each (lambda (o)
                   (when (< (car o) (vector-length styles))
                     (vector-set! styles (car o) (cdr o))))
-                (or (rainbow-row b row) '()))
+                (or (rainbow-row source row) '()))
       styles))
 
   (define (scheme-styles s)
@@ -274,11 +269,11 @@
     (member (mode:name-of (head:current-buffer))
             '("pretty-scheme-clusters" "pretty-scheme-depth")))
 
-  (define (innermost-opener)
+  (define (innermost-opener lines target)
     ;; The source character of the innermost construct still open at
     ;; point: #\( or #\[, or #f outside any.
-    (let ([target (head:point)] [stack '()])
-      (walk (buffer-vector (head:current-buffer))
+    (let ([stack '()])
+      (walk lines
         (lambda (r c ch)
           (when (or (< r (car target))
                     (and (= r (car target)) (< c (cdr target))))
@@ -289,20 +284,22 @@
       (and (pair? stack) (car stack))))
 
   (edoc "Close the innermost open construct as typing a round bracket does: with the bracket the construct opened with, whatever was typed."
+        (id (list-of model) "explicit editor view; omission uses the legacy window")
         (edits))
-  (define (close-round!) (close! #\)))
+  (define (close-round! . id) (close! #\) (and (pair? id) (car id))))
 
   (edoc "Close the innermost open construct as typing a square bracket does: with the bracket the construct opened with, whatever was typed."
+        (id (list-of model) "explicit editor view; omission uses the legacy window")
         (edits))
-  (define (close-square!) (close! #\]))
+  (define (close-square! . id) (close! #\] (and (pair? id) (car id))))
 
-  (define (close! typed)
-    ;; ")" and "]" both close the innermost open construct with the
-    ;; character the source opened it with, as the Scheme REPL does;
-    ;; run outside the modes, from M-x say, they insert themselves.
-    (if (pretty-buffer?)
-        (edit:insert-text! (string (if (eqv? (innermost-opener) #\[) #\] #\))))
-        (edit:insert-text! (string typed))))
+  (define (close! typed id)
+    (define (closing lines point)
+      (case (innermost-opener lines point) [(#\[) "]"] [(#\() ")"] [else (string typed)]))
+    (if id
+      (let-values ([(source d) (text-control:context id 'editor)])
+        (edit:insert! id (closing (text-control:basis-text source d) (car (view:state d)))))
+      (edit:insert-text! (closing (head:buffer-lines (head:current-buffer)) (head:point)))))
 
   (define (toggle-mode! name)
     (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
@@ -349,8 +346,8 @@
     ;; the closing brackets are the two hiding modes' own keys, bound in their
     ;; contexts: elsewhere a bracket types itself
     (for-each (lambda (context)
-                (keymap:bind-default! context ")" close-round!)
-                (keymap:bind-default! context "]" close-square!))
+                (keymap:bind-default! context ")" (keymap:call close-round! widget:target))
+                (keymap:bind-default! context "]" (keymap:call close-square! widget:target)))
               '(pretty-scheme-clusters pretty-scheme-depth))
     (paint:add-status-hint!
       (lambda ()

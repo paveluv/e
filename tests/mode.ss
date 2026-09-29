@@ -116,7 +116,7 @@
      (check 'local-chosen (mode:name-of local) "probe")
      (check 'local-chosen-is-not-auto (head:buffer-mode-auto local) #f)
      (check 'local-line-styles
-            (vector->list ((mode:line-styles local) "abc"))
+            (vector->list ((mode:line-styles (mode:of local)) "abc"))
             '(keyword keyword keyword))
      (head:with-buffer local (mode:choose! #f))
      (check 'local-mode-cleared (mode:of local) #f)
@@ -137,7 +137,7 @@
 
      ;; -- memoized line styles ------------------------------------------------
 
-     (define styles-of (mode:line-styles by-file))
+     (define styles-of (mode:line-styles (mode:of by-file)))
      (define line (string #\a #\b #\c))
      (set-box! styler-calls 0)
      (check 'line-styles (vector->list (styles-of line)) '(keyword keyword keyword))
@@ -146,13 +146,13 @@
      (check 'line-styles-memoized-by-identity (unbox styler-calls) 1)
      (styles-of (string #\a #\b #\c))
      (check 'line-styles-fresh-string (unbox styler-calls) 2)
-     (check 'plain-buffer-styles ((mode:line-styles plain) "abc") #f)
+     (check 'plain-buffer-styles ((mode:line-styles (mode:of plain)) "abc") #f)
 
      (mode:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
      (head:with-buffer plain (mode:choose! "raiser"))
-     (check 'raising-styler-paints-plain ((mode:line-styles plain) "abc") #f)
+     (check 'raising-styler-paints-plain ((mode:line-styles (mode:of plain)) "abc") #f)
 
-     ;; -- memoized whole-buffer analysis --------------------------------------
+     ;; Explicit text presentations share analysis without any head buffer.
 
      (define analyses (box 0))
      (define row-of
@@ -160,14 +160,17 @@
          (lambda (lines)
            (set-box! analyses (+ (unbox analyses) 1))
            (vector-map string-length lines))))
-     (head:buffer-lines-set! by-file (vector "one" "three"))
-     (check 'analysis-row (row-of by-file 1) 5)
-     (row-of by-file 0)
-     (check 'analysis-once-per-revision (unbox analyses) 1)
-     (check 'analysis-row-out-of-range (row-of by-file 7) #f)
-     (head:buffer-lines-set! by-file (vector "changed"))
-     (check 'analysis-after-edit (row-of by-file 0) 7)
-     (check 'analysis-reran (unbox analyses) 2)
+     (define analysis-lines (vector "one" "three"))
+     (define presentation (mode:source analysis-lines '((label . "first"))))
+     (define other-presentation (mode:source analysis-lines '((label . "second"))))
+     (check 'analysis-is-shared-across-explicit-presentations-with-independent-facts
+       (list (row-of presentation 1) (row-of other-presentation 0)
+         (row-of presentation -1) (row-of presentation 7) (unbox analyses)
+         (map (lambda (s) (mode:source-fact s 'label #f)) (list presentation other-presentation)))
+       '(5 3 #f #f 1 ("first" "second")))
+     (check 'new-text-is-analyzed-without-invalidating-retained-presentations
+       (list (row-of (mode:source (vector "changed") '()) 0) (row-of presentation 1) (unbox analyses))
+       '(7 5 2))
 
      ;; -- re-registration and refresh -----------------------------------------
 
@@ -191,7 +194,7 @@
      (define (parent! styler indenter)
        (parameterize ([kernel:registering-module 'derived-parent])
          (kernel:retract-module! 'derived-parent)
-         (mode:register! "parent" '(".parent") '("parentsh") styler indenter indenter)
+         (mode:register! "parent" '(".parent") '("parentsh") styler indenter indenter '(parent-fact))
          (mode:register-indenter! "parent" indenter)
          (mode:register-formatter! "parent" indenter)))
      (define (old-indent b from to) '(1))
@@ -199,9 +202,15 @@
      (parent! probe-styler old-indent)
      (mode:derive! "child" "parent" '(".child"))
      (mode:derive! "grandchild" "child" '(".grandchild"))
+     (mode:derive! "render-child" "parent" '() #f old-indent #f '(child-fact))
+     (mode:derive! "replaced-child" "parent" '() #f old-indent old-indent '(child-fact))
+     (check 'presentation-facts-follow-effective-callbacks-without-unused-parent-inputs
+       (map (lambda (name) (mode:required-facts (mode:find name)))
+         '("grandchild" "render-child" "replaced-child" "no-such-mode"))
+       '((parent-fact) (child-fact parent-fact) (child-fact) ()))
      (head:with-buffer plain (mode:choose! "grandchild"))
      (define derived-line (string-copy "abc"))
-     ((mode:line-styles plain) derived-line)
+     ((mode:line-styles (mode:of plain)) derived-line)
      (mode:indent-on-tab! "parent" #f)
      (check 'derivation-retains-own-detection-and-key-context
        (list (mode:name (mode:detect "x.parent" ""))
@@ -211,7 +220,7 @@
        '("parent" "child" () grandchild #t #f))
      (parent! (lambda (s) (make-vector (string-length s) 'string)) new-indent)
      (check 'parent-replacement-updates-presentation-operations-and-cached-styles
-       (list (vector->list ((mode:line-styles plain) derived-line))
+       (list (vector->list ((mode:line-styles (mode:of plain)) derived-line))
              (map (lambda (get) (eq? (get (mode:find "child")) new-indent))
                (list mode:render mode:row-styles))
              (eq? (mode:indenter "grandchild") new-indent)
@@ -275,7 +284,7 @@
              (mode:extensions (mode:find "parent"))) '(#t (".parent")))
      (kernel:retract-module! 'derived-parent)
      (check 'missing-parent-loses-presentation-but-keeps-child-and-local-overrides
-       (list (mode:name-of plain) ((mode:line-styles plain) derived-line)
+       (list (mode:name-of plain) ((mode:line-styles (mode:of plain)) derived-line)
              (mode:render (mode:find "child")) (eq? (mode:formatter "child") old-indent))
        '("grandchild" #f #f #t))
 
@@ -284,6 +293,16 @@
      ;; and take Tab as Scheme does, with a presentation of their own
      (scheme-mode:init!)
      (pretty-scheme:init!)
+     (let* ([lines '#("(define (f x)" "  (+ x 1))")]
+            [source (mode:source lines '())]
+            [rainbow (mode:row-styles (mode:find "pretty-scheme-rainbow"))]
+            [clusters (mode:render (mode:find "pretty-scheme-clusters"))])
+       (check 'pretty-modes-render-an-explicit-source-without-a-buffer
+         (list (string-length (clusters source 0 (vector-ref lines 0)))
+           (not (string=? (clusters source 0 (vector-ref lines 0)) (vector-ref lines 0)))
+           (vector-length (rainbow source 1 (vector-ref lines 1)))
+           (not (eq? (vector-ref (rainbow source 1 (vector-ref lines 1)) 2) 'plain)))
+         '(13 #t 10 #t)))
      (check 'pretty-scheme-modes-inherit-scheme-editing-with-their-own-display
        (list (eq? (mode:indenter "pretty-scheme-rainbow") (mode:indenter "scheme"))
              (eq? (mode:formatter "pretty-scheme-clusters") (mode:formatter "scheme"))
@@ -295,8 +314,8 @@
      ;; the closing brackets are the hiding modes' own keys, not the global map's
      (check 'pretty-schemes-closing-brackets-are-bound-in-its-hiding-modes-only
        (list (keymap:binding ")") (keymap:binding "]")
-             (let ([hit (keymap:resolved-binding 'pretty-scheme-clusters '(")"))]) (and hit (eq? (keymap:binding-action (cdr hit)) pretty-scheme:close-round!)))
-             (let ([hit (keymap:resolved-binding 'pretty-scheme-depth '("]"))]) (and hit (eq? (keymap:binding-action (cdr hit)) pretty-scheme:close-square!)))
+             (let ([hit (keymap:resolved-binding 'pretty-scheme-clusters '(")"))]) (and hit (eq? (keymap:call-action-procedure (keymap:binding-action (cdr hit))) pretty-scheme:close-round!)))
+             (let ([hit (keymap:resolved-binding 'pretty-scheme-depth '("]"))]) (and hit (eq? (keymap:call-action-procedure (keymap:binding-action (cdr hit))) pretty-scheme:close-square!)))
              (keymap:resolved-binding 'pretty-scheme-rainbow '(")")))
        '(#f #f #t #t #f))
 

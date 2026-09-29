@@ -24,7 +24,8 @@
              (prefix (foundation string) string:)
              (prefix (core kernel) kernel:)
              (prefix (head dispatch) dispatch:)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
@@ -36,6 +37,7 @@
              (only (chezscheme) format get-process-id mkdir delete-file delete-directory))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (delta-log:init!)
      (define dir (format "/tmp/e-reload-~a" (get-process-id)))
@@ -197,7 +199,6 @@
      ;; a replacement typed as a backspace and a character is one batch, and
      ;; the reload conflicts it whole: the disk's side stands, both sides are
      ;; listed, and keeping mine writes the typed side
-     (edit-init!)
      (define path2 (string-append dir "/typed.txt"))
      (file:write! path2 (file:lines "abcdefgh\n") #t)
      (visit-file! path2)

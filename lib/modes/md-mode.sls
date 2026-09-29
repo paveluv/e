@@ -155,10 +155,10 @@
 
   (define md-row (mode:memoize-analysis analyze))
 
-  (define (md-row-styles b row line)
+  (define (md-row-styles source row line)
     ;; Inside a fence the line is Scheme; elsewhere #f falls back to
     ;; the cached per-line markdown styles.
-    (and (eq? (md-row b row) 'code)
+    (and (eq? (md-row source row) 'code)
          (let ([scheme (mode:find "scheme")])
            (and scheme ((mode:styles scheme) line)))))
 

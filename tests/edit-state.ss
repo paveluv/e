@@ -11,7 +11,8 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:)
              (prefix (core property) property:)
              (prefix (foundation text) text:)
@@ -106,6 +107,7 @@
      (define (utc-nanos)
        (let ([now (current-time 'time-utc)])
          (+ (* (time-second now) 1000000000) (time-nanosecond now))))
+     (widget:init!) (edit:init!) (window:init!)
      (define time-steps
        '((insert . #t) (same . #f) (metadata . #f) (save . #f) (newline . #t)
          (edit . #t) (undo . #t) (redo . #t) (reset . #t) (reset . #f)

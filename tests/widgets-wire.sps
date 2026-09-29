@@ -1,3 +1,47 @@
+;; Editor views use the same journal across real clients. Warm navigation
+;; and preparation read only mirrored text, even through mode callbacks.
+(let* ([source (head-read a '(store:create! head:ui-actor "editor wire" '("first" "second" "third") '((internal . #t))))]
+       [left (head-read a `(let ([id (edit:create-view! head:ui-actor ,source '())])
+                             (widget:mount! id 'editor-wire) (widget:prepare! id 12 3) id))]
+       [right (head-read b `(let ([id (edit:create-view! head:ui-actor ,source '())])
+                              (widget:mount! id 'editor-wire) (widget:prepare! id 20 3) id))])
+  (test:check 'editor-warm-navigation-and-resize-send-no-wire-data
+    (head-read a
+      `(let ([io (lambda () (call-with-input-file "/proc/self/io"
+                              (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
+                                                         (if (eq? k 'wchar:) v (loop)))))))])
+         (let ([before (io)])
+           (do ([i 0 (+ i 1)]) ((= i 40))
+             (edit:move! ',left (if (even? i) 'down 'up))
+             (edit:page! ',left (if (even? i) 1 -1) 1)
+             (widget:prepare! ',left (+ 12 (modulo i 3)) 3))
+           (- (io) before)))) 0)
+  (head-read a `(begin (edit:select! ',left '(0 . 5) '(0 . 5)) (edit:insert! ',left "!") #t))
+  (head-wait 'editor-mirror-reaches-second-head b
+    (lambda () (equal? (head-read b `(vector-ref (text-source:lines (text-source:lookup ,source)) 0)) "first!")))
+  (head-read b `(begin (edit:select! ',right '(1 . 6) '(1 . 6)) (edit:insert! ',right "?") #t))
+  (test:check 'editor-actor-undo-retains-the-other-head-edit
+    (head-read a `(begin (edit:undo! ',left)
+                    (let-values ([(lines revision) (store:snapshot ,source)]) lines))) '#("first" "second?" "third"))
+  (test:check 'editor-client-has-no-shadow-head-buffer
+    (head-read b `(list (not (head:buffer-of-store-id ,source)) (car (view:state (interaction:snapshot ',right)))
+                    (keymap:action-text edit:move!))) '(#t (1 . 7) "edit:move!"))
+  (test:check 'ordinary-editor-host-has-no-navigation-wire-cost
+    (head-read a
+      `(let* ([w (head:current-window)] [was (head:current-buffer)]
+              [b (head:adopt-store-buffer! ,source)]
+              [io (lambda () (call-with-input-file "/proc/self/io"
+                               (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
+                                                          (if (eq? k 'wchar:) v (loop)))))))])
+         (head:show-buffer! b)
+         (let* ([root (head:window-widget w)] [before (io)])
+           (do ([i 0 (+ i 1)]) ((= i 40))
+             (dispatch:input! root (list 'key (if (even? i) "DOWN" "UP")))
+             (widget:prepare! root (+ 12 (modulo i 3)) 3))
+           (let ([written (- (io) before)]) (head:show-buffer! was) written)))) 0)
+  (head-read a `(begin (widget:unmount! ',left) #t))
+  (head-read b `(begin (widget:unmount! ',right) #t)))
+
 ;; Included in the existing two-real-head scenario. Run the shipped example.
 (let* ([example (string-append (current-directory) "/examples/widgets.e")]
        [opened (begin

@@ -790,7 +790,8 @@ The public Scheme API exposes read-only inspection through `head:current-buffer`
 `head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `edit:buffer-text`,
 `edit:buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
 `head:buffer-read-only`, `head:buffer-flags`, `mode:name-of`,
-`head:buffer-line`, `head:buffer-line-count`, and `mode:line-styles`.
+`head:buffer-line`, and `head:buffer-line-count`. To obtain the buffer's cached
+line styler, use `(mode:line-styles (mode:of b))`.
 
 `(head:buffer-modified-at b)` returns the last content-change time as an exact
 integer of UTC nanoseconds, or `#f` before a change has been recorded.

@@ -31,7 +31,7 @@
     buffer-base-set! buffer-conflicted buffer-fact
     buffer-fact-set! buffer-facts-set! buffer-file
     buffer-file-set! buffer-flags buffer-line buffer-line-count
-    buffer-lines buffer-lines-raw-set! buffer-lines-set!
+    buffer-lines buffer-lines-set!
     buffer-mark-col buffer-mark-col-set! buffer-mark-row
     buffer-mark-row-set! buffer-marked buffer-marked-set!
     buffer-mode-auto buffer-mode-auto-set! buffer-modified
@@ -44,7 +44,7 @@
     buffer-spot-row-set! buffer-spot-top buffer-spot-top-set!
     buffer-stamp buffer-stamp-set! buffer-state buffer-status
     buffer-sticky-lines buffer-store-id buffer-store-rev
-    buffer-store-rev-set! buffer-trailing buffer-trailing-set!
+    buffer-trailing buffer-trailing-set!
     buffer-window-size buffer-wrap-set! buffer? buffers
     bump-buffer-revision! buttons-width call-uninterrupted
     call-with-display-update call-with-interrupt checkpoint!
@@ -67,7 +67,7 @@
     layout-split? line-numbers make-app make-buffer
     make-interrupted make-layout-split make-window mark
     min-window-lines mouse-position new-buffer!
-    new-local-buffer! open-directory! open-file! point popup
+    new-local-buffer! note-ui-edit! open-directory! open-file! point popup
     popup-buttons popup-default-rows popup-limit popup-rows
     popup? prepare-quit previous-window quit! quit-command!
     quitting? read-key-event read-paste read-rendition
@@ -84,9 +84,9 @@
     set-directory-opener! set-dividers! set-drag!
     set-file-opener! set-frame-hook! set-full-capture!
     set-last-command! set-layout-root! set-mouse-handler!
-    set-mouse-position! set-pending-paste! set-quit-command!
+    set-mouse-position! set-pending-paste! set-point-mover! set-quit-command!
     set-repaint-hook! set-review-viewer! set-root!
-    set-window-buffer! set-windows! show-buffer! show-popup!
+    set-window-buffer! set-window-mounter! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
     store-history! store-reset!
     store-resolve! store-resolve-picks! store-rewrite!
@@ -96,7 +96,7 @@
     weighted-first window window-at window-auto-scrollbar-set!
     window-buffer window-buffer-set! window-button-at
     window-buttons window-buttons-width window-content-width
-    window-goal window-goal-set! window-index window-left
+    window-editor window-goal window-goal-set! window-index window-left
     window-left-set! window-line window-line-number-width
     window-line-numbers window-line-numbers-set!
     window-line-numbers? window-lines window-numbered
@@ -104,7 +104,7 @@
     window-rendition window-scrollbar-column window-scrollbar?
     window-size window-size-set! window-status-actions-set!
     window-text window-top window-top-set! window-topseg
-    window-topseg-set! window-width window-width-set!
+    window-topseg-set! window-widget window-width window-width-set!
     window-wrap window-wrap-set! window-xoff window-xoff-set!
     window? windows with-buffer with-window)
   (import (rnrs)
@@ -124,19 +124,22 @@
           (prefix (foundation edoc) edoc:)
           (prefix (foundation text) text:)
           (prefix (head checkpoint) checkpoint:)
+          (prefix (head editor-state) editor-state:)
+          (prefix (head interaction) interaction:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
+          (prefix (head text-source) text-source:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (only (sys sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (sys tty) tty:))
 
   ;;; The records ----------------------------------------------------------------
-
-  (define delta-log-limit 256)
 
   ;; A store buffer caches immutable text and reads its facts from the
   ;; store.  A local buffer has no store id: its text and local-facts
@@ -144,7 +147,6 @@
   ;; toggles belong to this seat in either case.
   (edoc "A buffer as this seat sees it: a cache of a store buffer's text plus per-seat presentation, or a local buffer of its own."
         (name string "the label: a shared buffer's cached, a local one's own")
-        (lines vector "the text, an immutable vector of lines")
         (revision integer "the seat's repaint counter")
         (mark-row integer "the mark's row")
         (mark-col integer "the mark's column")
@@ -154,27 +156,23 @@
         (spot-top integer "the top row when last displayed")
         (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
         (store-rev (or integer #f) "the store revision the lines last agreed with")
-        (local-rev integer "the local content revision")
-        (changes any "the bounded chain of adopted revision links")
+        (lines any "constructor text; retained internally as a shared text-source mirror")
         (local-facts hashtable "a local buffer's facts")
         (rendition (or (record frame) #f) "the cached cell projection")
         (constructor name lines revision mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
   (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
-            (mutable lines buffer-text buffer-lines-raw-set!)
+            (immutable lines buffer-source)
             (mutable revision)      ; the seat's repaint counter
-            (mutable mark-row) (mutable mark-col)
-            (mutable marked buffer-marked buffer-marked-raw-set!)
+            (mutable mark-row buffer-mark-row-raw buffer-mark-row-raw-set!)
+            (mutable mark-col buffer-mark-col-raw buffer-mark-col-raw-set!)
+            (mutable marked buffer-marked-raw buffer-marked-raw-set!)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
             store-id (mutable store-rev)
-            ;; Local content has its own revision, independent of repaint.
-            ;; Either owner retains bounded links between adopted revisions, so
-            ;; derived views can follow exactly the text this head sees.
-            (mutable local-rev) (mutable changes)
             local-facts
             (mutable rendition buffer-rendition-raw buffer-rendition-set!))
     ;; The public constructor's shape: each record gets private facts and
@@ -183,9 +181,11 @@
       (lambda (new)
         (lambda (name lines revision mark-row mark-col marked
                   spot-row spot-col spot-top store-id store-rev)
-          (new name lines revision mark-row mark-col marked
+          (new name (text-source:make store-id lines (or store-rev 0)) revision mark-row mark-col marked
                spot-row spot-col spot-top store-id store-rev
-               0 #f (make-eq-hashtable) #f)))))
+               (make-eq-hashtable) #f)))))
+
+  (define (buffer-text b) (text-source:lines (buffer-source b)))
 
   (edoc "A window: a view of a buffer at a place in the layout."
         (index integer "the number at the left of its status line")
@@ -204,7 +204,8 @@
         (following? boolean "whether it follows its shared app")
         (view any "a local app's presentation of its rows, or #f")
         (full-capture? boolean "whether every key goes to the app")
-        (status-actions list "the painted status-line controls"))
+        (status-actions list "the painted status-line controls")
+        (editors list "retained document/editor identities; no copied interaction state"))
   (define-record-type (window %make-window window?)
     (fields
       ;; the window's number, shown at the left of its status line: 0
@@ -212,12 +213,13 @@
       ;; live window holds -- a closed window's number is reused, so
       ;; the numbers on screen stay small.  (window n) finds it.
       index
-      (mutable buffer) (mutable top)
+      (mutable buffer) (mutable top window-top-raw window-top-raw-set!)
       ;; a soft-wrapping window may start mid-line: the first
       ;; visible segment of the top line (0 elsewhere)
       (mutable topseg)
       (mutable left)
-      (mutable prow) (mutable pcol)
+      (mutable prow window-prow-raw window-prow-raw-set!)
+      (mutable pcol window-pcol-raw window-pcol-raw-set!)
       ;; Text height is layout output; proportions belong to the split tree.
       (mutable size)
       ;; horizontal band geometry, written by the layout: the
@@ -226,7 +228,7 @@
       (mutable width)
       ;; soft-wrap long lines onto continuation rows instead of
       ;; scrolling horizontally
-      (mutable wrap)
+      (mutable wrap window-wrap-raw window-wrap-raw-set!)
       ;; line numbers beside an edit buffer's text: #t, #f, or default for
       ;; the head's line-numbers parameter
       (mutable line-numbers)
@@ -240,9 +242,177 @@
       ;; Input preference and painted status controls belong to this view,
       ;; never to the shared process. Only the preference is checkpointed.
       (mutable full-capture?)
-      (mutable status-actions)))
+      (mutable status-actions)
+      (mutable editors)))
 
   (define-record-type view (fields owner source lines frame))
+
+  ;; The outer host retains identities, never another copy of an editor's
+  ;; selection. Raw window coordinates serve only the remaining local apps
+  ;; and process surfaces until those consumers become widgets.
+
+  (edoc "The editor view retained for this window's current shared document, or false for a legacy app. Reading it performs no acquisition."
+        (w window "outer placement") (returns (or model #f)))
+  (define (window-editor w)
+    (let* ([b (window-buffer w)] [entry (assv (buffer-store-id b) (window-editors w))])
+      ;; Backend surfaces retain their existing host until their renderer
+      ;; becomes a widget. They are not ordinary document editor bodies.
+      (and entry (interaction:snapshot (cdr entry)) (not (render:header (buffer-rendition b))) (cdr entry))))
+
+  (edoc "The widget root hosted by a window, or false for a legacy app. This reads placement identity without acquiring a source or querying the base."
+        (w window "outer placement") (returns (or model #f)))
+  (define (window-widget w)
+    (or (and window-mounter (window-editor w))
+      (let ([b (window-buffer w)])
+        (and (not (buffer-store-id b)) (buffer-fact b 'widget-id #f)))))
+
+  (define window-mounter #f)
+
+  (edoc "Install the outer host's widget attachment callback, called after a placement has its document and retained view identity."
+        (proc procedure "window -> unspecified"))
+  (define (set-window-mounter! proc)
+    (set! window-mounter proc)
+    (for-each proc the-windows))
+
+  (define (ensure-window-editor! w)
+    (let* ([b (window-buffer w)] [source (buffer-store-id b)]
+           [entry (assv source (window-editors w))] [old (and entry (cdr entry))])
+      (if (not (and source (not (app-facts b)) (not (render:header (buffer-rendition b)))))
+        (let ([d (and old (interaction:snapshot old))])
+          (when d (interaction:release! ui-actor old (view:generation d))))
+        (let ([id (or old (editor-state:create! ui-actor source
+                            (cons (cons 'wrap (window-wrap-raw w)) (if (popup? w) '((read-only . #t)) '()))))])
+          (let-values ([(status d) (interaction:claim! ui-actor id)])
+            (unless (eq? status 'applied) (error 'ensure-window-editor! "cannot claim editor" id status))
+            (unless old
+              (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-editor the-current) the-current)]
+                     [state (and peer (window-editor-state peer))])
+                (interaction:set-state! ui-actor id (content-revision b)
+                  (list (cons (window-prow-raw w) (window-pcol-raw w))
+                    (if state (cadr state) (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
+                    (cons (window-top-raw w) 0) (if state (cadddr state) (buffer-marked-raw b)))))
+              (window-editors-set! w (cons (cons source id) (window-editors w)))))))))
+
+  (define (window-editor-state w)
+    (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+      (and d
+        (let* ([b (window-buffer w)] [state (editor-state:state d)]
+               [points (editor-state:points (buffer-source b) (content-revision b) d)])
+          (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))
+            (list (cadddr state)))))))
+
+  (edoc "The text wrapping preference of this placement: default follows the source and head preference. Editor preferences belong to the retained view."
+        (w window "outer placement") (returns (or boolean (one-of default))))
+  (define (window-wrap w)
+    (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+      (if d (cond [(assq 'wrap (view:options d)) => cdr] [else 'default]) (window-wrap-raw w))))
+
+  (edoc "Set a placement's wrapping preference; an editor view is configured through its current ownership lease."
+        (w window "outer placement") (setting (or boolean (one-of default)) "wrapping policy"))
+  (define (window-wrap-set! w setting)
+    (unless (memq setting '(default #t #f)) (error 'window-wrap-set! "expected default, #t or #f" setting))
+    (unless (eq? setting (window-wrap w))
+      (let ([id (window-editor w)])
+        (if (not id) (window-wrap-raw-set! w setting)
+          (begin
+            (interaction:flush!)
+            (let* ([d (interaction:snapshot id)] [packet (model:snapshots (list id))]
+                   [record (caddr (car (cadr packet)))]
+                   [options (cons (cons 'wrap setting) (remp (lambda (p) (eq? (car p) 'wrap)) (view:options d)))])
+              (unless (and (equal? id (window-editor w)) record)
+                (error 'window-wrap-set! "editor placement changed"))
+              (let-values ([(status rows)
+                            (interaction:arrange! ui-actor
+                              (list (list id (cdr (assq 'revision record)) (view:children d) options))
+                              (list (list id (view:generation d))))])
+                (unless (eq? status 'applied) (error 'window-wrap-set! "editor preference changed" status)))))))))
+
+  (define (editor-references? entries)
+    (and (list? entries)
+         (for-all (lambda (p) (and (pair? p) (integer? (car p)) (exact? (car p)) (> (car p) 0)
+                                   (model:reference? (cdr p)))) entries)
+         (= (length entries) (length (fold-left (lambda (xs p) (if (memv (car p) xs) xs (cons (car p) xs))) '() entries)))))
+
+  (define (restore-window-editors! w entries)
+    (window-editors-set! w
+      (filter (lambda (p)
+                (let* ([id (cdr p)] [d (or (interaction:snapshot id) (view:snapshot id))])
+                  (and d (eq? (view:kind d) 'editor) (= (view:schema d) 1)
+                    (equal? (view:source d) (list 'buffer (car p)))
+                    (buffer-of-store-id (car p))
+                    (or (not (view:owner d)) (equal? (view:owner d) ui-actor))))) entries)))
+
+  (define (update-window-editor! w index value)
+    (let ([state (window-editor-state w)])
+      (interaction:set-state! ui-actor (window-editor w) (content-revision (window-buffer w))
+        (map (lambda (old i) (if (= index i) value old)) state '(0 1 2 3)))))
+
+
+  (edoc "The current editor caret's row, or the legacy app's point row."
+        (w window "outer host") (returns integer))
+  (define (window-prow w) (let ([s (window-editor-state w)]) (if s (caar s) (window-prow-raw w))))
+
+  (edoc "The current editor caret's character column, or the legacy app's point column."
+        (w window "outer host") (returns integer))
+  (define (window-pcol w) (let ([s (window-editor-state w)]) (if s (cdar s) (window-pcol-raw w))))
+
+  (edoc "The current editor's logical top row, or the legacy app's viewport row."
+        (w window "outer host") (returns integer))
+  (define (window-top w) (let ([s (window-editor-state w)]) (if s (car (caddr s)) (window-top-raw w))))
+
+  (edoc "Set the caret row through the retained editor view; legacy apps keep their local point."
+        (w window "outer host")
+        (row integer "logical coordinate"))
+  (define (window-prow-set! w row)
+    (if (window-editor w) (update-window-editor! w 0 (cons row (window-pcol w))) (window-prow-raw-set! w row)))
+
+  (edoc "Set the caret column through the retained editor view; legacy apps keep their local point."
+        (w window "outer host")
+        (col integer "logical coordinate"))
+  (define (window-pcol-set! w col)
+    (if (window-editor w) (update-window-editor! w 0 (cons (window-prow w) col)) (window-pcol-raw-set! w col)))
+
+  (edoc "Set the logical top row through the retained editor view; legacy apps keep their local viewport."
+        (w window "outer host")
+        (row integer "logical coordinate"))
+  (define (window-top-set! w row)
+    (if (window-editor w) (update-window-editor! w 2 (cons row 0)) (window-top-raw-set! w row)))
+
+  ;; Compatibility for commands whose receiver is still a catalogue buffer.
+  ;; Their mark addresses the selected placement, never another window's mark.
+  (define (buffer-editor-window b)
+    (let ([w (if (and the-current (eq? b (window-buffer the-current))) the-current
+               (find (lambda (w) (eq? b (window-buffer w))) the-windows))])
+      (and w (window-editor w) w)))
+
+  (edoc "The mark row of the selected placement of this document, or its legacy saved mark."
+        (b buffer "outer host") (returns integer))
+  (define (buffer-mark-row b)
+    (let ([w (buffer-editor-window b)]) (if w (caadr (window-editor-state w)) (buffer-mark-row-raw b))))
+
+  (edoc "The mark character column of the selected placement of this document, or its legacy saved mark."
+        (b buffer "outer host") (returns integer))
+  (define (buffer-mark-col b)
+    (let ([w (buffer-editor-window b)]) (if w (cdadr (window-editor-state w)) (buffer-mark-col-raw b))))
+
+  (edoc "Whether the selected placement of this document has an active mark, or its legacy mark activity."
+        (b buffer "outer host") (returns boolean))
+  (define (buffer-marked b)
+    (let ([w (buffer-editor-window b)]) (if w (cadddr (window-editor-state w)) (buffer-marked-raw b))))
+
+  (edoc "Set the mark row in the selected placement of this document."
+        (b buffer "outer host")
+        (row integer "logical coordinate"))
+  (define (buffer-mark-row-set! b row)
+    (let ([w (buffer-editor-window b)])
+      (if w (update-window-editor! w 1 (cons row (buffer-mark-col b))) (buffer-mark-row-raw-set! b row))))
+
+  (edoc "Set the mark character column in the selected placement of this document."
+        (b buffer "outer host")
+        (col integer "logical coordinate"))
+  (define (buffer-mark-col-set! b col)
+    (let ([w (buffer-editor-window b)])
+      (if w (update-window-editor! w 1 (cons (buffer-mark-row b) col)) (buffer-mark-col-raw-set! b col))))
 
   (edoc "A window's app view while it is still the one its buffer would build, else #f, dropping the stale one."
         (w window "the window")
@@ -400,6 +570,15 @@
   (edoc "Replace the seat's window list."
         (ws (list-of window) "the windows"))
   (define (set-windows! ws)
+    (let ([retained (apply append (map window-editors ws))])
+      (for-each
+        (lambda (w)
+          (unless (memq w ws)
+            (for-each (lambda (p)
+                        (unless (exists (lambda (kept) (equal? (cdr kept) (cdr p))) retained)
+                          (let ([d (interaction:snapshot (cdr p))])
+                            (when d (interaction:release! ui-actor (cdr p) (view:generation d))))))
+              (window-editors w)))) the-windows))
     (set! the-windows ws))
 
   (edoc "The root of the layout tree."
@@ -429,12 +608,13 @@
         (xoff integer "the first screen column")
         (width integer "the width in columns")
         (wrap (or boolean (one-of default)) "whether long lines wrap")
-        (returns window))
+        (returns window) (effects internal))
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
-               size xoff width wrap 'default #f #t #f #f '())])
-      (window-buffer-set! w (placed-buffer! w buffer the-windows)) w))
+               size xoff width wrap 'default #f #t #f #f '() '())])
+      (window-buffer-set! w (placed-buffer! w buffer the-windows))
+      (ensure-window-editor! w) (when window-mounter (window-mounter w)) w))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -537,8 +717,15 @@
     ;; Point belongs to the selected window, for apps and text alike.
     (let ([w the-current])
       (follow-app! w #f)
-      (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
-      (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w))))))))
+      (unless (point-mover w (cons (max 0 (car p)) (max 0 (cdr p))))
+        (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
+        (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w)))))))))
+
+  (define point-mover (lambda (w p) #f))
+
+  (edoc "Install the default host's logical caret mover. Return true after moving an editor view, false to use a legacy app's point adapter."
+        (proc procedure "(window position) -> handled?"))
+  (define (set-point-mover! proc) (set! point-mover proc))
 
   (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
         (returns directory))
@@ -629,7 +816,7 @@
     ;; pop-up stays the root split's second leaf whatever tree arrives
     (set! the-root (if (memq the-popup (layout-leaves root)) root
                        (make-layout-split 'below root the-popup 1 1)))
-    (set! the-windows (layout-leaves the-root)))
+    (set-windows! (layout-leaves the-root)))
 
   (edoc "Replace a node of the layout by another and adopt the result."
         (old (or window (record layout-split)) "the node to replace")
@@ -1720,59 +1907,22 @@
 
   (edoc "The revision of this head's adopted text source, independent of its display rendition."
         (b buffer "text source") (returns integer))
-  (define (content-revision b)
-    (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
+  (define (content-revision b) (text-source:revision (buffer-source b)))
 
   (define (adopt-text! b text revision changes)
-    ;; Keep only actual deltas ending at the adopted snapshot.  A reset or
-    ;; incomplete chain cuts provenance; it is never inferred from a diff.
-    ;; Links carry all steps between two revisions. A reload can jump
-    ;; revisions, and one bridge can contain several steps at the same
-    ;; destination revision; neither is a single numbered delta.
-    (cond
-      [(not changes) (buffer-changes-set! b #f)]
-      [(> revision (content-revision b))
-       (let loop ([from (content-revision b)] [rest changes] [log (or (buffer-changes b) '())])
-         (cond
-           [(null? rest)
-            (let ([log (if (< from revision) (cons (list from revision) log) log)])
-              (buffer-changes-set! b (if (> (length log) delta-log-limit) (list-head log delta-log-limit) log)))]
-           [else
-            (let ([to (caar rest)])
-              (let take ([rest rest] [steps '()])
-                (if (and (pair? rest) (= (caar rest) to))
-                    (take (cdr rest) (cons (car rest) steps))
-                    (loop to rest (cons (cons* from to (reverse steps)) log)))))]))])
-    ;; No old surface can describe newly adopted text, even if a callback
-    ;; asks for rendition before the next demanded frame has been prepared.
-    (buffer-rendition-set! b #f)
-    (buffer-lines-raw-set! b text)
-    (if (buffer-store-id b)
-        (buffer-store-rev-set! b revision)
-        (buffer-local-rev-set! b revision))
-    (bump-buffer-revision! b)
-    (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b)))
+    (let ([basis (content-revision b)])
+      (buffer-rendition-set! b #f)
+      ;; Mark this legacy projection adopted before notifying other readers.
+      (when (buffer-store-id b) (buffer-store-rev-set! b revision))
+      (text-source:adopt! (buffer-source b) basis text revision changes)
+      (bump-buffer-revision! b)
+      (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b))))
 
-  (edoc "A buffer's text, revision and changes since a content revision, ending at this head's cached source: (values text revision changes)."
-        (b buffer "the buffer")
-        (basis (or integer #f) "the earlier content revision, or #f"))
+  (edoc "The adopted text, revision and exact changes since a basis. This legacy presentation adapter never fetches."
+        (b buffer "the buffer") (basis (or integer #f) "earlier revision"))
   (define (snapshot-since b basis)
-    ;; Like store:snapshot-since, but ends at this head's cached source,
-    ;; including for local buffers.  Read on the head's pump: it does not
-    ;; pull newer store text or run callbacks.  #f omits an earlier basis.
-    (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0)))
-      (error 'snapshot-since "expected a content revision or #f" basis))
-    (let* ([text (buffer-lines b)] [revision (content-revision b)]
-           [log (buffer-changes b)]
-           [changes
-            (and basis (<= basis revision)
-                 (let scan ([at revision] [links (or log '())] [out '()])
-                   (cond [(= at basis) (map (lambda (e) (list (car e) (cadr e) (caddr e))) out)]
-                         [(or (< at basis) (null? links)) #f]
-                         [(= (cadar links) at)
-                          (scan (caar links) (cdr links) (append (cddar links) out))]
-                         [else #f])))])
-      (values text revision changes)))
+    (let-values ([(text revision changes) (text-source:snapshot (buffer-source b) basis)])
+      (values (buffer-lines b) revision changes)))
 
   (edoc "Make a buffer's cache the store's current text, by reference, and refit its positions and rendition."
         (b buffer "the buffer"))
@@ -1885,7 +2035,7 @@
     (unless (if delta (equal? (text:delta-removed delta) (text:delta-inserted delta))
                 (equal? (buffer-text b) text))
       (note-local-modification! b))
-    (let ([revision (+ (buffer-local-rev b) 1)])
+    (let ([revision (+ (content-revision b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
   (edoc "Replace a buffer's baseline, loading or rereading, with new lines and facts, optionally only while a reviewed state still matches; the accepted revision, or #f."
@@ -1950,21 +2100,8 @@
            [basis (caddr source)]
            [proposal (delay (call-with-values (lambda () (text:apply-edit old span replacement)) list))])
       (define (project-placements actual before after)
-        (map
-          (lambda (entry)
-            (let ([wanted (cdr entry)])
-              (cons (car entry)
-                    (fold-left text:rebase-position
-                      (case wanted
-                        [(start) (text:span-start (text:delta-span actual))]
-                        [(end) (text:delta-new-end actual)]
-                        [else
-                         (let ([plan (force proposal)])
-                           (text:rebase-result-position
-                             (clamp-text-position (car plan) wanted)
-                             (cadr plan) actual before))])
-                      after))))
-          placements))
+        (map cons (map car placements)
+          (text-source:project-positions old span replacement actual before after (map cdr placements))))
       (check-placements! b placements)
       (store:validate-edit-context context)
       (unless (and (eqv? (cadr source) (buffer-store-id b))
@@ -1972,34 +2109,13 @@
         (raise (condition (kernel:make-refusal)
                           (make-message-condition "Edit not applied: the source buffer changed"))))
       (if (buffer-store-id b)
-          (let-values ([(status info)
-                        (store:edit-with-snapshot! ui-actor (buffer-store-id b)
-                                                   basis span replacement context 'any)])
-            (if (eq? status 'applied)
-                (let* ([committed (car info)]
-                       [changes (caddr info)]
-                       [backwards (reverse changes)]
-                       [actual (caddar backwards)]
-                       [before (map caddr (reverse (cdr backwards)))])
-                  (let-values ([(text revision after)
-                                (store:snapshot-since (buffer-store-id b) committed)])
-                    (adopt-snapshot! b basis text revision
-                                     (and after (append changes after))
-                                     (if after (project-placements actual before (map caddr after)) '()))
-                    (note-ui-edit! b committed)))
-                (let ([reason (case info
-                                [(read-only) "the buffer is read-only"]
-                                [(property-changed) "the buffer's reviewed facts changed"]
-                                [(revision-changed) "the reviewed text changed"]
-                                [(overlap) "another edit overlaps this change"]
-                                [else "the edit's revision is no longer available"])])
-                  (guard (ex [else (void)]) (sync-store-buffer! b))
-                  (guard (ex [else (void)])
-                    (log:add! 'head:store-edit!
-                      (format "edit refused in ~s: ~a" (buffer-name b) reason)))
-                  (raise (condition (kernel:make-refusal)
-                                    (make-message-condition
-                                      (format "Edit not applied: ~a" reason)))))))
+          (let-values ([(text revision changes placed committed)
+                        (guard (ex [(kernel:refusal? ex)
+                                    (guard (ex [else (void)]) (sync-store-buffer! b)) (raise ex)])
+                          (text-source:edit! ui-actor source span replacement context (map cdr placements)))])
+            (adopt-snapshot! b basis text revision changes
+              (if (null? placed) '() (map cons (map car placements) placed)))
+            (note-ui-edit! (buffer-store-id b) committed))
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
             (when (and (property:context-revision context)
@@ -2086,8 +2202,7 @@
       [(not (buffer-store-id b)) (values 'nothing #f)]
       [else
        (let-values ([(status detail)
-                     (guard (ex [else (values 'blocked 'store-unavailable)])
-                       (store:history-step! ui-actor (buffer-store-id b) direction scope 'any))])
+                     (text-source:history! ui-actor (buffer-store-id b) direction scope)])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))
@@ -2341,13 +2456,16 @@
         b (min (buffer-spot-col b)
                (string-length (render:line-ref v (buffer-spot-row b)))))
       (buffer-spot-top-set! b (min (buffer-spot-top b) last))
-      (buffer-mark-row-set! b (min (buffer-mark-row b) last))
-      (buffer-mark-col-set!
-        b (min (buffer-mark-col b)
-               (string-length (render:line-ref v (buffer-mark-row b)))))
+      (if window-mounter
+        (begin
+          (buffer-mark-row-raw-set! b (min (buffer-mark-row-raw b) last))
+          (buffer-mark-col-raw-set! b (min (buffer-mark-col-raw b) (string-length (render:line-ref v (buffer-mark-row-raw b))))))
+        (begin
+          (buffer-mark-row-set! b (min (buffer-mark-row b) last))
+          (buffer-mark-col-set! b (min (buffer-mark-col b) (string-length (render:line-ref v (buffer-mark-row b)))))))
       (for-each
         (lambda (w)
-          (when (eq? (window-buffer w) b)
+          (when (and (eq? (window-buffer w) b) (not (and window-mounter (window-editor w))))
             (window-prow-set! w (min (window-prow w) last))
             (window-pcol-set!
               w (min (window-pcol w)
@@ -2364,20 +2482,22 @@
   ;; when a burst goes stale, and at shutdown.
   (define ui-audit-bursts '())  ; (id . #(name first-rev last-rev n time))
 
-  (define (note-ui-edit! b revision)
+  (edoc "Record an admitted UI edit for the displayed document's coalesced audit. Drafts without a document catalogue entry do not create audit messages."
+        (id integer "source document") (revision (or integer #f) "committed revision, false for no text change"))
+  (define (note-ui-edit! id revision)
     (guard (ex [else (void)])
-      (let* ([id (buffer-store-id b)]
-             [rev revision]
+      (let* ([b (buffer-of-store-id id)] [rev revision]
              [hit (assv id ui-audit-bursts)]
              [now (time-second (current-time 'time-monotonic))])
-        (if hit
+        (when (and b rev)
+          (if hit
             (let ([v (cdr hit)])
               (vector-set! v 2 rev)
               (vector-set! v 3 (+ (vector-ref v 3) 1))
               (vector-set! v 4 now))
             (set! ui-audit-bursts
               (cons (cons id (vector (buffer-name b) rev rev 1 now))
-                    ui-audit-bursts))))))
+                    ui-audit-bursts)))))))
 
   (edoc "Send this head's batched audit records: a buffer id's, the stale ones, or all."
         (which (or integer (one-of stale all)) "which records"))
@@ -2410,7 +2530,7 @@
   (define (rebase-buffer-positions! b delta)
     (for-each
       (lambda (w)
-        (when (eq? (window-buffer w) b)
+        (when (and (eq? (window-buffer w) b) (not (window-editor w)))
           (let ([p (text:rebase-position
                      (cons (window-prow w) (window-pcol w)) delta)])
             (window-prow-set! w (car p))
@@ -2424,9 +2544,9 @@
       (buffer-spot-col-set! b (cdr p)))
     (buffer-spot-top-set!
       b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta)))
-    (let ([p (text:rebase-position (cons (buffer-mark-row b) (buffer-mark-col b)) delta)])
-      (buffer-mark-row-set! b (car p))
-      (buffer-mark-col-set! b (cdr p))))
+    (let ([p (text:rebase-position (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)) delta)])
+      (buffer-mark-row-raw-set! b (car p))
+      (buffer-mark-col-raw-set! b (cdr p))))
 
   ;; A live grid may have committed text before its matching surface. Keep
   ;; one retry id, not the intermediate text or an event backlog. Surface
@@ -2454,6 +2574,8 @@
                   (set! deferred-store-ids (cons id deferred-store-ids))))
               (begin
                 (when advance?
+                  (when (or (not complete?) (exists (lambda (entry) (not (equal? (cadr entry) ui-actor))) deltas))
+                    (flush-ui-audit! (buffer-store-id b)))
                   (when deltas
                     (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas)
                     (rebase-published-marks! (buffer-store-id b) deltas revision))
@@ -2473,6 +2595,13 @@
                               (buffer-name b) old revision))
                     (request-repaint!)))))))))
 
+  (define source-observer
+    (text-source:observe!
+      (lambda (source basis text revision changes)
+        (let ([b (buffer-of-store-id (text-source:id source))])
+          (when (and b (> revision (buffer-store-rev b)))
+            (adopt-snapshot! b basis text revision changes '()))))))
+
   (define (sync-store-buffer! b)
     ;; Event arrival is only a wakeup.  Reading text separately from
     ;; its deltas can adopt a newer revision than the anchors follow.
@@ -2480,7 +2609,6 @@
     ;; replay a partial or out-of-order chain across a missing basis.
     (let ([basis (buffer-store-rev b)])
       (let-values ([(text revision changes) (store:snapshot-since (buffer-store-id b) basis)])
-        (when (> revision basis) (flush-ui-audit! (buffer-store-id b)))
         (adopt-snapshot! b basis text revision changes '()))))
 
   (edoc "Adopt the store's pending changes, and those of given buffer ids, before a frame."
@@ -2506,19 +2634,21 @@
               (guard (ex [else (void)])
                 (let ([b (buffer-of-store-id id)])
                   (if (store:visible? ui-actor id)
-                    (let ([b (or b (adopt-store-buffer! id))])
-                      (when b
-                        (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
-                        (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
-                          (unless (string=? name (buffer-name b))
-                            (buffer-name-raw-set! b name)
-                            (reserve-store-name! (store:buffer-name id))))
-                        (sync-store-buffer! b)
-                        (when (or (not pending) (memv id changed-ids)
+                    (if (and (not b) (store:property id 'internal #f))
+                      (text-source:open! ui-actor id)
+                      (let ([b (or b (adopt-store-buffer! id))])
+                        (when b
+                          (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
+                          (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
+                            (unless (string=? name (buffer-name b))
+                              (buffer-name-raw-set! b name)
+                              (reserve-store-name! (store:buffer-name id))))
+                          (sync-store-buffer! b)
+                          (when (or (not pending) (memv id changed-ids)
                                   (cond [(assv id pending) => cdr] [else #f]))
-                          (bump-buffer-revision! b)
-                          (request-repaint!))))
-                    (when b (forget-buffer! b))))))
+                            (bump-buffer-revision! b)
+                            (request-repaint!)))))
+                    (begin (text-source:forget! id) (when b (forget-buffer! b)))))))
             (let dedupe ([ids ids] [seen '()])
               (cond [(null? ids) (reverse seen)]
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
@@ -2655,7 +2785,7 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 4 selected-number layout buffers).
+  ;; A checkpoint is (screen 5 selected-number layout buffers).
   ;; Version 1 had no capture preference; restore those windows with partial
   ;; capture. Version 2 kept line numbers per buffer; a window restored from
   ;; it follows the default. Splits retain their ordinary orientation/weights;
@@ -2705,7 +2835,11 @@
                                 [(placement-window place) => (lambda (w) (cons 'top (window-index w)))]
                                 [else place])
                       (cdr entry))))
-             (buffer-placements b))])
+             (filter (lambda (entry)
+                       (let ([w (placement-window (car entry))])
+                         (not (and w (window-editor w)))))
+               (cons (cons 'mark (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
+                 (remp (lambda (entry) (eq? (car entry) 'mark)) (buffer-placements b)))))])
       (let-values ([(reference positions)
                     (cond
                       [(buffer-store-id b) => (lambda (id) (values (list 'shared id (buffer-store-rev b)) positions))]
@@ -2727,7 +2861,7 @@
                                          (list-sort (lambda (x y) (string<? (symbol->string (car x)) (symbol->string (car y)))) facts)
                                          text)
                                    positions)))])])
-        (list reference (buffer-marked b) positions))))
+        (list reference (buffer-marked-raw b) positions))))
 
   ;; An idle checkpoint (a wake frame: foreign edits moved this head's
   ;; positions) goes at most once a second: resume projects the saved
@@ -2765,11 +2899,11 @@
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-full-capture? node) (window-line-numbers node))
+                    (window-full-capture? node) (window-line-numbers node) (window-editors node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 5 (window-index the-current) layout (map capture-buffer the-buffers))])
       (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
@@ -2797,22 +2931,10 @@
           (let-values ([(lines revision changes) (store:snapshot-since id basis)])
             (let ([positions (project-resume-positions positions lines changes)])
               (adopt-snapshot! b basis lines revision changes '())
-              ;; A newly adopted source already has current text, but views
-              ;; may retain older logical selections. Keep their actual
-              ;; provenance locally without replaying edits over that text.
+              ;; Keep the complete saved-view bridge in the common mirror.
               (when (and basis changes)
-                (let-values ([(text now retained) (snapshot-since b basis)]
-                             [(unused to after) (snapshot-since b revision)])
-                  (when (and (not retained) after)
-                    (let loop ([from basis] [rest (append changes after)] [out '()])
-                      (if (null? rest)
-                        (let ([out (if (< from now) (cons (list from now) out) out)])
-                          (buffer-changes-set! b (if (> (length out) delta-log-limit) (list-head out delta-log-limit) out)))
-                        (let ([revision (caar rest)])
-                          (let group ([rest rest] [steps '()])
-                            (if (and (pair? rest) (= revision (caar rest)))
-                              (group (cdr rest) (cons (car rest) steps))
-                              (loop revision rest (cons (cons* from revision (reverse steps)) out))))))))))
+                (let-values ([(text now after) (snapshot-since b revision)])
+                  (when after (text-source:adopt! (buffer-source b) basis text now (append changes after)))))
               (let-values ([(lines revision changes) (snapshot-since b revision)])
                 (values b (project-resume-positions positions lines changes))))))))
 
@@ -2851,7 +2973,7 @@
   (define (restore-screen! state)
     (apply
       (lambda (tag version selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4)))
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4 5)))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
@@ -2861,7 +2983,7 @@
                                                      (cons (car entry) (cddr entry))
                                                      entry)))
                                entries))]
-               [indices '()]
+               [indices '()] [editor-placements '()]
                [natural? (lambda (n) (and (integer? n) (exact? n) (>= n 0)))]
                ;; Window 0 is the pop-up now. A screen saved before it
                ;; numbered an ordinary window 0: that window takes the
@@ -2882,16 +3004,24 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following? full? numbers)
+                       (lambda (tag index slot topseg left wrap following? full? numbers editors)
                          (unless (and (for-all natural? (list index slot topseg left))
                                       (< slot (vector-length buffers)) (not (memv index indices))
-                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f)))
+                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f))
+                                      (editor-references? editors)
+                                      (let ([used (apply append (map (lambda (p) (map cdr (cdr p))) editor-placements))])
+                                        (let loop ([entries editors] [seen used])
+                                          (or (null? entries)
+                                            (and (not (member (cdar entries) seen))
+                                              (loop (cdr entries) (cons (cdar entries) seen)))))))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
-                         (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '()))
-                       (cond [(= version 1) (append node '(#f default))]
-                             [(= version 2) (append node '(default))]
+                         (let ([w (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
+                                    0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '() '())])
+                           (set! editor-placements (cons (cons w editors) editor-placements)) w))
+                       (cond [(= version 1) (append node '(#f default ()))]
+                             [(= version 2) (append node '(default ()))]
+                             [(< version 5) (append node '(()))]
                              [else node]))]
                     [(split)
                      (apply
@@ -2946,6 +3076,10 @@
                                 (apply-placements! b (list entry))
                                 (when seg (window-topseg-set! w seg)))) (vector-ref entry 4))
                   (clamp-buffer-positions! b)))) buffers)
+          (for-each (lambda (entry)
+                      (let ([w (car entry)])
+                        (restore-window-editors! w (cdr entry))
+                        (ensure-window-editor! w) (when window-mounter (window-mounter w)))) editor-placements)
           (request-repaint!)
           #t)) state))
 
@@ -3040,6 +3174,7 @@
     (set! frame-deadline #f)
     (sync-foreign-edits!)
     (refresh-renditions!)
+    (for-each (lambda (w) (ensure-window-editor! w) (when window-mounter (window-mounter w))) the-windows)
     (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
@@ -3103,7 +3238,8 @@
         (b buffer "the buffer")
         (marked? boolean "whether the mark is active"))
   (define (buffer-marked-set! b marked?)
-    (buffer-marked-raw-set! b (and marked? (buffer-selectable? b))))
+    (let ([w (buffer-editor-window b)] [value (and marked? (buffer-selectable? b))])
+      (if w (update-window-editor! w 3 value) (buffer-marked-raw-set! b value))))
 
   ;; Mouse context is head-owned; edit reexports these same parameters.
   ;; Position is a one-based viewport cell pair, buffer position is an
@@ -3703,14 +3839,22 @@
       (unless (eq? old b)
         (window-view-set! w #f)
         (window-status-actions-set! w '())
-        (buffer-spot-row-set! old (window-prow w))
-        (buffer-spot-col-set! old (window-pcol w))
-        (buffer-spot-top-set! old (window-top w))
+        (unless (window-editor w)
+          (buffer-spot-row-set! old (window-prow w))
+          (buffer-spot-col-set! old (window-pcol w))
+          (buffer-spot-top-set! old (window-top w)))
+        (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+          (when d (interaction:release! ui-actor id (view:generation d))))
         (window-buffer-set! w b)
         (window-following?-set! w #t)
-        (window-prow-set! w (buffer-spot-row b))
-        (window-pcol-set! w (buffer-spot-col b))
-        (window-top-set! w (buffer-spot-top b))
+        (window-prow-raw-set! w (buffer-spot-row b))
+        (window-pcol-raw-set! w (buffer-spot-col b))
+        (window-top-raw-set! w (buffer-spot-top b))
+        (ensure-window-editor! w)
+        (unless (window-editor w)
+          (window-prow-set! w (buffer-spot-row b))
+          (window-pcol-set! w (buffer-spot-col b))
+          (window-top-set! w (buffer-spot-top b)))
         (when (eq? w the-popup)
           ;; a buffer sent to the pop-up, by a link say, shows it at its
           ;; default size; its own placeholder hides it again
@@ -3721,6 +3865,7 @@
         (window-left-set! w 0)
         (clamp-buffer-positions! b))
       (refresh-buffer-rendition! b)
+      (when window-mounter (window-mounter w))
       ;; Identity, geometry, and rendition agree before a callback can switch.
       (unless (eq? old b) (request-repaint!))))
 
@@ -3922,6 +4067,12 @@
                     identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------
+
+  (define interaction-started
+    (begin
+      (interaction:start! ui-actor wake-main!)
+      (kernel:call-with-runtime-registrations
+        (lambda () (add-publication-hook! (lambda (fence?) (if fence? (interaction:flush!) (interaction:publish!))))))))
 
   ;; Subscribe before taking the initial inventory: writes during the read
   ;; are in the inventory, the queue, or both. Deduplicate at first adoption.

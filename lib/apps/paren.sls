@@ -1,20 +1,17 @@
 ;; paren.sls -- matching-bracket highlighting for the e editor.
 ;;
 ;; An e extension module: the library (paren), loaded at startup by the
-;; kernel, which calls init!.  Registers a highlighter (the painter's
-;; generic context-highlighting hook) that marks the bracket at point
+;; kernel, which calls init!. Registers a pure mode highlighter that marks the bracket at point
 ;; and its partner, as in Emacs's show-paren-mode: the opener point
 ;; sits on, or the closer just before it.  Brackets inside strings and
-;; comments don't count, per the buffer's syntax styles; in a buffer
+;; comments don't count, per the source's syntax styles; in text
 ;; without a mode every bracket counts.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps paren)
   (export init! (rename (matching-paren-style matching-style)))
   (import (chezscheme)
-          (prefix (head head) head:)
           (prefix (head mode) mode:)
-          (prefix (head paint) paint:)
           (prefix (head style) style:)
           (prefix (service doc) doc:))
 
@@ -43,15 +40,16 @@
                                      (style:set! 'matching-paren (cadr hit))
                                      name))))
 
-  (define (scan-paren b styles-of start-row start-col dir)
+  (define (scan-paren lines styles-of start-row start-col dir)
     ;; Find the bracket balancing the one at (start-row, start-col),
     ;; scanning forward (dir 1) or backward (dir -1).  The scan is bounded
     ;; so pathological buffers stay responsive; #f when nothing balances.
-    (define count (head:buffer-line-count b))
-    (define (line r) (head:buffer-line b r))
+    (define count (vector-length lines))
+    (define (line r) (vector-ref lines r))
+    (define pairs (if (> dir 0) '((#\( . #\)) (#\[ . #\]) (#\{ . #\})) '((#\) . #\() (#\] . #\[) (#\} . #\{))))
     (let walk ([row start-row] [col start-col]
                [styles (styles-of (line start-row))]
-               [depth 0] [budget 50000])
+               [stack '()] [budget 50000])
       (and (> budget 0)
            (if (or (< col 0) (>= col (string-length (line row))))
                (let ([row (+ row dir)])
@@ -59,26 +57,25 @@
                       (walk row
                             (if (> dir 0) 0 (- (string-length (line row)) 1))
                             (styles-of (line row))
-                            depth (- budget 1))))
+                            stack (- budget 1))))
                (let* ([c (string-ref (line row) col)]
-                      [delta (if (or (not styles)
-                                     (eq? (vector-ref styles col) 'delimiter))
-                                 (cond [(memv c '(#\( #\[ #\{)) dir]
-                                       [(memv c '(#\) #\] #\})) (- dir)]
-                                       [else 0])
-                                 0)])
-                 (if (and (not (= delta 0)) (= (+ depth delta) 0))
-                     (cons row col)
-                     (walk row (+ col dir) styles (+ depth delta) (- budget 1))))))))
+                      [delimiter? (or (not styles) (eq? (vector-ref styles col) 'delimiter))]
+                      [opener (and delimiter? (assv c pairs))])
+                 (cond
+                   [opener (walk row (+ col dir) styles (cons (cdr opener) stack) (- budget 1))]
+                   [(and delimiter? (memv c '(#\( #\[ #\{ #\) #\] #\})))
+                    (and (pair? stack) (char=? c (car stack))
+                      (if (null? (cdr stack)) (cons row col)
+                        (walk row (+ col dir) styles (cdr stack) (- budget 1))))]
+                   [else (walk row (+ col dir) styles stack (- budget 1))]))))))
 
-  (define (paren-highlights)
-    ;; The bracket at point and its partner, as (row start end) ranges;
+  (define (paren-highlights source mode pt)
+    ;; The bracket at point and its partner, as logical span/face pairs;
     ;; empty when neither applies.
-    (let* ([b (head:current-buffer)]
-           [styles-of (mode:line-styles b)]
-           [pt (head:point)]
+    (let* ([lines (mode:source-lines source)]
+           [styles-of (mode:line-styles mode)]
            [row (car pt)]
-           [line (head:buffer-line b row)]
+           [line (vector-ref lines row)]
            [styles (styles-of line)])
       (define (bracket-at col kinds)
         (and (>= col 0) (< col (string-length line))
@@ -88,15 +85,15 @@
       (let* ([closer (bracket-at (- (cdr pt) 1) '(#\) #\] #\}))]
              [opener (and (not closer) (bracket-at (cdr pt) '(#\( #\[ #\{)))]
              [col (or closer opener)]
-             [match (and col (scan-paren b styles-of row col (if closer -1 1)))])
+             [match (and col (scan-paren lines styles-of row col (if closer -1 1)))])
         (if match
-            (list (list row col (+ col 1) 'matching-paren)
-                  (list (car match) (cdr match) (+ (cdr match) 1) 'matching-paren))
+            (list (list (list row col row (+ col 1)) 'matching-paren)
+                  (list (list (car match) (cdr match) (car match) (+ (cdr match) 1)) 'matching-paren))
             '()))))
 
   (edoc "Install the matching-bracket highlighter and its describe entry.")
   (define (init!)
-    (paint:add-highlighter! paren-highlights)
+    (mode:add-highlighter! paren-highlights)
     (doc:register!
       '(((paren:matching-style)
          (("parameter" . "(paren:matching-style [name])")) "symbol"

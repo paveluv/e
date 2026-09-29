@@ -404,7 +404,7 @@
                         (hits (+ hit m) (cons (list (cons row hit) (cons row (+ hit m)) to) out))
                         (rows (+ row 1) out)))))))))
     (when (= m 0) (error 'replace! "empty search string"))
-    (let ([r (edit:current-region)] [basis (head:edit-basis (head:current-buffer))])
+    (let ([r (edit:current-region)] [basis (edit:basis)])
       (edit:call-as-one-edit!
         (format "(search:replace! ~s ~s)" from to)
         (lambda () (edit:rewrite-regions! basis (occurrences r))))))

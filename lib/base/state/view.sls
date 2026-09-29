@@ -14,9 +14,11 @@
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
     (rename (descriptor:state state)) tree upgrade)
-  (import (chezscheme) (prefix (core descriptor) descriptor:)
+  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (state connection) connection:) (prefix (state model) model:))
-  (define registration (model:register-kind! 'widget-view 2 descriptor:valid?))
+  (define registration
+    (kernel:call-with-runtime-registrations
+      (lambda () (model:register-kind! 'widget-view 2 descriptor:valid?))))
   (define (field r k) (cdr (assq k r)))
   (define (value r) (field r 'value))
   (define (supported? r) (and r (eq? (field r 'kind) 'widget-view) (= (field r 'schema) 2)

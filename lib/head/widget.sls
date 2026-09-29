@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
-          frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
+          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
           host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
@@ -15,6 +15,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head spinner) spinner:)
+          (prefix (head text-source) text-source:)
           (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -120,7 +121,7 @@
 
   (edoc "Register a head definition owned by the defining module; reject unknown and duplicate fields."
         (kind symbol "widget kind") (schema integer "positive version")
-        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures"))
+        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures. Contexts may be a list or a read-only (id descriptor) provider using already acquired state; never perform I/O there."))
   (define (register! kind schema definition)
     (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0) (list? definition)
               (let loop ([rest definition] [seen '()])
@@ -133,7 +134,8 @@
                                        (or (null? rest)
                                          (and (pair? (car rest)) (symbol? (caar rest)) (procedure? (cdar rest))
                                            (not (memq (caar rest) names)) (check (cdr rest) (cons (caar rest) names))))))]
-                        [(contexts capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
+                        [(contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
+                        [(capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
@@ -156,12 +158,12 @@
         [(not d) (values #f #f)]
         [(not id) (values #t #f)]
         [(eq? (car id) 'buffer)
-         (let ([b (head:buffer-of-store-id (cadr id))])
-           (if b
-             (let ([rev (head:content-revision b)])
+         (let ([source (text-source:lookup (cadr id))])
+           (if source
+             (let ([rev (text-source:revision source)])
                (unless (and (node-mirrored n) (= rev (caar (node-mirrored n))))
                  (node-mirrored-set! n
-                   (cons (cons rev #t) (list (cons 'id id) (cons 'revision rev) (cons 'value (head:buffer-lines b))))))
+                   (cons (cons rev #t) (list (cons 'id id) (cons 'revision rev) (cons 'value (text-source:lines source))))))
                (values #t (cdr (node-mirrored n))))
              (values #f #f)))]
         [else
@@ -250,8 +252,8 @@
                    [d (and r (eq? (field r 'kind #f) 'widget-view) (interaction:snapshot id))])
               (if d (map (lambda (p) (if (eq? (car p) 'value) (cons 'value d) p)) r) r)))
           (define (text id)
-            (let ([b (head:buffer-of-store-id (cadr id))])
-              (and b (list (cons 'id id) (cons 'revision (head:content-revision b)) (cons 'value (head:buffer-lines b))))))
+            (let ([source (text-source:lookup (cadr id))])
+              (and source (list (cons 'id id) (cons 'revision (text-source:revision source)) (cons 'value (text-source:lines source))))))
           (let* ([r (get id)] [ds (and r (port:describe (port:key r)))]
                  [inputs (if ds
                            (map (lambda (d)
@@ -310,11 +312,8 @@
             (let ([fresh (model:subscribe! ids (lambda (notice) (changed)))] [old (car tokens)])
               (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
           (for-each (lambda (p)
-                      (let ([b (head:adopt-store-buffer! (car p))])
-                        (when (and b (cdr p))
-                          (let-values ([(text revision changes) (head:snapshot-since b (cdr p))])
-                            (unless changes (head:resume-source! (car p) (cdr p) '())))))) texts)
-          (for-each (lambda (id) (head:adopt-store-buffer! (cadr id))) (cadddr (connection:snapshot endpoints)))))
+                      (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
+          (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (connection:snapshot endpoints)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
                        (when (cadr tokens) (connection:unsubscribe! (cadr tokens))) (raise ex)])
         (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (acquire) (changed))))
@@ -553,6 +552,11 @@
             (loop (cdr parts) (+ char (caar parts)) (+ cell (cdar parts)))))
         styles)))
 
+  (edoc "Read an immutable prepared row of backend cell styles, or false outside the frame. Borrowed rows must not be mutated."
+        (frame any "widget frame") (row integer "row index") (returns any))
+  (define (frame-cell-styles frame row)
+    (and (<= 0 row) (< row (vector-length (frame-cells frame))) (vector-ref (frame-cells frame) row)))
+
   (edoc "The focused view's caret within this frame, in root backend coordinates, or #f when clipped or unavailable."
         (frame any "root frame") (returns any))
   (define (caret frame)
@@ -775,14 +779,17 @@
                        (let* ([id (car rest)] [d (read-view id)] [entry (definition d)]
                               [full? (eq? (field entry 'capture 'partial) 'full)]
                               [yield? (and (not full?) (member key (field entry 'yield '())))]
-                              [contexts (if yield? '() (field entry 'contexts '()))]
+                              [provider (field entry 'contexts '())]
+                              [contexts (if yield? '() (if (procedure? provider) (provider id d) provider))]
                               [item (list id (if (or (equal? id root) (equal? id barrier)) (append contexts '(widget-host)) contexts)
                                       (or full? (equal? id barrier)))])
+                         (unless (and (list? contexts) (for-all symbol? contexts))
+                           (error 'key-scopes "expected context symbols" id contexts))
                          (if (equal? id barrier) (reverse (cons item out)) (loop (cdr rest) (cons item out))))))]
            [captures (filter (lambda (scope) (pair? (cadr scope)))
                        (map (lambda (id) (list id (field (definition (read-view id)) 'capture-contexts '()) #f)) path))]
            [basis (map (lambda (id) (let ([d (read-view id)]) (list id (and d (view:generation d)) (definition d)))) path)])
-      (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis) (append captures normal) focus)))
+      (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis normal captures) (append captures normal) focus)))
 
   (edoc "Offer committed text or an unbound normalized key to the focused path; a full capture or modal boundary stops bubbling."
         (root model "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
@@ -850,7 +857,7 @@
                     (or scroll? (and definition (assq 'scroll (field definition 'actions '())))))))))))))
 
   (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
-        (event list "(pointer phase button modifiers) or (scroll dx dy units)")
+        (event list "(pointer phase button modifiers [click-count]) or (scroll dx dy units)")
         (x integer "screen x, zero based") (y integer "screen y, zero based") (returns any))
   (define (pointer! event x y)
     (reconcile-input!)
@@ -894,7 +901,9 @@
                           (when target
                             (unless (parameterize ([pointer-event event])
                                       (send! (frame-id target)
-                                        (append event (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))) target))
+                                        (append (list-head event 4)
+                                          (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))
+                                          (cddddr event)) target))
                               (loop (cdr ids))))))))))))
           (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'release) (eq? (caddr event) capture-button))
             (set! pointer-capture #f) (set! capture-button #f))

@@ -18,7 +18,7 @@
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
+     (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
@@ -39,7 +39,7 @@
            (let* ([r (collection:summary (query))] [v (get r 'value)] [s (selection)])
              (and (eq? (get v 'status) 'ready) s (= (cadr s) (get v 'generation))
                   (equal? (get v 'input-filter)
-                    (head:buffer-line (head:buffer-of-store-id (cadr (view:source (interaction:snapshot (entry))))) 0))
+                    (store:line (cadr (view:source (interaction:snapshot (entry)))) 0))
                   (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
        (table:select! (table) (catalogue-host:reference b)) (settle!))
@@ -97,10 +97,12 @@
        (let ([width (paint:screen-cols)])
          (define (italic-text width)
            (paint:set-screen-cols! width) (paint:window-layout) (head:before-frame!)
-           (let* ([b (head:window-buffer (head:popup))] [styler (mode:row-styles (mode:of b))])
+           (let* ([b (head:window-buffer (head:popup))] [m (mode:of b)] [styler (mode:row-styles m)]
+                  [source (mode:source (head:buffer-lines b)
+                            (map (lambda (k) (cons k (head:buffer-fact b k #f))) (mode:required-facts m)))])
              (apply string-append
                (map (lambda (line row)
-                      (let ([styles (styler b row line)])
+                      (let ([styles (styler source row line)])
                         (if (not styles) ""
                           (list->string
                             (filter (lambda (c) (not (char-whitespace? c)))

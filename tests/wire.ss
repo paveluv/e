@@ -1930,7 +1930,7 @@
                    (head-read a `(begin (entry:undo! ',left) (entry:select! ',right 3 1) (widget:focus! ',root-view ',right) #t))
                    (head-wait 'nested-entry-shared-undo a (lambda () (head-sees? a "remote seed")))
                    (test:check 'nested-entry-keeps-shared-text-and-independent-selection
-                     (head-read a `(list (head:buffer-lines (head:buffer-of-store-id ,source))
+                     (head-read a `(list (text-source:lines (text-source:lookup ,source))
                                          (view:state (interaction:snapshot ',right))
                                          (equal? (view:state (interaction:snapshot ',left)) (view:state (interaction:snapshot ',right)))))
                      '(#("remote seed") ((0 . 3) (0 . 1)) #f))
@@ -1950,10 +1950,10 @@
                      (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
                    (test:check 'nested-resume-restores-focus-and-logical-selection
                      (head-read a `(list (view:focus (interaction:snapshot ',root-view)) (view:state (interaction:snapshot ',right))
-                                         (head:buffer-lines (head:buffer-of-store-id ,source))))
+                                         (text-source:lines (text-source:lookup ,source))))
                      (list right '((0 . 3) (0 . 1)) '#("off remote seed")))
                    (test:check 'resumed-entry-retains-its-selection-basis-through-detached-edits
-                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (head:buffer-lines (head:buffer-of-store-id ,source)) 0)))
+                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (text-source:lines (text-source:lookup ,source)) 0)))
                      "off rXote seed")
                    (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (head:buffer-fact b 'widget-id #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
                                         (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
@@ -2712,11 +2712,10 @@
                          ;; in that modal loop must not checkpoint its chrome.
                          ;; The first Tab only counts matches; the second lists them.
                          (head-send! again "\x1b;xhead:window-\t\t")
-                         ;; Narrow status lines prioritize the page count;
-                         ;; observe a candidate rather than the view label --
-                         ;; the first one, since hint rows shorten a page.
+                         ;; Observe the completion status, not a particular
+                         ;; candidate: public API/docs change the page breaks.
                          (head-wait 'completions-before-loss again
-                           (lambda () (head-sees? again "head:window-prow")))
+                           (lambda () (head-sees? again "matches of symbol")))
                          (vector-set! again 3 "")
                          (rpc head 'properties plain '((fixture-wake . #t)))
                          (head-wait 'wake-inside-prompt again

@@ -68,12 +68,13 @@
         (key string "the key event")
         (returns boolean))
   (define (global-key! key)
-    (let ([hit (keymap:resolved-binding 'global (list key))])
-      (and hit
-           (begin
-             (head:set-current-keys! (list key))
-             (run-key-action! (keymap:binding-action (cdr hit)) #f)
-             #t))))
+    (keymap:call-with-command! (lambda ()
+                                 (let ([hit (keymap:resolved-binding 'global (list key))])
+                                   (and hit
+                                     (begin
+                                       (head:set-current-keys! (list key))
+                                       (run-key-action! (keymap:binding-action (cdr hit)) #f)
+                                       #t))))))
 
   ;; One chord for this pump, shared by ordinary dispatch and prompt readers.
   ;; Its receiver owns every suffix; stale/invalid suffixes are never replayed.
@@ -131,24 +132,25 @@
         (root list "active root") (event list "(key token text-fallback) or (text string source)")
         (contexts (list-of symbol) "outer host keymaps") (returns boolean))
   (define (input! root event . contexts)
-    (widget:cancel! root 'keyboard)
-    (case (car event)
-      [(text) (set! chord #f) (widget:input! root event)]
-      [(key)
-       (let* ([key (cadr event)] [routing (widget:key-scopes! root key)]
-              [reply (resolve! (car routing) (append (cadr routing) (if (null? contexts) '() (list (list 'editor contexts #f)))) key)]
-              [receiver (cadr reply)] [sequence (list-ref reply 3)])
-         (case (car reply)
-           [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) #t]
-           [(command)
-            (head:set-current-keys! sequence)
-            (if (eq? receiver 'editor) (run-key-action! (caddr reply) #f)
-              (parameterize ([widget:target receiver])
-                (if (symbol? (caddr reply)) (widget:act! receiver (caddr reply)) (run-key-action! (caddr reply) #f)))) #t]
-           [(cancelled invalid) (echo:set-text! "Key sequence cancelled") #t]
-           [else
-            (or (widget:input! root event) (eq? (car reply) 'blocked))]))]
-      [else (error 'input! "expected key or text input" event)]))
+    (keymap:call-with-command! (lambda ()
+                                 (widget:cancel! root 'keyboard)
+                                 (case (car event)
+                                   [(text) (set! chord #f) (widget:input! root event)]
+                                   [(key)
+                                    (let* ([key (cadr event)] [routing (widget:key-scopes! root key)]
+                                           [reply (resolve! (car routing) (append (cadr routing) (if (null? contexts) '() (list (list 'editor contexts #f)))) key)]
+                                           [receiver (cadr reply)] [sequence (list-ref reply 3)])
+                                      (case (car reply)
+                                        [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) #t]
+                                        [(command)
+                                         (head:set-current-keys! sequence)
+                                         (if (eq? receiver 'editor) (run-key-action! (caddr reply) #f)
+                                           (parameterize ([widget:target receiver])
+                                             (if (symbol? (caddr reply)) (widget:act! receiver (caddr reply)) (run-key-action! (caddr reply) #f)))) #t]
+                                        [(cancelled invalid) (echo:set-text! "Key sequence cancelled") #t]
+                                        [else
+                                         (or (widget:input! root event) (eq? (car reply) 'blocked))]))]
+                                   [else (error 'input! "expected key or text input" event)]))))
 
   (define (context-claims? event)
     ;; Whether the current buffer's mode context binds event, starts a
@@ -172,29 +174,30 @@
         (input (or char string any) "a character, an event string, or eof")
   )
   (define (handle-key! input)
-    ;; One key from the pump: a character or an event string, eof
-    ;; when the terminal is gone.  The current buffer's app has first
-    ;; refusal of every key its mode context leaves unbound; what it
-    ;; declines, and what the context claims, goes through the keymaps.
-    (let ([event (cond [(eof-object? input) input]
-                       [(char? input) (tty:character-event input)]
-                       [else input])])
-      (cond
-        [(eof-object? event) (cancel!) (head:quit!)]
-        [(string=? event "MOUSE-HANDLED")
-         (cancel!)
-         (echo:settle!)
-         (void)]
-        [(head:buffer-fact (head:current-buffer) 'widget-id #f)
-         => (lambda (root)
-              (echo:settle!)
-              (input! root (if (string=? event "PASTE") (list 'text (head:read-paste) 'paste)
-                             (list 'key event (let ([c (tty:key-event-character event)]) (and c (string c))))) 'global))]
-        [else
-         (echo:settle!)
-         (if (and (not (pending?)) (not (context-claims? event))
-                  (head:dispatch-app-event! event))
-             (head:set-last-command! #f)
-             (dispatch-sequence! event))])))
+    (keymap:call-with-command! (lambda ()
+                                 ;; One key from the pump: a character or an event string, eof
+                                 ;; when the terminal is gone.  The current buffer's app has first
+                                 ;; refusal of every key its mode context leaves unbound; what it
+                                 ;; declines, and what the context claims, goes through the keymaps.
+                                 (let ([event (cond [(eof-object? input) input]
+                                                [(char? input) (tty:character-event input)]
+                                                [else input])])
+                                   (cond
+                                     [(eof-object? event) (cancel!) (head:quit!)]
+                                     [(string=? event "MOUSE-HANDLED")
+                                      (cancel!)
+                                      (echo:settle!)
+                                      (void)]
+                                     [(head:window-widget (head:current-window))
+                                      => (lambda (root)
+                                           (echo:settle!)
+                                           (input! root (if (string=? event "PASTE") (list 'text (head:read-paste) 'paste)
+                                                          (list 'key event (let ([c (tty:key-event-character event)]) (and c (string c))))) 'global))]
+                                     [else
+                                      (echo:settle!)
+                                      (if (and (not (pending?)) (not (context-claims? event))
+                                            (head:dispatch-app-event! event))
+                                        (head:set-last-command! #f)
+                                        (dispatch-sequence! event))])))))
 
 ) ;; library (dispatch)

@@ -2,7 +2,7 @@
 ;; One background batch and one pending invalidation set serve every mount.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export available? commit! create! ids metadata retire! snapshot snapshots subscribe! unsubscribe!)
+  (export available? commit! create! ids metadata reference? retire! snapshot snapshots subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core kernel) kernel:)
@@ -11,15 +11,20 @@
   (define dirty (make-eqv-hashtable)) ; n -> generation, or #f for a rescan
   (define active? #f)
   (define subscribers (kernel:make-registry car))
+
+  (edoc "Whether a value is a tagged model reference; this checks its spelling, not availability."
+        (value any "candidate identity") (returns boolean))
+  (define (reference? value)
+    (and (list? value) (= (length value) 2) (eq? (car value) 'model)
+      (integer? (cadr value)) (exact? (cadr value)) (> (cadr value) 0)))
+
   (edoc-type model "a model reference, spelled (model number); operations validate existence and kind"
-    (predicate (lambda (v) (and (list? v) (= (length v) 2) (eq? (car v) 'model)
-                             (integer? (cadr v)) (exact? (cadr v)) (> (cadr v) 0))))
+    (predicate reference?)
     (portable #t) (within list)
     (complete (lambda (partial) (map (lambda (row) (cons (car row) (symbol->string (cadr row)))) (metadata))))
     (write (lambda (id) (format "(model ~a)" (cadr id)))))
   (define (number id)
-    (unless (and (list? id) (= (length id) 2) (eq? (car id) 'model)
-                 (integer? (cadr id)) (exact? (cadr id)) (> (cadr id) 0))
+    (unless (reference? id)
       (error 'model "expected (model positive-integer)" id))
     (cadr id))
   (define (mirror id)
