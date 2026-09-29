@@ -1,15 +1,15 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export create-view! delete! history! insert! move! register! scroll! select! set-mark!)
+  (export create-view! delete! history! insert! move! page! paste! register! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
-          (prefix (foundation text) text:) (prefix (head head) head:)
+          (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head mode) mode:) (prefix (head render) render:)
           (prefix (head text-control) text-control:) (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
           (prefix (service document) document:) (prefix (state store) store:)
-          (prefix (state view) view:) (prefix (sys glyph) glyph:))
+          (prefix (state view) view:) (prefix (sys glyph) glyph:) (prefix (sys tty) tty:))
 
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (option d key fallback) (cond [(assq key (view:options d)) => cdr] [else fallback]))
@@ -207,13 +207,16 @@
       (let loop ([d d])
         (if (view:parent d) (loop (interaction:snapshot (view:parent d)))
           (list (view:generation d) (view:sequence d))))))
-  (define (replace! id source d selection replacement typing?)
+  (define (continues? m source d kind)
+    (let ([group (mount-group m)])
+      (and group (eq? (car group) kind) (= (or (view:basis d) (text-control:revision source)) (text-control:revision source))
+        (equal? (cadr group) (typing-basis d)))))
+  (define (replace! id source d selection replacement typing? . accepted)
     (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
       (let* ([m (mounted id)] [old (text-control:basis-text source d)] [basis (or (view:basis d) (text-control:revision source))]
              [old-group (mount-group m)]
-             [join? (and typing? old-group (= basis (text-control:revision source))
-                      (equal? (car old-group) (typing-basis d)))]
-             [key (if join? (cadr old-group) (list 'editor head:ui-actor id (gensym->unique-string (gensym))))]
+             [join? (and typing? (continues? m source d 'typing))]
+             [key (if join? (caddr old-group) (list 'editor head:ui-actor id (gensym->unique-string (gensym))))]
              [document (text-source:id (text-control:mirror source))]
              [reload? (and (not join?) (document:check! head:ui-actor document))])
         (mount-group-set! m #f)
@@ -228,12 +231,22 @@
           (mount-goal-set! m #f)
           (when (and settled? typing? (text-control:current? id source d))
             (let ([now (interaction:snapshot id)])
-              (mount-group-set! m (list (typing-basis now) key)))))
+              (mount-group-set! m (list 'typing (typing-basis now) key))))
+          ;; Clipboard publication follows admission even when a callback has
+          ;; closed the view or established a newer selection.
+          (for-each (lambda (callback) (callback settled?)) accepted))
         (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))
 
   (edoc "Insert multiline text into an explicit editor, replacing its active selection. Consecutive insertions at the unchanged resulting caret share an undo group. Stale or read-only edits refuse through the shared journal."
         (id model "editor view") (text string "inserted text"))
   (define (insert! id text)
+    (insert-text! id text #t))
+
+  (edoc "Paste text into an explicit editor as one undo action, separate from surrounding typing."
+        (id model "editor view") (text string "inserted text"))
+  (define (paste! id text)
+    (insert-text! id text #f))
+  (define (insert-text! id text typing?)
     (unless (string? text) (error 'insert! "expected text"))
     (let-values ([(source d) (text-control:context id 'editor)])
       (let ([s (state d)])
@@ -241,7 +254,50 @@
           (let loop ([start 0] [end 0] [out '()])
             (cond [(= end (string-length text)) (reverse (cons (substring text start end) out))]
               [(char=? (string-ref text end) #\newline) (loop (+ end 1) (+ end 1) (cons (substring text start end) out))]
-              [else (loop start (+ end 1) out)])) #t))))
+              [else (loop start (+ end 1) out)])) typing?))))
+
+  (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish."
+        (id model "editor view") (operation (one-of copy cut line) "transfer") (publish procedure "(text accumulate?)"))
+  (define (transfer! id operation publish)
+    (unless (memq operation '(copy cut line)) (error 'transfer! "invalid transfer"))
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let* ([s (state d)] [p (car s)] [old (text-control:basis-text source d)]
+             [selection (if (eq? operation 'line)
+                          (list p (let ([end (string-length (vector-ref old (car p)))])
+                                    (if (< (cdr p) end) (cons (car p) end) (adjacent old p 'right)))) s)]
+             [span (text-source:span selection)] [m (mounted id)] [join? (continues? m source d 'kill)])
+        (unless (or (eq? operation 'line) (cadddr s)) (refuse "The mark is not set"))
+        (unless (text:span-empty? span)
+          (let ([text (text:to-string (list->vector (text:extract old span)) #f)])
+            (if (eq? operation 'copy)
+              (let* ([changes (text-source:changes (text-control:mirror source) (or (view:basis d) (text-control:revision source)) (text-control:revision source))]
+                     [kept (and changes (fold-left (lambda (span change) (and span (text:rebase-span span change))) span changes))]
+                     [ps (points source d)])
+                (unless (and kept ps) (refuse "The selected text changed; select it again"))
+                (publish! id source d (list (car ps) (car ps) (caddr ps)) #f #f)
+                (publish text #f))
+              (replace! id source d selection '("") #f
+                (lambda (settled?)
+                  (let ([after (and settled? (typing-basis (interaction:snapshot id)))])
+                    (publish text join?)
+                    (when (and after (text-control:current? id source d)
+                            (equal? after (typing-basis (interaction:snapshot id))))
+                      (mount-group-set! m (list 'kill after #f))))))))))))
+
+  (edoc "Page an allocated editor by a fraction of its height, retaining mark activity and the desired display column. At an already reached edge, move the caret to that edge."
+        (id model "editor view") (direction integer "negative up, positive down") (fraction integer "positive page divisor"))
+  (define (page! id direction fraction)
+    (unless (and (integer? direction) (exact? direction) (not (zero? direction))
+              (integer? fraction) (exact? fraction) (> fraction 0)) (error 'page! "invalid page direction or divisor"))
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let* ([g (geometry id source d #f)] [ps (cadr g)] [lines (text-control:lines source)]
+             [frame (caddr (car g))] [wrap (and (option d 'wrap #t) (max 1 (list-ref g 4)))] [m (mounted id)])
+        (unless ps (refuse "Editor selection history is unavailable"))
+        (let ([goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 (car ps))))]
+              [marked? (cadddr (state d))])
+          (let-values ([(top caret) (text-layout:page lines frame wrap 0 (list-ref g 5) (caddr g) goal direction fraction)])
+            (publish! id source d (list caret (if marked? (cadr ps) caret) (text-layout:anchor lines wrap top)) marked? #f)
+            (mount-goal-set! m goal))))))
 
   (edoc "Delete an editor's active selection, or an adjacent grapheme or newline."
         (id model "editor view") (direction (one-of backward forward) "deletion direction"))
@@ -294,7 +350,9 @@
                 (list '(drag primary ()) (keymap:call select! id p (cadr current)))) '()))))))
   (define (event! id source d event)
     (case (car event)
-      [(text) (insert! id (cadr event)) #t]
+      [(text) (if (eq? (caddr event) 'paste)
+                (paste! id (string:join (tty:paste-lines (cadr event)) "\n"))
+                (insert! id (cadr event))) #t]
       [(cancel) (when (equal? dragging id) (set! dragging #f)) #t]
       [(pointer)
        (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
@@ -307,14 +365,14 @@
                                   (when (eq? (cadr event) 'press) (set! dragging id) (widget:capture! id)) #t))))])]
       [else #f]))
 
-  (edoc "Install the editor widget definition and its explicit command bindings. History callbacks are supplied by the canonical edit API."
-        (undo procedure "explicit editor undo") (redo procedure "explicit editor redo"))
-  (define (register! undo redo)
+  (edoc "Install the editor widget definition and explicit command bindings. History and clipboard policy are supplied by the canonical edit API."
+        (commands list "named command procedures"))
+  (define (register! commands)
     (widget:register! 'editor 1
       (list (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts '(widget-editor))
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
-        (cons 'actions (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!) (cons 'undo undo) (cons 'redo redo)))))
+        (cons 'actions (append (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!)) commands))))
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)
                             (if (caddr b) (keymap:call move! widget:target (cadr b) #t) (keymap:call move! widget:target (cadr b)))))
       '(("LEFT" left #f) ("RIGHT" right #f) ("UP" up #f) ("DOWN" down #f)
@@ -327,5 +385,7 @@
     (keymap:bind-default! 'widget-editor "RET" (keymap:call insert! widget:target "\n"))
     (keymap:bind-default! 'widget-editor "C-@" (keymap:call set-mark! widget:target #t))
     (keymap:bind-default! 'widget-editor "C-g" (keymap:call set-mark! widget:target #f))
-    (keymap:bind-default! 'widget-editor "C-_" (keymap:call undo widget:target))
-    (keymap:bind-default! 'widget-editor "C-M-_" (keymap:call redo widget:target))))
+    (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)
+                            (keymap:call (apply (cdr (assq (cadr b) commands)) (cons widget:target (cddr b))))))
+      '(("C-_" undo) ("C-M-_" redo) ("C-k" kill-line) ("C-w" kill-region) ("M-w" copy-region) ("C-y" yank)
+        ("PAGEUP" page -1 1) ("PAGEDOWN" page 1 1) ("M-v" page -1 1) ("C-v" page 1 1)))))

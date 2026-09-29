@@ -1,12 +1,14 @@
 ;; Two widths share text and the existing renderer, but never interaction.
 (let* ([actor head:ui-actor] [ambient (head:current-buffer)]
        [source (store:create! actor "nested editor" '("abcdefghijklmno" "a界éz" "" "last") '((mode . "editor-test")))]
-       [a (create-view! actor source '())] [b (create-view! actor source '())]
+       [a (create-view! actor source '())] [b (create-view! actor source '((wrap . #f)))]
        [root (view:create! actor #f 'row 1 '() '())] [calls 0])
   (define (state id) (view:state (interaction:snapshot id)))
   (define (show! width)
     (let ([f (widget:prepare! root width 4)]) (widget:present! (list (list f 0 0))) f))
   (define (body f n) (list-ref (widget:frame-children f) n))
+  (define (text) (let-values ([(lines revision) (store:snapshot source)]) lines))
+  (define (key token) (dispatch:input! root (list 'key token)))
   (edit:init!)
   (mode:register! "editor-test" '() '() #f #f
     (lambda (source row line) (set! calls (+ calls 1)) (make-vector (string-length line) 'keyword)))
@@ -91,6 +93,56 @@
     (check 'editor-mark-extends-and-cancel-collapses
       (list (list-head (state a) 2) (begin (set-mark! a #f) (state a)))
       '(((0 . 1) (0 . 0)) ((0 . 1) (0 . 1) (0 . 0) #f))))
+  ;; Paging uses the same displayed-row engine; only logical anchors survive.
+  (store:reset! '(base test) source '("abcdefghijklmno" "abc" "def" "ghi" "jkl" "mno" "pqrs"))
+  (text-source:open! actor source)
+  (select! a '(0 . 3) '(0 . 3)) (select! b '(0 . 7) '(0 . 7)) (show! 27)
+  (set-mark! a #t) (key "PAGEDOWN")
+  (check 'editor-page-keeps-mark-column-and-other-view
+    (list (state a) (car (state b))) '(((4 . 3) (0 . 3) (3 . 0) #t) (0 . 7)))
+  (key "C-v")
+  (check 'editor-page-at-bottom-selects-edge (car (state a)) '(6 . 3))
+  (key "M-v")
+  (check 'editor-page-back-lands-inside-wrapped-row (car (state a)) '(0 . 13))
+  (widget:focus! root b) (key "PAGEDOWN")
+  (check 'editor-page-unwrapped-keeps-its-column (car (state b)) '(4 . 3))
+  (widget:focus! root a)
+  (store:set-property! actor source 'read-only #t)
+  (select! a '(1 . 0) '(2 . 3)) (key "M-w")
+  (check 'editor-copy-read-only-reversed-region-without-retargeting
+    (list (copy-text) (cadddr (state a)) (eq? ambient (head:current-buffer)) (store:line source 1)) '("abc\ndef" #f #t "abc"))
+  (select! a '(1 . 0) '(2 . 3))
+  (check 'editor-refused-cut-keeps-clipboard (list (refused? (lambda () (key "C-w"))) (copy-text)) '(#t "abc\ndef"))
+  (store:set-property! actor source 'read-only #f)
+  (key "C-w")
+  (check 'editor-cut-uses-explicit-view-and-can-undo
+    (list (store:line source 1) (car (state a)) (copy-text) (begin (undo! a) (store:line source 2))) '("" (1 . 0) "abc\ndef" "def"))
+  (select! a '(1 . 0) '(1 . 0))
+  (key "C-k") (key "C-k") (key "C-k")
+  (check 'editor-kills-accumulate-text-and-newlines (copy-text) "abc\ndef")
+  (select! b '(0 . 0) '(0 . 0)) (widget:focus! root b) (key "C-k")
+  (check 'editor-kill-in-another-view-starts-a-new-copy (copy-text) "abcdefghijklmno")
+  (widget:focus! root a) (select! a '(0 . 0) '(0 . 0))
+  (let ([before (text)])
+    (insert! a "T")
+    (let ([typed (text)])
+      (dispatch:input! root '(text "P\r\nQ\r" paste))
+      (let ([pasted (text)])
+        (insert! a "U")
+        (check 'editor-paste-normalizes-newlines-and-isolates-undo
+          (list (vector-ref pasted 0) (vector-ref pasted 1)
+            (begin (undo! a) (equal? (text) pasted)) (begin (undo! a) (equal? (text) typed)) (begin (undo! a) (equal? (text) before)))
+          '("TP" "Q" #t #t #t)))))
+  (copy-text! "yank\n") (key "C-y")
+  (check 'editor-yank-preserves-final-newline (list (store:line source 0) (car (state a))) '("yank" (1 . 0)))
+  (undo! a)
+  (select! a '(2 . 0) '(2 . 3)) (copy-text! "keep")
+  (let-values ([(lines revision) (store:snapshot source)])
+    (store:edit! '(agent "editor") source revision (text:make-span 2 1 2 2) '("X")))
+  (text-source:open! actor source)
+  (check 'editor-stale-copy-and-cut-refuse-without-losing-either-text
+    (list (refused? (lambda () (copy-region! a))) (refused? (lambda () (kill-region! a))) (copy-text) (store:line source 2))
+    '(#t #t "keep" "gXi"))
   (store:reset! '(base test) source '("replacement"))
   (text-source:forget! source) (text-source:open! actor source)
   (check 'editor-unknown-selection-history-refuses-until-explicit-selection
@@ -98,11 +150,12 @@
       (begin (select! a '(0 . 3) '(0 . 3)) (insert! a "X") (store:line source 0)))
     '(#f #t "repXlacement"))
   (let ([fired? #f] [token #f])
+    (select! a '(0 . 0) '(0 . 3))
     (set! token (store:subscribe! source (lambda (event)
                                            (when (and (not fired?) (eq? (car event) 'edit))
                                              (set! fired? #t) (store:reset! '(base test) source '("external reset"))))))
-    (check 'editor-lost-postcommit-history-keeps-text-without-inventing-a-caret
-      (list (refused? (lambda () (insert! a "accepted"))) (store:line source 0)) '(#f "external reset"))
+    (check 'editor-lost-postcommit-history-keeps-accepted-cut-and-new-text
+      (list (refused? (lambda () (kill-region! a))) (copy-text) (store:line source 0)) '(#f "rep" "external reset"))
     (store:unsubscribe! token))
   (widget:prepare! root 0 0)
   (store:delete! '(base test) source)

@@ -243,8 +243,8 @@
     ;; left, right. Vertical ticks move the hovered viewport by one eighth
     ;; of its height; horizontal ones move point sideways within its line.
     (case dir
-      [(0) (lambda () (edit:page-window! -1 8))]
-      [(1) (lambda () (edit:page-window! 1 8))]
+      [(0) (lambda () (edit:page! -1 8))]
+      [(1) (lambda () (edit:page! 1 8))]
       [(2) (lambda () (let ([p (head:point)]) (head:goto! (cons (car p) (- (cdr p) 3)))))]
       [(3) (lambda () (let ([p (head:point)]) (head:goto! (cons (car p) (+ (cdr p) 3)))))]
       [else (lambda () (void))]))

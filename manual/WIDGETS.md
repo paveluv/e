@@ -814,20 +814,34 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   an allocation. Omitted `extend` follows mark activity.
 - `edit:set-mark! id active` starts selection at the caret or collapses it.
 - `edit:insert! id text` and `edit:delete! id direction` use the source journal;
-  deletion directions are `backward` and `forward`. Multiline paste is one
-  operation. Consecutive insertions at their unchanged resulting caret share
+  deletion directions are `backward` and `forward`. Consecutive insertions at their unchanged resulting caret share
   an undo group; movement or a source change ends the run.
+- `edit:paste! id text` inserts multiline text as one undo action, separate
+  from surrounding typing. Terminal paste also normalizes CR/LF line endings.
+- `edit:copy-region! id`, `edit:kill-region! id`, `edit:kill-line! id` and
+  `edit:yank! id` use the ordinary copy buffer and optional system clipboard.
+  Copying works on read-only documents. Copy and cut refuse a changed selection;
+  a refused cut leaves the copy buffer unchanged. Consecutive keyboard kills
+  accumulate only while the same view's interaction and source remain current.
 - `edit:undo! id`, `edit:redo! id` and `edit:undo-actor! actor id` preserve
   actor attribution and the existing overlap protection. `undo-scope` still
   defaults to `mine`; explicit view calls return journal status and detail.
 - `edit:scroll! id rows` changes the logical top without changing selection
   and returns any unconsumed scroll distance for an enclosing viewport.
+- `edit:page! id direction fraction` pages by displayed rows, retaining the
+  desired column and mark. Direction is negative up or positive down; fraction
+  is a positive divisor of the allocated height. A page lands the caret in
+  the middle; paging outward at an already reached edge selects that edge.
+  This replaces `page-window!` and `page-window-fraction!`. The temporary
+  two-argument form operates on the legacy current window.
 
 Arrow keys, Home/End, Control-Home/End and their ordinary Emacs motion keys
 use those commands. Shift-arrows extend selection; Control-Space sets the
 mark and C-g clears it. Return inserts a newline, Backspace/Delete remove
 whole graphemes, and C-_/C-M-_ undo/redo. Mouse presses and drags select using
-the shown frame; the wheel scrolls even when the host is inactive.
+the shown frame; the wheel scrolls even when the host is inactive. PageUp/M-v
+and PageDown/C-v page the editor. M-w copies the region, C-w cuts it, C-k kills
+to the line end (or kills the newline there), and C-y yanks the copy buffer.
 
 Entry and editor share guarded mutation and history settlement. A committed
 edit survives a callback that closes its view, but cannot overwrite a newly
@@ -836,6 +850,6 @@ refuse instead of clamping an edit to different text. Read-only sources remain
 navigable. Empty insertion and deletion at a document boundary are inert.
 
 Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; expression commands, mode indentation,
-clipboard commands, search/conflict decorations and window chrome have not
+still use their existing host; expression and bulk-region commands, mode indentation,
+search/conflict decorations and window chrome have not
 yet moved to the nested editor.

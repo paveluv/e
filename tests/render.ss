@@ -389,7 +389,7 @@
        (head:goto! '(9999990 . 0))
        (head:refresh-renditions!)
        (painted)
-       (edit:page-window! -1 2)
+       (edit:page! -1 2)
        (edit:move-vertical! -1)
        (paint:buffer-line-hyperlinks view 9999990)
        (head:view-replace! view (render:prefix text '("Header")) '() '()

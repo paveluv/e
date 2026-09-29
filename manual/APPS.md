@@ -51,7 +51,7 @@ move that new buffer's point when the mouse button is released.
 Wheel events scroll the window under the pointer, keeping keyboard focus
 where it was. Leave them unhandled to use normal scrolling; do not map them
 to arrow-key actions. An app that maintains a separate row choice can call
-`(page-window! direction 8)` and synchronize that choice with the resulting
+`(edit:page! direction 8)` and synchronize that choice with the resulting
 point, so its next refresh preserves the scroll. Paginated prompt lists
 scroll through pages and stop at either end.
 During clicks, drags, releases, and wheel events, `(head:app-event-buffer-position)`

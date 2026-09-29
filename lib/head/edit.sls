@@ -37,8 +37,8 @@
           indent-tab! init! (rename (editor:insert! insert!)) insert-text! keyboard-quit! kill-buffer! kill-expression! kill-line! kill-region!
           mark-expression! mark-form!
           message-progress (rename (editor:move! move!)) move-horizontal! move-left! move-right! move-vertical!
-          new-buffer! newline! next-line! next-list! open-line! page-down! page-up! page-window!
-          page-window-fraction! (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
+          new-buffer! newline! next-line! next-list! open-line! page! page-down! page-up!
+          (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
           quit! redo! redraw-command! region-text reload! replace-region-text! reread! restore!
           rewrite-region! rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
@@ -774,7 +774,11 @@
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
     ;; into a single copy-buffer entry.
-    (and (memq (head:last-command) (list kill-line! kill-region! kill-expression! backward-kill-expression!)) #t))
+    (let* ([action (head:last-command)] [procedure (if (keymap:call-action? action) (keymap:call-action-procedure action) action)])
+      (and (memq procedure (list kill-line! kill-region! kill-expression! backward-kill-expression!)) #t)))
+
+  (define (publish-view-kill! text accumulate?)
+    (replace-copy-text! (if (and accumulate? (killing?)) (string-append (copy-text) text) text) "kill"))
 
   (define (kill! text . before?)
     ;; consecutive kills accumulate into the copy buffer, a backward kill
@@ -791,20 +795,24 @@
     (void))
 
   (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate."
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (kill-line!)
-    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-           [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
-      (cond [(< col n)
-             (let ([text (substring s col n)])
-               (with-recorded-edit (format "kill ~s" text)
-                 (parameterize ([edit-source source])
-                   (submit-edit! b (text:make-span row col row n) '("")))
-                 (kill! text)
-                 (changed!)))]
-            [(< point-row (- (vlen) 1))
-             (delete-forward!)
-             (kill! "\n")])))
+  (define kill-line!
+    (case-lambda
+      [()
+       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
+              [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
+         (cond [(< col n)
+                (let ([text (substring s col n)])
+                  (with-recorded-edit (format "kill ~s" text)
+                    (parameterize ([edit-source source])
+                      (submit-edit! b (text:make-span row col row n) '("")))
+                    (kill! text)
+                    (changed!)))]
+           [(< point-row (- (vlen) 1))
+            (delete-forward!)
+            (kill! "\n")]))]
+      [(id) (editor:transfer! id 'line publish-view-kill!)]))
 
   (edoc "The copy buffer's text."
         (returns string))
@@ -812,13 +820,17 @@
     (head:copy-text))
 
   (edoc "Insert the copy buffer's text at point."
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (yank!)
-    ;; The copy buffer can span lines after consecutive C-k commands.  Insert
-    ;; newlines as buffer structure rather than embedding them in a line string.
-    (let ([text (head:copy-text)])
-      (unless (string=? text "")
-        (insert-text-as! text (format "yank ~s" text)))))
+  (define yank!
+    (case-lambda
+      [()
+       ;; The copy buffer can span lines after consecutive C-k commands.  Insert
+       ;; newlines as buffer structure rather than embedding them in a line string.
+       (let ([text (head:copy-text)])
+         (unless (string=? text "")
+           (insert-text-as! text (format "yank ~s" text))))]
+      [(id) (let ([text (copy-text)]) (unless (string=? text "") (editor:paste! id text)))]))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -890,34 +902,42 @@
                 (unless changes (error 'rewrite-regions! "the changes since the basis are no longer available"))
                 (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1))))))))
 
-  (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates.")
-  (define (copy-region!)
-    ;; Save the region to the copy buffer without deleting it -- M-w, as
-    ;; in Emacs.  The mark deactivates; C-y reinserts.
-    (if (not mark-active?)
-        (set! message "The mark is not set now")
-        (let-values ([(sr sc er ec) (ordered-region)])
-          (if (and (= sr er) (= sc ec))
-              (set! message "Empty region")
-              (begin
-                (copy-text! (text-between sr sc er ec))
-                (set! mark-active? #f)
-                (set! message "Copied"))))))
+  (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates. An explicit view refuses if the selected text changed."
+        (id model "editor view; omission is the legacy window adapter"))
+  (define copy-region!
+    (case-lambda
+      [()
+       ;; Save the region to the copy buffer without deleting it -- M-w, as
+       ;; in Emacs.  The mark deactivates; C-y reinserts.
+       (if (not mark-active?)
+         (set! message "The mark is not set now")
+         (let-values ([(sr sc er ec) (ordered-region)])
+           (if (and (= sr er) (= sc ec))
+             (set! message "Empty region")
+             (begin
+               (copy-text! (text-between sr sc er ec))
+               (set! mark-active? #f)
+               (set! message "Copied")))))]
+      [(id) (editor:transfer! id 'copy (lambda (text accumulate?) (copy-text! text)))]))
 
   (edoc "Kill the text between mark and point into the copy buffer."
+        (id model "editor view; omission is the legacy window adapter")
         (edits))
-  (define (kill-region!)
-    (if (not mark-active?)
-        (set! message "The mark is not set now")
-        (let-values ([(sr sc er ec) (ordered-region)])
-          (if (and (= sr er) (= sc ec))
-              (set! message "Empty region")
-              (let ([text (text-between sr sc er ec)]
-                    [source (edit-basis-for (head:window-buffer current-window))])
-                (with-recorded-edit (format "kill ~s" text)
-                  (parameterize ([edit-source source]) (delete-region! sr sc er ec))
-                  (kill! text)
-                  (changed!)))))))
+  (define kill-region!
+    (case-lambda
+      [()
+       (if (not mark-active?)
+         (set! message "The mark is not set now")
+         (let-values ([(sr sc er ec) (ordered-region)])
+           (if (and (= sr er) (= sc ec))
+             (set! message "Empty region")
+             (let ([text (text-between sr sc er ec)]
+                   [source (edit-basis-for (head:window-buffer current-window))])
+               (with-recorded-edit (format "kill ~s" text)
+                 (parameterize ([edit-source source]) (delete-region! sr sc er ec))
+                 (kill! text)
+                 (changed!))))))]
+      [(id) (editor:transfer! id 'cut publish-view-kill!)]))
 
   ;;; Files -----------------------------------------------------------------
 
@@ -1494,24 +1514,22 @@
   ;; commands over its viewport logic -- paging and point placement --
   ;; and the head's side of the interaction protocol.
 
-  (edoc "Scroll the selected window by a fraction of its page, direction -1 for up and 1 for down, and put point in the middle; at an edge already reached, point moves to that edge."
+  (edoc "Page an allocated editor by a fraction of its height and put the caret in the middle; at an already reached edge, move to that edge. Retains mark activity and the desired column. Without an explicit view, page the legacy current window."
+        (id model "editor view; omission is the legacy window adapter")
         (direction integer "-1 for up, 1 for down")
-        (fraction integer "the divisor of the page: 1 for a whole page, 8 for a wheel tick"))
-  (define (page-window! direction fraction)
-    (let* ([w current-window] [v (head:window-text w)]
-           [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- (render:line-count v) 1))])
-      (let-values ([(top point)
-                    (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
-                      sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
-                      (visual-column w point-row point-col) direction fraction)])
-        (head:goto! point)
-        (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top)))))
-
-  (edoc "Scroll the selected window by a fraction of its height and put point in the middle: negative direction up, positive down; fraction 1 is a page, 8 an eighth."
-        (direction integer "negative for up, positive for down")
-        (fraction integer "the divisor of the window height"))
-  (define (page-window-fraction! direction fraction)
-    (page-window! direction fraction))
+        (fraction integer "positive page divisor"))
+  (define page!
+    (case-lambda
+      [(direction fraction)
+       (let* ([w current-window] [v (head:window-text w)]
+              [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- (render:line-count v) 1))])
+         (let-values ([(top point)
+                       (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
+                         sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
+                         (visual-column w point-row point-col) direction fraction)])
+           (head:goto! point)
+           (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top))))]
+      [(id direction fraction) (editor:page! id direction fraction)]))
 
   (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
         (position position "where point goes"))
@@ -1573,16 +1591,20 @@
 
   ;;; Pasting and typed runs --------------------------------------------------
 
-  (edoc "Insert a bracketed paste, the PASTE key, as one edit, its newlines real line breaks."
+  (edoc "Paste text into an explicit editor as one undo action separate from typing. Without arguments, insert the legacy window's pending terminal paste, normalizing line endings."
+        (id model "editor view") (text string "text to insert")
         (edits))
-  (define (paste-into-buffer!)
-    ;; A bracketed paste: the whole text becomes one labeled edit, its
-    ;; newlines becoming real line breaks.
-    (let ([text (head:read-paste)])
-      (unless (string=? text "")
-        (call-as-one-edit! (format "insert ~s" text)
-          (lambda ()
-            (insert-text! (string:join (tty:paste-lines text) "\n")))))))
+  (define paste-into-buffer!
+    (case-lambda
+      [()
+       ;; A bracketed paste: the whole text becomes one labeled edit, its
+       ;; newlines becoming real line breaks.
+       (let ([text (head:read-paste)])
+         (unless (string=? text "")
+           (call-as-one-edit! (format "insert ~s" text)
+             (lambda ()
+               (insert-text! (string:join (tty:paste-lines text) "\n"))))))]
+      [(id text) (editor:paste! id text)]))
 
   (define (typing? action)
     ;; whether a key's action typed: type! itself, or its call from SELF-INSERT
@@ -1636,11 +1658,11 @@
 
   (edoc "Scroll the selected window up by a page and put point in the middle; at the top, move point to the first line.")
   (define (page-up!)
-    (page-window! -1 1))
+    (page! -1 1))
 
   (edoc "Scroll the selected window down by a page and put point in the middle; at the bottom, move point to the last line.")
   (define (page-down!)
-    (page-window! 1 1))
+    (page! 1 1))
 
   (edoc "Move point up one line, or one visual row in a wrapping window, keeping the goal column.")
   (define (previous-line!)
@@ -1694,7 +1716,8 @@
   ;; commands is installed here too.
   (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet.")
   (define (init!)
-    (editor:register! undo! redo!)
+    (editor:register! (list (cons 'undo undo!) (cons 'redo redo!) (cons 'page page!) (cons 'paste paste-into-buffer!)
+                        (cons 'kill-line kill-line!) (cons 'kill-region kill-region!) (cons 'copy-region copy-region!) (cons 'yank yank!)))
     ;; One module-owned subscriber per head. All records wake its shared
     ;; history view; echo presentation belongs to the originating head.
     ;; Presentation mode is captured with the record, not read on delivery.

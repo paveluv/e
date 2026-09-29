@@ -119,10 +119,10 @@
       (head:buffers)))
 
   (edoc "Scroll the terminal window a page up into its scrollback.")
-  (define (page-up!) (edit:page-window-fraction! -1 1))
+  (define (page-up!) (edit:page! -1 1))
 
   (edoc "Scroll the terminal window a page down toward the live screen.")
-  (define (page-down!) (edit:page-window-fraction! 1 1))
+  (define (page-down!) (edit:page! 1 1))
 
   (edoc "Install the terminal app: its mode with the keys of its context, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
   (define (init!)

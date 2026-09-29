@@ -13,6 +13,7 @@
          (let ([before (io)])
            (do ([i 0 (+ i 1)]) ((= i 40))
              (edit:move! ',left (if (even? i) 'down 'up))
+             (edit:page! ',left (if (even? i) 1 -1) 1)
              (widget:prepare! ',left (+ 12 (modulo i 3)) 3))
            (- (io) before)))) 0)
   (head-read a `(begin (edit:select! ',left '(0 . 5) '(0 . 5)) (edit:insert! ',left "!") #t))
