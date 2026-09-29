@@ -13,8 +13,9 @@
   (define list-view (table:create! actor query '(name) '((kind . list))))
   (define target (view:create! actor #f 'table-target 1 '() '()))
   (define root (view:create! actor #f 'row 1 '() '()))
+  (define height 6)
   (define (show! width)
-    (let ([f (widget:prepare! root width 6)]) (widget:present! (list (list f 0 0))) f))
+    (let ([f (widget:prepare! root width height)]) (widget:present! (list (list f 0 0))) f))
   (define (face frame row column)
     (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) column))
   (define (pump!) (range:pump!) (widget:pump!) (show! 80))
@@ -112,6 +113,33 @@
     (check 'table-row-click-uses-shown-key-and-explicit-command
       (list (key table) (- (length activated) before)) '(71 1)))
   (show! 80)
+  ;; Streaming results insert rows before a scrolled viewport. Summary,
+  ;; anchor rank and page arrive separately; every intermediate frame must
+  ;; keep the same visible rows, including across a metadata-only refresh.
+  ;; A resize can expose cached rows before service has retained that slice.
+  (set! height 8)
+  (let* ([body (lambda (f) (car (widget:frame-children (cadr (widget:frame-children (car (widget:frame-children f)))))))]
+         [before (widget:frame-lines (body (show! 80)))] [stable? #t])
+    (for-each
+      (lambda (insert?)
+        (let* ([r (model:snapshot source)] [value (get r 'value)]
+               [rows (if insert?
+                       (list->vector
+                         (append (vector->list (cadr value))
+                           (map (lambda (i) (list (- i) (list (cons 'name (format "added/~a" i)) (cons 'size (+ 200 i)) '(flag . #f)) '()))
+                             (map add1 (iota 80)))))
+                       (cadr value))])
+          (model:commit! actor (list (list source (get r 'revision) '() (list (car value) rows))))
+          (test:await 'table-streamed-insertion-ready
+            (lambda () (eq? (get (get (collection:summary query) 'value) 'status) 'ready)))
+          (let ([g (get (get (collection:summary query) 'value) 'generation)])
+            (test:await 'table-streamed-viewport
+              (lambda ()
+                (let* ([f (body (pump!))] [s (selection table)])
+                  (set! stable? (and stable? (equal? before (widget:frame-lines f))))
+                  (and s (= (cadr s) g) (= (cadr (widget:frame-rect f)) -149)))))))) '(#t #f))
+    (check 'table-streamed-rows-and-anchor-adopt-together-without-jumps stable? #t))
+  (set! height 6)
   (let ([before (length activated)] [r (collection:summary query)])
     (collection:configure! actor query (get r 'revision) '((sort (name descending))))
     (test:await 'table-stale-shown (lambda () (eq? (get (get (collection:summary query) 'value) 'status) 'ready)))

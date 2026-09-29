@@ -47,13 +47,15 @@
        (range:pump!) (widget:pump!)
        (let ([f (widget:prepare! host (if (pair? width) (car width) 300) 20)])
          (widget:present! (list (list f 0 0))) f))
+     (define (entry-frame f)
+       (if (equal? (widget:frame-id f) entry) f (exists entry-frame (widget:frame-children f))))
      (define (settle!)
        (test:await 'finder-ready
          (lambda ()
-           (draw!)
-           (let* ([v (metadata)] [s (selection)]
+           (let* ([f (draw!)] [v (metadata)] [s (selection)]
                   [r (range:read query (get v 'generation) 0 (min 18 (get v 'count)) '(name kind link size modified created permissions count exact))])
              (and (eq? (get v 'status) 'ready) (get v 'complete)
+               (equal? (caddr (assq 'context (widget:frame-inputs (entry-frame f)))) v)
                (or (zero? (get v 'count)) (and s (= (cadr s) (get v 'generation))))
                (eq? (car r) 'ready)
                (for-all (lambda (row) (for-all (lambda (c) (not (eq? (cadr c) 'pending))) (caddr row))) (list-ref r 4)))))))
@@ -75,7 +77,8 @@
      (define (complete!)
        (finder:complete! app)
        (test:await 'finder-completion-applied
-         (lambda () (draw!) (let ([c (get (get (metadata) 'details) 'completion)]) (null? c)))))
+         (lambda () (draw!) (let ([v (metadata)])
+                              (and (eq? (get v 'status) 'ready) (null? (get (get v 'details) 'completion)))))))
      (settle!)
      (check 'finder-starts-focused-in-entry-with-real-row-keys
        (list (equal? (widget:focused host) entry) (head:buffer-name (head:current-buffer))

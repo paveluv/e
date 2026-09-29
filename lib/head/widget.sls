@@ -437,6 +437,9 @@
            [position (locate id (view:state d) width)]
            [intent (hashtable-ref pending-scroll id #f)]
            [at (min (max 0 (- extent height)) (max 0 (if intent (cdr intent) (or position (hashtable-ref scroll-positions id 0)))))])
+      ;; A logical anchor can move as content grows before it. Retain its
+      ;; latest resolved position while the next result is being acquired.
+      (hashtable-set! scroll-positions id at)
       (list (list id (list 0 (- at) width extent)))))
   (define (overlay-measure data d axis cross measure)
     (map (lambda (i) (apply max 0 (map (lambda (child) (list-ref (measure (cadr child) axis cross) i)) (view:children d)))) '(0 1)))

@@ -195,19 +195,40 @@
   (define (viewport-demand s v)
     (let* ([f (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
            [count (if f (min 256 (cadddr (widget:frame-clip f))) 1)]
-           [start (if f (- (cadr (widget:frame-clip f)) (cadr (widget:frame-rect f))) 0)])
-      (values (max 0 (min start (- (get v 'count 0) count))) count)))
+           [start (if f (- (cadr (widget:frame-clip f)) (cadr (widget:frame-rect f))) 0)]
+           [shown (and f (widget:frame-data f))]
+           [scroll (interaction:snapshot (child s 'body))] [anchor (and scroll (view:state scroll))]
+           [row (and shown (row:selection? anchor) (equal? (car anchor) (session-query s))
+                  (find (lambda (r) (equal? (cadr r) (caddr anchor))) (or (visible-rows shown) '())))])
+      ;; Relocate the viewport in the new result before fetching its rows.
+      ;; The shown anchor must actually account for the shown position: an
+      ;; explicit scroll waiting for a page still demands its new ordinal.
+      (when (and row (not (= (get (visible-metadata shown) 'generation 0) (get v 'generation 0)))
+              (= start (max 0 (min (car row) (- (get (visible-metadata shown) 'count 0) count)))))
+        (let ([rank (range:locate (session-query s) (get v 'generation 0) (caddr anchor))])
+          (set! start (and (eq? (car rank) 'ready) (or (list-ref rank 3) 0)))))
+      (values (and start (max 0 (min start (- (get v 'count 0) count)))) count)))
   (define (display-metadata s)
     (let ([display (and s (session-display s))]) (if display (car display) (and s (metadata s)))))
   (define (refresh-display! s v)
     ;; Keep one bounded viewport until its replacement is complete. It is
     ;; presentation only: selection and actions always validate current data.
-    (let ([old (session-display s)])
+    (let* ([old (session-display s)]
+           [frame (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
+           [shown (and frame (widget:frame-data frame))])
+      ;; Painting can expose cached rows after a scroll or resize, before
+      ;; service runs again. Retain those actual rows before a new generation
+      ;; drops the range cache, rather than falling back to an older slice.
+      (when (and shown (or (pair? (visible-rows shown)) (zero? (get (visible-metadata shown) 'count 0)))
+              (>= (get (visible-metadata shown) 'generation 0) (get (and old (car old)) 'generation 0)))
+        (session-display-set! s
+          (list (visible-metadata shown) (- (cadr (widget:frame-clip frame)) (cadr (widget:frame-rect frame)))
+            (visible-rows shown) (visible-selection shown))))
       (cond [(or (not v) (eq? (get v 'status #f) 'unavailable)) (session-display-set! s #f)]
         [(ready? v)
          (let-values ([(start count) (viewport-demand s v)])
-           (let ([r (range:read (session-query s) (get v 'generation 0) start count (requested-columns s v))])
-             (case (car r)
+           (let ([r (and start (range:read (session-query s) (get v 'generation 0) start count (requested-columns s v)))])
+             (case (and r (car r))
                [(ready) (session-display-set! s (list v start (list-ref r 4)
                                                   (or (selected s) (and old (cadddr old)))))]
                [(unavailable)
@@ -272,7 +293,7 @@
              (begin (mark-pending! s) (range:request! (session-token s) generation ordinal 1 names '()))))]
         [else (mark-pending! s)
           (let-values ([(start count) (viewport-demand s v)])
-            (range:request! (session-token s) generation start count names
+            (range:request! (session-token s) generation (or start 0) (if start count 0) names
               (if navigation '() (list (cadr intent))) (if navigation (list navigation) '())))])))
   (define (service! id frame)
     (let-values ([(source d inputs) (widget:context id 'current)])
@@ -306,7 +327,7 @@
                 (let-values ([(start count) (viewport-demand s v)])
                   (let* ([scroll (interaction:snapshot (child s 'body))]
                          [anchor (and scroll (view:state scroll))])
-                    (range:request! (session-token s) g start count (requested-columns s v)
+                    (range:request! (session-token s) g (or start 0) (if start count 0) (requested-columns s v)
                       (fold-left (lambda (keys ref)
                                    (if (and (row:selection? ref) (equal? query (car ref))
                                          (not (member (caddr ref) keys))
@@ -614,14 +635,22 @@
                                          (map (lambda (style) (list (list (+ (cadr span) (car style)) (car row) (cadr style) 1) (caddr style)))
                                            ((visible-styles v) row span base))) (visible-spans v)))))) (visible-rows v)))]))
   (define (anchor id ordinal width)
-    (let* ([s (runtime id)] [v (metadata s)]
-           [r (and (ready? v) (range:read (session-query s) (get v 'generation 0) ordinal 1 (requested-columns s v)))])
-      (and r (eq? (car r) 'ready) (pair? (list-ref r 4)) (list (session-query s) (get v 'generation 0) (cadar (list-ref r 4))))))
+    (let* ([s (runtime id)] [display (session-display s)] [v (display-metadata s)]
+           [row (and display (assv ordinal (or (caddr display) '())))])
+      (unless row
+        (let ([r (and (ready? v) (range:read (session-query s) (get v 'generation 0) ordinal 1 (requested-columns s v)))])
+          (when (and r (eq? (car r) 'ready) (pair? (list-ref r 4))) (set! row (car (list-ref r 4))))))
+      (and row (list (session-query s) (get v 'generation 0) (cadr row)))))
   (define (locate id anchor width)
-    (let* ([s (runtime id)] [v (metadata s)])
+    (let* ([s (runtime id)] [display (session-display s)] [v (display-metadata s)])
       (if (and (row:selection? anchor) (equal? (car anchor) (session-query s)))
-        (let ([r (range:locate (session-query s) (get v 'generation 0) (caddr anchor))])
-          (and (eq? (car r) 'ready) (or (list-ref r 3) 0))) 0)))
+        ;; Position and rows belong to one retained result. New rank replies
+        ;; must not move old rows; a newer selection waits for its result.
+        (and (<= (cadr anchor) (get v 'generation 0))
+          (let ([row (and display (find (lambda (r) (equal? (cadr r) (caddr anchor))) (or (caddr display) '())))])
+            (if row (car row)
+              (let ([r (range:locate (session-query s) (get v 'generation 0) (caddr anchor))])
+                (and (eq? (car r) 'ready) (or (list-ref r 3) 0)))))) 0)))
 
   (edoc "Choose an explicitly identified displayed row and activate it if the table has an activate command. Refuse a stale result or a row no longer displayed; no deferred activation is queued."
         (id model "table or descendant") (selection list "(collection generation key)"))
