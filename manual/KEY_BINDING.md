@@ -103,12 +103,13 @@ The ID addresses that view while it remains mounted. Describing a binding
 never invokes its argument producers.
 
 For a table action, bind the key to `table:invoke!` with a named command.
-Omit the name for the default `activate` command, as Enter does:
+Keep the command name explicit in bindings, including Enter's `activate`, so
+the listing identifies which connection is followed:
 
 ```scheme
-(table:invoke! (model 110))          ; default action, opening a row in Buffet
-(table:invoke! (model 110) 'trash)   ; invoke the table's trash connection
-(table:invoke! (model 110) 'delete)  ; invoke the table's delete connection
+(table:invoke! (model 110) 'activate) ; default action, opening a row in Buffet
+(table:invoke! (model 110) 'trash)    ; invoke the table's trash connection
+(table:invoke! (model 110) 'delete)   ; invoke the table's delete connection
 ```
 
 Buffet's `C-k`, for example, is displayed as:

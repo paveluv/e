@@ -77,13 +77,12 @@
              (not (string:search text "(widget:target)" 0 (string-length text)))
              (not (string:search text "Unavailable target." 0 (string-length text)))
              (equal? focus (widget:focused (root)))) '(#t #t #t #t #t)))
-       (test:check 'table-command-keys-show-model-literals-and-omit-the-default-command
+       (test:check 'table-command-keys-show-model-literals-and-explicit-command-names
          (map (lambda (keys)
                 (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'buffet keys)))
                   (list (cons widget:target (app))))) '(("RET") ("C-k") ("C-x" "D")))
-         (cons (format "(table:invoke! (widget:descendant (model ~a) 'table))" (cadr (app)))
-           (map (lambda (command) (format "(table:invoke! (widget:descendant (model ~a) 'table) '~a)" (cadr (app)) command))
-             '(trash delete))))
+         (map (lambda (command) (format "(table:invoke! (widget:descendant (model ~a) 'table) '~a)" (cadr (app)) command))
+           '(activate trash delete)))
        (test:check 'archive-binding-exposes-every-forwarding-step
          (map cadr
            (keymap:action-trace (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("C-k"))))

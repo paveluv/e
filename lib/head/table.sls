@@ -656,5 +656,5 @@
                     (if (eq? kind 'table-body) (list (cons 'focus #t) (cons 'anchor anchor) (cons 'locate locate)) '())))) '(table-heading table-body))
     (for-each (lambda (p) (keymap:bind-default! 'widget-table (car p) (keymap:call move! widget:target (cdr p))))
       '(("UP" . previous) ("DOWN" . next) ("HOME" . first) ("END" . last) ("PGUP" . page-previous) ("PGDN" . page-next)))
-    (keymap:bind-default! 'widget-table "RET" (keymap:call invoke! widget:target))
+    (keymap:bind-default! 'widget-table "RET" (keymap:call invoke! widget:target 'activate))
     (for-each (lambda (i) (keymap:bind-default! 'widget-table (format "F~a" (+ i 1)) (keymap:call toggle-visible-sort! widget:target i))) (iota 12))))
