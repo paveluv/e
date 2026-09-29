@@ -4,7 +4,7 @@
   (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
-          (prefix (head document) document:) (prefix (head edit) edit:)
+          (prefix (head catalogue-host) catalogue-host:) (prefix (head edit) edit:)
           (prefix (head entry) entry:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head table) table:)
@@ -133,7 +133,7 @@
             (lambda (kind value)
               (case kind
                 [(directory) (navigate! id value)]
-                [(buffer) (widget:invoke! id 'open (document:reference value))]))
+                [(buffer) (widget:invoke! id 'open (catalogue-host:reference value))]))
             (and proposed? (ready cells 'proposal)))))))
 
   (edoc "Toggle this Finder query's explicit hidden-entry policy without discarding shared filesystem inventory."

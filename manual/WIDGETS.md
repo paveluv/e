@@ -222,7 +222,7 @@ remains the extension author's responsibility.
 
 ## Buffer catalogue
 
-Create a head's source with `(document:create-source! 'transient)`, then use
+Create a head's source with `(catalogue-host:create-source! 'transient)`, then use
 `collection:create!` and `table:create!` as for other collections. Shared
 documents, Backups and Trash come from one subscribed base inventory.
 Case-insensitive filters search names and file paths, including `~/` spelling.
@@ -244,8 +244,8 @@ switching, without fetching archive rows or maintaining a head-side comparator.
 
 Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
 for widget hosts, and `(local actor attachment token)` for remaining local
-buffers. `document:reference` obtains a listed buffer's key;
-`document:resolve!` resolves it in the owning head, adopting shared text as
+buffers. `catalogue-host:reference` obtains a listed buffer's key;
+`catalogue-host:resolve!` resolves it in the owning head, adopting shared text as
 needed. Foreign or retired local tokens return false. A retained widget view
 can be mounted with `window:show-widget!`. Local metadata is sent in bounded,
 coalesced batches; repaint, hover and generated rows are never contributions.
@@ -354,7 +354,7 @@ filter text. It returns `(query filter-buffer-reference)` and gives the query
 ownership of that source and internal filter buffer. Views borrow these resources.
 
 Finder and ordinary file visits acquire files through the base's
-`acquisition:acquire!` service. Creation invalidates affected inventory and
+`document:acquire!` service. Creation invalidates affected inventory and
 parent listings; unrelated cached subtrees remain available. A creation row's
 `proposal` cell carries its kind and observed parent identity. Finder checks
 the shown selection/basis, then passes this witness to `edit:visit-file!` with

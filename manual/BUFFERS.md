@@ -836,7 +836,7 @@ subscriber's later edits and undo history survive opening.
 Overlapping visits, including a callback reopening the same path, reuse the
 same shared buffer and preserve edits made before the first visit returns.
 
-For extension code, `(acquisition:acquire! actor absolute-path)` acquires a
+For extension code, `(document:acquire! actor absolute-path)` acquires a
 file without selecting a window: `(directory path)` for a directory, or
 `(buffer id admitted? path diagnostic)` for a file. The optional diagnostic
 describes a disk review that could not be applied; shared work is retained.
@@ -846,12 +846,27 @@ head buffer. File reads and creation run in the base's connection worker,
 outside its lifecycle dispatcher and store locks. External disk changes
 merge undoably; concurrent text or file-fact changes refuse a stale review.
 
+`(document:reload! actor id)` rereads a shared document's file in the base
+and merges it as one undoable action. `(document:reread! actor id)` replaces
+the text and settles pending conflicts, also undoably. Both return status
+and detail: `applied` with `(revision conflicts)` for reload, or the revision
+for reread. A concurrent edit or change to the reviewed file facts returns
+`refused` with `stale-review`; unreadable files raise. Neither operation
+requires an editor window or discards earlier undo history.
+
+`(document:check! actor id)` checks for changed disk content using the saved
+stamp as a hint. Equal content updates only the reviewed stamp. Its boolean
+result can schedule a reload after an editing action, but does not authorize
+reusing an old disk observation. An unreadable or unvisited file returns
+`#f`. These operations share the acquisition service's base worker boundary;
+heads receive results and ordinary text deltas, not a disk-text round trip.
+
 `(store:find-file canonical-path)` looks up the shared
 buffer's id or returns `#f`. `(store:visit! actor name lines facts)` requires
 a canonical `file` fact and returns two values: id and whether it was created.
 Lookup and creation happen together; a reused buffer keeps all its existing
 state. Prepare disk text and initial facts before calling it.
-Use acquisition for files; `store:visit!` is the lower-level admission
+Use `document:acquire!` for files; `store:visit!` is the lower-level admission
 primitive for already prepared content. Visiting always uses the shared file
 identity; manually constructed local buffers are not file-identity owners.
 

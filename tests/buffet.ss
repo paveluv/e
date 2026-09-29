@@ -13,7 +13,7 @@
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
              (prefix (head keymap) keymap:) (head literal)
              (prefix (head mouse) mouse:) (prefix (head mode) mode:)
-             (prefix (head document) document:) (prefix (head paint) paint:)
+             (prefix (head catalogue-host) catalogue-host:) (prefix (head paint) paint:)
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
@@ -42,7 +42,7 @@
                     (head:buffer-line (head:buffer-of-store-id (cadr (view:source (interaction:snapshot (entry))))) 0))
                   (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
-       (table:select! (table) (document:reference b)) (settle!))
+       (table:select! (table) (catalogue-host:reference b)) (settle!))
      (define (press! . keys) (for-each dispatch:key! keys))
      (define a (head:new-buffer! "buffet-a"))
      (define b (head:new-buffer! "buffet-b"))
@@ -57,7 +57,7 @@
            (and (exists (lambda (line) (string:search line path 0 (string-length line))) (cddr lines)) #t)) '(#t #t)))
      (test:check 'default-previous-and-self-name
        (list (caddr (selection)) (head:buffer-name (head:current-buffer)))
-       (list (document:reference a) "<buffet>"))
+       (list (catalogue-host:reference a) "<buffet>"))
      (press! "RET")
      (test:check 'enter-opens-the-previous-document (eq? (head:current-buffer) a) #t)
      (buffet:open!) (settle!) (press! "ESC")
@@ -182,7 +182,7 @@
        (test:check 'typing-from-entry-filters-in-base-without-shifting-columns
          (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection))
            (equal? heading (cadr (widget:frame-lines (draw! (root) 120 15)))))
-         (list 1 (document:reference b) #t)))
+         (list 1 (catalogue-host:reference b) #t)))
      (press! "C-u") (settle!)
      (define before (selection))
      (press! "UP") (settle!)
@@ -241,11 +241,11 @@
          (lambda ()
            (draw! host 120 15)
            (let* ([s (get (view:state (interaction:snapshot original-table)) 'selection)]
-                  [r (and s (collection:rank original-query (cadr s) (document:reference a)))])
+                  [r (and s (collection:rank original-query (cadr s) (catalogue-host:reference a)))])
              (and r (eq? (car r) 'ready) (list-ref r 3)))))
        (let* ([frame (draw! host 120 15)] [s (get (view:state (interaction:snapshot original-table)) 'selection)]
               [generation (cadr s)]
-              [rank (list-ref (collection:rank original-query generation (document:reference a)) 3)]
+              [rank (list-ref (collection:rank original-query generation (catalogue-host:reference a)) 3)]
               [row (+ 2 rank)]
               [face (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) 0)])
          (test:check 'inactive-pane-emphasizes-current-document face 'active)
@@ -262,7 +262,7 @@
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.
      (define independent (buffet:create! '()))
-     (let ([transient (document:create-source! 'transient)])
+     (let ([transient (catalogue-host:create-source! 'transient)])
        (test:check 'transient-owner-cannot-orphan-a-persistent-filter
          (test:raises? (lambda () (catalogue:create-query! head:ui-actor transient))) #t)
        (model:retire! head:ui-actor transient (get (model:snapshot transient) 'revision)))

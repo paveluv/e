@@ -15,6 +15,7 @@
              (prefix (state store) store:)
              (prefix (core property) property:)
              (prefix (foundation text) text:)
+             (prefix (service document) document:)
              (prefix (service file) file:)
              (prefix (service log) log:)
              (prefix (foundation string) string:)
@@ -542,7 +543,27 @@
                                      (if (eq? operation 'edit) (insert-text! "edited ") (visit-file! path))))])
                      (list (car result) (property:matches? updates (caddr (state b)))))))
                '(edit visit))
-             '((#t #t) (#t #t))))
+             '((#t #t) (#t #t)))
+           ;; Reuse the same read fixture: the service must carry its
+           ;; pre-I/O review through both merge and replacement admission.
+           (check 'base-document-reads-refuse-concurrent-text-and-file-changes
+             (map
+               (lambda (operation change)
+                 (let* ([b (fresh "reviewed reload" #t)] [id (head:buffer-store-id b)] [newer #f])
+                   (head:store-reset! b '("mine")
+                     (list (cons 'file path) (cons 'base (file:text disk #t))))
+                   (let ([result
+                          (interrupt-during!
+                            (lambda ()
+                              (case change
+                                [(text) (insert! id 0 "concurrent ")]
+                                [(file) (store:set-properties! bot id '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))])
+                              (set! newer (call-with-values (lambda () (store:snapshot-state id)) list)))
+                            (lambda () (set-timer 10000)
+                              (call-with-values (lambda () (operation head:ui-actor id)) list)))])
+                     (list result (equal? newer (call-with-values (lambda () (store:snapshot-state id)) list))))))
+               (list document:reload! document:reread!) '(text file))
+             '(((#t (refused stale-review)) #t) ((#t (refused stale-review)) #t))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
      ;; Before the input reader runs no question can be answered: the prompts

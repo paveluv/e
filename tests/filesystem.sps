@@ -82,7 +82,7 @@
                   (lambda (notice)
                     (unless nested
                       (set! nested #t)
-                      (set! nested (cadr (acquisition:acquire! actor (path "nested-acquire")))))))])
+                      (set! nested (cadr (document:acquire! actor (path "nested-acquire")))))))])
     (ready alias)
     (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination (head:buffer-store-id value))))
     (model:unsubscribe! token)
@@ -102,10 +102,10 @@
   ;; refused for both merge and reread without changing newer text or facts.
   (let ([target (path "acquire-merge")])
     (file:write! target '#("one" "two") #t)
-    (let ([id (cadr (acquisition:acquire! actor target))])
+    (let ([id (cadr (document:acquire! actor target))])
       (store:edit! actor id 0 (text:make-span 0 0 0 0) '("mine "))
       (file:write! target '#("one" "disk") #t)
-      (acquisition:acquire! actor target)
+      (document:acquire! actor target)
       (let ([merged (store:line id 1)])
         (store:undo! actor id)
         (let ([before (call-with-values (lambda () (store:snapshot id)) (lambda (text revision) text))])
@@ -134,7 +134,7 @@
           (rename-file parent away)
           (if link? (system (format "ln -s ~s ~s" away parent)) (mkdir parent))
           (test:check (list 'creation-refuses-replaced-parent link?)
-            (list (test:raises? (lambda () (acquisition:acquire! actor target witness)))
+            (list (test:raises? (lambda () (document:acquire! actor target witness)))
               (file-exists? target)) '(#t #f))
           (if link? (delete-file parent) (delete-directory parent))
           (delete-directory away)))) '(#f #t))
@@ -145,7 +145,7 @@
     (dynamic-wind void
       (lambda ()
         (test:check 'partial-directory-creation-is-retained-and-logged
-          (list (test:raises? (lambda () (acquisition:acquire! actor (string-append block "/file"))))
+          (list (test:raises? (lambda () (document:acquire! actor (string-append block "/file"))))
             (file-directory? parent) (call-with-input-file block get-string-all)
             (log:datum (car (log:entries 'file:create!))))
           (list #t #t "keep" (string-append "Created directory " parent "/"))))

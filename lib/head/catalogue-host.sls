@@ -1,6 +1,6 @@
 ;; Temporary host bridge for shared documents and legacy local buffers.
 (import (only (foundation edoc) elibrary))
-(elibrary (head document)
+(elibrary (head catalogue-host)
   (export create-source! reference resolve! retire!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:)
           (prefix (foundation datum) datum:) (prefix (foundation wire) wire:)
@@ -49,11 +49,11 @@
                 (hashtable-set! entries b (list key version (datum:copy raw) text-revision))
                 (if (> (bytevector-length (wire:encode (list (list key value)))) 65536)
                   (begin (queue! key #f)
-                    (log:add! 'document:changed! (format "Local metadata too large: ~a" (head:buffer-name b))))
+                    (log:add! 'catalogue-host:changed! (format "Local metadata too large: ~a" (head:buffer-name b))))
                   (queue! key (datum:copy value))))))))))
 
   (define (send!)
-    (guard (ex [else (log:add! 'document:send! (kernel:condition-text ex))])
+    (guard (ex [else (log:add! 'catalogue-host:send! (kernel:condition-text ex))])
       (let loop ()
         (let ([batch
                (with-mutex lock

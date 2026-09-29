@@ -10,8 +10,8 @@
           (prefix (foundation datum) datum:)
           (prefix (foundation text) text:)
           (prefix (foundation wire) wire:)
-          (prefix (service acquisition) acquisition:)
           (prefix (service doc) doc:)
+          (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service filesystem) filesystem:)
           ;; Startup also publishes these modules into base configuration.
@@ -37,7 +37,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("acquisition" "activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -285,7 +285,13 @@
        (unless (<= 1 (length args) 2) (error 'wire "expected path and optional creation witness"))
        ;; This connection's worker performs I/O; the base lifecycle loop and
        ;; other heads keep running. No model/store writer spans the read.
-       (apply acquisition:acquire! actor args)]
+       (apply document:acquire! actor args)]
+      [(document-reload document-reread document-check)
+       (control!) (arity 1)
+       (case operation
+         [(document-check) (document:check! actor (car args))]
+         [else (call-with-values
+                 (lambda () ((if (eq? operation 'document-reload) document:reload! document:reread!) actor (car args))) list)])]
       [(create visit reset rename delete discard properties)
        (control!)
        (case operation

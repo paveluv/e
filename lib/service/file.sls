@@ -6,9 +6,9 @@
 ;; permission-preserving writes, the line/trailing-newline algebra a
 ;; file's text and a buffer's line vector convert through, and
 ;; completion over a directory listing. No dialogs or buffer bookkeeping;
-;; (service acquisition) composes these operations with the base store.
+;; (service document) composes these operations with the base store.
 ;;
-;; Visiting and creation run in the base. Save and explicit reload commands
+;; Visiting, creation and explicit reload run in the base. Save commands
 ;; still use these disk primitives from same-host heads.
 ;; Exported names
 ;; drop the module stem: (file:read path), (file:lines text),

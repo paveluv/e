@@ -15,7 +15,7 @@
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
-          (prefix (head document) document:)
+          (prefix (head catalogue-host) catalogue-host:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -79,7 +79,7 @@
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
         (w window "outer host") (id model "root view id") (returns buffer))
   (define (show-widget! w id)
-    (let ([origin (document:reference (head:window-buffer w))])
+    (let ([origin (catalogue-host:reference (head:window-buffer w))])
       (head:set-window-buffer! w (widget-buffer! id))
       (let* ([b (head:window-buffer w)] [actual (buffer-widget b)] [d (interaction:snapshot actual)])
         (when (and d (eq? (view:kind d) 'window-tool))
@@ -99,7 +99,7 @@
   (define (open-document! id ref)
     (let* ([own (tool-window id)] [event-target (head:app-event-focus)]
            [target (if (and event-target (memq event-target (head:windows))) event-target own)]
-           [b (document:resolve! ref)])
+           [b (catalogue-host:resolve! ref)])
       (unless b (error 'open-document! "document is unavailable" ref))
       (widget:keep-host-focus!)
       (let ([targets (linked 'target target)])
@@ -110,7 +110,7 @@
         (id model "window-tool view"))
   (define (return! id)
     (let* ([w (tool-window id)] [d (interaction:snapshot id)] [p (assq 'origin (view:state d))]
-           [b (or (and p (document:resolve! (cdr p)))
+           [b (or (and p (catalogue-host:resolve! (cdr p)))
                 (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
       (when b (head:with-window w (head:show-buffer! b)))))
 
@@ -129,7 +129,7 @@
     (let* ([d (interaction:snapshot id)] [app (cadr (assq 'app (view:children d)))])
       (when (assq 'current (widget:commands app))
         (widget:invoke! app 'current
-          (and (not (eq? (head:current-buffer) (widget:host id))) (document:reference (head:current-buffer)))))))
+          (and (not (eq? (head:current-buffer) (widget:host id))) (catalogue-host:reference (head:current-buffer)))))))
 
   (define (init-widget-host!)
     ;; Definition reload keeps runtime mounts. Rediscover only at installation;

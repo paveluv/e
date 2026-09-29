@@ -65,8 +65,8 @@
           (prefix (head style) style:)
           (prefix (head table) table:)
           (prefix (head window) window:)
-          (prefix (service acquisition) acquisition:)
           (prefix (service doc) doc:)
+          (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
@@ -233,47 +233,25 @@
   (define reload-due '()) ; files noticed while a command is editing
 
   (define (check-disk-before-edit!)
-    ;; The start of an edit session -- one undo entry; chained typing
-    ;; checks once: a file changed on disk meanwhile is noted, and once the
-    ;; edit is made, against the text as the user saw it, the buffer
-    ;; reloads through the store before the frame, the disk's changes
-    ;; merged with the buffer's, the edit just made among them, so an
-    ;; insertion where the disk inserted conflicts instead of landing
-    ;; elsewhere.  The mtime raises the suspicion cheaply; the content
-    ;; confirms it, so a mere touch passes silently.
-    (let ([b (head:window-buffer current-window)])
-      (when (and file-name (head:buffer-base b))
-        (let-values ([(text revision facts) (head:buffer-state b)])
-          (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
-                [base (cond [(assq 'base facts) => cdr] [else #f])])
-            (when (and path base)
-              (let ([stamp (file:stamp path)])
-                (unless (and stamp (equal? stamp (cond [(assq 'stamp facts) => cdr] [else #f])))
-                  (let ([disk (guard (ex [else #f]) (read-disk path))])
-                    (cond
-                      [(not disk) (void)]
-                      [(string=? (car disk) base)
-                       (head:buffer-facts-set! b (list (cons 'stamp (cdr disk))) (property:select facts '(file base stamp)))]
-                      [else (unless (memq b reload-due) (set! reload-due (cons b reload-due)))]))))))))))
+    ;; One check per new edit group, before its edit; merge afterwards so
+    ;; a changed disk cannot silently retarget the user's displayed intent.
+    ;; Filesystem reads and observation guards belong to the base.
+    (let* ([b (head:window-buffer current-window)] [id (head:buffer-store-id b)])
+      (when (and id file-name (head:buffer-base b) (document:check! head:ui-actor id))
+        (unless (memq b reload-due) (set! reload-due (cons b reload-due))))))
 
   (define (reload-if-due!)
-    ;; before the frame: the buffer an edit found changed on disk reloads,
-    ;; the disk read again now; a file the store cannot reload says so in
-    ;; the echo, as reload! does, and the edit stands
     (let ([pending reload-due])
       (set! reload-due '())
-      (for-each (lambda (b)
-                  (when (and b (memq b (head:buffers)) (head:buffer-store-id b))
-                    (let-values ([(text revision facts) (head:buffer-state b)])
-                      (let ([path (cond [(assq 'file facts) => cdr] [else #f])]
-                            [base (cond [(assq 'base facts) => cdr] [else #f])])
-                        (when (and path base)
-                          (let ([disk (guard (ex [else #f]) (read-disk path))])
-                            (when (and disk (not (string=? (car disk) base)))
-                              (guard (ex [(kernel:refusal? ex) (void)])
-                                (let-values ([(status detail) (reload-from-disk! b path disk)])
-                                  (unless (eq? status 'applied)
-                                    (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) (merge-failure detail))))))))))))) pending)))
+      (for-each
+        (lambda (b)
+          (when (and (memq b (head:buffers)) (head:buffer-store-id b))
+            (guard (ex [else (log:add! 'edit:reload-if-due! (kernel:condition-text ex))])
+              (let-values ([(status detail) (document:reload! head:ui-actor (head:buffer-store-id b))])
+                (head:sync-foreign-edits! (head:buffer-store-id b))
+                (unless (eq? status 'applied)
+                  (log:add! 'edit:reload-if-due!
+                    (format "~a could not be reloaded: ~a" (head:buffer-name b) (merge-failure detail)))))))) pending)))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and undo: #t forbids all edits,
@@ -985,7 +963,7 @@
       [(path destination proposal)
        (unless (procedure? destination) (error 'visit-file! "expected a destination procedure" destination))
        (guard (ex [else (log:add! 'edit:visit-file! (format "Cannot open ~a: ~a" path (kernel:condition-text ex))) #f])
-         (let ([result (acquisition:acquire! head:ui-actor (file:expand (file:absolute path)) proposal)])
+         (let ([result (document:acquire! head:ui-actor (file:expand (file:absolute path)) proposal)])
            (case (car result)
              [(directory) (destination 'directory (cadr result))]
              [(buffer)
@@ -1169,38 +1147,26 @@
             (format "~a changed on disk, ~a, and could not be reread: ~a" path why detail)))
       (eq? status 'applied)))
 
-  (define (current-file-disk)
-    ;; the current buffer, its file's path and the disk's state, for the
-    ;; commands that take the disk; refused without a file or unreadable
-    (let ([b (head:current-buffer)])
-      (let-values ([(text revision facts) (head:buffer-state b)])
-        (let ([path (cond [(assq 'file facts) => cdr] [else #f])])
-          (unless path (refuse-file! "This buffer visits no file"))
-          (let ([disk (guard (ex [else #f]) (read-disk path))])
-            (unless disk (refuse-file! (format "Cannot read ~a" path)))
-            (values b path disk revision facts))))))
-
-  (edoc "Reread the current buffer's file: the disk's text replaces the buffer's as one undoable edit, settling the pending conflicts, so the red !! goes and undo brings the text and the conflicts back; nothing is written."
-        (edits))
-  (define (reread!)
-    (check-editable!)
-    (let-values ([(b path disk revision facts) (current-file-disk)])
+  (define (reload-document! replace?)
+    (let* ([b (head:current-buffer)] [id (head:buffer-store-id b)])
+      (unless id (refuse-file! "This buffer is not a shared document"))
       (let-values ([(status detail)
-                    (head:store-reread! b (file:lines (car disk))
-                      (list (cons 'trailing (file:ends-in-newline? (car disk)))
-                            (cons 'base (car disk)) (cons 'stamp (cdr disk))))])
-        (case status
-          [(applied)
-           (head:clamp-buffer-positions! b)
-           (log:add! 'edit:reread! (format "Reread ~a" path))]
-          [else (refuse-file! (format "~a could not be reread: ~a" (file:base-name path) detail))]))))
-
-  (edoc "Reload the current buffer's file as one undoable action, preserving earlier undo history. The disk's text becomes the baseline and the buffer's edits merge on top, a collision pending as a conflict, the red !!. Undo restores the pre-reload buffer while remembering the observed disk version, so saving can overwrite it. Where the store cannot reload, the echo says so and C-x C-r rereads. Reopening, editing and saving after a change on disk reload the same way.")
-  (define (reload!)
-    (let-values ([(b path disk revision facts) (current-file-disk)])
-      (let-values ([(status detail) (reload-from-disk! b path disk)])
+                    (guard (ex [(kernel:refusal? ex) (raise ex)]
+                               [else (refuse-file! (kernel:condition-text ex))])
+                      ((if replace? document:reread! document:reload!) head:ui-actor id))])
+        ;; An adoption failure after commit is not a refused document action.
+        (head:sync-foreign-edits! id)
+        (head:flush-ui-audit! id)
         (unless (eq? status 'applied)
-          (refuse-file! (format "~a could not be reloaded: ~a" (file:base-name path) (merge-failure detail)))))))
+          (refuse-file! (format "~a could not be ~a: ~a" (head:buffer-name b)
+                          (if replace? "reread" "reloaded") (merge-failure detail)))))))
+
+  (edoc "Reread the current document's file in the base as one undoable replacement, settling pending conflicts. Concurrent edits or retargeting during the read refuse; earlier undo history remains."
+        (edits))
+  (define (reread!) (check-editable!) (reload-document! #t))
+
+  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it.")
+  (define (reload!) (reload-document! #f))
 
   (define (stale-save! b path disk review write!)
     ;; The file changed on disk since the baseline: reload first, then write

@@ -1,7 +1,7 @@
-;; File acquisition belongs to the base; placement and mode detection do not.
+;; Document filesystem operations belong to the base, independently of views.
 (import (only (foundation edoc) elibrary))
-(elibrary (service acquisition)
-  (export acquire!)
+(elibrary (service document)
+  (export acquire! check! reload! reread!)
   (import (chezscheme) (prefix (core property) property:)
           (prefix (foundation string) string:) (prefix (service file) file:)
           (prefix (service log) log:) (prefix (state store) store:)
@@ -10,6 +10,67 @@
   (define (disk-facts disk)
     (list (cons 'base (car disk)) (cons 'stamp (cdr disk))
       (cons 'trailing (file:ends-in-newline? (car disk)))))
+
+  (define (fact facts key) (cond [(assq key facts) => cdr] [else #f]))
+
+  (define (read-disk path)
+    (let* ([identity (sys:file-identity path)] [disk (file:read-state path)])
+      (unless (and identity (equal? identity (sys:file-identity path)))
+        (error 'read-disk "File identity changed during read" path))
+      (values disk identity)))
+
+  (define (apply-disk! actor id path review disk identity replace?)
+    ;; Neither a store lock nor a head event loop owns the read. The disk
+    ;; witness and coherent store review both have to survive admission.
+    (let-values ([(current current-identity) (read-disk path)])
+      (unless (and (equal? identity current-identity) (equal? (car disk) (car current)))
+        (error 'apply-disk! "Disk changed again; review the file again" path)))
+    (let-values ([(status detail)
+                  ((if replace? store:reread! store:reload!) actor id (file:lines (car disk))
+                   (disk-facts disk) 'any review)])
+      (when (eq? status 'applied)
+        (log:add! 'document:apply-disk!
+          (if replace?
+            (format "Reread ~a; undo brings the buffer's text back" path)
+            (let ([n (length (cadr detail))])
+              (if (zero? n) (format "Reloaded ~a, the buffer's edits merged" path)
+                (format "Reloaded ~a with ~a conflict~a" path n (if (= n 1) "" "s")))))))
+      (values status detail)))
+
+  (define (reload-document! actor id replace?)
+    (activity:call-with
+      (lambda ()
+        (let-values ([(text revision facts) (store:snapshot-state id)])
+          (let ([path (fact facts 'file)])
+            (unless path (error 'reload-document! "This buffer visits no file"))
+            (let-values ([(disk identity) (read-disk path)])
+              (apply-disk! actor id path (cons revision facts) disk identity replace?)))))))
+
+  (edoc "Reload a document from its file in the base, merging local edits as one undoable action without erasing earlier history. Refuse if its reviewed text or file facts changed during I/O. Returns status and detail, applied with (revision conflicts)."
+        (actor actor "requesting actor") (id integer "buffer identity"))
+  (define (reload! actor id) (reload-document! actor id #f))
+
+  (edoc "Replace a document with its file's text in the base as one undoable action, settling pending conflicts. Refuse if its reviewed text or file facts changed during I/O. Returns status and detail, applied with the revision."
+        (actor actor "requesting actor") (id integer "buffer identity"))
+  (define (reread! actor id) (reload-document! actor id #t))
+
+  (edoc "Check a document's disk content against its baseline. An unchanged stamp avoids reading; equal content updates only the reviewed stamp. Unreadable or unvisited files return false. A true result is a hint to request a fresh guarded reload, not permission to overwrite a later state."
+        (actor actor "requesting actor") (id integer "buffer identity") (returns boolean))
+  (define (check! actor id)
+    (activity:call-with
+      (lambda ()
+        (let-values ([(text revision facts) (store:snapshot-state id)])
+          (let ([path (fact facts 'file)] [base (fact facts 'base)])
+            (and path base
+              (let ([stamp (file:stamp path)])
+                (and (not (and stamp (equal? stamp (fact facts 'stamp))))
+                  (guard (ex [else #f])
+                    (let-values ([(disk identity) (read-disk path)])
+                      (if (string=? base (car disk))
+                        (begin
+                          (store:set-properties! actor id (list (cons 'stamp (cdr disk)))
+                            (property:select facts '(file base stamp))) #f)
+                        #t)))))))))))
 
   (define (reopen! actor id path)
     ;; Capture before disk I/O. A concurrent writer must not attach this
@@ -20,31 +81,21 @@
           [(not (and base (equal? (cdr (assq 'file facts)) path))) #f]
           [(not (file-exists? path)) "Cannot reread the file; shared work was retained"]
           [else
-           (let* ([identity (sys:file-identity path)] [disk (file:read-state path)])
-             (unless (and identity (equal? identity (sys:file-identity path)))
-               (error 'reopen! "File identity changed during read" path))
+           (let-values ([(disk identity) (read-disk path)])
              (cond
                [(string=? base (car disk))
                 (store:set-properties! actor id (list (cons 'stamp (cdr disk)))
                   (property:select facts '(file base stamp))) #f]
                [else
-                ;; No store lock spans a filesystem read. Compare contents,
-                ;; not only mtime, before attempting the guarded transaction.
-                (unless (and (equal? (car disk) (car (file:read-state path)))
-                             (equal? identity (sys:file-identity path)))
-                  (error 'reopen! "Disk changed again; visit it again" path))
-                (let ([review (cons revision facts)] [updates (disk-facts disk)])
-                  (let-values ([(status detail) (store:reload! actor id (file:lines (car disk)) updates 'any review)])
+                (let ([review (cons revision facts)])
+                  (let-values ([(status detail) (apply-disk! actor id path review disk identity #f)])
                     (cond
-                      [(eq? status 'applied)
-                       (log:add! 'acquisition:reopen!
-                         (format "Reloaded ~a with ~a conflicts; the buffer's edits were merged" path (length (cadr detail)))) #f]
+                      [(eq? status 'applied) #f]
                       [(eq? detail 'pending-edits) "Resolve the pending conflicts first; further edits were retained"]
                       [(memq detail '(no-base basis-too-old))
-                       (let-values ([(status detail) (store:reread! actor id (file:lines (car disk)) updates 'any review)])
+                       (let-values ([(status detail) (apply-disk! actor id path review disk identity #t)])
                          (if (eq? status 'applied)
-                           (begin (log:add! 'acquisition:reopen!
-                                    (format "Reread ~a; undo brings the buffer's text back" path)) #f)
+                           #f
                            (format "File review refused (~a); shared work was retained" detail)))]
                       [else (format "File review refused (~a); shared work was retained" detail)])))]))]))))
 
