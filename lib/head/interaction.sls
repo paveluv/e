@@ -2,39 +2,51 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export arrange! bind! claim! flush! focus! init! publish! release! set-state! snapshot)
+  (export arrange! bind! claim! flush! focus! publish! release! set-state! snapshot start!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:)
+          (prefix (core identity) identity:)
           (prefix (core publication) publication:)
           (prefix (foundation datum) datum:)
-          (prefix (head head) head:)
           (prefix (state connection) connection:)
           (prefix (state view) view:))
 
   (define owned (make-hashtable equal-hash equal?))
   (define dirty? #f)
   (define queued '())
-  (define writer
-    (publication:make!
-      (lambda (batch previous)
-        (let ([changes (filter (lambda (row) (not (member row (or previous '())))) batch)])
-          (unless (null? changes)
-            (let ([reply (call-with-values (lambda () (view:publish! head:ui-actor changes)) list)])
-              (unless (eq? (car reply) 'applied)
-                (error 'interaction:publish! "view ownership or sequence changed" reply))))))
-      head:wake-main!
-      datum:copy))
+  (define owner #f)
+  (define wake! void)
+  (define writer #f)
+
+  (edoc "Start this head's interaction publisher with an explicit actor and failure wakeup. Repeated startup for the same actor is harmless; a different actor requires another head runtime."
+        (actor actor "head identity") (notify! thunk "wake the owner on publication failure"))
+  (define (start! actor notify!)
+    (unless (and (identity:valid? actor) (eq? (car actor) 'head) (procedure? notify!))
+      (error 'start! "expected a head identity and wakeup procedure"))
+    (when (and owner (not (equal? owner actor))) (error 'start! "interaction publisher already belongs to another actor"))
+    (set! owner (datum:copy actor)) (set! wake! notify!)
+    (unless writer
+      (set! writer (publication:make!
+                     (lambda (batch previous)
+                       (let ([changes (filter (lambda (row) (not (member row (or previous '())))) batch)])
+                         (unless (null? changes)
+                           (let ([reply (call-with-values (lambda () (view:publish! owner changes)) list)])
+                             (unless (eq? (car reply) 'applied)
+                               (error 'interaction:publish! "view ownership or sequence changed" reply))))))
+                     (lambda () (wake!))
+                     datum:copy))))
 
   (edoc "Claim an unmounted view; return status and descriptor. Call from the head's pump thread."
         (actor actor "attribution is supplied by the connection") (id model "view model id"))
   (define (claim! actor id)
+    (unless (equal? owner actor) (error 'claim! "start this actor's interaction publisher before claiming a view"))
     (let ([reply (call-with-values (lambda () (view:claim! actor id)) list)])
       (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
       (values (car reply) (snapshot id))))
 
   (define (adopt! rows)
     (for-each (lambda (row)
-                (if (equal? head:ui-actor (view:owner (cdr row)))
+                (if (equal? owner (view:owner (cdr row)))
                     (hashtable-set! owned (datum:copy (car row)) (datum:copy (cdr row)))
                     (hashtable-delete! owned (car row)))) rows)
     (set! dirty? #t))
@@ -96,10 +108,10 @@
                            (view:basis descriptor) (view:state descriptor) (view:focus descriptor)))
                 (vector->list ids) (vector->list descriptors))))))
       (set! dirty? #f))
-    (publication:submit! writer queued))
+    (when writer (publication:submit! writer queued)))
 
   (edoc "Publish and fence acknowledged view state before detach or release." (effects remote))
-  (define (flush!) (publish!) (publication:flush! writer))
+  (define (flush!) (publish!) (when writer (publication:flush! writer)))
 
   (edoc "Fence publication and release an owned mount, keeping its acknowledged state for resume."
         (actor actor "attribution is supplied by the connection") (id model "view model id") (generation integer "the claimed generation"))
@@ -109,7 +121,4 @@
       (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
       (apply values reply)))
 
-  (edoc "Integrate interaction publication with presentation and lifecycle checkpoints.")
-  (define (init!)
-    (head:add-publication-hook! (lambda (fence?) (if fence? (flush!) (publish!)))))
 )

@@ -20,7 +20,7 @@
              (prefix (state collection) collection:) (prefix (state model) model:)
              (prefix (state view) view:) (prefix (state store) store:)
              (prefix (sys glyph) glyph:) (prefix (sys sys) sys:) (prefix (test) test:))
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (finder:init!) (edit:init!)
+     (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (finder:init!) (edit:init!)
      (define check test:check)
      (define root (format "/tmp/e-files-~a-~a" (get-process-id) (random 1000000)))
      (define (path name) (string-append root "/" name))

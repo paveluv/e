@@ -18,7 +18,7 @@
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
+     (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))

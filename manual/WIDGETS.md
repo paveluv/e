@@ -876,6 +876,11 @@ claimed view or a newer selection. Missing history and overlapping edits
 refuse instead of clamping an edit to different text. Read-only sources remain
 navigable. Empty insertion and deletion at a document boundary are inert.
 
+The head starts interaction publication with
+`interaction:start! actor wake-on-failure`. The publisher itself has no window
+or screen dependency. The default head wires publication to frame boundaries
+and lifecycle fences; extensions do not need a separate initializer.
+
 Mode-specific editing bindings precede the editor's defaults and include
 inherited mode contexts. Pretty Scheme's bracket-closing commands accept an
 explicit view and use its source and caret. Mode contexts are cached outside

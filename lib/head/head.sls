@@ -124,6 +124,7 @@
           (prefix (foundation edoc) edoc:)
           (prefix (foundation text) text:)
           (prefix (head checkpoint) checkpoint:)
+          (prefix (head interaction) interaction:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
           (prefix (head text-source) text-source:)
@@ -3842,6 +3843,12 @@
                     identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------
+
+  (define interaction-started
+    (begin
+      (interaction:start! ui-actor wake-main!)
+      (kernel:call-with-runtime-registrations
+        (lambda () (add-publication-hook! (lambda (fence?) (if fence? (interaction:flush!) (interaction:publish!))))))))
 
   ;; Subscribe before taking the initial inventory: writes during the read
   ;; are in the inventory, the queue, or both. Deduplicate at first adoption.

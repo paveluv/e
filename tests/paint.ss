@@ -647,7 +647,7 @@
 
      ;; The visible frame owns hit geometry, including across partial output
      ;; and uncertain terminal writes. No extra test process or timing wait.
-     (widget:init!) (interaction:init!) (window:init!)
+     (widget:init!) (window:init!)
      ;; A partial overlay must not mutate the full-width child's lent style
      ;; row or an earlier frame, including when that child is cached.
      (widget:register! 'style-row 1

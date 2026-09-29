@@ -573,7 +573,7 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (interaction:init!) (widget:init!) (window:init!) (entry:init!)
+     (widget:init!) (window:init!) (entry:init!)
      ;; Widget host hooks must leave shared buffers alone after their store
      ;; records disappear, whether hidden or still shown in a window.
      (let* ([was (head:current-buffer)]
