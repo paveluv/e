@@ -59,6 +59,9 @@
     (let* ([m (mounted id)] [lines (text-control:lines source)]
            [frame (render:prepare #f #f lines (text-control:revision source) '())])
       (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m))))))
+  (define (contexts id d)
+    (let ([signature (mount-mode (mounted id))])
+      (append (mode:key-contexts (and signature (car signature)) #f) '(widget-editor))))
   (define (snap lines frame p)
     (let* ([row (min (car p) (- (vector-length lines) 1))]
            [col (min (cdr p) (string-length (vector-ref lines row)))])
@@ -463,7 +466,7 @@
   (define (register! commands)
     (widget:register! 'editor 1
       (list (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
-        (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts '(widget-editor))
+        (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts contexts)
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (append (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!)) commands))))
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)

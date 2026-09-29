@@ -183,6 +183,23 @@
   (check 'editor-formatter-can-empty-the-document (text) '#(""))
   (replace-region-text! a '(0 . 0) '(0 . 0) "new\ntext")
   (check 'editor-explicit-range-replacement (list (text) (car (state a))) '(#("new" "text") (1 . 4)))
+  ;; Mode contexts belong to the explicit editor, including inherited keys.
+  (unless (mode:find "scheme") (mode:register! "scheme" '() '() #f))
+  (pretty-scheme:init!)
+  (store:set-property! actor source 'mode "pretty-scheme-depth")
+  (store:reset! '(base test) source '("[foo"))
+  (text-source:open! actor source) (select! a '(0 . 4) '(0 . 4))
+  (widget:pump!) (show! 27)
+  (key ")")
+  (check 'editor-mode-binding-uses-its-own-source
+    (list (store:line source 0) (eq? ambient (head:current-buffer))
+      (cadar (cadr (widget:key-scopes root "")))) '("[foo]" #t (pretty-scheme-depth scheme widget-editor)))
+  (keymap:bind-default! 'scheme "C-c x" (keymap:call move! widget:target 'start))
+  (key "C-c")
+  (store:set-property! actor source 'mode "editor-test")
+  (widget:pump!)
+  (key "x")
+  (check 'editor-mode-change-cancels-pending-chord (car (state a)) '(0 . 5))
   (store:reset! '(base test) source '("replacement"))
   (text-source:forget! source) (text-source:open! actor source)
   (check 'editor-unknown-selection-history-refuses-until-explicit-selection

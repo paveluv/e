@@ -35,6 +35,7 @@
              (prefix (state actor) actor:) (prefix (state surface) surface:) (prefix (head render) render:)
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
              (prefix (head dispatch) dispatch:)
+             (prefix (apps pretty-scheme) pretty-scheme:)
              (prefix (apps git-view) git-view:)
              (prefix (apps log-view) log-view:))
 

@@ -298,20 +298,23 @@
     (fold-right (lambda (entry acc) (if (guard (ex [else #f]) ((cdr entry) b)) (cons (car entry) acc) acc))
                 '() (kernel:registry-items state-contexts)))
 
-  (edoc "The keymap contexts of a buffer, nearest first: those it has by its state, registered with add-context!, then its mode's and its parents', each named after its mode; a capture context needs a live app."
-        (b buffer "the buffer")
+  (edoc "Read a resolved mode's contexts and inherited contexts, nearest first, excluding capturing contexts unless allowed. The one-argument legacy buffer adapter prepends state contexts and allows capture only for live apps."
+        (m any "resolved mode or #f")
+        (b buffer "legacy one-argument buffer adapter")
+        (capture? boolean "whether capturing mode contexts are eligible")
         (returns (list-of symbol)))
-  (define (key-contexts b)
-    (append
-      (state-contexts-of b)
-      (let loop ([m (mode-of b)] [acc '()])
-        (if (not m)
-            (reverse acc)
-            (loop (and (mode-parent m) (find-mode (mode-parent m)))
-                  (let ([context (string->symbol (mode-name m))])
-                    (if (or (not (keymap:context-capture context)) (head:app-buffer? b))
-                        (cons context acc)
-                        acc)))))))
+  (define key-contexts
+    (case-lambda
+      [(b) (append (state-contexts-of b) (key-contexts (mode-of b) (head:app-buffer? b)))]
+      [(m capture?)
+       (let loop ([m m] [acc '()])
+         (if (not m)
+           (reverse acc)
+           (loop (and (mode-parent m) (find-mode (mode-parent m)))
+                 (let ([context (string->symbol (mode-name m))])
+                   (if (or (not (keymap:context-capture context)) capture?)
+                       (cons context acc)
+                       acc)))))]))
 
   (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
         (b (list-of buffer) "the buffer, at most one")

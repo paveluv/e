@@ -771,6 +771,10 @@ its focus in the base; inactive roots retain it. Modal overlays confine focus
 and consume input even when their contents are empty.
 
 Definitions list ordinary `contexts` and optional `capture-contexts`.
+`contexts` may also be a read-only `(id descriptor)` procedure returning
+context symbols from already acquired state. Routing and binding inspection
+use the same provider; it must not perform I/O. A context change cancels an
+unfinished chord.
 Captures are checked from outermost ancestor first; ordinary bindings bubble
 from the focused leaf. A `full` capture stops unhandled input; a `partial`
 capture can list first-key tokens in `yield`. Bind named actions through
@@ -862,7 +866,12 @@ claimed view or a newer selection. Missing history and overlapping edits
 refuse instead of clamping an edit to different text. Read-only sources remain
 navigable. Empty insertion and deletion at a document boundary are inert.
 
+Mode-specific editing bindings precede the editor's defaults and include
+inherited mode contexts. Pretty Scheme's bracket-closing commands accept an
+explicit view and use its source and caret. Mode contexts are cached outside
+key routing, so discovering or dispatching a binding performs no remote reads.
+
 Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; bulk-region commands, mode-specific editing bindings,
+still use their existing host; bulk-region commands,
 search/conflict decorations and window chrome have not
 yet moved to the nested editor.

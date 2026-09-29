@@ -121,7 +121,7 @@
 
   (edoc "Register a head definition owned by the defining module; reject unknown and duplicate fields."
         (kind symbol "widget kind") (schema integer "positive version")
-        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures"))
+        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures. Contexts may be a list or a read-only (id descriptor) provider using already acquired state; never perform I/O there."))
   (define (register! kind schema definition)
     (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0) (list? definition)
               (let loop ([rest definition] [seen '()])
@@ -134,7 +134,8 @@
                                        (or (null? rest)
                                          (and (pair? (car rest)) (symbol? (caar rest)) (procedure? (cdar rest))
                                            (not (memq (caar rest) names)) (check (cdr rest) (cons (caar rest) names))))))]
-                        [(contexts capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
+                        [(contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
+                        [(capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
                         [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (memq (cdr p) '(full partial))]
@@ -773,14 +774,17 @@
                        (let* ([id (car rest)] [d (read-view id)] [entry (definition d)]
                               [full? (eq? (field entry 'capture 'partial) 'full)]
                               [yield? (and (not full?) (member key (field entry 'yield '())))]
-                              [contexts (if yield? '() (field entry 'contexts '()))]
+                              [provider (field entry 'contexts '())]
+                              [contexts (if yield? '() (if (procedure? provider) (provider id d) provider))]
                               [item (list id (if (or (equal? id root) (equal? id barrier)) (append contexts '(widget-host)) contexts)
                                       (or full? (equal? id barrier)))])
+                         (unless (and (list? contexts) (for-all symbol? contexts))
+                           (error 'key-scopes "expected context symbols" id contexts))
                          (if (equal? id barrier) (reverse (cons item out)) (loop (cdr rest) (cons item out))))))]
            [captures (filter (lambda (scope) (pair? (cadr scope)))
                        (map (lambda (id) (list id (field (definition (read-view id)) 'capture-contexts '()) #f)) path))]
            [basis (map (lambda (id) (let ([d (read-view id)]) (list id (and d (view:generation d)) (definition d)))) path)])
-      (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis) (append captures normal) focus)))
+      (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis normal captures) (append captures normal) focus)))
 
   (edoc "Offer committed text or an unbound normalized key to the focused path; a full capture or modal boundary stops bubbling."
         (root model "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
