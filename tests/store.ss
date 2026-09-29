@@ -998,6 +998,8 @@
        (check 'incremental-snapshot-already-current changes '()))
      (let-values ([(text revision changes) (store:snapshot-since nested 3)])
        (check 'incremental-snapshot-future-basis changes #f))
+     (let-values ([(text revision changes) (store:snapshot-since nested #f)])
+       (check 'snapshot-without-basis-omits-history (list text revision changes) '(#("yxabc") 2 #f)))
      ;; a reset clears the log, yet a reader crosses it on a line diff of the
      ;; two texts, the chain taking its text to the fresh one
      (store:reset! bot nested '("fresh"))

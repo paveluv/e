@@ -31,7 +31,7 @@
     buffer-base-set! buffer-conflicted buffer-fact
     buffer-fact-set! buffer-facts-set! buffer-file
     buffer-file-set! buffer-flags buffer-line buffer-line-count
-    buffer-lines buffer-lines-raw-set! buffer-lines-set!
+    buffer-lines buffer-lines-set!
     buffer-mark-col buffer-mark-col-set! buffer-mark-row
     buffer-mark-row-set! buffer-marked buffer-marked-set!
     buffer-mode-auto buffer-mode-auto-set! buffer-modified
@@ -44,7 +44,7 @@
     buffer-spot-row-set! buffer-spot-top buffer-spot-top-set!
     buffer-stamp buffer-stamp-set! buffer-state buffer-status
     buffer-sticky-lines buffer-store-id buffer-store-rev
-    buffer-store-rev-set! buffer-trailing buffer-trailing-set!
+    buffer-trailing buffer-trailing-set!
     buffer-window-size buffer-wrap-set! buffer? buffers
     bump-buffer-revision! buttons-width call-uninterrupted
     call-with-display-update call-with-interrupt checkpoint!
@@ -126,6 +126,7 @@
           (prefix (head checkpoint) checkpoint:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
+          (prefix (head text-source) text-source:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
@@ -136,15 +137,12 @@
 
   ;;; The records ----------------------------------------------------------------
 
-  (define delta-log-limit 256)
-
   ;; A store buffer caches immutable text and reads its facts from the
   ;; store.  A local buffer has no store id: its text and local-facts
   ;; live here alone.  Selection, saved position, and line-number
   ;; toggles belong to this seat in either case.
   (edoc "A buffer as this seat sees it: a cache of a store buffer's text plus per-seat presentation, or a local buffer of its own."
         (name string "the label: a shared buffer's cached, a local one's own")
-        (lines vector "the text, an immutable vector of lines")
         (revision integer "the seat's repaint counter")
         (mark-row integer "the mark's row")
         (mark-col integer "the mark's column")
@@ -154,15 +152,14 @@
         (spot-top integer "the top row when last displayed")
         (store-id (or integer #f) "the twin in the store, or #f for a local buffer")
         (store-rev (or integer #f) "the store revision the lines last agreed with")
-        (local-rev integer "the local content revision")
-        (changes any "the bounded chain of adopted revision links")
+        (lines any "constructor text; retained internally as a shared text-source mirror")
         (local-facts hashtable "a local buffer's facts")
         (rendition (or (record frame) #f) "the cached cell projection")
         (constructor name lines revision mark-row mark-col marked spot-row spot-col spot-top store-id store-rev))
   (define-record-type buffer
     (fields (mutable name buffer-name buffer-name-raw-set!)
                                    ; shared label cache or local <name>
-            (mutable lines buffer-text buffer-lines-raw-set!)
+            (immutable lines buffer-source)
             (mutable revision)      ; the seat's repaint counter
             (mutable mark-row) (mutable mark-col)
             (mutable marked buffer-marked buffer-marked-raw-set!)
@@ -171,10 +168,6 @@
             ;; the buffer's twin in the (store), and the store
             ;; revision this buffer's lines last agreed with
             store-id (mutable store-rev)
-            ;; Local content has its own revision, independent of repaint.
-            ;; Either owner retains bounded links between adopted revisions, so
-            ;; derived views can follow exactly the text this head sees.
-            (mutable local-rev) (mutable changes)
             local-facts
             (mutable rendition buffer-rendition-raw buffer-rendition-set!))
     ;; The public constructor's shape: each record gets private facts and
@@ -183,9 +176,11 @@
       (lambda (new)
         (lambda (name lines revision mark-row mark-col marked
                   spot-row spot-col spot-top store-id store-rev)
-          (new name lines revision mark-row mark-col marked
+          (new name (text-source:make store-id lines (or store-rev 0)) revision mark-row mark-col marked
                spot-row spot-col spot-top store-id store-rev
-               0 #f (make-eq-hashtable) #f)))))
+               (make-eq-hashtable) #f)))))
+
+  (define (buffer-text b) (text-source:lines (buffer-source b)))
 
   (edoc "A window: a view of a buffer at a place in the layout."
         (index integer "the number at the left of its status line")
@@ -1720,59 +1715,22 @@
 
   (edoc "The revision of this head's adopted text source, independent of its display rendition."
         (b buffer "text source") (returns integer))
-  (define (content-revision b)
-    (if (buffer-store-id b) (buffer-store-rev b) (buffer-local-rev b)))
+  (define (content-revision b) (text-source:revision (buffer-source b)))
 
   (define (adopt-text! b text revision changes)
-    ;; Keep only actual deltas ending at the adopted snapshot.  A reset or
-    ;; incomplete chain cuts provenance; it is never inferred from a diff.
-    ;; Links carry all steps between two revisions. A reload can jump
-    ;; revisions, and one bridge can contain several steps at the same
-    ;; destination revision; neither is a single numbered delta.
-    (cond
-      [(not changes) (buffer-changes-set! b #f)]
-      [(> revision (content-revision b))
-       (let loop ([from (content-revision b)] [rest changes] [log (or (buffer-changes b) '())])
-         (cond
-           [(null? rest)
-            (let ([log (if (< from revision) (cons (list from revision) log) log)])
-              (buffer-changes-set! b (if (> (length log) delta-log-limit) (list-head log delta-log-limit) log)))]
-           [else
-            (let ([to (caar rest)])
-              (let take ([rest rest] [steps '()])
-                (if (and (pair? rest) (= (caar rest) to))
-                    (take (cdr rest) (cons (car rest) steps))
-                    (loop to rest (cons (cons* from to (reverse steps)) log)))))]))])
-    ;; No old surface can describe newly adopted text, even if a callback
-    ;; asks for rendition before the next demanded frame has been prepared.
-    (buffer-rendition-set! b #f)
-    (buffer-lines-raw-set! b text)
-    (if (buffer-store-id b)
-        (buffer-store-rev-set! b revision)
-        (buffer-local-rev-set! b revision))
-    (bump-buffer-revision! b)
-    (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b)))
+    (let ([basis (content-revision b)])
+      (buffer-rendition-set! b #f)
+      ;; Mark this legacy projection adopted before notifying other readers.
+      (when (buffer-store-id b) (buffer-store-rev-set! b revision))
+      (text-source:adopt! (buffer-source b) basis text revision changes)
+      (bump-buffer-revision! b)
+      (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b))))
 
-  (edoc "A buffer's text, revision and changes since a content revision, ending at this head's cached source: (values text revision changes)."
-        (b buffer "the buffer")
-        (basis (or integer #f) "the earlier content revision, or #f"))
+  (edoc "The adopted text, revision and exact changes since a basis. This legacy presentation adapter never fetches."
+        (b buffer "the buffer") (basis (or integer #f) "earlier revision"))
   (define (snapshot-since b basis)
-    ;; Like store:snapshot-since, but ends at this head's cached source,
-    ;; including for local buffers.  Read on the head's pump: it does not
-    ;; pull newer store text or run callbacks.  #f omits an earlier basis.
-    (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0)))
-      (error 'snapshot-since "expected a content revision or #f" basis))
-    (let* ([text (buffer-lines b)] [revision (content-revision b)]
-           [log (buffer-changes b)]
-           [changes
-            (and basis (<= basis revision)
-                 (let scan ([at revision] [links (or log '())] [out '()])
-                   (cond [(= at basis) (map (lambda (e) (list (car e) (cadr e) (caddr e))) out)]
-                         [(or (< at basis) (null? links)) #f]
-                         [(= (cadar links) at)
-                          (scan (caar links) (cdr links) (append (cddar links) out))]
-                         [else #f])))])
-      (values text revision changes)))
+    (let-values ([(text revision changes) (text-source:snapshot (buffer-source b) basis)])
+      (values (buffer-lines b) revision changes)))
 
   (edoc "Make a buffer's cache the store's current text, by reference, and refit its positions and rendition."
         (b buffer "the buffer"))
@@ -1885,7 +1843,7 @@
     (unless (if delta (equal? (text:delta-removed delta) (text:delta-inserted delta))
                 (equal? (buffer-text b) text))
       (note-local-modification! b))
-    (let ([revision (+ (buffer-local-rev b) 1)])
+    (let ([revision (+ (content-revision b) 1)])
       (adopt-text! b text revision (and delta (list (list revision ui-actor delta))))))
 
   (edoc "Replace a buffer's baseline, loading or rereading, with new lines and facts, optionally only while a reviewed state still matches; the accepted revision, or #f."
@@ -1950,21 +1908,8 @@
            [basis (caddr source)]
            [proposal (delay (call-with-values (lambda () (text:apply-edit old span replacement)) list))])
       (define (project-placements actual before after)
-        (map
-          (lambda (entry)
-            (let ([wanted (cdr entry)])
-              (cons (car entry)
-                    (fold-left text:rebase-position
-                      (case wanted
-                        [(start) (text:span-start (text:delta-span actual))]
-                        [(end) (text:delta-new-end actual)]
-                        [else
-                         (let ([plan (force proposal)])
-                           (text:rebase-result-position
-                             (clamp-text-position (car plan) wanted)
-                             (cadr plan) actual before))])
-                      after))))
-          placements))
+        (map cons (map car placements)
+          (text-source:project-positions old span replacement actual before after (map cdr placements))))
       (check-placements! b placements)
       (store:validate-edit-context context)
       (unless (and (eqv? (cadr source) (buffer-store-id b))
@@ -1972,34 +1917,13 @@
         (raise (condition (kernel:make-refusal)
                           (make-message-condition "Edit not applied: the source buffer changed"))))
       (if (buffer-store-id b)
-          (let-values ([(status info)
-                        (store:edit-with-snapshot! ui-actor (buffer-store-id b)
-                                                   basis span replacement context 'any)])
-            (if (eq? status 'applied)
-                (let* ([committed (car info)]
-                       [changes (caddr info)]
-                       [backwards (reverse changes)]
-                       [actual (caddar backwards)]
-                       [before (map caddr (reverse (cdr backwards)))])
-                  (let-values ([(text revision after)
-                                (store:snapshot-since (buffer-store-id b) committed)])
-                    (adopt-snapshot! b basis text revision
-                                     (and after (append changes after))
-                                     (if after (project-placements actual before (map caddr after)) '()))
-                    (note-ui-edit! b committed)))
-                (let ([reason (case info
-                                [(read-only) "the buffer is read-only"]
-                                [(property-changed) "the buffer's reviewed facts changed"]
-                                [(revision-changed) "the reviewed text changed"]
-                                [(overlap) "another edit overlaps this change"]
-                                [else "the edit's revision is no longer available"])])
-                  (guard (ex [else (void)]) (sync-store-buffer! b))
-                  (guard (ex [else (void)])
-                    (log:add! 'head:store-edit!
-                      (format "edit refused in ~s: ~a" (buffer-name b) reason)))
-                  (raise (condition (kernel:make-refusal)
-                                    (make-message-condition
-                                      (format "Edit not applied: ~a" reason)))))))
+          (let-values ([(text revision changes placed committed)
+                        (guard (ex [(kernel:refusal? ex)
+                                    (guard (ex [else (void)]) (sync-store-buffer! b)) (raise ex)])
+                          (text-source:edit! ui-actor source span replacement context (map cdr placements)))])
+            (adopt-snapshot! b basis text revision changes
+              (if (null? placed) '() (map cons (map car placements) placed)))
+            (note-ui-edit! b committed))
           (let* ([plan (force proposal)] [text (car plan)] [delta (cadr plan)]
                  [placed (project-placements delta '() '())])
             (when (and (property:context-revision context)
@@ -2086,8 +2010,7 @@
       [(not (buffer-store-id b)) (values 'nothing #f)]
       [else
        (let-values ([(status detail)
-                     (guard (ex [else (values 'blocked 'store-unavailable)])
-                       (store:history-step! ui-actor (buffer-store-id b) direction scope 'any))])
+                     (text-source:history! ui-actor (buffer-store-id b) direction scope)])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))
@@ -2473,6 +2396,13 @@
                               (buffer-name b) old revision))
                     (request-repaint!)))))))))
 
+  (define source-observer
+    (text-source:observe!
+      (lambda (source basis text revision changes)
+        (let ([b (buffer-of-store-id (text-source:id source))])
+          (when (and b (> revision (buffer-store-rev b)))
+            (adopt-snapshot! b basis text revision changes '()))))))
+
   (define (sync-store-buffer! b)
     ;; Event arrival is only a wakeup.  Reading text separately from
     ;; its deltas can adopt a newer revision than the anchors follow.
@@ -2506,19 +2436,21 @@
               (guard (ex [else (void)])
                 (let ([b (buffer-of-store-id id)])
                   (if (store:visible? ui-actor id)
-                    (let ([b (or b (adopt-store-buffer! id))])
-                      (when b
-                        (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
-                        (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
-                          (unless (string=? name (buffer-name b))
-                            (buffer-name-raw-set! b name)
-                            (reserve-store-name! (store:buffer-name id))))
-                        (sync-store-buffer! b)
-                        (when (or (not pending) (memv id changed-ids)
+                    (if (and (not b) (store:property id 'internal #f))
+                      (text-source:open! ui-actor id)
+                      (let ([b (or b (adopt-store-buffer! id))])
+                        (when b
+                          (hashtable-set! (buffer-local-facts b) 'internal (buffer-fact b 'internal #f))
+                          (let ([name (shown-name (store:buffer-name id) (buffer-fact b 'audience 'all) b)])
+                            (unless (string=? name (buffer-name b))
+                              (buffer-name-raw-set! b name)
+                              (reserve-store-name! (store:buffer-name id))))
+                          (sync-store-buffer! b)
+                          (when (or (not pending) (memv id changed-ids)
                                   (cond [(assv id pending) => cdr] [else #f]))
-                          (bump-buffer-revision! b)
-                          (request-repaint!))))
-                    (when b (forget-buffer! b))))))
+                            (bump-buffer-revision! b)
+                            (request-repaint!)))))
+                    (begin (text-source:forget! id) (when b (forget-buffer! b)))))))
             (let dedupe ([ids ids] [seen '()])
               (cond [(null? ids) (reverse seen)]
                 [(memv (car ids) seen) (dedupe (cdr ids) seen)]
@@ -2797,22 +2729,10 @@
           (let-values ([(lines revision changes) (store:snapshot-since id basis)])
             (let ([positions (project-resume-positions positions lines changes)])
               (adopt-snapshot! b basis lines revision changes '())
-              ;; A newly adopted source already has current text, but views
-              ;; may retain older logical selections. Keep their actual
-              ;; provenance locally without replaying edits over that text.
+              ;; Keep the complete saved-view bridge in the common mirror.
               (when (and basis changes)
-                (let-values ([(text now retained) (snapshot-since b basis)]
-                             [(unused to after) (snapshot-since b revision)])
-                  (when (and (not retained) after)
-                    (let loop ([from basis] [rest (append changes after)] [out '()])
-                      (if (null? rest)
-                        (let ([out (if (< from now) (cons (list from now) out) out)])
-                          (buffer-changes-set! b (if (> (length out) delta-log-limit) (list-head out delta-log-limit) out)))
-                        (let ([revision (caar rest)])
-                          (let group ([rest rest] [steps '()])
-                            (if (and (pair? rest) (= revision (caar rest)))
-                              (group (cdr rest) (cons (car rest) steps))
-                              (loop revision rest (cons (cons* from revision (reverse steps)) out))))))))))
+                (let-values ([(text now after) (snapshot-since b revision)])
+                  (when after (text-source:adopt! (buffer-source b) basis text now (append changes after)))))
               (let-values ([(lines revision changes) (snapshot-since b revision)])
                 (values b (project-resume-positions positions lines changes))))))))
 

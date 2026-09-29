@@ -39,7 +39,7 @@
            (let* ([r (collection:summary (query))] [v (get r 'value)] [s (selection)])
              (and (eq? (get v 'status) 'ready) s (= (cadr s) (get v 'generation))
                   (equal? (get v 'input-filter)
-                    (head:buffer-line (head:buffer-of-store-id (cadr (view:source (interaction:snapshot (entry))))) 0))
+                    (store:line (cadr (view:source (interaction:snapshot (entry)))) 0))
                   (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
        (table:select! (table) (catalogue-host:reference b)) (settle!))

@@ -642,6 +642,30 @@ than overwriting unseen text. No operation switches the current editor buffer.
 If the selection's history has expired, Home or End establishes a new caret
 at the corresponding endpoint; typing cannot silently reuse an unknown range.
 
+Entry and the ordinary editor use one `text-source:` mirror and edit path.
+Mounting an entry does not create a legacy buffer or borrow a window.
+Closing or reclaiming its mount fences delayed selection updates: a text
+edit that already committed survives, but its caret cannot overwrite a new
+mount's state.
+
+For text consumers, `(text-source:open! actor document-id [basis])` acquires
+the shared mirror outside painting, optionally retaining a saved selection's
+history. `lookup`, `lines`, `revision` and `snapshot` read adopted state
+without I/O. `snapshot` returns text, revision and the exact delta chain;
+missing history is `#f`. `changes`, `rebase` and `basis-text` handle logical
+endpoints and retained edit intent, independent of terminal cells or widgets.
+The mirror keeps a bounded history and shares immutable text across views.
+
+`(text-source:edit! actor basis span replacement context positions)` admits
+a document edit without a mounted view. `basis` is `(old-text document-id
+revision)`, `context` is the store's edit context, and desired result positions
+are `start`, `end` or `(row . column)` pairs. It returns text, revision, changes,
+projected positions and the committed revision. The presentation adopts that
+receipt with `text-source:adopt!`; only a still-current view receives the
+projected selection. `text-source:history!` steps the document's existing
+attributed undo/redo journal. File I/O remains in `document:`. Entry commands
+add their single-line policy and explicit view selection to this common path.
+
 This example runs in a head without any base configuration. It builds a row
 inside a column, inside an overlay and a scroll viewport. Make the host narrow
 or short to exercise clipping; click either entry to edit their common source.

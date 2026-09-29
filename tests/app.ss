@@ -23,7 +23,7 @@
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)
-             (prefix (head entry) entry:) (prefix (foundation text) text:)
+             (prefix (head entry) entry:) (prefix (head text-source) text-source:) (prefix (foundation text) text:)
              (prefix (head control) control:) (prefix (core descriptor) descriptor:)
              (prefix (head table) table:)
              (prefix (foundation string) string:)
@@ -837,7 +837,7 @@
            (list (refused? (lambda () (entry:insert! a "lost"))) (string=? before (line))) '(#t #t)))
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
-         (list (widget:caret (widget:prepared root)) (head:buffer-read-only (head:buffer-of-store-id source))
+         (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)
                (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
        (widget:unmount! root) (widget:invalidate!))
 

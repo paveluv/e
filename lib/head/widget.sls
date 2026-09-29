@@ -15,6 +15,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head spinner) spinner:)
+          (prefix (head text-source) text-source:)
           (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -156,12 +157,12 @@
         [(not d) (values #f #f)]
         [(not id) (values #t #f)]
         [(eq? (car id) 'buffer)
-         (let ([b (head:buffer-of-store-id (cadr id))])
-           (if b
-             (let ([rev (head:content-revision b)])
+         (let ([source (text-source:lookup (cadr id))])
+           (if source
+             (let ([rev (text-source:revision source)])
                (unless (and (node-mirrored n) (= rev (caar (node-mirrored n))))
                  (node-mirrored-set! n
-                   (cons (cons rev #t) (list (cons 'id id) (cons 'revision rev) (cons 'value (head:buffer-lines b))))))
+                   (cons (cons rev #t) (list (cons 'id id) (cons 'revision rev) (cons 'value (text-source:lines source))))))
                (values #t (cdr (node-mirrored n))))
              (values #f #f)))]
         [else
@@ -250,8 +251,8 @@
                    [d (and r (eq? (field r 'kind #f) 'widget-view) (interaction:snapshot id))])
               (if d (map (lambda (p) (if (eq? (car p) 'value) (cons 'value d) p)) r) r)))
           (define (text id)
-            (let ([b (head:buffer-of-store-id (cadr id))])
-              (and b (list (cons 'id id) (cons 'revision (head:content-revision b)) (cons 'value (head:buffer-lines b))))))
+            (let ([source (text-source:lookup (cadr id))])
+              (and source (list (cons 'id id) (cons 'revision (text-source:revision source)) (cons 'value (text-source:lines source))))))
           (let* ([r (get id)] [ds (and r (port:describe (port:key r)))]
                  [inputs (if ds
                            (map (lambda (d)
@@ -310,11 +311,8 @@
             (let ([fresh (model:subscribe! ids (lambda (notice) (changed)))] [old (car tokens)])
               (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
           (for-each (lambda (p)
-                      (let ([b (head:adopt-store-buffer! (car p))])
-                        (when (and b (cdr p))
-                          (let-values ([(text revision changes) (head:snapshot-since b (cdr p))])
-                            (unless changes (head:resume-source! (car p) (cdr p) '())))))) texts)
-          (for-each (lambda (id) (head:adopt-store-buffer! (cadr id))) (cadddr (connection:snapshot endpoints)))))
+                      (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
+          (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (connection:snapshot endpoints)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
                        (when (cadr tokens) (connection:unsubscribe! (cadr tokens))) (raise ex)])
         (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (acquire) (changed))))
