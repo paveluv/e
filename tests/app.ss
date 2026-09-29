@@ -9,7 +9,9 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
-(eval
+(define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
+
+(evaluate!
   '(begin
      (import (except (head edit) init!)
              (prefix (head head) head:)
@@ -879,4 +881,5 @@
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")
-     (test:finish! 'app)))
+     (test:finish! 'app))
+  (interaction-environment))

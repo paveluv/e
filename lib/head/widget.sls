@@ -105,7 +105,7 @@
     (or (hashtable-ref nodes id #f) (error 'widget "view is not mounted" id)))
 
   (edoc "Find a descendant of a mounted view by its named child path. Read the head's current logical tree; no geometry or window discovery is involved. A missing child refuses."
-        (id model "starting view") (path (list-of symbol) "child names in order") (returns model "descendant view") (effects internal))
+        (id model "starting view") (path (list-of symbol) "child names in order") (returns model "descendant view") (effects internal) (inspect))
   (define (descendant id . path)
     (unless (for-all symbol? path) (error 'descendant "expected child names" path))
     (mounted id)
@@ -203,10 +203,32 @@
 
   (edoc "Invoke an explicit command target with its fixed arguments followed by control-supplied arguments."
         (id model "control") (command symbol "binding name") (arguments (list-of any) "additional arguments") (returns any))
-  (define (invoke! id command . arguments)
+  (define-forwarding (invoke! id command . arguments) invoke-command! inspect-command)
+
+  (define (invoke-command! id command . arguments)
     (let ([c (assq command (commands id))])
       (unless c (error 'invoke! "command target is unavailable" id command))
-      (apply act! (cadr c) (caddr c) (append (cadddr c) arguments))))
+      (act! (apply (cadr c) (caddr c) (append (cadddr c) arguments)))))
+
+  (define (known-target? args)
+    (and (>= (length args) 2) (eq? (caar args) 'value) (eq? (caadr args) 'value)
+      (symbol? (cadadr args))))
+  (define (inspect-command args)
+    (if (not (known-target? args)) '()
+      (let* ([id (cadar args)] [name (cadadr args)] [d (read-view id)]
+             [c (and d (assq name (descriptor:commands d)))])
+        (if (not c) '()
+          (let ([target (command-target c)])
+            (list (list dispatch-action!
+                    (append (map (lambda (v) (list 'value v)) (cons* (cadr c) (caddr c) (cadddr c))) (cddr args))
+                    #f (and (not (cdr target)) "Unavailable target"))))))))
+
+  (define (inspect-action args)
+    (if (not (known-target? args)) '()
+      (let ([target (command-target (list 'inspect (cadar args) (cadadr args)))])
+        (if (car target)
+          (list (list (car target) (cons (car args) (cddr args)) #f
+                  (and (not (cdr target)) "Unavailable target"))) '()))))
 
   (edoc "Invalidate one mounted view's derived presentation after a head-local cache or hover change."
         (id model "view") (projection (list-of boolean) "also rebuild prepared data when true"))
@@ -253,7 +275,9 @@
 
   (edoc "Invoke a named action with an explicit view, coherent source and provisional interaction."
         (id model "view id") (action symbol "action") (arguments (list-of any) "action arguments") (returns any))
-  (define (act! id action . arguments)
+  (define-forwarding (act! id action . arguments) dispatch-action! inspect-action)
+
+  (define (dispatch-action! id action . arguments)
     (let* ([n (mounted id)] [d (read-view id)] [entry (definition d)]
            [proc (assq action (field entry 'actions '()))])
       (let-values ([(available? source) (source! n d)])

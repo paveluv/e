@@ -135,9 +135,10 @@ to reconcile focus first.
 
 Buffet's kill/delete keys activate the table's `trash` and `delete` command
 connections, targeting `buffet:kill!` and `buffet:delete!`. The keyboard
-section describes the control operation, while **Widget commands** exposes
-the app action and its documentation. The same explicit connection serves
-keys, mouse actions and programmatic activation.
+section follows the full forwarding chain from the control operation to the
+app action, with each step's documentation. **Widget commands** also lists
+the connections independently. The same explicit connection serves keys,
+mouse actions and programmatic activation.
 
 The first Bindings section follows the mouse independently of keyboard focus.
 Widget definitions can provide `pointer-bindings`: a procedure receiving a
@@ -158,6 +159,66 @@ entry and action-text controls expose their public commands through this
 contract. `table:choose!` takes a table and a `(collection generation key)`
 reference, selects that displayed row and activates it when the host has
 provided an activation command; an obsolete result refuses.
+
+## Forwarding and inspection
+
+`widget:invoke!` and `widget:act!` are exported syntax, with private runtime
+dispatchers. An `elibrary` registers their call sites while compiling its
+procedure definitions. Ordinary app and control commands remain procedures:
+
+```scheme
+(edoc "Activate the chosen row." (id model) (selection any) (basis any))
+(define (choose! id selection basis)
+  (widget:invoke! id 'activate selection basis))
+```
+
+One call supplies both execution and inspection; no separate forwarding
+annotation can drift away from it. Constants, arguments, lexical bindings and
+simple structural operations provide the symbolic call template. Unknown
+runtime work remains named rather than being evaluated. Import prefixes and
+renames retain the dispatcher's identity.
+
+Outside `elibrary`, wrap a definition or expression in `edoc:expression`.
+M-x and the head's evaluation channel do this automatically. A macro that
+introduces forwarding must introduce this context around its generated code
+too. An unregistered call is a Scheme compilation error, including one hidden
+by a macro; the linter is not involved. Quoted code remains data.
+
+For a runtime list of arguments use the explicit spread form:
+
+```scheme
+(widget:invoke! (apply id 'activate arguments))
+```
+
+The syntax identifiers cannot be passed to ordinary `apply` or aliased as
+procedure values. Use `keymap:call` for structured bindings. Its compiler
+adapter retains the registered dispatcher identity so the same route is
+inspectable. This is an API contract, not an isolation boundary for arbitrary
+Scheme code.
+
+An extension implementing its own dispatch protocol can declare it inside
+`elibrary` with:
+
+```scheme
+(edoc "Dispatch an action." (id model) (action symbol) (args (list-of any)))
+(define-forwarding (dispatch! id action . args)
+  dispatch-command! inspect-command)
+```
+
+Keep `dispatch-command!` private and dedicated to this entry point. The
+inspector receives argument nodes `(value datum)` or `(unknown expression)`
+and returns a list of steps, each
+`(procedure argument-nodes rest-node-or-false reason-or-false)`. It reads
+existing local connection metadata; it must not invoke commands, perform I/O
+or request remote data. Private forwarding declarations are registered too.
+
+A query annotated `(inspect)` in its edoc may also reduce arguments during
+inspection when all inputs are known. Use this only for bounded local reads
+such as resolving a mounted descendant, never for producers or model fetches.
+Exceptions leave the argument symbolic. Inspection follows only registered
+forwarding, reports alternative sites conservatively and bounds cyclic or
+large chains. The compiler enforces registration; the local-query contract
+remains the extension author's responsibility.
 
 ## Buffer catalogue
 

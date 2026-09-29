@@ -59,6 +59,13 @@
     (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
       (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
 
+  (define (trace action . substitutions)
+    (map (lambda (row)
+           (list (string-append (if (= (car row) 0) "" (string-append (make-string (* 2 (min 8 (car row))) #\space) "→ "))
+                   (cadr row) (if (cadddr row) (string-append " [" (cadddr row) "]") ""))
+             (if (caddr row) (summary-of (caddr row)) "")))
+      (apply keymap:action-trace action substitutions)))
+
   (define (shadowed? sequence nearer)
     ;; whether a nearer context binds the sequence, or a prefix of it, so
     ;; the key never reaches this binding
@@ -76,7 +83,7 @@
     ;; first key; a lambda shows as the anonymous command it is, a name
     ;; being owed
     (define (add key command description groups)
-      (let ([hit (find (lambda (g) (string=? (cadr g) command)) groups)])
+      (let ([hit (find (lambda (g) (equal? (cadr g) command)) groups)])
         (if hit
             (map (lambda (g) (if (eq? g hit) (cons (cons key (car g)) (cdr g)) g)) groups)
             (cons (list (list key) command description) groups))))
@@ -85,7 +92,7 @@
           (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
                      (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
           (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
-                 [command (and action (if describe (describe b) (keymap:action-text action)))])
+                 [command (and action (if describe (describe b) (trace action)))])
             (loop (cdr owned)
                   (if (and command
                            (not (shadowed? (keymap:binding-sequence b) nearer))
@@ -145,6 +152,13 @@
     ;; command, a long call wrapped at its spaces, and its description
     ;; wrapped in the last column, the keys of a group joined by a line in
     ;; the margin
+    (define (steps group)
+      (if (string? (cadr group)) (list (cdr group)) (cadr group)))
+    (define (step-lines step command-width text-width)
+      (let* ([command (wrap (car step) command-width)] [text (wrap (cadr step) text-width)]
+             [height (max (length command) (length text) 1)])
+        (map (lambda (i) (cons (if (< i (length command)) (list-ref command i) "")
+                           (if (< i (length text)) (list-ref text i) ""))) (iota height))))
     (if (null? groups)
         '()
         (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
@@ -154,21 +168,21 @@
                ;; keeps twenty-four cells, and shrinks to eight cells before
                ;; the description shrinks below that
                [room (- width key-width 6)]
-               [command-width (min (apply max (map (lambda (g) (cells (cadr g))) groups)) (max 8 (- room 24)))]
+               [command-width (min (apply max (apply append (map (lambda (g) (map (lambda (s) (cells (car s))) (steps g))) groups))) (max 8 (- room 24)))]
                [text-width (max 8 (- room command-width))])
           (cons title
                 (apply append
                   (map (lambda (g)
-                         (let* ([keys (car g)] [command (wrap (cadr g) command-width)]
-                                [text (wrap (caddr g) text-width)]
-                                [height (max (length keys) (length command) (length text) 1)])
+                         (let* ([keys (car g)]
+                                [lines (apply append (map (lambda (s) (step-lines s command-width text-width)) (steps g)))]
+                                [height (max (length keys) (length lines) 1)])
                            (let loop ([i 0] [out '()])
                              (if (= i height) (reverse out)
                                  (loop (+ i 1)
                                        (cons (string-append
                                                (bracket keys i) (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
-                                               (pad (if (< i (length command)) (list-ref command i) "") command-width) "  "
-                                               (if (< i (length text)) (list-ref text i) ""))
+                                               (pad (if (< i (length lines)) (car (list-ref lines i)) "") command-width) "  "
+                                               (if (< i (length lines)) (cdr (list-ref lines i)) ""))
                                              out))))))
                        groups))))))
 
@@ -214,7 +228,7 @@
     (let* ([root (head:buffer-fact b 'widget-id #f)]
            [scope (find (lambda (scope) (memq context (cadr scope)))
                     (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
-      (keymap:action-text (keymap:binding-action binding)
+      (trace (keymap:binding-action binding)
         (if scope (list (cons widget:target (car scope))) '()))))
 
   (define (listing b width)
@@ -320,7 +334,7 @@
   (define (command-template procedure arguments)
     ;; Fixed arguments are expressions; remaining formal names are supplied
     ;; by the invoking control, not invented values or a runnable nullary call.
-    (let* ([text (keymap:action-text (apply keymap:call procedure arguments))]
+    (let* ([text (keymap:action-text (keymap:call (apply procedure arguments)))]
            [sigs (edoc:edoc-of procedure)] [sig (and sigs (find (lambda (s) (eq? (edoc:signature-kind s) 'procedure)) sigs))]
            [remaining (if sig
                         (let skip ([f (edoc:signature-formals sig)] [n (length arguments)])
@@ -348,7 +362,8 @@
                                          [public? (and proc (not (string=? (keymap:action-text proc) "anonymous command")))])
                                     (list (list (symbol->string (car binding)))
                                       (if public? (command-template proc (cons (cadr binding) (cadddr binding)))
-                                        (command-template widget:act! (cons* (cadr binding) (caddr binding) (cadddr binding))))
+                                        (command-template (keymap:call-action-procedure (keymap:call widget:act!))
+                                          (cons* (cadr binding) (caddr binding) (cadddr binding))))
                                       (string-append (if (list-ref binding 5) "" "Unavailable target. ")
                                         (if proc (summary-of proc) "Target action is not registered."))))) (cadddr row)) width)) bindings)))))))
       (cdr commands-cache)))
@@ -358,11 +373,11 @@
     ;; keyboard context; keep the reader's place through pointer or width changes
     (let* ([width (listing-width)]
            [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
-           [keyboard-key (append (list-head now 5) (list width))]
+           [keyboard-key (append (list-head now 5) (list (list-ref now 6) width))]
            [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
            [lines (append (section "Mouse bindings"
                             (map (lambda (binding)
-                                   (list (list (mouse:gesture-text (car binding))) (keymap:action-text (cadr binding)) (summary-of (cadr binding)))) pointer) width)
+                                   (list (list (mouse:gesture-text (car binding))) (trace (cadr binding)) "")) pointer) width)
                     keyboard (command-sections (list-ref now 6) width))]
            [lines (if (null? lines) (list "no bindings") lines)])
       (set! keyboard-cache (cons keyboard-key keyboard))

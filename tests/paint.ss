@@ -9,7 +9,9 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
-(eval
+(define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
+
+(evaluate!
   '(begin
      (import (prefix (head paint) paint:) (prefix (head widget) widget:)
              (prefix (head entry) entry:) (prefix (state store) store:)
@@ -138,7 +140,7 @@
                [in-escape
                 (loop (cdr chars) out
                       (not (or (char-alphabetic? (car chars))
-                               (char=? (car chars) #\\))))]
+                             (char=? (car chars) #\\))))]
                [(char=? (car chars) #\esc)
                 (loop (cdr chars) out #t)]
                [else (loop (cdr chars) (cons (car chars) out) #f)])))
@@ -474,11 +476,11 @@
      (define scrolling
        (let loop ([row 0] [frames '()])
          (if (= row 40)
-             (reverse frames)
-             (begin
-               (head:window-prow-set! (head:current-window) row)
-               (let ([frame (painted paint:redraw!)])
-                 (loop (+ row 1) (cons frame frames)))))))
+           (reverse frames)
+           (begin
+             (head:window-prow-set! (head:current-window) row)
+             (let ([frame (painted paint:redraw!)])
+               (loop (+ row 1) (cons frame frames)))))))
      (check 'scrolling-frames-are-synchronized
             (map sync-events scrolling) (make-list 40 '(begin end)))
      (check 'scrolling-moves-the-viewport
@@ -700,4 +702,5 @@
          (check 'unchanged-entry-text-still-updates-selection-and-caret
            (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
        (head:show-buffer! was) (head:forget-buffer! b))
-     (test:finish! 'paint)))
+     (test:finish! 'paint))
+  (interaction-environment))

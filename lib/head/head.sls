@@ -3919,7 +3919,7 @@
           (run-on-main!
             (lambda ()
               (let ([reply (guard (ex [else (list 'evaluated (cadr payload) 'error (kernel:condition-text ex))])
-                             (let ([value (eval (read (open-input-string (caddr payload))) (interaction-environment))])
+                             (let ([value (kernel:evaluate! (read (open-input-string (caddr payload))) (interaction-environment))])
                                (list 'evaluated (cadr payload) (format "~s" value))))])
                 (guard (ex [else (void)]) (frame!) (checkpoint!))
                 (actor:send! from reply))))))))

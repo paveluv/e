@@ -13,7 +13,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head keymap)
-  (export action-text (rename (bind-key! bind!))
+  (export action-text action-trace (rename (bind-key! bind!))
     (rename (bind-default-key! bind-default!))
     (rename (key-binding binding)) binding-action
     binding-context binding-kind binding-prefix?
@@ -333,7 +333,12 @@
         (procedure procedure "the command to call")
         (producers (list-of any) "arguments: procedures and nested calls are evaluated at the press; other values stand as they are")
         (returns (record call-action)))
-  (define (call procedure . producers)
+  (define-syntax call
+    (syntax-rules (apply)
+      [(_ (apply procedure arguments)) (apply make-call (edoc:forward-callee procedure) arguments)]
+      [(_ procedure producer ...) (make-call (edoc:forward-callee procedure) producer ...)]))
+
+  (define (make-call procedure . producers)
     (unless (procedure? procedure)
       (error 'call "expected a procedure" procedure))
     (make-call-action procedure producers))
@@ -355,8 +360,9 @@
 
   (define (top-level-name procedure)
     ;; the symbol the editor's top level binds to a procedure, or #f
-    (let ([sym (find (lambda (s) (and (top-level-bound? s) (eq? (top-level-value s) procedure)))
-                     (environment-symbols (interaction-environment)))])
+    (let ([sym (or (edoc:forwarding-name procedure)
+                 (find (lambda (s) (and (top-level-bound? s) (eq? (top-level-value s) procedure)))
+                   (environment-symbols (interaction-environment))))])
       (and sym (symbol->string sym))))
 
   (define (spell procedure index value)
@@ -404,6 +410,53 @@
         [else (format "~s" action)]))
     (unless (<= (length bindings) 1) (error 'action-text "expected optional producer values"))
     (describe action))
+
+  (edoc "Describe a structured binding and its registered forwarding chain without running argument producers or commands. Rows are (depth text procedure-or-false note-or-false); alternatives, cycles and unresolved runtime arguments stay explicit. Only declared local inspection queries may reduce arguments."
+        (action any "binding action") (bindings (list-of list) "optional producer-to-value substitutions") (returns list))
+  (define (action-trace action . bindings)
+    (define substitutions (if (null? bindings) '() (car bindings)))
+    (define (node argument)
+      (cond [(call-action? argument)
+             (let ([result (edoc:inspection-value (call-action-procedure argument) (map node (call-action-arguments argument)))])
+               (if (eq? (car result) 'value) result (list 'unknown (action-text argument substitutions))))]
+        [(procedure? argument)
+         (cond [(assq argument substitutions) => (lambda (p) (list 'value (cdr p)))]
+           [else (list 'unknown (string-append "(" (action-text argument) ")"))])]
+        [else (list 'value argument)]))
+    (define (node-text procedure index n)
+      (if (eq? (car n) 'value) (spell procedure index (cadr n)) (format "~a" (cadr n))))
+    (define (call-text procedure arguments tail)
+      (string-append "(" (action-text procedure)
+        (apply string-append (map (lambda (n i) (string-append " " (node-text procedure i n))) arguments (iota (length arguments))))
+        (if tail (string-append " . " (node-text procedure (length arguments) tail)) "") ")"))
+    (define left 64)
+    (define (follow procedure arguments tail depth seen note)
+      (let* ([identity (list procedure arguments tail)] [cycle? (member identity seen)]
+             [stop? (or cycle? (>= depth 16) (<= left 1) tail note)]
+             [note (or note (and cycle? "cycle") (and (or (>= depth 16) (<= left 1)) "trace limit"))]
+             [row (list depth (call-text procedure arguments tail) procedure note)])
+        (set! left (- left 1))
+        (cons row
+          (if stop? '()
+            (let ([steps (edoc:forwarding-steps procedure arguments)])
+              (let walk ([rest steps])
+                (if (or (null? rest) (<= left 0)) '()
+                  (let* ([step (car rest)]
+                         [rows (follow (car step) (cadr step) (caddr step) (+ depth 1) (cons identity seen) (cadddr step))])
+                    (append
+                      (if (> (length steps) 1)
+                        (cons (list (caar rows) (cadar rows) (caddar rows) (or (cadddr (car rows)) "possible")) (cdr rows)) rows)
+                      (walk (cdr rest)))))))))))
+    (unless (<= (length bindings) 1) (error 'action-trace "expected optional producer values"))
+    (let ([procedure (cond [(call-action? action) (call-action-procedure action)] [(procedure? action) action] [else #f])])
+      (if (not procedure) (list (list 0 (action-text action substitutions) #f #f))
+        (let* ([arguments (if (call-action? action) (map node (call-action-arguments action)) '())]
+               [original (action-text action substitutions)] [chain (follow procedure arguments #f 0 '() #f)])
+          (if (string=? original (cadar chain)) chain
+            (cons (list 0 original procedure #f)
+              (if (call-action? action)
+                (map (lambda (row) (cons (+ 1 (car row)) (cdr row))) chain)
+                (cdr chain))))))))
 
   ;; The command type: what a key or a binding names, spelled as the
   ;; call it makes.

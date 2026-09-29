@@ -110,10 +110,32 @@ Buffet's `C-k`, for example, is displayed as:
 ```
 
 The table supplies its hovered or selected row and result basis to the
-connected action. The **Widget commands** section shows that connection's
-target API and documentation. Selection changes do not rewrite the binding
-or its help. Copying the expression to eval uses the same activation and
-validation path as pressing the key.
+connected action. Bindings shows the full registered forwarding chain below
+the key, with each operation's own documentation:
+
+```scheme
+(table:activate! (widget:descendant (model 109) 'table) 'trash)
+  → (table:activate! (model 110) 'trash)
+    → (widget:invoke! (model 110) 'trash selection basis)
+      → (widget:act! (model 109) 'kill selection basis)
+        → (buffet:kill! (model 109) selection basis)
+```
+
+The model IDs are those of the current composition. `selection` and `basis`
+remain symbolic: inspection does not select a row, run argument producers
+or execute commands. Only explicitly declared, bounded local queries can
+resolve arguments. Multiple forwarding sites are marked as possible routes;
+cycles and unavailable targets stop the chain with a note. This is a map of
+registered forwarding, not a prediction that runtime validation will succeed.
+The **Widget commands** section still lists the connections independently.
+Selection changes do not rewrite the binding or its help. Copy the initial
+expression to eval to use the same activation and validation path as the key.
+
+`keymap:call` is syntax so it can also accept forwarding syntax such as
+`widget:act!`. To construct a call from a list of arguments, use
+`(keymap:call (apply command arguments))`. Ordinary command procedures remain
+first-class values. [Widgets](WIDGETS.md#forwarding-and-inspection) describes
+how extensions register their forwarding at compilation.
 
 When the pointer has a target, `C-x TAB` starts with **Mouse bindings**.
 This section follows the pointer, including over an unfocused window; the

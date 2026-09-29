@@ -534,4 +534,8 @@ component-specific log presentation with `log:register-formatter!`. Both
 registries participate in transactional reload. A library written with
 `elibrary` documents its exports where it defines them, each definition
 annotated with a typed `edoc` form checked against it when the module
-expands. See [Describe](DESCRIBE.md) and [Logging](LOG.md).
+expands. It also records calls to declared forwarding syntax in procedure
+bodies, allowing Bindings to show dispatch routes without running commands.
+Unregistered forwarding is a compiler error. See
+[Widgets](WIDGETS.md#forwarding-and-inspection), [Describe](DESCRIBE.md) and
+[Logging](LOG.md).

@@ -147,6 +147,9 @@
     (fields id query token (mutable generation) (mutable pending) (mutable ordinal)
       (mutable hovered) (mutable signature) (mutable neighbors) (mutable previous) (mutable display) (mutable fitting)))
   (define (get xs key fallback) (cond [(and xs (assq key xs)) => cdr] [else fallback]))
+
+  (edoc "Find the containing table in the local descriptor tree."
+        (id model "table or descendant") (returns model) (inspect))
   (define (root id)
     (let ([d (interaction:snapshot id)])
       (cond [(not d) (error 'table "unavailable view" id)]
@@ -384,11 +387,11 @@
         (session-hovered-set! s #f)
         (save-selection! s (cadr (cadr hover)) (caddr (cadr hover)) (caddr hover) (cadddr hover))
         (repaint! s))
-      (let ([selection (selected s)])
+      (let ([selection (selected s)] [basis (get (view:state (descriptor s)) 'basis '())])
         (unless (and (ready? v) selection (not (session-pending s))
                   (equal? (car selection) (session-query s)) (= (cadr selection) (get v 'generation 0)))
           (error 'activate! "selection is pending or unavailable"))
-        (widget:invoke! (session-id s) (if (null? command) 'activate (car command)) selection (get (view:state (descriptor s)) 'basis '())))))
+        (widget:invoke! (root id) (if (null? command) 'activate (car command)) selection basis))))
 
   (edoc "Set shared collection sorting using raw column values; selection remains local." (id model "table") (keys list "(column ascending-or-descending) entries"))
   (define (sort-by! id keys)

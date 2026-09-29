@@ -1182,7 +1182,7 @@
           (if (eof-object? form)
               (apply values last)
               (loop (call-with-values
-                      (lambda () (eval form (interaction-environment)))
+                      (lambda () (kernel:evaluate! form (interaction-environment)))
                       list)))))))
 
   (edoc "An evaluation's outcome, before reporting or copying it."

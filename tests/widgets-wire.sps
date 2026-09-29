@@ -111,12 +111,14 @@
              (lambda ()
                (when (and (not completion-status-bytes) (prompt:active?) (head:popup)
                        (string:prefix? "<completions" (head:buffer-name (head:window-buffer (head:popup)))))
-                 (let ([io (lambda () (call-with-input-file "/proc/self/io"
+                 ;; Exclude unrelated mirror workers: inspection itself runs
+                 ;; on this UI thread and must not write to the base.
+                 (let ([io (lambda () (call-with-input-file "/proc/thread-self/io"
                                         (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
                                                                    (if (eq? k 'wchar:) v (loop)))))))])
                    (let ([before (io)] [binding (cdr (keymap:resolved-binding 'buffet '("C-k")))])
                      (do ([i 0 (+ i 1)]) ((= i 100))
-                       (keymap:action-text (keymap:binding-action binding) (list (cons widget:target ',app)))
+                       (keymap:action-trace (keymap:binding-action binding) (list (cons widget:target ',app)))
                        (widget:command-bindings ',app)
                        (head:buffer-status (head:window-buffer (head:popup)) (head:popup)))
                      (set! completion-status-bytes (- (io) before)))))))) #t))
