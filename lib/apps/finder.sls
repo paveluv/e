@@ -245,7 +245,7 @@
     (let* ([v (get source 'value '())] [details (get v 'details '())]
            [n (get details 'matches 0)] [unreadable (get details 'unreadable 0)] [c (get details 'completion '())])
       (string-append (format "[~a~a match~a]" n (if (and (get v 'complete #f) (zero? unreadable)) "" "+") (if (= n 1) "" "es"))
-        (if (get details 'hidden #f) " [hidden]" "")
+        (if (get details 'hidden #f) " [showing hidden]" "")
         (cond [(eq? (get v 'status #f) 'unavailable) " [Unavailable]"]
           [(not (get v 'complete #f)) " [Searching…]"]
           [(and (pair? c) (eq? (car c) 'unavailable)) " [Completion unavailable]"]

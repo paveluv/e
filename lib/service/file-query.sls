@@ -1,7 +1,7 @@
 ;; Filesystem query semantics shared by base providers and the migrating Finder.
 (import (only (foundation edoc) elibrary))
 (elibrary (service file-query)
-  (export complete directory-filter filter-keys hidden-keys? index-choice index-count index-entries
+  (export complete directory-filter filter-keys index-choice index-count index-entries
           keys plan plan-hidden? plan-keys plan-missing plan-proposed plan-root prepare root value)
   (import (chezscheme) (prefix (core row) row:)
           (prefix (foundation path-filter) path-filter:) (prefix (foundation string) string:)
@@ -30,12 +30,6 @@
         (keys list "expanded keys") (returns list))
   (define (filter-keys keys)
     (if (and (= (length keys) 1) (string=? (car keys) (path-prefix (root keys)))) '() keys))
-
-  (edoc "Whether explicitly typed dot components enable hidden entries."
-        (keys list "expanded keys") (returns boolean))
-  (define (hidden-keys? keys)
-    (and (exists (lambda (key) (or (string:prefix? "." key)
-                                 (string:search key "/." 0 (string-length key)))) keys) #t))
 
   (edoc "A resolved filesystem query."
         (root string "nearest existing directory") (keys list "expanded matching keys")
@@ -80,7 +74,7 @@
                              (directory:make-missing (substring full 0 (or slash (string-length full)))
                                (and slash #t) (if child (list child) '())))))))))]
               [else (walk (+ i 1) start)]))))
-      (make-plan base matching (or hidden? (hidden-keys? expanded)) missing proposed)))
+      (make-plan base matching hidden? missing proposed)))
 
   (edoc "Read a raw sortable entry fact; unavailable facts remain false."
         (entry any "directory entry") (column symbol "name, size, modified, created, permissions or count") (returns any))
@@ -147,9 +141,9 @@
 
   (edoc "Complete against a prepared readable match set while preserving scope, hidden policy and case-distinct paths. A unique lone directory may gain its trailing slash."
         (index any "prepared index") (plan any "resolved query") (text string "original filter")
-        (home string "absolute home") (hidden? boolean "explicit hidden option")
+        (home string "absolute home")
         (cancelled? thunk "cancellation/yield checkpoint") (returns string))
-  (define (complete index plan text home hidden? cancelled?)
+  (define (complete index plan text home cancelled?)
     (let* ([base (plan-root plan)] [prefix-size (if (string=? base "/") 0 (string-length base))]
            [full-keys (keys text home)]
            [keys (if (pair? full-keys) (cons (string:tail (car full-keys) prefix-size) (cdr full-keys)) '())]
@@ -179,6 +173,5 @@
           (spell (path-filter:complete keys walk
                    (lambda (parts)
                      (and (or (null? parts) (path-filter:anchored? (car parts)))
-                       (eq? (or hidden? (hidden-keys? (spell parts))) (plan-hidden? plan))
                        (or (not common) (string:prefix? (path-prefix (root (spell parts))) common))
                        (not (hashtable-contains? matching-directories (root (spell parts)))))) cancelled?)))))))

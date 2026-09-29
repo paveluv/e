@@ -257,7 +257,7 @@
               (let* ([source (field (job-source job) 'value)]
                      [answer (guard (ex [else (list 'unavailable intent (kernel:condition-text ex))])
                                (list 'ready intent (file-query:complete (job-index job) (job-plan job) (field (job-query job) 'filter)
-                                                     (field source 'home) (field source 'hidden)
+                                                     (field source 'home)
                                                      (lambda () (check!) (or (obsolete? job) (not (= intent (job-intent job))))))))])
                 (when (and (not (obsolete? job)) (= intent (job-intent job)))
                   (job-completion-set! job answer) (publish! job))))) intent))))

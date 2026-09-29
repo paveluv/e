@@ -47,7 +47,7 @@ Esc or C-g returns to the document from which this window opened the app.
 | `Left` / `Right` | Go to the parent / enter the selected directory. |
 | `C-b` / `C-f` | Move the filter caret by one grapheme. |
 | `F1`–`F6` | Cycle sorting on the corresponding column. |
-| `M-.` | Toggle hidden entries. A filter with a component beginning with `.` also includes them. |
+| `M-.` | Toggle hidden entries; `[showing hidden]` appears while enabled. |
 | `C-r` | Rescan the directory with the current filter and settings. |
 
 After the leading path, Space starts another literal key. For example,
@@ -125,7 +125,7 @@ performs the action. There is no separate Create app or M-c binding.
 
 A filter with additional keys searches below the directory derived from
 its leading path. Directory paths include their trailing `/` for matching.
-Typing a dot component, such as `lib/.git/`, includes hidden entries.
+Dot-prefixed filter keys, such as `.sls`, do not change hidden-entry visibility.
 Every matching path is expanded as a tree, with one space of indentation per
 level and no limit on the number of matches or the depth of expansion.
 Intermediate directories show their own descendant counts and can be entered
@@ -164,8 +164,10 @@ Use `C-r` to discard the cache and pick up external changes. The inventory is
 not an atomic filesystem snapshot; cancellation takes effect between filesystem
 operations.
 
-Dotfiles and dot directories are excluded by default. `M-.` includes them;
-`(finder:show-hidden #t)` enables them for newly created queries in configuration. Directory symlinks
+Dotfiles and dot directories are excluded by default. `M-.` toggles them;
+`(finder:show-hidden #t)` enables them for newly created queries in configuration.
+You can navigate directly into a hidden directory by typing its full path ending
+in `/`; its children follow the same hidden-entry setting. Directory symlinks
 are marked `@/` and can be entered explicitly. Recursive searches do not
 follow them, so links cannot create loops or duplicate entire subtrees. Files
 inside a link can be reached by entering that directory; a typed path through
