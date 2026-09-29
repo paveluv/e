@@ -23,23 +23,82 @@
   (define (points source d)
     (text-source:rebase (list-head (state d) 3)
       (text-source:changes (text-control:mirror source) (or (view:basis d) (text-control:revision source)) (text-control:revision source))))
-  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group)))
+  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations)))
   (define mounts (make-hashtable equal-hash equal?))
   (define (mounted id)
     (or (hashtable-ref mounts id #f)
-      (let ([m (make-mount #f '() #f #f #f)]) (hashtable-set! mounts id m) m)))
+      (let ([m (make-mount #f '() #f #f #f #f)]) (hashtable-set! mounts id m) m)))
   (define dragging #f)
   (define (release! id)
     (hashtable-delete! mounts id)
     (when (equal? dragging id) (set! dragging #f)))
 
-  (edoc "Create an unmounted editor view over a shared document. Caret, anchor, logical top and mark activity belong to the view. Options currently include wrap (boolean); no window is created."
+  (edoc "Create an unmounted editor view over a shared document. Caret, anchor, logical top and mark activity belong to the view. Options include wrap (boolean) and annotations (revision-bound logical ranges); no window is created."
         (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (returns model))
   (define (create-view! actor document options)
     (unless (and (integer? document) (exact? document) (> document 0)
-              (list? options) (for-all (lambda (p) (and (pair? p) (eq? (car p) 'wrap) (boolean? (cdr p)))) options)
-              (<= (length options) 1)) (error 'create-view! "invalid document or editor options"))
-    (view:create! actor (list 'buffer document) 'editor 1 options '((0 . 0) (0 . 0) (0 . 0) #f)))
+              (list? options) (for-all (lambda (p) (and (pair? p) (case (car p)
+                                                                    [(wrap) (boolean? (cdr p))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
+              (or (null? options) (and (<= (length options) 2) (not (assq (caar options) (cdr options))))))
+      (error 'create-view! "invalid document or editor options"))
+    (view:create! actor (list 'buffer document) 'editor 1
+      (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f)))
+
+  ;; An annotation batch is (document revision ((span-datum face) ...)).
+  ;; It contains logical coordinates and semantic faces, never terminal cells.
+  (define (annotations? value)
+    (or (null? value)
+      (and (list? value) (= (length value) 3)
+        (integer? (car value)) (exact? (car value)) (> (car value) 0)
+        (integer? (cadr value)) (exact? (cadr value)) (>= (cadr value) 0)
+        (list? (caddr value))
+        (for-all (lambda (p)
+                   (and (list? p) (= (length p) 2) (symbol? (cadr p))
+                     (guard (ex [else #f]) (text:datum->span (car p)) #t))) (caddr value)))))
+  (define (annotation-index source batch)
+    (let* ([mirror (text-control:mirror source)] [lines (text-control:lines source)])
+      (unless (annotations? batch) (error 'editor "invalid annotations" batch))
+      (let* ([changes (and (pair? batch) (= (car batch) (text-source:id mirror))
+                        (text-source:changes mirror (cadr batch) (text-control:revision source)))]
+             [ranges (if (not changes) '()
+                       (filter values
+                         (map (lambda (p)
+                                (let ([s (fold-left (lambda (s delta) (and s (text:rebase-span s delta)))
+                                           (text:datum->span (car p)) changes)])
+                                  (and s (not (text:span-empty? s))
+                                    (for-all (lambda (p) (and (< (car p) (vector-length lines))
+                                                           (<= (cdr p) (string-length (vector-ref lines (car p))))))
+                                      (list (text:span-start s) (text:span-end s)))
+                                    (list s (cadr p))))) (caddr batch))))]
+             [ordered (list-sort (lambda (a b) (text:position<? (text:span-start (car a)) (text:span-start (car b)))) ranges)])
+        ;; Prefix maximum ends bound visible-range lookup, even with overlaps.
+        (list->vector (let loop ([rest ordered] [end 0])
+                        (if (null? rest) '()
+                          (let ([end (max end (car (text:span-end (caar rest))))])
+                            (cons (append (car rest) (list end)) (loop (cdr rest) end)))))))))
+  (define (annotations id source inputs)
+    (let ([input (assq 'annotations inputs)])
+      (if (not (and input (eq? (cadr input) 'ready))) '#()
+        (let* ([m (mounted id)]
+               ;; Our selection is not an annotation dependency. Options do
+               ;; carry a model revision; external provisional producers keep
+               ;; their full dependency stamp, including interaction state.
+               [key (list (text-control:mirror source) (text-control:revision source)
+                      (map (lambda (row) (if (equal? id (car row)) (list-head row 2) row)) (cadddr input)))]
+               [old (mount-annotations m)])
+          (if (and old (equal? key (car old))) (cdr old)
+            (let ([index (annotation-index source (caddr input))])
+              (mount-annotations-set! m (cons key index)) index))))))
+  (define (row-annotations index row)
+    (let ([end (let search ([lo 0] [hi (vector-length index)])
+                 (if (= lo hi) lo
+                   (let ([mid (div (+ lo hi) 2)])
+                     (if (<= (car (text:span-start (car (vector-ref index mid)))) row)
+                       (search (+ mid 1) hi) (search lo mid)))))])
+      (let loop ([i (- end 1)] [out '()])
+        (if (or (< i 0) (< (caddr (vector-ref index i)) row)) out
+          (let ([p (vector-ref index i)])
+            (loop (- i 1) (if (<= row (car (text:span-end (car p)))) (cons p out) out)))))))
 
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
@@ -58,7 +117,8 @@
     (text-control:mirror source)
     (let* ([m (mounted id)] [lines (text-control:lines source)]
            [frame (render:prepare #f #f lines (text-control:revision source) '())])
-      (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m))))))
+      (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m)))
+        (annotations id source inputs))))
   (define (contexts id d)
     (let ([signature (mount-mode (mounted id))])
       (append (mode:key-contexts (and signature (car signature)) #f) '(widget-editor))))
@@ -123,6 +183,13 @@
     (if (not (cadr projection)) (list (list (list 0 0 width 1) 'ghost))
       (let* ([data (car projection)] [lines (text-control:lines (cadr data))] [frame (caddr data)]
              [selected (and (cadddr (state d)) (text-source:span (cadr projection)))])
+        (define (paint-range span face r y left)
+          (if (<= (car (text:span-start span)) r (car (text:span-end span)))
+            (let* ([a (if (= r (car (text:span-start span))) (cdr (text:span-start span)) 0)]
+                   [b (if (= r (car (text:span-end span))) (cdr (text:span-end span)) (+ 1 (string-length (vector-ref lines r))))]
+                   [a (max 0 (- (render:column frame r a) left))]
+                   [b (min width (- (render:column frame r b #t) left))])
+              (if (> b a) (list (list (list a y (- b a) 1) face)) '())) '()))
         (apply append
           (map (lambda (row)
                  (let ([y (car row)] [r (cadr row)] [left (caddr row)] [end (min (cadddr row) (+ (caddr row) width))])
@@ -134,12 +201,8 @@
                              (let* ([style (vector-ref styles i)]
                                     [j (let run ([j (+ i 1)]) (if (and (< j (min end (vector-length styles))) (equal? style (vector-ref styles j))) (run (+ j 1)) j))])
                                (loop j (if (or (not style) (eq? style 'plain)) out (cons (list (list (- i left) y (- j i) 1) style) out)))))) '())
-                       (if (and selected (<= (car (text:span-start selected)) r (car (text:span-end selected))))
-                         (let* ([a (if (= r (car (text:span-start selected))) (cdr (text:span-start selected)) 0)]
-                                [b (if (= r (car (text:span-end selected))) (cdr (text:span-end selected)) (+ 1 (string-length (vector-ref lines r))))]
-                                [a (max 0 (- (render:column frame r a) left))]
-                                [b (min width (- (render:column frame r b #t) left))])
-                           (if (> b a) (list (list (list a y (- b a) 1) 'selection)) '())) '())))))
+                       (apply append (map (lambda (p) (paint-range (car p) (cadr p) r y left)) (row-annotations (list-ref data 5) r)))
+                       (if selected (paint-range selected 'selection r y left) '())))))
             (list-ref projection 6))))))
   (define (caret projection d width height)
     (and (cadr projection)

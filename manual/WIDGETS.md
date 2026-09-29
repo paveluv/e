@@ -799,7 +799,8 @@ preserves focus and selection, and bubbles only its unconsumed remainder.
 view over an existing store document. Mount it directly, compose it with
 other views, or pass its root to `window:show-widget!`. Options are `()` for
 wrapping or `((wrap . #f))` for unwrapped text. The `text` output port exposes
-the source text. [examples/editor.e](../examples/editor.e) places wrapped and
+single-line sources, like Entry; multiline sources do not satisfy that
+string-field contract. [examples/editor.e](../examples/editor.e) places wrapped and
 unwrapped editors side by side over one document.
 
 Each view owns `(caret anchor top marked?)`, with all three positions expressed
@@ -870,6 +871,18 @@ Mode-specific editing bindings precede the editor's defaults and include
 inherited mode contexts. Pretty Scheme's bracket-closing commands accept an
 explicit view and use its source and caret. Mode contexts are cached outside
 key routing, so discovering or dispatching a binding performs no remote reads.
+
+The `annotations` input accepts `()` or
+`(document-id revision ((span face) ...))`, where each span is
+`(start-row start-character end-row end-character)` and each face is a semantic
+style symbol, for example `match` or `conflict-disk`. Connect a model output
+through the ordinary port protocol, or supply a fixed `annotations` option.
+One batch can decorate several views of the same document at different widths.
+The editor rebases ranges through retained changes, withholding overlapping
+ranges, another document's annotations, or annotations whose history is gone.
+Painting uses an index of visible ranges; navigation reuses it. Selection
+overrides annotations, which override syntax styles. Annotation data contains
+no display geometry.
 
 Nested editors currently provide these core commands. Ordinary editor windows
 still use their existing host; bulk-region commands,

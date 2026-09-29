@@ -200,6 +200,34 @@
   (widget:pump!)
   (key "x")
   (check 'editor-mode-change-cancels-pending-chord (car (state a)) '(0 . 5))
+  ;; One portable annotation producer decorates two widths of the same text.
+  (store:set-property! actor source 'mode #f)
+  (store:reset! '(base test) source '("abcdefghijklmno" "a界éz"))
+  (text-source:open! actor source) (select! a '(0 . 0) '(0 . 0)) (select! b '(0 . 0) '(0 . 0))
+  (model:register-kind! 'editor-annotations 1 list?)
+  (port:register! '(model editor-annotations 1) '((output ranges list (value))))
+  (let* ([producer (model:create! actor 'editor-annotations 1 'session 'transient (list (list 'buffer source))
+                     (list source (text-source:revision (text-source:lookup source))
+                       '(((0 8 0 13) match) ((1 1 1 2) conflict-disk))))])
+    (define (face f x y) (vector-ref (widget:frame-styles f y (list-ref (widget:frame-lines f) y)) x))
+    (interaction:bind! actor root (map (lambda (id) (list id 'annotations #f (list producer 'ranges))) (list a b)))
+    (widget:pump!)
+    (let ([f (show! 27)])
+      (check 'editor-annotations-project-through-wrap-and-wide-characters
+        (list (face (body f 0) 8 0) (face (body f 0) 2 1) (face (body f 1) 12 0)
+          (face (body f 0) 1 2) (face (body f 0) 2 2)) '(match match match conflict-disk #f)))
+    (insert! a "!")
+    (let ([f (show! 27)])
+      (check 'editor-annotations-rebase-without-a-producer-update
+        (list (face (body f 0) 8 0) (face (body f 0) 9 0) (face (body f 0) 3 1)) '(#f match match)))
+    (replace-region-text! a '(0 . 10) '(0 . 11) "X")
+    (let ([f (show! 27)])
+      (check 'editor-overlapping-edit-hides-only-invalidated-annotation
+        (list (face (body f 0) 9 0) (face (body f 0) 1 2)) '(#f conflict-disk)))
+    (text-source:forget! source) (text-source:open! actor source) (insert! a "Y")
+    (check 'editor-annotations-without-history-are-withheld
+      (face (body (show! 27) 0) 1 2) #f)
+    (interaction:bind! actor root (map (lambda (id) (list id 'annotations (list producer 'ranges) #f)) (list a b))))
   (store:reset! '(base test) source '("replacement"))
   (text-source:forget! source) (text-source:open! actor source)
   (check 'editor-unknown-selection-history-refuses-until-explicit-selection
