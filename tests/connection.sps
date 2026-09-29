@@ -10,7 +10,8 @@
     (parameterize ([kernel:registering-module contracts])
       (port:register! '(model connection-fixture 1)
         '((input in string (value fallback)) (output out string (value text))))))
-  (model:register-kind! 'connection-fixture 1 (lambda (v) #t))
+  (define validation-effect void)
+  (model:register-kind! 'connection-fixture 1 (lambda (v) (validation-effect) #t))
   (register!)
   (let* ([id (connection:topology)] [r (model:snapshot id)])
     (model:commit! author (list (list id (field r 'revision) (field r 'references) (list-head (field r 'value) 2))))
@@ -26,6 +27,22 @@
          [a (model:create! author 'connection-fixture 1 owner 'persistent '() '((fallback . "a") (text . "A")))]
          [b (model:create! author 'connection-fixture 1 owner 'persistent '() '((fallback . "b") (text . "B")))]
          [c (model:create! author 'connection-fixture 1 owner 'persistent '() '((fallback . "c") (text . "C")))])
+    ;; Change the owner after bind captured it, during out-of-lock validation.
+    ;; Exercise both initial allocation and replacement of existing bindings.
+    (define (race-bind expected producer)
+      (set! validation-effect
+        (lambda ()
+          (set! validation-effect void)
+          (let ([r (model:snapshot owner)])
+            (model:commit! author
+              (list (list owner (field r 'revision) (field r 'references)
+                      (list (cons 'updated (field r 'revision)))))))))
+      (bind owner c expected producer))
+    (test:check 'connection-retries-revision-races-with-the-original-producer-guard
+      (list (race-bind #f (list a 'out)) (race-bind (list a 'out) (list b 'out))
+        (list-head (connection:read c 'in) 2))
+      '(applied applied (ready "B")))
+    (bind owner c (list b 'out) #f)
     (test:check 'connection-default-type-guards-and-idempotency
       (list (list-head (connection:read b 'in) 2)
         (bind owner b #f (list a 'in))

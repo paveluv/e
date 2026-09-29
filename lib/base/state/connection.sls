@@ -92,14 +92,14 @@
                (begin (set! finished (cons id finished)) #t)))]))
       (for-all (lambda (e) (visit (cadr e) '())) edges)))
 
-  (edoc "Atomically bind or disconnect inputs: (consumer input expected-producer replacement-producer). Return status and this owner's bindings; an already satisfied change is idempotent."
+  (edoc "Atomically bind or disconnect inputs: (consumer input expected-producer replacement-producer). Return status and this owner's bindings; an already satisfied change is idempotent. Retry internal revision races while preserving the caller's producer and interaction guards."
         (actor actor "caller") (owner list "containing view or model") (changes list "guarded input changes")
         (leases (list-of list) "optional (consumer generation sequence) guards after head publication"))
   (define (bind! actor owner changes . leases)
     (unless (and (<= (length leases) 1)
               (or (null? leases) (for-all (lambda (l) (and (list? l) (= (length l) 3) (id? (car l)))) (car leases))))
       (error 'bind! "invalid interaction leases" leases))
-    (let ([changes (datum:copy changes)])
+    (let retry ([changes (datum:copy changes)])
       (unless (and (id? owner) (list? changes)
                 (for-all (lambda (c) (and (list? c) (= (length c) 4) (id? (car c)) (symbol? (cadr c))
                                        (or (not (caddr c)) (producer? (caddr c)))
@@ -119,7 +119,7 @@
                          (unless (and r (or (buffer? id) (model:available? id))) (fail 'unavailable)) r))
                      (define (owned r)
                        (when (and (view? r) (descriptor:owner (field r 'value))
-                               (not (equal? actor (descriptor:owner (field r 'value))))) (fail 'owned)))
+                                  (not (equal? actor (descriptor:owner (field r 'value))))) (fail 'owned)))
                      (owned (need owner))
                      (for-each
                        (lambda (c)
@@ -148,29 +148,29 @@
                              (map (lambda (r)
                                     (let* ([id (field r 'id)] [d (and (view? r) (field r 'value))]
                                            [changed? (and d
-                                                       (not (equal? (filter (lambda (e) (equal? (cadr e) id)) edges)
-                                                              (filter (lambda (e) (equal? (cadr e) id)) next))))])
+                                                          (not (equal? (filter (lambda (e) (equal? (cadr e) id)) edges)
+                                                                 (filter (lambda (e) (equal? (cadr e) id)) next))))])
                                       (if changed?
-                                        (change r (field r 'references)
-                                          (descriptor:with d (list (cons 'generation (+ 1 (descriptor:generation d))) '(sequence . 0))))
-                                        (witness r))))
-                               (filter (lambda (r) (and r (id? (field r 'id)))) (vector->list (hashtable-values seen))))]
+                                          (change r (field r 'references)
+                                            (descriptor:with d (list (cons 'generation (+ 1 (descriptor:generation d))) '(sequence . 0))))
+                                          (witness r))))
+                                  (filter (lambda (r) (and r (id? (field r 'id)))) (vector->list (hashtable-values seen))))]
                             [witnesses (append witnesses (map witness (if old (remq old records) records)))])
                        (cond
                          [(and old (equal? (field old 'value) mine)) 'applied]
                          [old (let-values ([(status ignored) (model:commit! actor
                                                                (cons (advance top (owners top))
-                                                                 (cons (change old refs mine) witnesses)))]) status)]
+                                                                 (cons (change old refs mine) witnesses)))]) (if (eq? status 'stale) 'retry status))]
                          [(null? mine) 'applied]
                          [else
                           (if (model:allocate! actor 1
                                 (lambda (ids) (list (list 'connection-bindings 1 owner (field (get owner) 'persistence) refs mine)))
                                 (lambda (ids) (cons (advance top (cons (cons owner (car ids)) (owners top))) witnesses)))
-                            'applied 'stale)]))))))])
+                              'applied 'retry)]))))))])
         ;; Buffer and model writers are independent. Reconcile a producer
         ;; deleted during binding; later deletions use the store observer.
         (clean!)
-        (values result (bindings owner)))))
+        (if (eq? result 'retry) (retry changes) (values result (bindings owner))))))
 
   (edoc "Read this owner's current (consumer input producer) bindings without resolving values."
         (owner list "composition owner") (returns list) (effects internal))
