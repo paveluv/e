@@ -2712,11 +2712,10 @@
                          ;; in that modal loop must not checkpoint its chrome.
                          ;; The first Tab only counts matches; the second lists them.
                          (head-send! again "\x1b;xhead:window-\t\t")
-                         ;; Narrow status lines prioritize the page count;
-                         ;; observe a candidate rather than the view label --
-                         ;; the first one, since hint rows shorten a page.
+                         ;; Observe the completion status, not a particular
+                         ;; candidate: public API/docs change the page breaks.
                          (head-wait 'completions-before-loss again
-                           (lambda () (head-sees? again "head:window-prow")))
+                           (lambda () (head-sees? again "matches of symbol")))
                          (vector-set! again 3 "")
                          (rpc head 'properties plain '((fixture-wake . #t)))
                          (head-wait 'wake-inside-prompt again

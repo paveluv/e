@@ -16,6 +16,8 @@
              (prefix (state store) store:)
              (prefix (foundation text) text:)
              (prefix (state actor) actor:)
+             (prefix (state view) view:)
+             (prefix (head interaction) interaction:)
              (prefix (core kernel) kernel:)
              (prefix (test) test:))
 
@@ -417,6 +419,39 @@
                   (store:exists? (head:buffer-store-id last-visible)))
             '(#t #t #f #t))
 
+     ;; A document's placements own separate retained views, even while one
+     ;; switches away. The window adapters and explicit descriptor agree.
+     (let* ([source (head:new-buffer! "independent selections" '#("alpha" "beta") '())]
+            [other (head:new-buffer! "other document")]
+            [one (head:current-window)])
+       (head:set-window-buffer! one source)
+       (head:window-pcol-set! one 2)
+       (head:buffer-mark-col-set! source 1)
+       (head:buffer-marked-set! source #t)
+       (let* ([first (head:window-editor one)]
+              [two (head:make-window source 0 0 0 0 2 10 0 40 'default)]
+              [second (head:window-editor two)])
+         (head:set-layout-root! (head:make-layout-split 'right one two 1 1))
+         (head:with-window two
+           (head:window-prow-set! two 1)
+           (head:buffer-marked-set! source #f))
+         (head:set-window-buffer! one other)
+         (head:set-window-buffer! one source)
+         (check 'placements-retain-independent-view-state
+           (list (equal? first second) (equal? first (head:window-editor one))
+             (view:state (interaction:snapshot first)) (view:state (interaction:snapshot second)))
+           '(#f #t ((0 . 2) (0 . 1) (0 . 0) #t) ((1 . 2) (0 . 1) (0 . 0) #f)))
+         (head:checkpoint!)
+         (let ([state (actor:checkpoint head:ui-actor)])
+           (check 'checkpoint-retains-views-not-copied-window-anchors
+             (list (cadr state)
+               (exists (lambda (entry)
+                         (exists (lambda (p) (or (integer? (car p)) (pair? (car p)))) (caddr entry))) (list-ref state 4)))
+             '(5 #f)))
+         (head:set-layout-root! one)
+         (check 'closed-placement-releases-ownership
+           (list (view:owner (view:snapshot second)) (and (interaction:snapshot first) #t)) '(#f #t))))
+
      ;; Resume follows the saved basis, not the fresh process's initial
      ;; cache. The table covers rebasing, old versions and unavailable views.
      (let ([b (head:new-buffer! "resume positions")])
@@ -449,8 +484,12 @@
                [(expired)
                 (do ([i 0 (+ i 1)]) ((= i 257))
                   (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("x")))])
-             (head:window-prow-set! w 0)
-             (head:set-full-capture! w #f)
+             ;; A fresh placement has its own editor view. Mutating w here
+             ;; would now change the saved view itself, not just a throwaway
+             ;; process-local coordinate as it did before view-owned state.
+             (let ([fresh (head:make-window b 0 0 0 0 0 20 0 80 'default)])
+               (head:set-layout-root! fresh)
+               (head:set-current! fresh))
              ;; the copy buffer is the base's, so the resume leaves its text as it stands
              (head:set-copy-text! "as the base has it")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
@@ -464,7 +503,7 @@
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
-           ((2 . 4) (1 . 0) (2 . 2) (0 . 0) (0 . 0))))
+           ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
        ;; The unchanged-frame comparison owns its data too.
        (head:set-copy-text! "Xaved kill")
        (head:checkpoint!)

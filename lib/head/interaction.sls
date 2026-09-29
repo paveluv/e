@@ -36,13 +36,16 @@
                      (lambda () (wake!))
                      datum:copy))))
 
-  (edoc "Claim an unmounted view; return status and descriptor. Call from the head's pump thread."
+  (edoc "Claim an unowned root, or reuse its current local ownership; return status and descriptor. Parented children refuse. Call from the head's pump thread."
         (actor actor "attribution is supplied by the connection") (id model "view model id"))
   (define (claim! actor id)
     (unless (equal? owner actor) (error 'claim! "start this actor's interaction publisher before claiming a view"))
-    (let ([reply (call-with-values (lambda () (view:claim! actor id)) list)])
-      (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
-      (values (car reply) (snapshot id))))
+    (let ([old (snapshot id)])
+      (if old
+        (values (if (view:parent old) 'parented 'applied) old)
+        (let ([reply (call-with-values (lambda () (view:claim! actor id)) list)])
+          (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
+          (values (car reply) (snapshot id))))))
 
   (define (adopt! rows)
     (for-each (lambda (row)

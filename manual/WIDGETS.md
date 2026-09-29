@@ -806,6 +806,10 @@ unwrapped editors side by side over one document.
 Each view owns `(caret anchor top marked?)`, with all three positions expressed
 as zero-based `(row . character)` pairs at the descriptor's text basis.
 Widths, wrapped segments and desired display columns remain in the head.
+Ordinary document windows also retain a separate editor view for each
+document they visit. Switching away and back restores that window's selection;
+splitting creates an independent selection over the same text. The outer
+checkpoint retains view identities, so resume reuses their saved state.
 Painting uses the document's mode and the same text projection as ordinary
 windows. Mode metadata is acquired outside painting; warm navigation and
 resizing use the shared mirror without requesting text or publishing geometry.

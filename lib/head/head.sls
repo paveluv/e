@@ -96,7 +96,7 @@
     weighted-first window window-at window-auto-scrollbar-set!
     window-buffer window-buffer-set! window-button-at
     window-buttons window-buttons-width window-content-width
-    window-goal window-goal-set! window-index window-left
+    window-editor window-goal window-goal-set! window-index window-left
     window-left-set! window-line window-line-number-width
     window-line-numbers window-line-numbers-set!
     window-line-numbers? window-lines window-numbered
@@ -124,6 +124,7 @@
           (prefix (foundation edoc) edoc:)
           (prefix (foundation text) text:)
           (prefix (head checkpoint) checkpoint:)
+          (prefix (head editor-state) editor-state:)
           (prefix (head interaction) interaction:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
@@ -133,6 +134,7 @@
           (prefix (state actor) actor:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (only (sys sys) terminal-isig! duplicate-standard-input-port) sys:)
           (prefix (sys tty) tty:))
 
@@ -162,8 +164,9 @@
                                    ; shared label cache or local <name>
             (immutable lines buffer-source)
             (mutable revision)      ; the seat's repaint counter
-            (mutable mark-row) (mutable mark-col)
-            (mutable marked buffer-marked buffer-marked-raw-set!)
+            (mutable mark-row buffer-mark-row-raw buffer-mark-row-raw-set!)
+            (mutable mark-col buffer-mark-col-raw buffer-mark-col-raw-set!)
+            (mutable marked buffer-marked-raw buffer-marked-raw-set!)
             ;; where point was when the buffer was last displayed
             (mutable spot-row) (mutable spot-col) (mutable spot-top)
             ;; the buffer's twin in the (store), and the store
@@ -200,7 +203,8 @@
         (following? boolean "whether it follows its shared app")
         (view any "a local app's presentation of its rows, or #f")
         (full-capture? boolean "whether every key goes to the app")
-        (status-actions list "the painted status-line controls"))
+        (status-actions list "the painted status-line controls")
+        (editors list "retained document/editor identities; no copied interaction state"))
   (define-record-type (window %make-window window?)
     (fields
       ;; the window's number, shown at the left of its status line: 0
@@ -208,12 +212,13 @@
       ;; live window holds -- a closed window's number is reused, so
       ;; the numbers on screen stay small.  (window n) finds it.
       index
-      (mutable buffer) (mutable top)
+      (mutable buffer) (mutable top window-top-raw window-top-raw-set!)
       ;; a soft-wrapping window may start mid-line: the first
       ;; visible segment of the top line (0 elsewhere)
       (mutable topseg)
       (mutable left)
-      (mutable prow) (mutable pcol)
+      (mutable prow window-prow-raw window-prow-raw-set!)
+      (mutable pcol window-pcol-raw window-pcol-raw-set!)
       ;; Text height is layout output; proportions belong to the split tree.
       (mutable size)
       ;; horizontal band geometry, written by the layout: the
@@ -236,9 +241,133 @@
       ;; Input preference and painted status controls belong to this view,
       ;; never to the shared process. Only the preference is checkpointed.
       (mutable full-capture?)
-      (mutable status-actions)))
+      (mutable status-actions)
+      (mutable editors)))
 
   (define-record-type view (fields owner source lines frame))
+
+  ;; The outer host retains identities, never another copy of an editor's
+  ;; selection. Raw window coordinates serve only the remaining local apps
+  ;; and process surfaces until those consumers become widgets.
+
+  (edoc "The editor view retained for this window's current shared document, or false for a legacy app. Reading it performs no acquisition."
+        (w window "outer placement") (returns (or model #f)))
+  (define (window-editor w)
+    (let ([entry (assv (buffer-store-id (window-buffer w)) (window-editors w))])
+      (and entry (cdr entry))))
+
+  (define (ensure-window-editor! w)
+    (let* ([b (window-buffer w)] [source (buffer-store-id b)])
+      (when (and source (not (app-facts b)))
+        (let* ([old (window-editor w)]
+               [id (or old (editor-state:create! ui-actor source
+                             (list (cons 'wrap (eq? (window-wrap w) #t)))) )])
+          (let-values ([(status d) (interaction:claim! ui-actor id)])
+            (unless (eq? status 'applied) (error 'ensure-window-editor! "cannot claim editor" id status))
+            (unless old
+              (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-editor the-current) the-current)]
+                     [state (and peer (window-editor-state peer))])
+                (interaction:set-state! ui-actor id (content-revision b)
+                  (list (cons (window-prow-raw w) (window-pcol-raw w))
+                    (if state (cadr state) (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
+                    (cons (window-top-raw w) 0) (if state (cadddr state) (buffer-marked-raw b)))))
+              (window-editors-set! w (cons (cons source id) (window-editors w)))))))))
+
+  (define (window-editor-state w)
+    (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+      (and d
+        (let* ([b (window-buffer w)] [state (editor-state:state d)]
+               [points (editor-state:points (buffer-source b) (content-revision b) d)])
+          (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))
+            (list (cadddr state)))))))
+
+  (define (editor-references? entries)
+    (and (list? entries)
+         (for-all (lambda (p) (and (pair? p) (integer? (car p)) (exact? (car p)) (> (car p) 0)
+                                   (list? (cdr p)) (= (length (cdr p)) 2) (eq? (cadr p) 'model)
+                                   (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))) entries)
+         (= (length entries) (length (fold-left (lambda (xs p) (if (memv (car p) xs) xs (cons (car p) xs))) '() entries)))))
+
+  (define (restore-window-editors! w entries)
+    (window-editors-set! w
+      (filter (lambda (p)
+                (let* ([id (cdr p)] [d (or (interaction:snapshot id) (view:snapshot id))])
+                  (and d (eq? (view:kind d) 'editor) (= (view:schema d) 1)
+                    (equal? (view:source d) (list 'buffer (car p)))
+                    (buffer-of-store-id (car p))
+                    (or (not (view:owner d)) (equal? (view:owner d) ui-actor))))) entries)))
+
+  (define (update-window-editor! w index value)
+    (let ([state (window-editor-state w)])
+      (interaction:set-state! ui-actor (window-editor w) (content-revision (window-buffer w))
+        (map (lambda (old i) (if (= index i) value old)) state '(0 1 2 3)))))
+
+
+  (edoc "The current editor caret's row, or the legacy app's point row."
+        (w window "outer host") (returns integer))
+  (define (window-prow w) (let ([s (window-editor-state w)]) (if s (caar s) (window-prow-raw w))))
+
+  (edoc "The current editor caret's character column, or the legacy app's point column."
+        (w window "outer host") (returns integer))
+  (define (window-pcol w) (let ([s (window-editor-state w)]) (if s (cdar s) (window-pcol-raw w))))
+
+  (edoc "The current editor's logical top row, or the legacy app's viewport row."
+        (w window "outer host") (returns integer))
+  (define (window-top w) (let ([s (window-editor-state w)]) (if s (car (caddr s)) (window-top-raw w))))
+
+  (edoc "Set the caret row through the retained editor view; legacy apps keep their local point."
+        (w window "outer host")
+        (row integer "logical coordinate"))
+  (define (window-prow-set! w row)
+    (if (window-editor w) (update-window-editor! w 0 (cons row (window-pcol w))) (window-prow-raw-set! w row)))
+
+  (edoc "Set the caret column through the retained editor view; legacy apps keep their local point."
+        (w window "outer host")
+        (col integer "logical coordinate"))
+  (define (window-pcol-set! w col)
+    (if (window-editor w) (update-window-editor! w 0 (cons (window-prow w) col)) (window-pcol-raw-set! w col)))
+
+  (edoc "Set the logical top row through the retained editor view; legacy apps keep their local viewport."
+        (w window "outer host")
+        (row integer "logical coordinate"))
+  (define (window-top-set! w row)
+    (if (window-editor w) (update-window-editor! w 2 (cons row 0)) (window-top-raw-set! w row)))
+
+  ;; Compatibility for commands whose receiver is still a catalogue buffer.
+  ;; Their mark addresses the selected placement, never another window's mark.
+  (define (buffer-editor-window b)
+    (let ([w (if (and the-current (eq? b (window-buffer the-current))) the-current
+               (find (lambda (w) (eq? b (window-buffer w))) the-windows))])
+      (and w (window-editor w) w)))
+
+  (edoc "The mark row of the selected placement of this document, or its legacy saved mark."
+        (b buffer "outer host") (returns integer))
+  (define (buffer-mark-row b)
+    (let ([w (buffer-editor-window b)]) (if w (caadr (window-editor-state w)) (buffer-mark-row-raw b))))
+
+  (edoc "The mark character column of the selected placement of this document, or its legacy saved mark."
+        (b buffer "outer host") (returns integer))
+  (define (buffer-mark-col b)
+    (let ([w (buffer-editor-window b)]) (if w (cdadr (window-editor-state w)) (buffer-mark-col-raw b))))
+
+  (edoc "Whether the selected placement of this document has an active mark, or its legacy mark activity."
+        (b buffer "outer host") (returns boolean))
+  (define (buffer-marked b)
+    (let ([w (buffer-editor-window b)]) (if w (cadddr (window-editor-state w)) (buffer-marked-raw b))))
+
+  (edoc "Set the mark row in the selected placement of this document."
+        (b buffer "outer host")
+        (row integer "logical coordinate"))
+  (define (buffer-mark-row-set! b row)
+    (let ([w (buffer-editor-window b)])
+      (if w (update-window-editor! w 1 (cons row (buffer-mark-col b))) (buffer-mark-row-raw-set! b row))))
+
+  (edoc "Set the mark character column in the selected placement of this document."
+        (b buffer "outer host")
+        (col integer "logical coordinate"))
+  (define (buffer-mark-col-set! b col)
+    (let ([w (buffer-editor-window b)])
+      (if w (update-window-editor! w 1 (cons (buffer-mark-row b) col)) (buffer-mark-col-raw-set! b col))))
 
   (edoc "A window's app view while it is still the one its buffer would build, else #f, dropping the stale one."
         (w window "the window")
@@ -396,6 +525,15 @@
   (edoc "Replace the seat's window list."
         (ws (list-of window) "the windows"))
   (define (set-windows! ws)
+    (let ([retained (apply append (map window-editors ws))])
+      (for-each
+        (lambda (w)
+          (unless (memq w ws)
+            (for-each (lambda (p)
+                        (unless (exists (lambda (kept) (equal? (cdr kept) (cdr p))) retained)
+                          (let ([d (interaction:snapshot (cdr p))])
+                            (when d (interaction:release! ui-actor (cdr p) (view:generation d))))))
+              (window-editors w)))) the-windows))
     (set! the-windows ws))
 
   (edoc "The root of the layout tree."
@@ -425,12 +563,13 @@
         (xoff integer "the first screen column")
         (width integer "the width in columns")
         (wrap (or boolean (one-of default)) "whether long lines wrap")
-        (returns window))
+        (returns window) (effects internal))
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
-               size xoff width wrap 'default #f #t #f #f '())])
-      (window-buffer-set! w (placed-buffer! w buffer the-windows)) w))
+               size xoff width wrap 'default #f #t #f #f '() '())])
+      (window-buffer-set! w (placed-buffer! w buffer the-windows))
+      (ensure-window-editor! w) w))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -625,7 +764,7 @@
     ;; pop-up stays the root split's second leaf whatever tree arrives
     (set! the-root (if (memq the-popup (layout-leaves root)) root
                        (make-layout-split 'below root the-popup 1 1)))
-    (set! the-windows (layout-leaves the-root)))
+    (set-windows! (layout-leaves the-root)))
 
   (edoc "Replace a node of the layout by another and adopt the result."
         (old (or window (record layout-split)) "the node to replace")
@@ -2334,7 +2473,7 @@
   (define (rebase-buffer-positions! b delta)
     (for-each
       (lambda (w)
-        (when (eq? (window-buffer w) b)
+        (when (and (eq? (window-buffer w) b) (not (window-editor w)))
           (let ([p (text:rebase-position
                      (cons (window-prow w) (window-pcol w)) delta)])
             (window-prow-set! w (car p))
@@ -2348,9 +2487,9 @@
       (buffer-spot-col-set! b (cdr p)))
     (buffer-spot-top-set!
       b (car (text:rebase-position (cons (buffer-spot-top b) 0) delta)))
-    (let ([p (text:rebase-position (cons (buffer-mark-row b) (buffer-mark-col b)) delta)])
-      (buffer-mark-row-set! b (car p))
-      (buffer-mark-col-set! b (cdr p))))
+    (let ([p (text:rebase-position (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)) delta)])
+      (buffer-mark-row-raw-set! b (car p))
+      (buffer-mark-col-raw-set! b (cdr p))))
 
   ;; A live grid may have committed text before its matching surface. Keep
   ;; one retry id, not the intermediate text or an event backlog. Surface
@@ -2588,7 +2727,7 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 4 selected-number layout buffers).
+  ;; A checkpoint is (screen 5 selected-number layout buffers).
   ;; Version 1 had no capture preference; restore those windows with partial
   ;; capture. Version 2 kept line numbers per buffer; a window restored from
   ;; it follows the default. Splits retain their ordinary orientation/weights;
@@ -2638,7 +2777,11 @@
                                 [(placement-window place) => (lambda (w) (cons 'top (window-index w)))]
                                 [else place])
                       (cdr entry))))
-             (buffer-placements b))])
+             (filter (lambda (entry)
+                       (let ([w (placement-window (car entry))])
+                         (not (and w (window-editor w)))))
+               (cons (cons 'mark (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
+                 (remp (lambda (entry) (eq? (car entry) 'mark)) (buffer-placements b)))))])
       (let-values ([(reference positions)
                     (cond
                       [(buffer-store-id b) => (lambda (id) (values (list 'shared id (buffer-store-rev b)) positions))]
@@ -2660,7 +2803,7 @@
                                          (list-sort (lambda (x y) (string<? (symbol->string (car x)) (symbol->string (car y)))) facts)
                                          text)
                                    positions)))])])
-        (list reference (buffer-marked b) positions))))
+        (list reference (buffer-marked-raw b) positions))))
 
   ;; An idle checkpoint (a wake frame: foreign edits moved this head's
   ;; positions) goes at most once a second: resume projects the saved
@@ -2698,11 +2841,11 @@
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-full-capture? node) (window-line-numbers node))
+                    (window-full-capture? node) (window-line-numbers node) (window-editors node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 4 (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 5 (window-index the-current) layout (map capture-buffer the-buffers))])
       (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
@@ -2772,7 +2915,7 @@
   (define (restore-screen! state)
     (apply
       (lambda (tag version selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4)))
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4 5)))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
@@ -2782,7 +2925,7 @@
                                                      (cons (car entry) (cddr entry))
                                                      entry)))
                                entries))]
-               [indices '()]
+               [indices '()] [editor-placements '()]
                [natural? (lambda (n) (and (integer? n) (exact? n) (>= n 0)))]
                ;; Window 0 is the pop-up now. A screen saved before it
                ;; numbered an ordinary window 0: that window takes the
@@ -2803,16 +2946,24 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following? full? numbers)
+                       (lambda (tag index slot topseg left wrap following? full? numbers editors)
                          (unless (and (for-all natural? (list index slot topseg left))
                                       (< slot (vector-length buffers)) (not (memv index indices))
-                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f)))
+                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f))
+                                      (editor-references? editors)
+                                      (let ([used (apply append (map (lambda (p) (map cdr (cdr p))) editor-placements))])
+                                        (let loop ([entries editors] [seen used])
+                                          (or (null? entries)
+                                            (and (not (member (cdar entries) seen))
+                                              (loop (cdr entries) (cons (cdar entries) seen)))))))
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
-                         (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                           0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '()))
-                       (cond [(= version 1) (append node '(#f default))]
-                             [(= version 2) (append node '(default))]
+                         (let ([w (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
+                                    0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '() '())])
+                           (set! editor-placements (cons (cons w editors) editor-placements)) w))
+                       (cond [(= version 1) (append node '(#f default ()))]
+                             [(= version 2) (append node '(default ()))]
+                             [(< version 5) (append node '(()))]
                              [else node]))]
                     [(split)
                      (apply
@@ -2867,6 +3018,10 @@
                                 (apply-placements! b (list entry))
                                 (when seg (window-topseg-set! w seg)))) (vector-ref entry 4))
                   (clamp-buffer-positions! b)))) buffers)
+          (for-each (lambda (entry)
+                      (let ([w (car entry)])
+                        (restore-window-editors! w (cdr entry))
+                        (ensure-window-editor! w))) editor-placements)
           (request-repaint!)
           #t)) state))
 
@@ -3024,7 +3179,8 @@
         (b buffer "the buffer")
         (marked? boolean "whether the mark is active"))
   (define (buffer-marked-set! b marked?)
-    (buffer-marked-raw-set! b (and marked? (buffer-selectable? b))))
+    (let ([w (buffer-editor-window b)] [value (and marked? (buffer-selectable? b))])
+      (if w (update-window-editor! w 3 value) (buffer-marked-raw-set! b value))))
 
   ;; Mouse context is head-owned; edit reexports these same parameters.
   ;; Position is a one-based viewport cell pair, buffer position is an
@@ -3624,14 +3780,22 @@
       (unless (eq? old b)
         (window-view-set! w #f)
         (window-status-actions-set! w '())
-        (buffer-spot-row-set! old (window-prow w))
-        (buffer-spot-col-set! old (window-pcol w))
-        (buffer-spot-top-set! old (window-top w))
+        (unless (window-editor w)
+          (buffer-spot-row-set! old (window-prow w))
+          (buffer-spot-col-set! old (window-pcol w))
+          (buffer-spot-top-set! old (window-top w)))
+        (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+          (when d (interaction:release! ui-actor id (view:generation d))))
         (window-buffer-set! w b)
         (window-following?-set! w #t)
-        (window-prow-set! w (buffer-spot-row b))
-        (window-pcol-set! w (buffer-spot-col b))
-        (window-top-set! w (buffer-spot-top b))
+        (window-prow-raw-set! w (buffer-spot-row b))
+        (window-pcol-raw-set! w (buffer-spot-col b))
+        (window-top-raw-set! w (buffer-spot-top b))
+        (ensure-window-editor! w)
+        (unless (window-editor w)
+          (window-prow-set! w (buffer-spot-row b))
+          (window-pcol-set! w (buffer-spot-col b))
+          (window-top-set! w (buffer-spot-top b)))
         (when (eq? w the-popup)
           ;; a buffer sent to the pop-up, by a link say, shows it at its
           ;; default size; its own placeholder hides it again
