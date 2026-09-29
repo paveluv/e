@@ -666,6 +666,17 @@ projected selection. `text-source:history!` steps the document's existing
 attributed undo/redo journal. File I/O remains in `document:`. Entry commands
 add their single-line policy and explicit view selection to this common path.
 
+TUI text consumers can import `(head text-layout)` for the editor's shared
+wrapping, vertical motion, paging, scroll margins and hit-coordinate mapping.
+These helpers take explicit source lines, a `render:` frame and resolved
+geometry; they never select a window or perform terminal I/O. `locate` and
+`hit` share whole-grapheme geometry. `scroll` and `page` return a proposed
+viewport and caret, leaving interaction publication to the caller. Their
+`(line . wrapped-segment)` addresses belong to the head; use `anchor` to
+convert a viewport address to a logical text position before persisting it.
+Changing width recomputes segments from that logical anchor. Ordinary paging
+and distant-caret scrolling inspect a viewport-sized part of the source.
+
 This example runs in a head without any base configuration. It builds a row
 inside a column, inside an overlay and a scroll viewport. Make the host narrow
 or short to exercise clipping; click either entry to edit their common source.

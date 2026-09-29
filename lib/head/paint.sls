@@ -27,8 +27,7 @@
           line-breaks line-segments mark-size-dirty! page-size paint! place-cursor!
           point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
           region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
-          screen-live? screen-rows scroll-margin scroll-window! segment-close segment-of
-          segment-start set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
+          screen-live? screen-rows scroll-margin scroll-window! set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
           show-message! show-prompt-message! terminal-size! update-echo-geometry!
           update-terminal-title! valid-hyperlink? view-invalidate! view-overflows? visual-bell!
           window-layout window-position window-screen-position window-wrapped? wrap-lines
@@ -37,8 +36,7 @@
           (rnrs mutable-strings)
           (rnrs r5rs)
           (only (chezscheme)
-                box void format make-parameter parameterize make-weak-eq-hashtable
-                eq-hashtable-ref eq-hashtable-set! remq getenv
+                box void format make-parameter parameterize remq getenv
                 make-mutex with-mutex unbox set-box!
                 current-time add-duration make-time time<?)
           (prefix (core kernel) kernel:)
@@ -49,6 +47,7 @@
           (prefix (head mode) mode:)
           (prefix (head render) render:)
           (prefix (head style) style:)
+          (prefix (head text-layout) text-layout:)
           (prefix (head widget) widget:)
           (prefix (sys glyph) glyph:)
           (prefix (only (sys sys) terminal-output-port terminal-character-width terminal-size watch-terminal-resize!) sys:))
@@ -648,59 +647,13 @@
                '() ranges))
 
 
-  (define wrap-cache (make-weak-eq-hashtable))
-
   (edoc "The break table of a line in a window, a vector of its segment start columns, memoized per line string and width."
         (w window "the window")
         (line string "the line")
         (returns vector)
         (effects internal))
   (define (line-breaks w line)
-    (cached-breaks line (wrap-width w)))
-
-  (edoc "Reuse a line's wrap boundaries at a resolved content width."
-        (line string "the line") (width integer "the width in cells")
-        (returns vector) (effects internal))
-  (define (cached-breaks line width)
-    ;; Geometry walks resolve their width once and share the same cache as
-    ;; single-line queries. No window setting is retained between walks.
-    (let* ([hit (eq-hashtable-ref wrap-cache line '())]
-           [found (assv width hit)])
-      (if found
-          (cdr found)
-          (let ([breaks (compute-breaks line width)])
-            (eq-hashtable-set! wrap-cache line
-                               (cons (cons width breaks) hit))
-            breaks))))
-
-  (edoc "The index of the segment of a break table holding a column."
-        (breaks vector "the break table")
-        (col integer "the column")
-        (returns integer))
-  (define (segment-of breaks col)
-    ;; The segment holding column col.
-    (let loop ([k (- (vector-length breaks) 1)])
-      (if (or (= k 0) (>= col (vector-ref breaks k)))
-          k
-          (loop (- k 1)))))
-
-  (edoc "The first column of segment k of a break table."
-        (breaks vector "the break table")
-        (k integer "the segment")
-        (returns integer))
-  (define (segment-start breaks k)
-    (vector-ref breaks k))
-
-  (edoc "The last column the cursor may occupy within segment k of a line of length len."
-        (breaks vector "the break table")
-        (k integer "the segment")
-        (len integer "the line's length")
-        (returns integer))
-  (define (segment-close breaks k len)
-    ;; The last column the cursor may occupy within segment k.
-    (if (< (+ k 1) (vector-length breaks))
-        (- (vector-ref breaks (+ k 1)) 1)
-        len))
+    (text-layout:breaks line (wrap-width w)))
 
   (edoc "How many screen rows a line takes in a window: 1, or its soft-wrapped segment count."
         (w window "the window")
@@ -721,14 +674,7 @@
         (cell integer "the visual cell")
         (returns integer))
   (define (column-at-cell w row breaks segment cell)
-    ;; Shared landing rule for vertical goals, paging, clicks and hover.
-    ;; Clamp to the segment, then snap to a cluster's leading character.
-    (let* ([frame (head:window-rendition w)]
-           [length (string-length (render:line-ref (head:window-text w) row))]
-           [start (if breaks (segment-start breaks segment) 0)]
-           [end (if breaks (segment-close breaks segment length) length)]
-           [at (min end (render:character frame row (+ (render:column frame row start) cell)))])
-      (render:character frame row (render:column frame row at))))
+    (text-layout:column (head:window-text w) (head:window-rendition w) row breaks segment cell))
 
   (edoc "The displayed (row . col) at a 1-based screen (x, y) inside a window's text band, given the band's start row and height."
         (w window "the window")
@@ -738,35 +684,17 @@
         (y integer "the screen row")
         (returns position))
   (define (window-position w start height x y)
-    ;; The displayed (row . col) at 1-based screen (x, y) inside w's text
-    ;; band. Wrapped lines occupy successive screen rows.
-    (let* ([v (head:window-text w)]
+    (let* ([v (head:window-text w)] [frame (head:window-rendition w)]
            [sticky (head:buffer-sticky-lines (head:window-buffer w))]
            [k (max 0 (- y 1 start))]
            [col (max 0 (- x 1 (head:window-xoff w)
                           (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                           (head:window-line-number-width w)))])
-      (cond
-        [(< k sticky)
-         (let ([row (min k (- (render:line-count v) 1))])
-           (cons row (render:character (head:window-rendition w) row col)))]
-        [(window-wrapped? w)
-         (let loop ([i (max sticky (head:window-top w))]
-                    [k (+ (- k sticky) (head:window-topseg w))])
-           (if (>= i (render:line-count v))
-               ;; Keep blank viewport space distinct from the final row.
-               ;; Only the ordinary point setter clamps a click to text.
-               (cons i col)
-               (let* ([line (render:line-ref v i)]
-                      [breaks (line-breaks w line)]
-                      [segs (vector-length breaks)])
-                 (if (< k segs)
-                     (cons i (column-at-cell w i breaks k col))
-                     (loop (+ i 1) (- k segs))))))]
-        [else
-         (let ([row (+ (max sticky (head:window-top w)) (- k sticky))])
-           (cons row (render:character (head:window-rendition w) row
-                                       (+ (head:window-left w) col))))])))
+      (if (< k sticky)
+        (let ([row (min k (- (render:line-count v) 1))]) (cons row (render:character frame row col)))
+        (text-layout:hit v frame (and (window-wrapped? w) (wrap-width w))
+          (cons (max sticky (head:window-top w)) (head:window-topseg w))
+          (head:window-left w) col (- k sticky)))))
 
   (edoc "Blank the terminal, its selection highlight included, and schedule the full repaint.")
   (define (erase-screen!)
@@ -909,12 +837,12 @@
                        [wrapped? (and (>= i sticky) wrap?)]
                        [breaks (and wrapped? (line-breaks w line))]
                        [slice-left (if wrapped?
-                                       (render:column frame i (segment-start breaks seg))
+                                       (render:column frame i (vector-ref breaks seg))
                                        left)]
                        [bound (if (and wrapped?
                                        (< (+ seg 1)
                                           (vector-length breaks)))
-                                  (render:column frame i (segment-start breaks (+ seg 1)))
+                                  (render:column frame i (vector-ref breaks (+ seg 1)))
                                   width)]
                        [edge (cond
                                [(and wrapped?
@@ -1240,17 +1168,9 @@
         (pcol integer "the column")
         (returns integer))
   (define (rows-before w prow pcol)
-    ;; Screen rows between w's top -- its first visible segment -- and
-    ;; point, wrap-aware.
-    (if (not (window-wrapped? w)) (- prow (max (head:buffer-sticky-lines (head:window-buffer w)) (head:window-top w)))
-      (let* ([v (head:window-text w)]
-             [width (wrap-width w)]
-             [sticky (head:buffer-sticky-lines (head:window-buffer w))])
-        (let loop ([i (max sticky (head:window-top w))]
-                   [n (- (head:window-topseg w))])
-          (if (>= i prow)
-            (+ n (segment-of (cached-breaks (render:line-ref v prow) width) pcol))
-            (loop (+ i 1) (+ n (vector-length (cached-breaks (render:line-ref v i) width)))))))))
+    (text-layout:distance (head:window-text w) (and (window-wrapped? w) (wrap-width w))
+      (cons (max (head:buffer-sticky-lines (head:window-buffer w)) (head:window-top w)) (head:window-topseg w))
+      (cons prow pcol)))
 
   ;; The minimal visual distance kept between the cursor and the
   ;; window's top and bottom edges: scrolling starts that early, and
@@ -1285,100 +1205,23 @@
         (height integer "the text height")
         (returns boolean))
   (define (view-overflows? w v height)
-    ;; Is there more content than the window holds, counting from its
-    ;; top segment?
-    (let ([width (and (window-wrapped? w) (wrap-width w))])
-      (let loop ([i (max (head:buffer-sticky-lines (head:window-buffer w))
-                         (head:window-top w))]
-                 [n (- (head:window-topseg w))])
-        (cond [(> n height) #t]
-              [(>= i (render:line-count v)) #f]
-              [else (loop (+ i 1)
-                          (+ n (if width (vector-length (cached-breaks (render:line-ref v i) width)) 1)))]))))
+    (text-layout:overflows? v (and (window-wrapped? w) (wrap-width w))
+      (cons (max (head:buffer-sticky-lines (head:window-buffer w)) (head:window-top w)) (head:window-topseg w)) height))
 
   (edoc "Clamp a window's point into its buffer and scroll so point stays visible, at least scroll-margin rows from the edges where the buffer allows."
         (w window "the window")
         (height integer "its text height"))
   (define (scroll-window! w height)
-    ;; Clamp w's point to its buffer (edits in another window may have moved
-    ;; the ground under it) and scroll so point stays visible -- at
-    ;; least scroll-margin rows from the edges, where the buffer's
-    ;; ends allow.
-    (let* ([v (head:window-text w)]
-           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
-           [height (max 1 (- height sticky))]
-           [prow (max 0 (min (head:window-prow w) (- (render:line-count v) 1)))]
-           [pcol (max 0 (min (head:window-pcol w)
-                             (string-length (render:line-ref v prow))))]
-           [m (min (scroll-margin) (div (max 0 (- height 1)) 2))])
-      (head:window-prow-set! w prow)
-      (head:window-pcol-set! w pcol)
-      ;; Cursor visibility controls its ink, not whether keyboard navigation
-      ;; keeps point in view. Only an app owning its viewport overrides this.
+    (let* ([v (head:window-text w)] [row (max 0 (min (head:window-prow w) (- (render:line-count v) 1)))]
+           [point (cons row (max 0 (min (head:window-pcol w) (string-length (render:line-ref v row)))))]
+           [sticky (head:buffer-sticky-lines (head:window-buffer w))])
+      (head:window-prow-set! w (car point)) (head:window-pcol-set! w (cdr point))
       (unless (head:app-manages-window-viewport? w)
-        (if (window-wrapped? w)
-          (let ([pseg (segment-of (line-breaks w (render:line-ref v prow))
-                                  pcol)])
-            ;; a stale top (edits, toggles) clamps into the buffer
-            (head:window-top-set! w
-              (max sticky
-                   (min (head:window-top w) (- (render:line-count v) 1))))
-            (head:window-topseg-set!
-              w (min (head:window-topseg w)
-                     (- (line-segments w (render:line-ref v (head:window-top w)))
-                        1)))
-            ;; point above the view: its own segment row becomes the
-            ;; top, so moving up scrolls by one visual row, not by the
-            ;; whole wrapped line
-            (when (and (>= prow sticky)
-                       (or (< prow (head:window-top w))
-                         (and (= prow (head:window-top w))
-                           (< pseg (head:window-topseg w)))))
-              (head:window-top-set! w prow)
-              (head:window-topseg-set! w pseg))
-            ;; the margin above: retreat while the top of the buffer
-            ;; still allows
-            (let retreat ()
-              (when (and (< (rows-before w prow pcol) m)
-                         (or (> (head:window-top w) sticky)
-                             (> (head:window-topseg w) 0)))
-                (if (> (head:window-topseg w) 0)
-                    (head:window-topseg-set! w (- (head:window-topseg w) 1))
-                    (begin
-                      (head:window-top-set! w (- (head:window-top w) 1))
-                      (head:window-topseg-set!
-                        w (- (line-segments
-                               w (render:line-ref v (head:window-top w)))
-                             1))))
-                (retreat)))
-            ;; and below: advance one visual row at a time, only while
-            ;; content actually overflows the window.  Each step reduces
-            ;; distance by exactly one; carrying it avoids rescanning from
-            ;; top to point at every step on a large jump.
-            (let advance ([distance (rows-before w prow pcol)])
-              (when (and (>= distance (- height m))
-                         (or (< (head:window-top w) prow)
-                             (< (head:window-topseg w) pseg))
-                         (view-overflows? w v height))
-                (if (< (+ (head:window-topseg w) 1)
-                       (line-segments w (render:line-ref v (head:window-top w))))
-                    (head:window-topseg-set! w (+ (head:window-topseg w) 1))
-                    (begin (head:window-top-set! w (+ (head:window-top w) 1))
-                           (head:window-topseg-set! w 0)))
-                (advance (- distance 1)))))
-          (begin
-            (head:window-topseg-set! w 0)
-            (when (< prow (+ (head:window-top w) m))
-              (head:window-top-set! w (max sticky (- prow m))))
-            (when (>= prow (+ (head:window-top w) height (- m)))
-              (head:window-top-set! w
-                (min (- prow (- height 1 m))
-                     (max sticky (- (render:line-count v) height)))))
-            (let ([cell (render:column (head:window-rendition w) prow pcol)])
-              (when (< cell (head:window-left w)) (head:window-left-set! w cell))
-              (when (>= cell (+ (head:window-left w) (head:window-content-width w)))
-                (head:window-left-set! w
-                  (- cell (head:window-content-width w) -1)))))))))
+        (let-values ([(point top left)
+                      (text-layout:scroll v (head:window-rendition w) (and (window-wrapped? w) (wrap-width w))
+                        (head:window-content-width w) (- height sticky) sticky
+                        (cons (head:window-top w) (head:window-topseg w)) (head:window-left w) point (scroll-margin))])
+          (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top)) (head:window-left-set! w left)))))
 
   ;; The cache holds, per screen row, the key describing what that row
   ;; currently shows; a row is repainted only when its key changes.  Any
@@ -1829,29 +1672,13 @@
         (pcol integer "the column")
         (returns pair))
   (define (window-screen-position w prow pcol)
-    ;; 1-based screen (row . col) of a displayed position in w, wrap-aware.
-    (let* ([entry (assq w (window-layout))]
-           [sticky (head:buffer-sticky-lines (head:window-buffer w))]
+    (let* ([entry (assq w (window-layout))] [sticky (head:buffer-sticky-lines (head:window-buffer w))]
            [frame (head:window-rendition w)]
-           [x (+ (head:window-xoff w)
-                 (if (eq? (head:window-scrollbar? w) 'left) 1 0)
-                 (head:window-line-number-width w))]
-           [screen-row (if (< prow sticky)
-                           (+ (cadr entry) prow 1)
-                           (+ (cadr entry) sticky
-                              (rows-before w prow pcol) 1))])
-      (if (and (>= prow sticky) (window-wrapped? w))
-          (cons screen-row
-                (let ([breaks (line-breaks
-                                w (render:line-ref
-                                    (head:window-text w) prow))])
-                  (+ x
-                     (- (render:column frame prow pcol)
-                        (render:column frame prow (segment-start breaks (segment-of breaks pcol))))
-                     1)))
-          (cons screen-row
-                (+ x (- (render:column frame prow pcol)
-                        (head:window-left w)) 1)))))
+           [x (+ (head:window-xoff w) (if (eq? (head:window-scrollbar? w) 'left) 1 0) (head:window-line-number-width w))]
+           [p (if (< prow sticky) (cons (- (render:column frame prow pcol) (head:window-left w)) (- prow sticky))
+                (text-layout:locate (head:window-text w) frame (and (window-wrapped? w) (wrap-width w))
+                  (cons (max sticky (head:window-top w)) (head:window-topseg w)) (head:window-left w) (cons prow pcol)))])
+      (cons (+ 1 (cadr entry) sticky (cdr p)) (+ 1 x (car p)))))
 
   (edoc "Park the cursor in the echo area for a prompt or a running evaluation, else at point in the current window.")
   (define (place-cursor!)

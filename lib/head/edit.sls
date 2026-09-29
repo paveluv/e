@@ -64,6 +64,7 @@
           (prefix (head render) render:)
           (prefix (head style) style:)
           (prefix (head table) table:)
+          (prefix (head text-layout) text-layout:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
           (prefix (service document) document:)
@@ -550,53 +551,18 @@
                         (paint:line-breaks w (render:line-ref (head:window-text w) row)))])
       (- (render:column frame row col)
          (if breaks
-             (render:column frame row (paint:segment-start breaks (paint:segment-of breaks col))) 0))))
+             (render:column frame row (vector-ref breaks (text-layout:segment breaks col))) 0))))
 
   (edoc "Move point a number of lines, negative for up, aiming for the goal column; visual rows in a wrapping window."
         (delta integer "how far, negative for up"))
   (define (move-vertical! delta)
-    ;; By buffer lines -- or by visual rows in a soft-wrapping window,
-    ;; where up and down walk a long line's segments (C-a and C-e
-    ;; still treat it as one line). The goal column is always in cells.
-    (define wrapped? (paint:window-wrapped? current-window))
-    (define goal-col
-      (let ([goal (head:window-goal current-window)])
-        (if (and goal (equal? (cdr goal) (goal-position wrapped?)))
-            (car goal)
-            (visual-column current-window point-row point-col))))
-    (define (land! breaks k)
-      ;; the goal column within segment k, clamped into it
-      (set! point-col (paint:column-at-cell current-window point-row breaks k goal-col)))
-    (if wrapped?
-        (let step ([n delta])
-          (cond
-            [(zero? n) (void)]
-            [(negative? n)
-             (let* ([breaks (paint:line-breaks current-window (current-display-line))]
-                    [seg (paint:segment-of breaks point-col)])
-               (cond
-                 [(> seg 0)                ; up, within the same line
-                  (land! breaks (- seg 1))]
-                 [(> point-row 0)          ; onto the line above's last row
-                  (set! point-row (- point-row 1))
-                  (let ([breaks (paint:line-breaks current-window
-                                                   (current-display-line))])
-                    (land! breaks (- (vector-length breaks) 1)))]))
-             (step (+ n 1))]
-            [else
-             (let* ([breaks (paint:line-breaks current-window (current-display-line))]
-                    [seg (paint:segment-of breaks point-col)])
-               (cond
-                 [(< (+ seg 1) (vector-length breaks))
-                  (land! breaks (+ seg 1))]  ; down, within the same line
-                 [(< point-row (- (vlen) 1))
-                  (set! point-row (+ point-row 1))
-                  (land! (paint:line-breaks current-window (current-display-line)) 0)]))
-             (step (- n 1))]))
-        (begin
-          (set! point-row (max 0 (min (+ point-row delta) (- (vlen) 1))))
-          (set! point-col (paint:column-at-cell current-window point-row #f 0 goal-col))))
-    (head:window-goal-set! current-window (cons goal-col (goal-position wrapped?))))
+    (let* ([w current-window] [wrapped? (paint:window-wrapped? w)] [goal (head:window-goal w)]
+           [goal-col (if (and goal (equal? (cdr goal) (goal-position wrapped?))) (car goal)
+                       (visual-column w point-row point-col))]
+           [point (text-layout:move (head:window-text w) (head:window-rendition w)
+                    (and wrapped? (paint:wrap-width w)) (cons point-row point-col) delta goal-col)])
+      (set! point-row (car point)) (set! point-col (cdr point))
+      (head:window-goal-set! w (cons goal-col (goal-position wrapped?)))))
 
   (define (split-inserted-lines s)
     ;; Unlike split-lines, retain an empty final part: inserting "a\n"
@@ -1526,58 +1492,14 @@
         (direction integer "-1 for up, 1 for down")
         (fraction integer "the divisor of the page: 1 for a whole page, 8 for a wheel tick"))
   (define (page-window! direction fraction)
-    ;; Pagination is a viewport operation. Shift its top by the requested
-    ;; fraction of the body height in visual rows, clamp at either end, then
-    ;; put point in the middle.
-    ;; A second outward page at an already-clamped edge moves point to that
-    ;; edge. Wrapped segments count as rows; the visual column is preserved.
-    (let* ([w current-window]
-           [v (head:window-text w)]
-           [n (render:line-count v)]
-           [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- n 1))]
-           [height (paint:page-size)]
-           [wrapped? (paint:window-wrapped? w)]
-           [visual-col (visual-column w point-row point-col)])
-      (define (offset-at target segment)
-        (if (not wrapped?) (+ (- target sticky) segment)
-          (let loop ([row sticky] [offset 0])
-            (if (>= row target)
-              (+ offset segment)
-              (loop (+ row 1)
-                    (+ offset (paint:line-segments w (render:line-ref v row))))))))
-      (define (position-at offset)
-        (if (not wrapped?) (cons (min (- n 1) (+ sticky offset)) 0)
-          (let loop ([row sticky] [left offset])
-            (let ([segments (paint:line-segments w (render:line-ref v row))])
-              (if (or (= row (- n 1)) (< left segments))
-                (cons row (min left (- segments 1)))
-                (loop (+ row 1) (- left segments)))))))
-      (define (column-at position)
-        (let* ([row (car position)]
-               [line (render:line-ref v row)])
-          (paint:column-at-cell w row (and wrapped? (paint:line-breaks w line)) (cdr position) visual-col)))
-      (define (land! top-offset point-offset)
-        (let ([top (position-at top-offset)]
-              [point (position-at point-offset)])
-          (head:goto! (cons (car point) (column-at point)))
-          (head:window-top-set! w (car top))
-          (head:window-topseg-set! w (cdr top))))
-      (let* ([total (max 1 (offset-at n 0))]
-             [last-top (max 0 (- total height))]
-             [old-top (min last-top
-                           (max 0 (offset-at (head:window-top w)
-                                             (head:window-topseg w))))]
-             [up? (negative? direction)]
-             [step (max 1 (quotient height fraction))]
-             [at-edge? (= old-top (if up? 0 last-top))]
-             [top (cond [(<= total height) 0]
-                        [up? (max 0 (- old-top step))]
-                        [else (min last-top (+ old-top step))])]
-             [middle (+ top (quotient (- height 1) 2))]
-             [point (cond [(<= total height) (if up? 0 (- total 1))]
-                          [at-edge? (if up? 0 (- total 1))]
-                          [else middle])])
-        (land! top point))))
+    (let* ([w current-window] [v (head:window-text w)]
+           [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- (render:line-count v) 1))])
+      (let-values ([(top point)
+                    (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
+                      sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
+                      (visual-column w point-row point-col) direction fraction)])
+        (head:goto! point)
+        (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top)))))
 
   (edoc "Scroll the selected window by a fraction of its height and put point in the middle: negative direction up, positive down; fraction 1 is a page, 8 an eighth."
         (direction integer "negative for up, positive for down")

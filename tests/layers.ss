@@ -141,10 +141,14 @@
                        "daemon transitively imports a head library" 'base name)))
          (closure base '(run base))) #t)
 
-     (test:check 'text-source-has-no-window-or-widget-runtime
-       (for-all (lambda (name)
-                  (not (memq (source-name (cdr (assoc name base))) '(head edit entry widget interaction paint render))))
-         (closure base '(head text-source))) #t)
+     (test:check 'shared-text-engines-have-no-window-or-widget-runtime
+       (for-all
+         (lambda (engine)
+           (for-all (lambda (name)
+                      (not (memq (source-name (cdr (assoc name base)))
+                             (append '(head edit entry widget interaction paint) (if (eq? engine 'text-source) '(render) '())))))
+             (closure base (list 'head engine))))
+         '(text-source text-layout)) #t)
 
      (test:check 'client-exports-are-subsets
        (for-all
