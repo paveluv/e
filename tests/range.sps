@@ -38,8 +38,8 @@
                           (min (- count (if (or (< count 1000) (even? count)) 1 2)) (max (if (< count 1000) 0 1) (+ first (* step sign offset)))))))
                     (if (< count 1000) '() '((default 3)))) #f))))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 10000000)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [a (range:acquire! query void)] [b (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [a (range:acquire! query void)] [b (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! a g 0 32 '(name) '())
     (range:request! b g 16 32 '(name) '())
     (page query g 0 48)
@@ -145,15 +145,15 @@
     (test:check 'range-last-release-ends-local-read-ownership
       (test:raises? (lambda () (range:summary query))) #t))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 9)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [token (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [token (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! token g 0 9 '(name) '())
     (test:check 'range-short-byte-limited-page-fetches-its-remainder
       (length (list-ref (page query g 0 9) 4)) 9)
     (range:release! token))
   (let* ([source (model:create! actor 'range-fixture 1 'session 'transient '() 160)]
-         [query (collection:create! actor source "" '() 'transient)] [s (ready query)] [g (generation s)]
-         [token (range:acquire! query void)])
+         [query (collection:create! actor source "" '() 'transient)]
+         [token (range:acquire! query void)] [s (ready query)] [g (generation s)])
     (range:request! token g 0 160 '(name) '())
     (test:await 'range-bounded-overload
       (lambda () (range:pump!) (eq? (car (range:read query g 0 160 '(name))) 'unavailable)))

@@ -77,6 +77,15 @@
     (list 'applied '()))
   (head-wait 'collection-default-restored a
     (lambda () (= (head-read a `(cdr (assq 'count (cdr (assq 'value (range:summary ',query)))))) 3)))
+  (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) (head:before-frame!) #t))
+  (test:check 'hidden-collection-releases-one-mount-without-stopping-the-other
+    (list (head-read a `(interaction:snapshot ',root-a))
+      (cdr (assq 'status (cdr (assq 'value (rpc head 'collection-summary query)))))) '(#f ready))
+  (head-read b `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) (head:before-frame!) #t))
+  (test:await 'last-hidden-collection-releases-base-work
+    (lambda () (eq? (cdr (assq 'status (cdr (assq 'value (rpc head 'collection-summary query))))) 'pending)))
+  (head-read a `(begin (window:show-widget! (head:current-window) ',root-a) #t))
+  (head-wait 'hidden-collection-resumes-retained-recipe a (lambda () (equal? (key a table-a) "beta.ss")))
   (for-each
     (lambda (ui root)
       (head-read ui `(begin
@@ -150,6 +159,7 @@
   (define (retire id)
     (let* ([packet (rpc head 'model-read (list id))] [r (caddar (cadr packet))])
       (rpc head 'model-retire id (cdr (assq 'revision r)))))
+  (rpc head 'model-watch (list query))
   (test:await 'catalogue-wire-local (lambda () (equal? (count query) 1)))
   (test:check 'catalogue-wire-cannot-resolve-another-heads-token
     (head-read b `(begin (kernel:load-modules! '("document")) (document:resolve! ',ref))) #f)
@@ -160,12 +170,17 @@
   (let* ([token (rpc temporary 'catalogue-attach)]
          [source (rpc temporary 'catalogue-source "/home" 'transient)]
          [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)])
+    (rpc temporary 'model-watch (list query))
     (rpc temporary 'catalogue-contribute token '((1 ((name . "catalogue-wire") (version . 0)))))
     (test:await 'catalogue-wire-contributed (lambda () (equal? (count query) 1)))
     (sys:close-connection! temporary)
+    (test:await 'last-disconnected-reader-cancels-collection (lambda () (not (count query))))
+    (rpc head 'model-watch (list query))
     (test:await 'catalogue-wire-detached (lambda () (equal? (count query) 0)))
     (test:check 'catalogue-wire-detach-retires-contribution (count query) 0)
+    (rpc head 'model-unwatch (list query))
     (for-each retire (list query source)))
+  (rpc head 'model-unwatch (list query))
   (for-each retire (list query source)))
 
 ;; The same prepared-range transport serves filesystem queries. No extra head
@@ -176,6 +191,7 @@
                              ,(string-append (current-directory) "/lib/service/file-query.s")))]
        [query (car pair)] [intent #f])
   (define (value) (cdr (assq 'value (rpc head 'collection-summary query))))
+  (rpc head 'model-watch (list query))
   (test:await 'filesystem-wire-ready
     (lambda () (let ([v (value)]) (and (eq? (cdr (assq 'status v)) 'ready) (cdr (assq 'complete v))))))
   (let ([v (value)])
@@ -208,4 +224,5 @@
     (head-read a `(let ([b (widget:host ',host)])
                     (head:show-buffer! (document:resolve! ',before)) (head:forget-buffer! b) #t)))
   (let* ([packet (rpc head 'model-read (list query))] [r (caddar (cadr packet))])
+    (rpc head 'model-unwatch (list query))
     (rpc head 'model-retire query (cdr (assq 'revision r)))))

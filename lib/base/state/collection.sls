@@ -51,7 +51,7 @@
     (fields columns count at locate seek complete default details sortable demand))
   (define-record-type publication (fields generation basis result))
   ;; A ticket is unique even if input A changes to B and back to A.
-  (define-record-type job (fields id key serial mutex))
+  (define-record-type job (fields id key serial mutex (mutable subscription)))
   (define (scalar? type)
     (exists (lambda (parent) (edoc:type-compatible? type parent)) '(number string boolean)))
   (define (bounded? value limit)
@@ -130,14 +130,15 @@
                                  (cons 'sortable (if result (result-sortable result) '()))))])
                   ;; The immutable index precedes its compact summary. A failed
                   ;; revision guard restores only the publication we replaced.
-                  (with-mutex lock (hashtable-set! results id next))
-                  (let-values ([(status ignored) (model:commit! '(base collection)
-                                                   (list (list id (field r 'revision) (field r 'references) value)))])
-                    (unless (eq? status 'applied)
-                      (with-mutex lock
-                        (when (eq? next (hashtable-ref results id #f))
-                          (if old (hashtable-set! results id old) (hashtable-delete! results id)))))
-                    (if (eq? status 'stale) (retry) (eq? status 'applied)))))))))))
+                  (and (with-mutex lock
+                         (and (eq? job (hashtable-ref desired id #f)) (begin (hashtable-set! results id next) #t)))
+                    (let-values ([(status ignored) (model:commit! '(base collection)
+                                                     (list (list id (field r 'revision) (field r 'references) value)))])
+                      (unless (eq? status 'applied)
+                        (with-mutex lock
+                          (when (eq? next (hashtable-ref results id #f))
+                            (if old (hashtable-set! results id old) (hashtable-delete! results id)))))
+                      (if (eq? status 'stale) (retry) (eq? status 'applied))))))))))))
   (define envelopes (make-hashtable equal-hash equal?))
   (define (source-envelope id)
     (let* ([revision (model:revision id)] [old (with-mutex lock (hashtable-ref envelopes id #f))])
@@ -166,6 +167,12 @@
                  (lambda (result diagnostic) (publish! job result diagnostic))))))
           (schedule! (job-id job)))
         (loop))))
+  (define (release! id idle?)
+    (let ([job (with-mutex lock
+                 (and (or (not idle?) (not (model:demanded? id)))
+                   (let ([job (hashtable-ref desired id #f)])
+                     (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id) job)))])
+      (when (and job (job-subscription job)) (model:unsubscribe! (job-subscription job)))))
   (define (schedule! id)
     (let ([r (query-record id)])
       (if (not r)
@@ -173,36 +180,51 @@
                [resources (with-mutex lock
                             (let ([refs (hashtable-ref owned id '())])
                               (when deleted? (hashtable-delete! owned id))
-                              (hashtable-delete! pending id) (hashtable-delete! desired id) (hashtable-delete! results id) refs))])
+                              refs))])
+          (release! id #f)
           (when deleted?
             (for-each (lambda (ref)
                         (if (eq? (car ref) 'buffer)
                           (when (store:exists? (cadr ref)) (store:delete! '(base collection) (cadr ref)))
                           (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)))
-        (let* ([key (input-key r)]
-               [job (with-mutex lock
-                      (hashtable-set! owned id (get (field r 'value) 'owned '()))
-                      (let ([old (hashtable-ref desired id #f)])
-                        (and (or (not old) (not (equal? key (job-key old))))
-                          (begin (set! serial (+ serial 1))
-                            (let ([job (make-job id key serial (make-mutex))])
-                              (hashtable-set! desired id job) job)))))])
-          (when job
-            (let publish-pending ()
-              (let ([r (current? job)])
-                (when r
-                  (let* ([v (field r 'value)] [filter (cadr key)]
-                         [changes (append (list '(status . pending) (cons 'basis (list id (job-serial job)))
-                                            '(complete . #f) '(details) '(default))
-                                    (if (eq? (car filter) 'ready) (list (cons 'input-filter (cadr filter))) '()))])
-                    (let-values ([(status ignored) (model:commit! '(base collection)
-                                                     (list (list id (field r 'revision) (field r 'references) (set-fields v changes))))])
-                      (when (eq? status 'stale) (publish-pending)))))))
-            (with-mutex lock
-              (when (eq? job (hashtable-ref desired id #f))
-                (hashtable-set! pending id job)
-                (unless worker? (set! worker? #t) (fork-thread work!))
-                (condition-signal ready))))))))
+        (begin
+          (with-mutex lock (hashtable-set! owned id (get (field r 'value) 'owned '())))
+          (if (not (model:demanded? id)) (release! id #t)
+            (let* ([key (input-key r)] [previous #f]
+                   [job (with-mutex lock
+                          (let ([old (hashtable-ref desired id #f)])
+                            (and (model:demanded? id) (or (not old) (not (equal? key (job-key old))))
+                              (begin (set! serial (+ serial 1))
+                                (set! previous old)
+                                (let ([job (make-job id key serial (make-mutex) #f)])
+                                  (hashtable-set! desired id job) job)))))])
+              (when job
+                ;; Derived queries retain their upstream models for exactly the
+                ;; lifetime of their own demand. Acquire before releasing the old
+                ;; subscription so unchanged dependencies never briefly go idle.
+                (let* ([dependencies (remp (lambda (ref) (or (equal? id ref) (not (row:source? ref))))
+                                       (append (if (eq? (caar key) 'ready) (list (cadar key)) '())
+                                         (map car (apply append (list-ref key 4)))))]
+                       [token (kernel:call-with-runtime-registrations
+                                (lambda () (model:subscribe! dependencies (lambda (notice) (void)))))])
+                  (job-subscription-set! job token)
+                  (unless (with-mutex lock (eq? job (hashtable-ref desired id #f))) (model:unsubscribe! token)))
+                (when (and previous (job-subscription previous)) (model:unsubscribe! (job-subscription previous)))
+                (let publish-pending ()
+                  (let ([r (current? job)])
+                    (when r
+                      (let* ([v (field r 'value)] [filter (cadr key)]
+                             [changes (append (list '(status . pending) (cons 'basis (list id (job-serial job)))
+                                                '(complete . #f) '(details) '(default))
+                                        (if (eq? (car filter) 'ready) (list (cons 'input-filter (cadr filter))) '()))])
+                        (let-values ([(status ignored) (model:commit! '(base collection)
+                                                         (list (list id (field r 'revision) (field r 'references) (set-fields v changes))))])
+                          (when (eq? status 'stale) (publish-pending)))))))
+                (with-mutex lock
+                  (when (eq? job (hashtable-ref desired id #f))
+                    (hashtable-set! pending id job)
+                    (unless worker? (set! worker? #t) (fork-thread work!))
+                    (condition-signal ready))))))))))
   (define (rescan!)
     (for-each schedule! (model:ids 'collection))
     (let ([ids (with-mutex lock (vector->list (hashtable-keys owned)))])
@@ -227,10 +249,14 @@
               (when (exists (lambda (id) (member id ids)) dependencies) (schedule! id)))) jobs)
         (prune-envelopes!))))
 
-  (edoc "Rebuild prepared query indexes after recovery; persisted records hold recipes, never provider captures.")
+  (edoc "Recover query ownership and rebuild indexes with active demand; saved recipes alone never start providers.")
   (define (init!) (rescan!))
   (define notices
     (list (model:subscribe! #f (lambda (notice) (invalidate! (cadr notice))))
+      (model:observe-demand!
+        (lambda (ids)
+          (for-each (lambda (id) (when (with-mutex lock (hashtable-contains? owned id)) (schedule! id))) ids)
+          (prune-envelopes!)))
       (store:subscribe! #f (lambda (event) (invalidate! (list (list 'buffer (cadr event))))))
       (port:observe! (lambda () (with-mutex lock (set! contract-generation (+ contract-generation 1))) (rescan!)))
       (kernel:registry-observe! providers
@@ -242,7 +268,7 @@
   (define (create-source! actor columns rows persistence)
     (model:create! actor 'collection-vector 1 'session persistence '() (list columns rows)))
 
-  (edoc "Create a query whose provider owns filtering and ordering; result work runs at the base."
+  (edoc "Create a query whose provider owns filtering and ordering. Scoped model subscriptions retain its work; creating or recovering an unobserved recipe does not start a provider."
         (actor actor "creator") (source row-source "source model") (filter string "provider filter")
         (sort list "compound keys") (persistence (one-of transient persistent) "restart policy")
         (resources (list-of list) "optional owned resource references, retired with a persistent query") (returns list))

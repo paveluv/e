@@ -88,6 +88,8 @@
     (let ([current (with-mutex lock epoch)])
       (unless (= cache-epoch current)
         (if cache (directory:clear! cache) (set! cache (directory:make-cache #f)))
+        ;; Recovered sources may retain inventory without ever starting a query.
+        (for-each (lambda (id) (with-mutex lock (hashtable-set! tracked id #t))) (model:ids 'filesystem-source))
         (hashtable-clear! existence) (set! cache-epoch current))))
   (define (exists? path directory?)
     (let* ([key (cons path directory?)] [known (hashtable-ref existence key 'unknown)])
@@ -207,8 +209,9 @@
   (define (create-source! actor home hidden? persistence)
     (unless (and (absolute? home) (boolean? hidden?)) (error 'create-source! "invalid filesystem context"))
     (with-mutex admin
-      (model:create! actor 'filesystem-source 1 'session persistence '()
-        (list (cons 'home home) (cons 'hidden hidden?) (cons 'epoch (with-mutex lock epoch))))))
+      (let ([id (model:create! actor 'filesystem-source 1 'session persistence '()
+                  (list (cons 'home home) (cons 'hidden hidden?) (cons 'epoch (with-mutex lock epoch))))])
+        (with-mutex lock (hashtable-set! tracked id #t)) id)))
 
   (edoc "Create a filesystem query owning its supplied persistent source and an internal editable filter; views borrow these resources."
         (actor actor "creator") (source row-source "unshared persistent filesystem source") (text string "initial rooted filter")
@@ -261,20 +264,21 @@
                                                      (lambda () (check!) (or (obsolete? job) (not (= intent (job-intent job))))))))])
                 (when (and (not (obsolete? job)) (= intent (job-intent job)))
                   (job-completion-set! job answer) (publish! job))))) intent))))
+  (define (cleanup! ids)
+    (when (with-mutex lock (or (not ids) (exists (lambda (id) (hashtable-contains? tracked id)) ids)))
+      (enqueue! 'cleanup
+        (lambda ()
+          (for-each (lambda (j)
+                      (let ([id (field (job-query j) 'id)] [source (field (job-source j) 'id)])
+                        (unless (and (model:snapshot id) (model:snapshot source) (not (obsolete? j)))
+                          (with-mutex lock
+                            (when (eq? j (hashtable-ref jobs id #f)) (hashtable-delete! jobs id) (hashtable-delete! tracked id))))))
+            (with-mutex lock (vector->list (hashtable-values jobs))))
+          (for-each (lambda (id) (unless (model:snapshot id) (with-mutex lock (hashtable-delete! tracked id))))
+            (with-mutex lock (vector->list (hashtable-keys tracked))))
+          (when (null? (model:ids 'filesystem-source))
+            (when cache (directory:close! cache) (set! cache #f))
+            (hashtable-clear! existence) (set! cache-epoch -1))))))
   (define cleanup
-    (model:subscribe! #f
-      (lambda (notice)
-        (when (with-mutex lock (or (not (cadr notice)) (exists (lambda (id) (hashtable-contains? tracked id)) (cadr notice))))
-          (enqueue! 'cleanup
-            (lambda ()
-              (for-each (lambda (j)
-                          (let ([id (field (job-query j) 'id)] [source (field (job-source j) 'id)])
-                            (unless (and (model:snapshot id) (model:snapshot source))
-                              (with-mutex lock
-                                (when (eq? j (hashtable-ref jobs id #f)) (hashtable-delete! jobs id) (hashtable-delete! tracked id))))))
-                (with-mutex lock (vector->list (hashtable-values jobs))))
-              (for-each (lambda (id) (unless (model:snapshot id) (with-mutex lock (hashtable-delete! tracked id))))
-                (with-mutex lock (vector->list (hashtable-keys tracked))))
-              (when (null? (model:ids 'filesystem-source))
-                (when cache (directory:close! cache) (set! cache #f))
-                (hashtable-clear! existence) (set! cache-epoch -1)))))))))
+    (list (model:subscribe! #f (lambda (notice) (cleanup! (cadr notice))))
+      (model:observe-demand! cleanup!))))

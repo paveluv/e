@@ -290,6 +290,7 @@
          (cond [(and (pair? message) (eq? (car message) 'changed))
                 (notices (cons connection (cadr message))) (receive-reply connection)]
            [(equal? message '(event (pending))) (receive-reply connection)]
+           [(and (pair? message) (eq? (car message) 'models)) (receive-reply connection)]
            [else message])))
      (define (connect)
        (let ([connection (sys:connect-local socket)])
@@ -1254,6 +1255,9 @@
                  (lambda (screen)
                    (head-wait 'restart-resumes-shared-work screen
                      (lambda () (head-sees? screen "kept after restart")))) heads)
+               (test:check 'restart-keeps-unobserved-collection-idle
+                 (head-read launcher `(cdr (assq 'status (cdr (assq 'value (collection:summary ',saved-query)))))) 'pending)
+               (head-read launcher `(begin (model:subscribe! (list ',saved-query) (lambda (notice) (void))) #t))
                (test:await 'restored-collection-index
                  (lambda ()
                    (head-read launcher

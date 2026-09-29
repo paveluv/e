@@ -2,7 +2,7 @@
 ;; remains here until those apps adopt the composable controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
-  (export choose! create! cycle-sort emphasize! heading init! invoke! layout less? make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
+  (export choose! create! emphasize! init! invoke! layout make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
@@ -17,18 +17,6 @@
         (alignment vector "text, right or tail per column"))
   (define-record-type (table make table?)
     (fields headings minimum keep drop alignment))
-
-  (edoc "The sort keys after a column's heading is pressed: ascending, then descending, then off; direction changes keep priority."
-        (keys list "(column . descending?) in priority order")
-        (column integer "the column")
-        (returns list))
-  (define (cycle-sort keys column)
-    ;; Ascending -> descending -> off. Direction retains priority; enabling
-    ;; a new or previously disabled key appends it to the compound order.
-    (let ([key (assv column keys)])
-      (cond [(not key) (append keys (list (cons column #f)))]
-            [(cdr key) (remq key keys)]
-            [else (map (lambda (k) (if (eq? k key) (cons column #t) k)) keys)])))
 
   (edoc "A column's heading with its sort priority in superscript and direction arrow when it is a key."
         (table (record table) "the table")
@@ -46,28 +34,6 @@
                      (string->list (number->string priority))))
                  (if (cdar keys) "↓" "↑"))]
               [else (loop (cdr keys) (+ priority 1))]))))
-
-  (define (value<? a b)
-    (cond [(not a) (and b #t)]
-          [(not b) #f]
-          [(boolean? a) #f]
-          [(number? a) (< a b)]
-          [else (string-ci<? a b)]))
-
-  (edoc "Whether row a sorts before row b by the keys, the fallback deciding ties."
-        (keys list "the sort keys")
-        (value procedure "(value row column) giving a cell value")
-        (fallback procedure "(fallback a b) for ties")
-        (a any "one row")
-        (b any "the other")
-        (returns boolean))
-  (define (less? keys value fallback a b)
-    (let compare ([keys keys])
-      (if (null? keys) (fallback a b)
-          (let ([x (value a (caar keys))] [y (value b (caar keys))])
-            (cond [(value<? x y) (not (cdar keys))]
-                  [(value<? y x) (cdar keys)]
-                  [else (compare (cdr keys))])))))
 
   (edoc "Fit a table into a width from its unfiltered rows: (values row columns), row a procedure formatting a row's data, columns the shown (column start end) spans."
         (table (record table) "the table")

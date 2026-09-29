@@ -1,8 +1,11 @@
 ;; Base provider contracts reuse Finder's filesystem fixture and process.
 (let ()
   (define actor '(head "filesystem"))
+  (define demands '())
   (define (field r k) (cdr (assq k r)))
   (define (ready query)
+    (unless (assoc query demands)
+      (set! demands (cons (cons query (model:subscribe! (list query) void)) demands)))
     (test:await 'filesystem-result
       (lambda ()
         (let ([s (collection:summary query)])
@@ -86,4 +89,5 @@
           (map (lambda (r) (caddr (assq 'name (caddr r)))) (rows query '(name)))) '(() ("zeta" "zeta.txt"))))
     (retire! query)
     (test:await 'filesystem-owned-filter-released (lambda () (not (store:exists? buffer))))
-    (test:check 'filesystem-query-disposal-releases-owned-source (model:snapshot source) #f)))
+    (test:check 'filesystem-query-disposal-releases-owned-source (model:snapshot source) #f))
+  (for-each (lambda (p) (model:unsubscribe! (cdr p))) demands))

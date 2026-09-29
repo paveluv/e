@@ -639,13 +639,17 @@
                                                          (eq? (car id) 'model) (integer? (cadr id))
                                                          (exact? (cadr id)) (> (cadr id) 0))) ids))
           (error 'wire "expected tagged model ids" ids)))
+      (define (models-demand!)
+        (let* ([ids (with-mutex out-lock (map (lambda (n) (list 'model n)) (vector->list (hashtable-keys model-ids))))]
+               [old model-token])
+          (set! model-token
+            (and (pair? ids) (parameterize ([kernel:registering-module owner]) (model:subscribe! ids model-event!))))
+          (when old (model:unsubscribe! old))))
       (define (models-watch! ids)
         ;; Subscribe before reading: a racing commit is in one or both.
         (check-model-ids ids)
-        (unless model-token
-          (parameterize ([kernel:registering-module owner])
-            (set! model-token (model:subscribe! #f model-event!))))
         (with-mutex out-lock (for-each (lambda (id) (hashtable-set! model-ids (cadr id) #t)) ids))
+        (models-demand!)
         (model:snapshots ids))
       (define (watch!)
         (unless changes
@@ -790,7 +794,8 @@
                                  (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
                                  (let ([ids (cadddr message)])
                                    (check-model-ids ids)
-                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids)))
+                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
+                                   (models-demand!))
                                  #t]
                                 [(status)
                                  (unless (= (length message) 3) (error 'wire "status takes no arguments"))
