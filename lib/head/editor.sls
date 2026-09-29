@@ -1,9 +1,9 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis create-view! delete! expression! format! history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
-          (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head expression) expression:)
+          (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head mode) mode:) (prefix (head render) render:)
           (prefix (head text-control) text-control:) (prefix (head text-layout) text-layout:)
@@ -16,13 +16,8 @@
   (define (position? p)
     (and (pair? p) (integer? (car p)) (exact? (car p)) (>= (car p) 0)
       (integer? (cdr p)) (exact? (cdr p)) (>= (cdr p) 0)))
-  (define (state d)
-    (let ([s (view:state d)])
-      (unless (and (list? s) (= (length s) 4) (for-all position? (list-head s 3)) (boolean? (cadddr s)))
-        (error 'editor "expected (caret anchor top marked?)" s)) s))
   (define (points source d)
-    (text-source:rebase (list-head (state d) 3)
-      (text-source:changes (text-control:mirror source) (or (view:basis d) (text-control:revision source)) (text-control:revision source))))
+    (editor-state:points (text-control:mirror source) (text-control:revision source) d))
   (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations)))
   (define mounts (make-hashtable equal-hash equal?))
   (define (mounted id)
@@ -33,31 +28,9 @@
     (hashtable-delete! mounts id)
     (when (equal? dragging id) (set! dragging #f)))
 
-  (edoc "Create an unmounted editor view over a shared document. Caret, anchor, logical top and mark activity belong to the view. Options include wrap (boolean) and annotations (revision-bound logical ranges); no window is created."
-        (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (returns model))
-  (define (create-view! actor document options)
-    (unless (and (integer? document) (exact? document) (> document 0)
-              (list? options) (for-all (lambda (p) (and (pair? p) (case (car p)
-                                                                    [(wrap) (boolean? (cdr p))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
-              (or (null? options) (and (<= (length options) 2) (not (assq (caar options) (cdr options))))))
-      (error 'create-view! "invalid document or editor options"))
-    (view:create! actor (list 'buffer document) 'editor 1
-      (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f)))
-
-  ;; An annotation batch is (document revision ((span-datum face) ...)).
-  ;; It contains logical coordinates and semantic faces, never terminal cells.
-  (define (annotations? value)
-    (or (null? value)
-      (and (list? value) (= (length value) 3)
-        (integer? (car value)) (exact? (car value)) (> (car value) 0)
-        (integer? (cadr value)) (exact? (cadr value)) (>= (cadr value) 0)
-        (list? (caddr value))
-        (for-all (lambda (p)
-                   (and (list? p) (= (length p) 2) (symbol? (cadr p))
-                     (guard (ex [else #f]) (text:datum->span (car p)) #t))) (caddr value)))))
   (define (annotation-index source batch)
     (let* ([mirror (text-control:mirror source)] [lines (text-control:lines source)])
-      (unless (annotations? batch) (error 'editor "invalid annotations" batch))
+      (unless (editor-state:annotations? batch) (error 'editor "invalid annotations" batch))
       (let* ([changes (and (pair? batch) (= (car batch) (text-source:id mirror))
                         (text-source:changes mirror (cadr batch) (text-control:revision source)))]
              [ranges (if (not changes) '()
@@ -182,7 +155,7 @@
   (define (decorate projection d width height range)
     (if (not (cadr projection)) (list (list (list 0 0 width 1) 'ghost))
       (let* ([data (car projection)] [lines (text-control:lines (cadr data))] [frame (caddr data)]
-             [selected (and (cadddr (state d)) (text-source:span (cadr projection)))]
+             [selected (and (cadddr (editor-state:state d)) (text-source:span (cadr projection)))]
              [highlights (if (equal? (widget:focused (car data)) (car data))
                            (mode:highlights (list-ref data 3) (list-ref data 4) (caadr projection)) '())])
         (define (paint-range span face r y left)
@@ -255,11 +228,11 @@
   (define (move! id direction . extend)
     (unless (and (memq direction '(left right up down home end start finish)) (<= (length extend) 1) (for-all boolean? extend)) (error 'move! "invalid movement"))
     (let-values ([(source d) (text-control:context id 'editor)])
-      (let* ([ps (points source d)] [lines (text-control:lines source)] [m (mounted id)] [mark? (if (pair? extend) (car extend) (cadddr (state d)))])
+      (let* ([ps (points source d)] [lines (text-control:lines source)] [m (mounted id)] [mark? (if (pair? extend) (car extend) (cadddr (editor-state:state d)))])
         (unless ps (refuse "Editor selection history is unavailable; select a fresh position"))
         (let* ([p (car ps)] [span (text-source:span ps)]
                [next (case direction
-                       [(left right) (if (and (not mark?) (cadddr (state d)) (not (equal? (car ps) (cadr ps))))
+                       [(left right) (if (and (not mark?) (cadddr (editor-state:state d)) (not (equal? (car ps) (cadr ps))))
                                        (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (adjacent lines p direction))]
                        [(home) (cons (car p) 0)] [(end) (cons (car p) (string-length (vector-ref lines (car p))))]
                        [(start) '(0 . 0)] [(finish) (let ([r (- (vector-length lines) 1)]) (cons r (string-length (vector-ref lines r))))]
@@ -346,7 +319,7 @@
                                       (mount-group-set! (mounted id) #f) (mount-goal-set! (mounted id) #f)
                                       (text-control:submit! id source d old revision (car r) (cdr r) context
                                         (map (lambda (p) (text:rebase-position p delta)) ps)
-                                        (lambda (ps) (next-state id (current-source source) d ps (cadddr (state d)) #t)))
+                                        (lambda (ps) (next-state id (current-source source) d ps (cadddr (editor-state:state d)) #t)))
                                       (loop (cdr regions) revision (+ count 1)))))))))))])
               (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document))
               count))))))
@@ -360,11 +333,11 @@
           (let ([ps (text-source:rebase positions (text-source:changes (text-control:mirror source) basis (text-control:revision source)))])
             (unless ps (refuse "Editor selection history is unavailable"))
             (unless (= (view:sequence d) (view:sequence (interaction:snapshot id))) (refuse "The editor selection changed"))
-            (publish! id source d ps (cadddr (state d)) #t))
+            (publish! id source d ps (cadddr (editor-state:state d)) #t))
           (let ([reload? (document:check! head:ui-actor document)])
             (text-control:submit! id source d old basis span replacement
               (list (list 'editor head:ui-actor id (gensym->unique-string (gensym))) label (cons 'undo properties)) positions
-              (lambda (ps) (next-state id (current-source source) d ps (cadddr (state d)) #t)))
+              (lambda (ps) (next-state id (current-source source) d ps (cadddr (editor-state:state d)) #t)))
             (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))))
   (define (replace! id source d selection replacement typing? . accepted)
     (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
@@ -379,7 +352,7 @@
                           (list 'end)
                           (lambda (ps)
                             (let* ([mirror (text-control:mirror source)]
-                                   [top (text-source:rebase (list (caddr (state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
+                                   [top (text-source:rebase (list (caddr (editor-state:state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
                               (next-state id (current-source source) d
                                 (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))))])
           (mount-goal-set! m #f)
@@ -403,7 +376,7 @@
   (define (insert-text! id text typing?)
     (unless (string? text) (error 'insert! "expected text"))
     (let-values ([(source d) (text-control:context id 'editor)])
-      (let ([s (state d)])
+      (let ([s (editor-state:state d)])
         (replace! id source d (if (cadddr s) s (list (car s) (car s)))
           (let loop ([start 0] [end 0] [out '()])
             (cond [(= end (string-length text)) (reverse (cons (substring text start end) out))]
@@ -421,12 +394,12 @@
         (id model "editor view") (operation (one-of indent-line indent-region indent-buffer indent-expression tab format-region format-buffer) "transformation"))
   (define (format! id operation)
     (let-values ([(source d) (text-control:context id 'editor)])
-      (let* ([old (text-control:basis-text source d)] [ps (list-head (state d) 3)]
+      (let* ([old (text-control:basis-text source d)] [ps (list-head (editor-state:state d) 3)]
              [document (text-source:id (text-control:mirror source))] [name (store:property document 'mode #f)]
              [mode (and name (mode:find name))]
              [input (mode:source old (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode)))]
              [span (text-source:span ps)] [last (- (vector-length old) 1)])
-        (when (and (memq operation '(indent-region format-region)) (not (cadddr (state d)))) (refuse "The mark is not set"))
+        (when (and (memq operation '(indent-region format-region)) (not (cadddr (editor-state:state d)))) (refuse "The mark is not set"))
         (let-values ([(from to)
                       (case operation
                         [(tab indent-line) (values (caar ps) (caar ps))]
@@ -452,7 +425,7 @@
   (define (transfer! id operation publish)
     (unless (memq operation '(copy cut line forward backward)) (error 'transfer! "invalid transfer"))
     (let-values ([(source d) (text-control:context id 'editor)])
-      (let* ([s (state d)] [p (car s)] [old (text-control:basis-text source d)]
+      (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)]
              [selection (case operation
                           [(line) (list p (let ([end (string-length (vector-ref old (car p)))])
                                             (if (< (cdr p) end) (cons (car p) end) (adjacent old p 'right))))]
@@ -485,13 +458,13 @@
   (define (expression! id operation)
     (let-values ([(source d) (text-control:context id 'editor)])
       (if (eq? operation 'transpose)
-        (let* ([old (text-control:basis-text source d)] [p (car (state d))])
+        (let* ([old (text-control:basis-text source d)] [p (car (editor-state:state d))])
           (let-values ([(as ae) (expression:backward old p)] [(bs be) (expression:forward old p)])
             (unless (and as bs (not (equal? as bs))) (refuse "No two expressions around the caret"))
             (let-values ([(lines trailing?) (text:from-string (string-append (expression:text old bs be)
                                                                 (expression:text old ae bs) (expression:text old as ae)))])
               (replace! id source d (list as be) (append (vector->list lines) (if trailing? '("") '())) #f))))
-        (let* ([ps (points source d)] [lines (text-control:lines source)] [marked? (cadddr (state d))])
+        (let* ([ps (points source d)] [lines (text-control:lines source)] [marked? (cadddr (editor-state:state d))])
           (unless ps (refuse "Editor selection history is unavailable"))
           (let* ([p (car ps)] [anchor (cadr ps)]
                  [from (if (and (eq? operation 'mark) marked? (or (< (car p) (car anchor))
@@ -522,7 +495,7 @@
              [frame (caddr (car g))] [wrap (and (option d 'wrap #t) (max 1 (list-ref g 4)))] [m (mounted id)])
         (unless ps (refuse "Editor selection history is unavailable"))
         (let ([goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 (car ps))))]
-              [marked? (cadddr (state d))])
+              [marked? (cadddr (editor-state:state d))])
           (let-values ([(top caret) (text-layout:page lines frame wrap 0 (list-ref g 5) (caddr g) goal direction fraction)])
             (publish! id source d (list caret (if marked? (cadr ps) caret) (text-layout:anchor lines wrap top)) marked? #f)
             (mount-goal-set! m goal))))))
@@ -532,7 +505,7 @@
   (define (delete! id direction)
     (unless (memq direction '(backward forward)) (error 'delete! "invalid deletion direction"))
     (let-values ([(source d) (text-control:context id 'editor)])
-      (let* ([s (state d)] [p (car s)] [old (text-control:basis-text source d)])
+      (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)])
         (replace! id source d (if (and (cadddr s) (not (equal? p (cadr s)))) s
                                 (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") #f))))
 
@@ -541,7 +514,7 @@
   (define (history! id direction scope)
     (let-values ([(source d) (text-control:context id 'editor)])
       (mount-group-set! (mounted id) #f) (mount-goal-set! (mounted id) #f)
-      (text-control:history! id source d direction scope (list-head (state d) 3)
+      (text-control:history! id source d direction scope (list-head (editor-state:state d) 3)
         (lambda (ps) (list (car ps) (car ps) (caddr ps) #f)))))
 
   (edoc "Set or clear an editor's mark. Setting it anchors at the current caret; clearing collapses the selection."
@@ -562,7 +535,7 @@
              [width (and (option d 'wrap #t) (max 1 (list-ref g 4)))])
         (unless ps (refuse "Editor selection history is unavailable"))
         (let ([top (text-layout:move lines (caddr data) width (text-layout:anchor lines width (caddr g)) rows 0)])
-          (publish! id source d (list (car ps) (cadr ps) top) (cadddr (state d)) #f)
+          (publish! id source d (list (car ps) (cadr ps) top) (cadddr (editor-state:state d)) #f)
           (- rows (text-layout:distance lines width (caddr g) top))))))
 
   (define (pointer-bindings frame x y)

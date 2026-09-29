@@ -150,7 +150,7 @@
                                (if (eq? engine 'interaction) '() '(interaction))
                                (if (eq? engine 'text-source) '(render) '())))))
              (closure base (list 'head engine))))
-         '(text-source text-layout interaction)) #t)
+         '(text-source text-layout interaction editor-state)) #t)
 
      (test:check 'client-exports-are-subsets
        (for-all
