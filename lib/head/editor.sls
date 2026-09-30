@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! register-effect! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -18,11 +18,16 @@
       (integer? (cdr p)) (exact? (cdr p)) (>= (cdr p) 0)))
   (define (points source d)
     (editor-state:points (text-control:mirror source) (text-control:revision source) d))
-  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations) (mutable backend?) (mutable surface)))
+  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations) (mutable backend?) (mutable surface) (mutable effects)))
+  (define effects (kernel:make-registry))
+
+  (edoc "Register a transient source effect for mounted editors. The procedure receives an already acquired text mirror and returns a revisioned annotation batch and optional monotonic expiry time. Called on the service path, never paint; perform no remote reads or model writes. Module retraction removes the provider."
+        (proc procedure "source to annotations and deadline"))
+  (define (register-effect! proc) (kernel:registry-add! effects proc))
   (define mounts (make-hashtable equal-hash equal?))
   (define (mounted id)
     (or (hashtable-ref mounts id #f)
-      (let ([m (make-mount #f '() #f #f #f #f #f #f)]) (hashtable-set! mounts id m) m)))
+      (let ([m (make-mount #f '() #f #f #f #f #f #f #f)]) (hashtable-set! mounts id m) m)))
   (define dragging #f)
   (define (release! id)
     (hashtable-delete! mounts id)
@@ -62,6 +67,15 @@
           (if (and old (equal? key (car old))) (cdr old)
             (let ([index (annotation-index source (caddr input))])
               (mount-annotations-set! m (cons key index)) index))))))
+  (define (refresh-effects! id source)
+    (let* ([m (mounted id)]
+           [batches (map (lambda (proc)
+                           (let-values ([(batch deadline) (proc (text-control:mirror source))])
+                             (when deadline (head:request-frame-at! deadline)) batch)) (kernel:registry-items effects))]
+           [key (cons (text-control:revision source) batches)] [old (mount-effects m)])
+      (unless (and old (equal? key (car old)))
+        (mount-effects-set! m (cons key (map (lambda (batch) (annotation-index source batch)) batches)))
+        (widget:repaint! id #t))))
   (define (row-annotations index row)
     (let ([end (let search ([lo 0] [hi (vector-length index)])
                  (if (= lo hi) lo
@@ -110,6 +124,7 @@
         (acquire-surface! id (text-source:lookup (cadr ref)) d frame)
         (when (or (not (mount-backend? (mounted id))) (mount-surface (mounted id)))
           (let-values ([(source d inputs) (widget:context id 'current)])
+            (refresh-effects! id source)
             ;; Idle views advance their logical anchors while the mirror still
             ;; has the delta chain. Admission itself owns settlement; adoption
             ;; callbacks must not manufacture a newer user interaction.
@@ -135,7 +150,8 @@
       (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m)))
         (annotations id source inputs)
         (if (mount-mode m) (list-ref (mount-mode m) 4) (text-layout:wrap-lines))
-        (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)) (following? inputs))))
+        (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)) (following? inputs)
+        (if (mount-effects m) (cdr (mount-effects m)) '()))))
   (define (layout-width data d width)
     (let* ([own (option d 'wrap 'default)]
            [source (mode:source-fact (list-ref data 3) 'wrap 'default)]
@@ -236,7 +252,9 @@
                              (let* ([style (vector-ref styles i)]
                                     [j (let run ([j (+ i 1)]) (if (and (< j (min end (vector-length styles))) (equal? style (vector-ref styles j))) (run (+ j 1)) j))])
                                (loop j (if (or (not style) (eq? style 'plain)) out (cons (list (list (- i left) y (- j i) 1) style) out)))))) '())
-                       (apply append (map (lambda (p) (paint-range (car p) (cadr p) r y left)) (row-annotations (list-ref data 5) r)))
+                       (apply append (map (lambda (index)
+                                            (apply append (map (lambda (p) (paint-range (car p) (cadr p) r y left)) (row-annotations index r))))
+                                       (append (list-ref data 9) (list (list-ref data 5)))))
                        (apply append (map (lambda (p) (paint-range (text:datum->span (car p)) (cadr p) r y left)) highlights))
                        (if selected (paint-range selected 'selection r y left) '())))))
             (list-ref projection 6))))))

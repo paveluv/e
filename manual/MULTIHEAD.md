@@ -257,7 +257,7 @@ and refreshes the buffer; shared text and history stay intact
 head's latest action by default; `(edit:undo-scope 'all)` includes every actor and
 `M-x edit:undo-actor!` picks one ([undo](BUFFERS.md#undo-selections-and-the-copy-buffer)).
 Another actor's fresh text is tinted briefly in its own color, and
-`M-x blame:at-point!` reports authorship from the retained edit log
+`blame:at-point!` reports authorship at an explicit editor view's caret
 ([attribution](BUFFERS.md#recent-edit-attribution)). Saving captures the
 current shared text, whoever typed it. Killing a shared buffer reviews its
 current unsaved work. Quitting reviews only this head's local buffers because

@@ -390,14 +390,16 @@
              (fixture:evaluate (evaluator-connection) who expression)))))
      (define (head-blame head)
        (head-read head
-         '(let* ([b (head:current-buffer)] [id (head:buffer-store-id b)])
+         '(let* ([b (head:current-buffer)] [id (head:buffer-store-id b)]
+                 [frame (widget:prepared (head:window-editor (head:current-window)))]
+                 [styles (widget:frame-cell-styles frame 0)])
             (list
-              (map (lambda (range) (list (cadr range) (caddr range) (cadddr range)))
-                (filter (lambda (range)
-                          (and (= (length range) 5) (eq? (car range) b)
-                               (memq (list-ref range 4)
-                                 '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))))
-                  (paint:highlight-ranges)))
+              (let loop ([i 0] [start #f] [out '()])
+                (let ([ink? (and (< i (vector-length styles))
+                                 (memq (vector-ref styles i) '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6)))])
+                  (cond [(= i (vector-length styles)) (reverse (if start (cons (list 0 start i) out) out))]
+                    [ink? (loop (+ i 1) (or start i) out)]
+                    [else (loop (+ i 1) #f (if start (cons (list 0 start i) out) out))])))
               (cadar (store:blame id 1))))))
      (define (screen-state head)
        (head-read head

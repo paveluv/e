@@ -398,8 +398,11 @@ temporary presentation: edits take effect immediately and attribution/history
 does not disappear with the tint.
 
 `(blame:tint-seconds 8)` sets the lifetime in seconds; fractional values work.
-Zero prevents new tints, while existing ones keep their deadlines.
-`M-x blame:at-point!` reports recent authorship from the retained edit log.
+Zero clears existing tints and prevents new ones. Tint preparation reads only
+the editor's acquired source; painting and expiry make no wire requests.
+`M-x (blame:at-point! ` selects an editor receiver and reports recent
+authorship from the retained edit log. `(blame:describe document position)`
+returns the same text for an extension's own label or pop-up.
 
 ## The delta log
 
