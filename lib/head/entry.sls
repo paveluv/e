@@ -1,11 +1,10 @@
 ;; A single-line control over authored text, with selection owned by its view.
 (import (only (foundation edoc) elibrary))
 (elibrary (head entry)
-  (export delete! init! insert! move! redo! register-policy! register-presentation! select! set-text! undo!)
+  (export delete! init! insert! move! redo! register-presentation! select! set-text! undo!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation text) text:)
-          (prefix (only (head edit) undo-scope) edit:)
           (prefix (only (head head) ui-actor) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -30,15 +29,7 @@
   (define (selection source d)
     (text-source:rebase (state d) (changes source (or (view:basis d) (text-control:revision source)))))
   (define presentations (kernel:make-registry car))
-  (define policies (kernel:make-registry car))
   (define presentation-changes (kernel:registry-observe! presentations (lambda (removed added) (widget:invalidate!))))
-
-  (edoc "Register a pure text editing policy. Given proposed single-line text and a character caret, return (text caret). A view selects it with its policy (name schema) option. This operates on logical text, independent of display projection."
-        (name symbol "policy name") (schema integer "positive version") (normalize procedure "pure text and caret normalization"))
-  (define (register-policy! name schema normalize)
-    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? normalize))
-      (error 'register-policy! "invalid entry policy"))
-    (kernel:registry-add! policies (cons (list name schema) normalize)))
 
   (edoc "Register a pure entry projection: (text context) returns one (display roles) pair per source grapheme. Roles are symbols. Painting, caret, selection and mouse hits share this mapping; edits address the original text."
         (name symbol "presentation name") (schema integer "positive version") (project procedure "pure grapheme formatter"))
@@ -134,34 +125,16 @@
                                   (or (find (lambda (n) (> n a)) edges) a))])])
           (select! id next (if selecting? b next))))))
 
-  (define (submit! id source d old basis span replacement context desired)
+  (define (submit! id source d old basis span replacement context desired policy?)
     (text-control:submit! id source d old basis span replacement context (list desired)
-      (lambda (points) (list (car points) (car points)))))
+      (lambda (points) (list (car points) (car points))) policy?))
   (define (replace! id source d selection replacement)
     (unless (single-line? (text-control:lines source)) (refuse "Entry requires a single-line source"))
     (let ([basis (or (view:basis d) (text-control:revision source))]
           [old (text-control:basis-text source d)])
       (unless (single-line? old) (refuse "Entry selection refers to a multiline source"))
       (unless (and (equal? (car selection) (cadr selection)) (string=? replacement ""))
-        (let* ([profile (assq 'policy (view:options d))]
-               [policy (and profile (kernel:registry-find policies (lambda (p) (equal? (cdr profile) (car p)))))]
-               [proposed (and profile
-                              (let-values ([(lines delta) (text:apply-edit old (text-source:span selection) (list replacement))])
-                                (unless policy (error 'entry "entry policy is unavailable" (cdr profile)))
-                                (let* ([text (vector-ref lines 0)] [caret (cdr (text:delta-new-end delta))]
-                                       [next ((cdr policy) text caret)])
-                                  (unless next (error 'entry "invalid normalized text or caret"))
-                                  (and (not (equal? next (list text caret))) next))))])
-          (when (and proposed
-                     (not (and (list? proposed) (= (length proposed) 2) (string? (car proposed))
-                            (not (exists (lambda (c) (memv c '(#\newline #\return))) (string->list (car proposed))))
-                            (integer? (cadr proposed)) (exact? (cadr proposed)) (<= 0 (cadr proposed) (string-length (car proposed))))))
-            (error 'entry "invalid normalized text or caret"))
-          (submit! id source d old basis
-            (if proposed (text:make-span 0 0 0 (string-length (vector-ref old 0))) (text-source:span selection))
-            (list (if proposed (car proposed) replacement))
-            (and proposed (list #f "Edit entry" (cons 'revision basis)))
-            (if proposed (cons 0 (cadr proposed)) 'end))))))
+        (submit! id source d old basis (text-source:span selection) (list replacement) #f 'end #t))))
 
   (edoc "Insert text once, replacing the entry selection through the shared edit journal. Multiline input is refused whole."
         (id model "entry view") (text string "committed text"))
@@ -182,7 +155,7 @@
         (if (string=? line text) (select! id (string-length text) (string-length text))
           (submit! id source d (text-control:lines source) rev
             (text:make-span 0 0 0 (string-length line)) (list text)
-            (list #f "Replace entry text" (cons 'revision rev)) 'end)))))
+            (list #f "Replace entry text" (cons 'revision rev)) 'end #f)))))
 
   (edoc "Delete the entry selection, or a whole adjacent grapheme."
         (id model "entry view") (direction (one-of backward forward all) "adjacent grapheme or all text"))
@@ -210,7 +183,7 @@
         (id model "entry view") (scope (list-of any) "scope override, at most one"))
   (define (undo! id . scope)
     (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
-    (history! id 'undo (if (pair? scope) (car scope) (edit:undo-scope))))
+    (history! id 'undo (if (pair? scope) (car scope) (text-control:undo-scope))))
 
   (edoc "Redo an entry's source through the editor's shared undo journal."
         (id model "entry view"))

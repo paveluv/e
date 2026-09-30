@@ -70,7 +70,7 @@
   (define (history id) (get (view:state (interaction:snapshot id)) 'history '()))
 
   (edoc "Navigate one Finder query to an absolute directory, clearing other filter keys. Restore this view's last child choice when returning."
-        (id model "Finder view") (path directory "directory to list"))
+        (receiver id (view finder)) (id model "Finder view") (path directory "directory to list"))
   (define (navigate! id path)
     (let* ([path (file:canonical (file:expand path))] [filter (file-query:directory-filter path)]
            [selected (cond [(assoc path (history id)) => cdr] [else #f])])
@@ -82,7 +82,7 @@
       (when selected (table:select! (table id) (list 'path selected 'directory)))))
 
   (edoc "Navigate to the parent directory, remembering the departed child so repeated Left/Right retraces the route, including during a pending listing."
-        (id model "Finder view"))
+        (receiver id (view finder)) (id model "Finder view"))
   (define (parent! id)
     (let* ([keys (file-query:keys (text id) (file:expand "~"))]
            [v (summary id)]
@@ -98,7 +98,7 @@
       (navigate! id parent)))
 
   (edoc "Enter the selected directory. While a parent listing is pending, follow its remembered return child so rapid Left/Right navigation preserves every step. Files remain untouched."
-        (id model "Finder view"))
+        (receiver id (view finder)) (id model "Finder view"))
   (define (enter! id)
     (let* ([v (summary id)] [r (get (view:state (interaction:snapshot id)) 'returning #f)]
            [selection (get (view:state (interaction:snapshot (table id))) 'selection #f)])
@@ -118,7 +118,7 @@
     (let ([p (assq key cells)]) (and p (eq? (cadr p) 'ready) (caddr p))))
 
   (edoc "Visit the exact shown path through edit:visit-file!. Directories navigate this query; files go to its explicit host. Directory-only activation leaves files untouched. Pending or stale selections refuse."
-        (id model "Finder view") (directory-only? boolean "Right rather than Enter")
+        (receiver id (view finder)) (id model "Finder view") (directory-only? boolean "Right rather than Enter")
         (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
   (define (choose! id directory-only? selection basis)
     (let* ([row (selected-row id selection basis)] [cells (caddr row)]
@@ -137,14 +137,14 @@
             (and proposed? (ready cells 'proposal)))))))
 
   (edoc "Toggle this Finder query's explicit hidden-entry policy without discarding shared filesystem inventory."
-        (id model "Finder view"))
+        (receiver id (view finder)) (id model "Finder view"))
   (define (toggle-hidden! id)
     (let* ([v (get (collection:summary (query id)) 'value '())] [r (read-model (get v 'source #f))])
       (hashtable-delete! completing id)
       (filesystem:configure! head:ui-actor (get r 'id #f) (get r 'revision #f) (not (get (get r 'value '()) 'hidden #f)))))
 
   (edoc "Request completion against this filter revision and query basis. The base solves over its index; a newer edit, refresh or Tab supersedes the result."
-        (id model "Finder view"))
+        (receiver id (view finder)) (id model "Finder view"))
   (define (complete! id)
     (let* ([s (entry-source id)] [v (get (collection:summary (query id)) 'value '())])
       (hashtable-set! completing id (list #f (get v 'basis #f) (get s 'revision #f)))
@@ -254,7 +254,7 @@
   (define (init!)
     (widget:register! 'finder 1
       (append (layout:container 'y)
-        (list (cons 'capture-contexts '(finder)) (cons 'event event!) (cons 'service service!)
+        (list '(receivers (table table)) (cons 'capture-contexts '(finder)) (cons 'event event!) (cons 'service service!)
           (cons 'release (lambda (id) (hashtable-delete! completing id)))
           (cons 'actions (list (cons 'choose choose!) (cons 'navigate navigate!) (cons 'parent parent!) (cons 'enter enter!) (cons 'complete complete!) (cons 'toggle-hidden toggle-hidden!))))))
     (widget:register! 'finder-status 1
@@ -263,7 +263,10 @@
         (cons 'measure (lambda (s d axis cross child) (if (eq? axis 'y) '(1 1) (list 0 (glyph:cells s)))))
         (cons 'decorate (lambda (s d w h r) (if (zero? (car r)) (list (list (list 0 0 (min w (glyph:cells s)) 1) 'ghost)) '())))))
     (entry:register-presentation! 'finder 1 project-filter)
-    (entry:register-policy! 'rooted-path 1 normalize-path)
+    (edit:register-policy! 'rooted-path 1
+      (lambda (lines positions)
+        (let* ([text (vector-ref lines 0)] [results (map (lambda (p) (normalize-path text (cdr p))) positions)])
+          (values (vector (caar results)) (map (lambda (r) (cons 0 (cadr r))) results)))))
     (table:register-presentation! 'finder 1
       (list (list 'name 14 'text '(kind link) name-cell)
         (list 'size 6 'right '() (present size-text))

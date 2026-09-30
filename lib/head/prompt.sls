@@ -1,1200 +1,545 @@
-;; prompt.sls -- the prompt: the library (prompt).
-;;
-;; The head's modal input in the echo area -- Emacs's minibuffer.
-;; (prompt:read! label ...) runs a line editor with the cursor parked
-;; in the echo area: history, TAB completion with a candidate list
-;; that borrows the current window (the <completions> view), a ghost
-;; suggestion, multiline and reindenting variants for M-x, and the
-;; global window commands a prompt may run without losing its input
-;; (registered with allow!).  (prompt:key! question allowed) asks a
-;; focused single-key question; confirm? is yes/no over it.
-;;
-;; An interaction owns C-g and the cursor (interaction): C-g cancels
-;; the prompt as a key rather than interrupting the editor, and the
-;; cursor follows the prompt, not a parked evaluation.  The prompt
-;; writes the echo area's model (echo) and asks the painter for
-;; frames; it reads keys from the head's pump.  Under (prompt:in-window
-;; #t) the same editor draws into the current window instead: a local
-;; view with the line on its bottom row and the candidate list paged
-;; above it.  Exported names drop the module stem: (prompt:read! "Find
-;; file: " file:complete), (prompt:confirm? "Really?"), (prompt:active?).
-
+;; Prompt controls own no keyboard reader or window. The host places the tree.
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt)
-  (export (rename (prompt-accept! accept!)) (rename (prompt-active? active?)) allow! (rename (prompt-allowed? allowed?))
-          (rename (prompt-alternate-complete! alternate-complete!)) (rename (prompt-backward! backward!))
-          (rename (prompt-beginning! beginning!)) (rename (prompt-cancel! cancel!)) (rename (prompt-complete! complete!))
-          completion-highlight completion-kind completion-label confirm? content (rename (content-view-context content-context))
-          (rename (prompt-delete-backward! delete-backward!)) (rename (prompt-delete-forward! delete-forward!))
-          (rename (prompt-down! down!)) (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
-          (rename (prompt-end! end!)) (rename (prompt-forward! forward!)) (rename (prompt-ghost ghost))
-          (rename (prompt-in-window in-window)) (rename (prompt-inspect! inspect!)) (rename (prompt-inspector inspector))
-          interaction (rename (query-key! key!)) (rename (prompt-kill! kill!)) line make-candidate make-completer
-          (rename (make-content-view make-content)) make-searcher (rename (prompt-multiline multiline))
-          (rename (prompt-newline! newline!)) (rename (prompt-paste! paste!)) (rename (prompt! read!))
-          (rename (prompt-reindent reindent)) searcher-done searcher-find searcher-next searcher-previous searcher? transient
-          (rename (prompt-type! type!)) (rename (prompt-up! up!)) (rename (validate-input validate)) (rename (prompt-yank! yank!)))
-  (import (rnrs)
-          (rnrs r5rs)
-          (only (chezscheme)
-                make-parameter parameterize box unbox set-box! format void
-                make-weak-eq-hashtable make-list list-head iota
-                current-time add-duration make-time time<?)
-          (prefix (core kernel) kernel:)
-          (prefix (foundation string) string:)
-          (prefix (head dispatch) dispatch:)
-          (prefix (head echo) echo:)
-          (prefix (head head) head:)
-          (prefix (head keymap) keymap:)
-          (prefix (head mode) mode:)
-          (prefix (head paint) paint:)
-          (prefix (head style) style:)
-          (prefix (sys glyph) glyph:)
-          (prefix (sys tty) tty:))
+  (export accept! active? cancel! choose! complete! create! drain! edge! history! init! inspect! key! newline! read! register-host! register-profile!)
+  (import (chezscheme) (prefix (core kernel) kernel:)
+          (prefix (foundation string) string:) (prefix (foundation text) text:)
+          (prefix (head completion) completion:) (prefix (head completion-layout) completion-layout:)
+          (prefix (head completion-state) completion-state:)
+          (prefix (head editor) editor:)
+          (prefix (head entry) entry:) (prefix (head head) head:) (prefix (head interaction) interaction:)
+          (prefix (head keymap) keymap:) (prefix (head layout) layout:)
+          (prefix (head suspension) suspension:) (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:) (prefix (service log) log:)
+          (prefix (service prompt-request) prompt-request:) (prefix (state model) model:)
+          (prefix (state view) view:) (prefix (sys glyph) glyph:))
 
-  ;;; The echo area, as the prompt writes it --------------------------------------
+  (define (get r key) (cdr (assq key r)))
 
-  ;; The prompt drives the echo area's model directly; these identifier
-  ;; macros keep its many writes readable.
-  (define-syntax message
-    (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
-  (define-syntax message-ghost
-    (identifier-syntax [id (echo:ghost)] [(set! id v) (echo:set-ghost! v)]))
-  (define-syntax message-styles
-    (identifier-syntax [id (echo:styles)] [(set! id v) (echo:set-styles! v)]))
-  (define-syntax echo-cursor
-    (identifier-syntax [id (echo:cursor)] [(set! id v) (echo:set-cursor! v)]))
-  (define-syntax echo-indent
-    (identifier-syntax [id (echo:indent)] [(set! id v) (echo:set-indent! v)]))
-  (define-syntax echo-input-end
-    (identifier-syntax [id (echo:input-end)] [(set! id v) (echo:set-input-end! v)]))
-  (define-syntax echo-scroll
-    (identifier-syntax [id (echo:scroll)] [(set! id v) (echo:set-scroll! v)]))
-  (define-syntax echo-spans
-    (identifier-syntax [id (echo:spans)] [(set! id v) (echo:set-spans! v)]))
-
-  ;;; Interaction -------------------------------------------------------------------
-
-  (edoc "Run an interaction that owns C-g and the cursor: uninterrupted, the cursor following its rules rather than a parked evaluation's."
-        (thunk thunk "the interaction")
-        (returns any "what the thunk returns") (effects internal))
-  (define (interaction thunk)
-    ;; An interaction owns C-g (head:call-uninterrupted) and the cursor:
-    ;; while it runs, the cursor follows the interaction's rules, not a
-    ;; parked evaluation's.
-    (head:call-uninterrupted
-      (lambda ()
-        (parameterize ([paint:cursor-in-echo #f])
-          (dynamic-wind dispatch:cancel! thunk dispatch:cancel!)))))
-
-  ;;; Commands a prompt may run ------------------------------------------------------
-
-  ;; The global commands a prompt runs without losing its input -- pure
-  ;; window management, registered by whoever defines them -- each with
-  ;; an optional prompt-safe stand-in whose string result is the note to
-  ;; show (a command that would nest a prompt is refused with one).
-  (define allowed-commands (kernel:make-registry))
-
-  (edoc "Allow a global command to run from inside a prompt without losing its input, or a prompt-safe stand-in for it."
-        (command procedure "the command")
-        (stand-in (list-of procedure) "a replacement to run instead, at most one"))
-  (define (allow! command . stand-in)
-    (kernel:registry-add! allowed-commands
-      (cons command (and (pair? stand-in) (car stand-in)))))
-
-  (edoc "Whether a global command may run from inside a prompt, having been allowed."
-        (command any "the command, as a key binds it")
+  (edoc "Whether the focused widget path contains a prompt, without reading remote state."
         (returns boolean))
-  (define (prompt-allowed? command)
-    (and (assq command (kernel:registry-items allowed-commands)) #t))
+  (define (active?)
+    (let ([root (head:window-widget (head:current-window))])
+      (and root
+        (let loop ([id (widget:focused root)])
+          (let ([d (and id (interaction:snapshot id))])
+            (and d (or (eq? (view:kind d) 'prompt) (and (view:parent d) (loop (view:parent d))))))))))
+  (define live (make-hashtable equal-hash equal?))
+  (define hovered (make-hashtable equal-hash equal?))
+  (define hosts (kernel:make-registry))
+  (define profiles (kernel:make-registry car))
+  (define tickets (make-hashtable equal-hash equal?))
+  (define host-changes
+    (kernel:registry-observe! hosts
+      (lambda (removed added)
+        (let-values ([(ids entries) (hashtable-entries tickets)])
+          (vector-for-each
+            (lambda (entry) (when (memq (car entry) removed) (suspension:cancel! (cdr entry)))) entries)))))
+  (define pending '())
+  (define-record-type runtime (fields request (mutable generation) factory source completion profile-factory profile
+                                (mutable signature) (mutable delivered?) (mutable closed?)
+                                (mutable message) (mutable history-index) (mutable stash) (mutable edge) (mutable kind)))
+  (define (option options key fallback) (cond [(assq key options) => cdr] [else fallback]))
+  (define (profile-factory d)
+    (let ([recipe (option (view:options d) 'profile #f)])
+      (and recipe (kernel:registry-find profiles (lambda (p) (equal? (car p) (list-head recipe 2)))))))
 
-  ;;; The prompt's commands -----------------------------------------------------------
-  ;;
-  ;; The keys of a prompt are bound in the prompt context to these commands,
-  ;; so the keys listing shows them and a key's meaning is documented here.
-  ;; Each asks the open prompt for one action, which its loop carries out on
-  ;; the input it holds; outside a prompt they are refused.
+  (edoc "Register a prompt interaction profile factory, called once per mounted request with configuration and captured origin. It returns optional history strings, alternate completion and pure normalize/validate/ghost/transform/edge callbacks, plus an inspect command. Callbacks run in input/service work, never painting."
+        (name symbol "profile namespace") (schema integer "positive version") (factory procedure "(configuration origin) -> profile alist"))
+  (define (register-profile! name schema factory)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? factory))
+      (error 'register-profile! "invalid profile registration"))
+    (kernel:registry-add! profiles (cons (list name schema) factory)))
+  (define (make-profile d origin)
+    (let* ([recipe (option (view:options d) 'profile #f)] [factory (profile-factory d)]
+           [profile (if factory ((cdr factory) (caddr recipe) origin) '())])
+      (when (and recipe (not factory)) (error 'prompt "interaction profile is unavailable" recipe))
+      (unless (and (list? profile) (for-all (lambda (p)
+                                              (and (pair? p)
+                                                (case (car p)
+                                                  [(history) (and (list? (cdr p)) (for-all string? (cdr p)))]
+                                                  [(alternate) (or (completion:source? (cdr p)) (procedure? (cdr p)))]
+                                                  [(normalize validate ghost transform edge inspect) (procedure? (cdr p))]
+                                                  [else #f]))) profile)
+                (let unique ([xs profile]) (or (null? xs) (and (not (assq (caar xs) (cdr xs))) (unique (cdr xs))))))
+        (error 'prompt "invalid interaction profile" profile))
+      (values factory profile)))
+  (define (queue! thunk)
+    (when (null? pending) (head:run-on-main! drain!))
+    (set! pending (cons thunk pending)))
+  (define (resume!)
+    (suspension:drain! (lambda (ex) (log:add! 'prompt:resume! (kernel:condition-text ex)))))
 
-  (define requested #f)
-
-  (define (request! action)
-    (unless (prompt-active?) (error 'prompt "no prompt is open"))
-    (set! requested action))
-
-  (define (take-requested!)
-    (let ([r requested]) (set! requested #f) r))
-
-  (edoc "Cancel the prompt, its input dropped.")
-  (define (prompt-cancel!) (request! 'cancel))
-
-  (edoc "Accept the prompt's input, where it validates as the prompt requires.")
-  (define (prompt-accept!) (request! 'accept))
-
-  (edoc "Move the prompt's point to the beginning of its line, and again to the beginning of the whole input.")
-  (define (prompt-beginning!) (request! 'beginning))
-
-  (edoc "Move the prompt's point to the end of its line, and again to the end of the whole input.")
-  (define (prompt-end!) (request! 'end))
-
-  (edoc "Move the prompt's point one character back.")
-  (define (prompt-backward!) (request! 'backward))
-
-  (edoc "Move the prompt's point one character forward.")
-  (define (prompt-forward!) (request! 'forward))
-
-  (edoc "Move up a line of a multi-line input, or back through the prompt's history from its first line.")
-  (define (prompt-up!) (request! 'up))
-
-  (edoc "Move down a line of a multi-line input, or forward through the prompt's history from its last line.")
-  (define (prompt-down!) (request! 'down))
-
-  (edoc "Delete the character after the prompt's point.")
-  (define (prompt-delete-forward!) (request! 'delete-forward))
-
-  (edoc "Delete the character before the prompt's point.")
-  (define (prompt-delete-backward!) (request! 'delete-backward))
-
-  (edoc "Kill the input from the prompt's point to its end into the copy buffer.")
-  (define (prompt-kill!) (request! 'kill))
-
-  (edoc "Insert the copy buffer's text at the prompt's point.")
-  (define (prompt-yank!) (request! 'yank))
-
-  (edoc "Complete the input at point, a sole candidate whole, a common prefix as far as it goes, the candidates listed otherwise.")
-  (define (prompt-complete!) (request! 'complete))
-
-  (edoc "Complete with the prompt's other completer, the editor-defined names at M-x say.")
-  (define (prompt-alternate-complete!) (request! 'alternate-complete))
-
-  (edoc "Describe the name at the prompt's point, where the prompt has an inspector.")
-  (define (prompt-inspect!) (request! 'inspect))
-
-  (edoc "Insert a line break at the prompt's point, in a multi-line input.")
-  (define (prompt-newline!) (request! 'newline))
-
-  (edoc "Insert a bracketed paste at the prompt's point, its lines joined with spaces unless the input is multi-line.")
-  (define (prompt-paste!) (request! 'paste))
-
-  (edoc "Insert text at the prompt's point, as typing does; SELF-INSERT, any character, runs it with the character typed."
-        (text string "the text to insert"))
-  (define (prompt-type! text) (request! (cons 'type text)))
-
-  (define (run-action! action)
-    ;; a bound action run inside the prompt: a command, or a call with its
-    ;; producers run and its other arguments as given
-    (cond [(procedure? action) (action)]
-          [(keymap:call-action? action) (keymap:run! action)]
-          [else (void)]))
-
-  (define (prompt-action event)
-    ;; what a key asks of the prompt: a symbol as bound, or what the bound
-    ;; command requests when run, a character through SELF-INSERT
-    (head:set-current-keys! (list event))
-    (let ([bound (or (keymap:event-binding 'prompt event)
-                     (and (tty:key-event-character event) (keymap:event-binding 'prompt "SELF-INSERT")))])
-      (cond [(symbol? bound) bound]
-            [(or (procedure? bound) (keymap:call-action? bound))
-             (set! requested #f)
-             (run-action! bound)
-             (take-requested!)]
-            [else #f])))
-
-  (define (content-action! body event)
-    ;; a key the content view's own context binds, run: #t when one was
-    (let ([bound (and (content-view-context body) (keymap:event-binding (content-view-context body) event))])
-      (and (or (procedure? bound) (keymap:call-action? bound))
-           (begin (head:set-current-keys! (list event)) (run-action! bound) #t))))
-
-  ;;; Questions, completions, and the prompt ------------------------------------------
-
-  (edoc "Ask a single-key question in the echo area and read one of the allowed characters; a marked option, m)erge, shows its letter bold. #f when cancelled."
-        (question string "the question")
-        (allowed string "the acceptable characters")
-        (rest (list-of thunk) "a repaint to run before waiting, at most one")
-        (returns (or char #f))
-        (prompts))
-  (define (query-key! question allowed . rest)
-    ;; A focused single-key question. Decode complete terminal events so an
-    ;; arrow's leading ESC cannot cancel the question and leave its remaining
-    ;; bytes to move point. Callers mark an option as m)erge internally; the
-    ;; marker is removed for display and its first letter uses the bold choice
-    ;; face. This keeps option structure separate from presentation.
-    (define (render-question text)
-      (let loop ([i 0] [chars '()] [marked '()])
-        (if (= i (string-length text))
-            (let* ([out (list->string (reverse chars))]
-                   [styles (make-vector (string-length out) 'plain)])
-              (let mark ([flags (reverse marked)] [j 0])
-                (unless (null? flags)
-                  (when (car flags) (vector-set! styles j 'choice))
-                  (mark (cdr flags) (+ j 1))))
-              (cons out styles))
-            (let* ([ch (string-ref text i)]
-                   [marker? (and (< (+ i 2) (string-length text))
-                                 (char=? (string-ref text (+ i 1)) #\))
-                                 (char-alphabetic?
-                                   (string-ref text (+ i 2)))
-                                 (string:search allowed
-                                   (string (char-downcase ch)) 0
-                                   (string-length allowed)))])
-              (loop (+ i (if marker? 2 1))
-                    (cons ch chars) (cons marker? marked))))))
-    ;; no input yet, no answer: a question asked before the terminal's
-    ;; reader runs cancels instead of waiting forever
-    (if (not (head:input-live?)) #f
-      (let* ([rendered (render-question question)]
-             [shown (string-append (car rendered) " ")]
-             [shown-styles (let* ([source (cdr rendered)]
-                                  [v (make-vector (string-length shown) 'plain)])
-                             (let copy ([i 0])
-                               (when (< i (vector-length source))
-                                 (vector-set! v i (vector-ref source i))
-                                 (copy (+ i 1))))
-                             v)]
-             [repaint (and (pair? rest) (car rest))])
-        (define (repaint-extra!)
-          (when repaint
-            (repaint)
-            (paint:place-cursor!)))
-        (interaction
-          (lambda ()
-            (dynamic-wind
-              (lambda ()
-                (set! message shown)
-                (set! message-ghost "")
-                (set! message-styles (cons shown (lambda (_) shown-styles)))
-                (set! echo-indent 0)
-                (set! echo-input-end (string-length shown))
-                (set! echo-cursor (string-length shown))
-                (paint:redraw!)
-                (repaint-extra!))
-              (lambda ()
-                (let wait ()
-                  (let ([event (head:read-key-event #f)])
-                    (cond [(eof-object? event) #f]
-                      [(string=? event "C-g") #\alarm]
-                      [(string=? event "ESC") #\esc]
-                      [(tty:key-event-character event)
-                       => (lambda (choice)
-                            (if (string:search allowed
-                                  (string (char-downcase choice))
-                                  0 (string-length allowed))
-                              choice
-                              (begin
-                                (paint:visual-bell!)
-                                (repaint-extra!)
-                                (wait))))]
-                      [else
-                       (paint:visual-bell!)
-                       (repaint-extra!)
-                       (wait)]))))
-              (lambda ()
-                (set! echo-cursor #f)
-                (set! echo-indent #f)
-                (set! echo-input-end #f)
-                (set! message-styles #f)
-                (set! message "")
-                (set! message-ghost ""))))))))
-
-  (define active-refresh (make-parameter #f))
-  (define window-owner (make-parameter #f))
-
-  (edoc "Whether a prompt is reading input now."
-        (returns boolean))
-  (define (prompt-active?)
-    (or (and (active-refresh) #t) (and echo-cursor #t)))
-
-  (edoc "Whether a prompt shows its completions and content in the pop-up window rather than the echo area."
-        (value boolean))
-  (define prompt-in-window (make-parameter #f))
-
-  (edoc "How a completion value is labelled in the list: (label value) gives the shown text."
-        (value procedure))
-  (define completion-label (make-parameter (lambda (value) value)))
-
-  (edoc "What a list procedure's completions are, for the status line of the list, \"12 matches of file\"; a completer's own kind takes precedence, and the prompt's label stem stands in."
-        (value (or string #f)))
-  (define completion-kind (make-parameter #f))
-
-  (edoc "Which completion labels take the editor face: (highlight? label)."
-        (value procedure))
-  (define completion-highlight (make-parameter (lambda (label) #f)))
-  ;; A cursor-aware source returns (values start end expansions candidates).
-  ;; Expansions may be a thunk: resolve only for a new Tab normalization,
-  ;; not when refreshing the live list or cycling already prepared results.
-  ;; Candidates replace [start,end); #f start means no completable token.
-  ;; Unlike a prefix completer, it normalizes on the first Tab and keeps its
-  ;; candidate list live after the second. Existing list procedures stay simple.
-  ;; An optional settle procedure, (settle text position), receives the input
-  ;; after a sole match has been inserted and returns the (text . position)
-  ;; to continue with: M-x closes forms and steps to the next argument. An
-  ;; optional kind, (kind text position) or a constant string, names what
-  ;; the completions are for the list's status line. An optional track,
-  ;; (track text position), gives (maker . needle) where a live search
-  ;; stands in for the list at the cursor: the prompt makes the searcher
-  ;; once, feeds it the needle as it changes, and ends it as the cursor
-  ;; leaves.
-  (define-record-type (completer %make-completer completer?) (fields lookup settle kind track))
-
-  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line; an optional track, (track text position), gives (maker . needle) where a live search stands in for the list."
-        (lookup procedure "the completion source")
-        (settle (or procedure #f) "the settle step")
-        (kind (or procedure string #f) "what the completions are")
-        (track (or procedure #f) "where a live search stands in"))
-  (define make-completer
-    (case-lambda
-      [(lookup)
-       (%make-completer lookup #f #f #f)]
-      [(lookup settle)
-       (%make-completer lookup settle #f #f)]
-      [(lookup settle kind)
-       (%make-completer lookup settle kind #f)]
-      [(lookup settle kind track)
-       (%make-completer lookup settle kind track)]))
-
-  ;; A searcher stands in for the list at a typed argument: it finds the
-  ;; needle's matches in the current buffer and highlights them as a search
-  ;; would, Tab visits them in turn, and nothing is ever inserted.
-  (edoc "A live search standing in for a completion list: (find needle) refreshes the needle's matches, giving (index . count) with index #f when none; (next) and (previous) preview the neighbouring match, giving the same; (done accepted?) ends the preview and restores any temporary selection."
-        (find procedure "(find needle) giving (index . count)")
-        (next procedure "(next) giving (index . count)")
-        (previous procedure "(previous) giving (index . count)")
-        (done procedure "(done accepted?)"))
-  (define-record-type searcher (fields find next previous done))
-
-  ;; A display label and its character styles are independent of the string
-  ;; inserted on selection. The lookup result owns both, including during cycling.
-  (define-record-type (candidate %make-candidate candidate?)
-    (fields value label styles preview))
-
-  (edoc "A completion candidate: the text inserted on selection, the label the list shows with its styles, and an optional preview, a thunk that shows the candidate's value in the editor while it is the inserted one and gives the thunk undoing the showing."
-        (value string "the text inserted on selection")
-        (label string "the text shown in the list")
-        (styles (or vector #f) "the label's styles")
-        (preview (list-of procedure) "the preview thunk, at most one")
-        (returns (record candidate)))
-  (define (make-candidate value label styles . preview)
-    (%make-candidate value label styles (and (pair? preview) (car preview))))
-
-  ;; A live completion view supplies its minimum height, renderer and key
-  ;; handler. (render input window available-height page) returns styled lines
-  ;; and a page count. Choices replace input or run an action returning new
-  ;; input (#f leaves it alone, e.g. when sorting a column).
-  (edoc "A live completion view below a prompt's input."
-        (minimum-height integer "the rows it needs at least")
-        (render procedure "(render input window available-height page) giving styled lines and a page count")
-        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it")
-        (context (or symbol #f) "a keymap context whose bindings act while the view shows, listed among the prompt's keys"))
-  (define-record-type (content-view %make-content-view content-view?)
-    (fields minimum-height render handle context))
-
-  (edoc "A content view for a prompt in a window: the rows it needs, its renderer, its event handler or #f, and optionally the keymap context whose bindings act while it shows."
-        (minimum-height integer "the rows it needs at least")
-        (render procedure "(render input window available-height page) giving styled lines and a page count")
-        (handle (or procedure #f) "(handle event) giving new input, or #f to leave it")
-        (context (list-of symbol) "the keymap context, at most one")
-        (returns (record content-view)))
-  (define make-content-view
-    (case-lambda
-      [(minimum-height render handle) (%make-content-view minimum-height render handle #f)]
-      [(minimum-height render handle context) (%make-content-view minimum-height render handle context)]))
-
-  (edoc "The content view a prompt in a window shows below its input, or #f."
-        (value (or (record content-view) #f)))
-  (define content (make-parameter #f))
-  ;; A validator returns #f to accept, a short explanation to keep editing,
-  ;; or (transient text) for an inline-only notice that expires after two
-  ;; seconds. Its deadline travels with the note, so keys that retain it
-  ;; cannot restart its lifetime. Editing discards it like any other note.
-  (define-record-type (notice make-notice notice?)
-    (fields text deadline))
-
-  (edoc "A validation notice shown inline for two seconds, bracketed."
-        (text string "the notice")
-        (returns (record notice)))
-  (define (transient text)
-    (make-notice (string-append " [" text "]")
-      (add-duration (current-time 'time-monotonic) (make-time 'time-duration 0 2))))
-
-  ;; A draft box carries (input . cursor) across invocations.
-  (edoc "The prompt's validator: (validate input) gives #f to accept, a note to keep editing, or a transient notice."
-        (value (or procedure #f)))
-  (define validate-input (make-parameter #f))
-
-  (edoc "A box carrying (input . cursor) across invocations of a prompt, or #f."
-        (value (or any #f)))
-  (define draft-input (make-parameter #f))
-
-  (edoc "The prompt's suggestion: (ghost input) gives the grey text after the input, or #f."
-        (value procedure))
-  (define prompt-ghost (make-parameter (lambda (s) #f)))
-
-  (edoc "What M-. does in a prompt: (inspect input position), or #f for nothing."
-        (value (or procedure #f)))
-  (define prompt-inspector (make-parameter #f))
-
-  (edoc "How M-RET and a paste insert a line break: (insert input position text) gives the new (input . position), or #f to insert none."
-        (value (or procedure #f)))
-  (define prompt-multiline (make-parameter #f))
-
-  (edoc "What C-a and C-e do: (move action input position repeated?) gives the new position, or #f for the input's ends."
-        (value (or procedure #f)))
-  (define prompt-edge-motion (make-parameter #f))
-
-  (edoc "How the input is reindented after an edit: (reindent input position) gives the new (input . position), or #f for none."
-        (value (or procedure #f)))
-  (define prompt-reindent (make-parameter #f))
-
-  ;; Rows retain their source coordinates. The same mapping places the
-  ;; cursor and handles mouse input after wrapping, paging or clipping.
-  ;; input is a source interval; choices are (start end value [hover-face]) intervals.
-  (define-record-type row (fields text styles input choices))
-
-  (edoc "A row of a content view: its text, styles and (start end value) choices, hovered with a face."
-        (text string "the row text")
-        (styles (or vector #f) "its styles")
-        (choices list "(start end value) intervals")
-        (hover-face (list-of symbol) "the face of a hovered choice, at most one")
-        (returns (record row)))
-  (define (line text styles choices . hover-face)
-    (make-row text styles #f
-      (map (lambda (choice) (append choice (if (null? hover-face) '(hover) hover-face))) choices)))
-  ;; Cache only styles and numeric choice spans: a row also owns its text,
-  ;; which would keep the weak key alive after a prompt is dismissed.
-  (define line-presentation (make-weak-eq-hashtable))
-  (define (choice-at choices column)
-    (find (lambda (entry) (<= (car entry) column (- (cadr entry) 1)))
-      choices))
-  (define prompt-modes
-    (begin
-      (head:add-pre-redraw-hook! (lambda () (when (active-refresh) ((active-refresh)))))
+  (edoc "Deliver queued prompt outcomes from the ordinary pump, outside widget service and painting. Named targets run at command boundaries and may open another input request.")
+  (define (drain!)
+    (let ([batch (reverse pending)])
+      (set! pending '())
       (for-each
-        (lambda (name)
-          (mode:register! name '() '()
-            ;; Presentation can change while the text stays equal (for example,
-            ;; a different completion query underlines different characters).
-            ;; Read the current row instead of the mode's text-only style cache.
-            (lambda (line) #f) #f
-            (lambda (buffer row line)
-              (let ([info (hashtable-ref line-presentation line #f)])
-                (and info (car info))))))
-        '("prompt" "completions"))
-      (paint:add-highlighter!
-        (lambda ()
-          (paint:hover-ranges
-            (lambda (w row column)
-              (and (active-refresh) (or (not (window-owner)) (eq? w (window-owner)))
-                   (let* ([line (head:window-line w row)]
-                          [info (hashtable-ref line-presentation line #f)]
-                          [choice (and info (choice-at (cdr info) column))])
-                     ;; Labels leave their padding plain; row candidates tint it too.
-                     (and choice
-                          (let trim ([end (cadr choice)])
-                            (if (and (eq? (caddr choice) 'hover) (> end (car choice))
-                                     (char-whitespace? (string-ref line (- end 1))))
-                                (trim (- end 1)) (list (car choice) end (caddr choice))))))))
-            caddr)))))
+        (lambda (thunk)
+          (guard (ex [else (log:add! 'prompt:drain! (kernel:condition-text ex))])
+            (suspension:call! head:ui-actor (lambda () (head:run-on-main! resume!)) thunk))) batch)))
 
-  (define (format-rows candidates width)
-    ;; One candidate per row. A label made of the value, two spaces and a
-    ;; hint wraps at word boundaries with its continuation rows indented to
-    ;; the hint; any other label wraps from the margin. Every row of a
-    ;; candidate chooses it.
-    (define (slice styles from to)
-      (let ([out (make-vector (- to from) 'plain)])
-        (do ([i from (+ i 1)]) ((= i to) out)
-          (when (< i (vector-length styles)) (vector-set! out (- i from) (vector-ref styles i))))))
-    (list->vector
-      (apply append
-        (map (lambda (value)
-               (let* ([rich? (candidate? value)]
-                      [chosen (if rich? (candidate-value value) value)]
-                      [label (if rich? (candidate-label value) value)]
-                      [styles (if rich? (candidate-styles value) (make-vector (string-length label) 'plain))]
-                      [head (+ (string-length chosen) 2)]
-                      [indent (if (and (< (* 2 head) width) (> (string-length label) head)
-                                       (string=? (substring label 0 head) (string-append chosen "  ")))
-                                  head 0)]
-                      [tail (substring label indent (string-length label))]
-                      [breaks (paint:compute-breaks tail (max 1 (- width indent)))]
-                      [count (vector-length breaks)])
-                 (map (lambda (i)
-                        (let* ([from (vector-ref breaks i)]
-                               [to (if (= (+ i 1) count) (string-length tail) (vector-ref breaks (+ i 1)))]
-                               [segment (substring tail from to)]
-                               [text (if (= i 0)
-                                         (string-append (substring label 0 indent) segment)
-                                         (string-append (make-string indent #\space) segment))]
-                               [faces (if (= i 0)
-                                          (slice styles 0 (+ indent to))
-                                          (list->vector
-                                            (append (make-list indent 'plain)
-                                                    (vector->list (slice styles (+ indent from) (+ indent to))))))])
-                          (make-row text faces #f (list (list 0 (string-length text) chosen)))))
-                      (iota count))))
-             candidates))))
+  (define (context id)
+    (let-values ([(source d inputs) (widget:context id 'current)])
+      (unless (and (eq? (view:kind d) 'prompt) source
+                (eq? (get source 'kind) 'prompt-request)
+                (equal? (get (get source 'value) 'owner) head:ui-actor))
+        (error 'prompt "request is unavailable" id))
+      (values source d (get source 'value))))
 
-  (define (format-columns candidates width labeler highlight?)
-    ;; Labelled candidates take a row each; plain strings fill columns.
-    (if (exists candidate? candidates)
-        (format-rows candidates width)
-        (format-grid candidates width labeler highlight?)))
+  (define (release! id)
+    (let ([r (hashtable-ref live id #f)])
+      (when r
+        (runtime-closed?-set! r #t)
+        (when (runtime-completion r) (completion-state:finish! (runtime-completion r) #f))
+        (hashtable-delete! live id)
+        ;; A host may be walking the very descriptors it is releasing.
+        ;; Teardown runs after unmount/reconciliation has finished.
+        (queue! (lambda () (prompt-request:close! head:ui-actor (runtime-request r)))))))
 
-  (define (format-grid candidates width labeler highlight?)
-    (let* ([labels (map (lambda (value) (if (candidate? value) (candidate-label value) (labeler value)))
-                     candidates)]
-           [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
-           [columns (max 1 (div width (max 1 column)))])
-      (let rows ([values candidates] [labels labels] [out '()])
-        (if (null? values) (list->vector (reverse out))
-            (let fill ([values values] [labels labels] [count 0]
-                       [text ""] [styles '()] [choices '()])
-              (if (or (= count columns) (null? values))
-                  (rows values labels
-                    (cons (make-row text (list->vector (apply append (reverse styles)))
-                            #f (reverse choices)) out))
-                  (let* ([label (car labels)] [shown (glyph:fit label column)]
-                         [value (car values)]
-                         [base (if (candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
-                         [faces (make-vector (string-length shown) base)]
-                         [start (string-length text)] [end (+ start (string-length shown))])
-                    (when (candidate? value)
-                      ;; fit preserves a prefix of whole glyph clusters. Stop
-                      ;; copying at its ellipsis/padding so neither is underlined.
-                      (let ([visible
-                             (if (<= (glyph:cells label) column) (string-length label)
-                                 (let trim ([i (- (string-length shown) 1)])
-                                   (if (char=? (string-ref shown i) #\space) (trim (- i 1)) i)))])
-                        (do ([i 0 (+ i 1)]) ((= i visible))
-                          (vector-set! faces i (vector-ref (candidate-styles value) i)))))
-                    (fill (cdr values) (cdr labels) (+ count 1)
-                      (string-append text shown)
-                      (cons (vector->list faces) styles)
-                      (cons (list start end (if (candidate? value) (candidate-value value) value))
-                        choices)))))))))
+  (define (service! id frame)
+    (guard (ex [else
+                (let* ([d (interaction:snapshot id)] [request (and d (view:source d))]
+                       [source (and request (model:snapshot request))])
+                  (when source
+                    (log:add! 'prompt:service! (kernel:condition-text ex))
+                    (unless (hashtable-ref live id #f)
+                      (queue! (lambda () (prompt-request:close! head:ui-actor request)))))
+                  (release! id))])
+      (let-values ([(source d value) (context id)])
+        (let* ([request (get source 'id)] [generation (view:generation d)]
+               [status (get value 'status)]
+               [r (and (equal? id (get value 'controller))
+                    (or (hashtable-ref live id #f)
+                      (let*-values ([(profile-factory profile) (make-profile d (get value 'origin))]
+                                    [(recipe) (get value 'provider)] [(factory) (and recipe (completion:provider recipe))]
+                                    [(source) (and factory (factory (caddr recipe) (get value 'origin)))]
+                                    [(r) (make-runtime request generation factory source
+                                           (and source (completion-state:create source (option profile 'transform #f)))
+                                           profile-factory profile #f (not (eq? status 'editing)) #f '(ghost . "") -1 "" #f "symbol")])
+                        (when (and recipe (not factory)) (error 'prompt "completion provider is unavailable" recipe))
+                        (hashtable-set! live id r) r)))])
+          (when r
+            ;; Re-arranging a still-mounted composition renews its lease. An
+            ;; editing controller follows that lease; queued outcomes retain
+            ;; the generation captured when they became terminal.
+            (when (eq? status 'editing) (runtime-generation-set! r generation))
+            (unless (and (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
+                      (eq? (runtime-profile-factory r) (profile-factory d)))
+              (release! id))
+            (when (and (eq? status 'editing) (not (runtime-closed? r)))
+              (refresh-completion! id r)))
+          ;; The base identifies the controller, independent of mount order.
+          ;; Mounting a terminal outcome never replays it, including reload.
+          (unless (or (not r) (runtime-delivered? r) (runtime-closed? r) (eq? status 'editing))
+            (runtime-generation-set! r generation)
+            (runtime-delivered?-set! r #t)
+            (when (runtime-completion r) (completion-state:finish! (runtime-completion r) (eq? status 'accepted)))
+            (let ([outcome (if (eq? status 'accepted) (get value 'outcome) (get value 'origin))])
+              (queue!
+                (lambda ()
+                  (let ([d (interaction:snapshot id)])
+                    (when (and (not (runtime-closed? r)) (eq? r (hashtable-ref live id #f)) d
+                            (= (runtime-generation r) (view:generation d))
+                            (equal? (runtime-request r) (view:source d))
+                            (assq status (widget:commands id)))
+                      (widget:invoke! id status outcome)))))))))))
 
-  (define (input-rows content styles width)
-    ;; Prewrap through the normal cell/cluster geometry, then render a
-    ;; bounded slice without a second viewport competing for the cursor.
-    (let logical ([start 0] [out '()])
-      (let* ([end (or (string:search content "\n" start (string-length content))
-                      (string-length content))]
-             [line (substring content start end)]
-             [breaks (paint:compute-breaks line (max 1 (- width 1)))]
-             [count (vector-length breaks)])
-        (let visual ([i 0] [out out])
-          (if (= i count)
-              (if (= end (string-length content)) (reverse out)
-                  (logical (+ end 1) out))
-              (let* ([from (+ start (vector-ref breaks i))]
-                     [to (if (= (+ i 1) count) end (+ start (vector-ref breaks (+ i 1))))]
-                     [text (substring content from to)]
-                     [shown (if (= (+ i 1) count) text
-                                (string-append (glyph:fit text (max 1 (- width 1))) "\\"))]
-                     [face (make-vector (string-length shown) 'chrome)])
-                (do ([j 0 (+ j 1)]) ((= j (min (- to from) (vector-length face))))
-                  (vector-set! face j (vector-ref styles (+ from j))))
-                (visual (+ i 1) (cons (make-row shown face (cons from to) '()) out))))))))
+  (edoc "Create an unmounted prompt composition for an existing request. Options are label, multiline?, help, an interaction profile recipe and input editing-policy/mode; commands bind accepted and cancelled to explicit host targets. The request owns its views; a borrowed draft retains its lifetime."
+        (request model "base prompt request") (options list "portable presentation options")
+        (commands list "explicit named outcome targets") (returns model "prompt view"))
+  (define (create! request options commands)
+    (unless (and (list? options)
+              (for-all (lambda (p) (and (pair? p)
+                                     (case (car p) [(label help choices) (string? (cdr p))]
+                                       [(multiline?) (boolean? (cdr p))]
+                                       [(mode) (string? (cdr p))]
+                                       [(profile) (and (list? (cdr p)) (= (length (cdr p)) 3) (symbol? (cadr p))
+                                                    (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))]
+                                       [(editing-policy) (and (list? (cdr p)) (= (length (cdr p)) 2) (symbol? (cadr p))
+                                                           (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))]
+                                       [else #f]))) options)
+              (let unique ([xs options]) (or (null? xs) (and (not (assq (caar xs) (cdr xs))) (unique (cdr xs))))))
+      (error 'create! "invalid prompt options" options))
+    (let* ([packet (model:snapshots (list request))] [r (caddr (caadr packet))]
+           [value (and r (get r 'value))])
+      (unless (and r (eq? (get r 'kind) 'prompt-request) (eq? (get value 'status) 'editing) (not (get value 'controller))
+                (equal? (get value 'owner) head:ui-actor)) (error 'create! "request is unavailable" request))
+      (let ([created '()])
+        (define (create-view! who source kind schema options state scope)
+          (let ([id (view:create! who source kind schema options state scope)])
+            (set! created (cons id created)) id))
+        (guard (ex [else
+                    (for-each
+                      (lambda (id)
+                        (guard (ignored [else (void)])
+                          (let ([r (caddr (caadr (model:snapshots (list id))))])
+                            (when r (view:retire! head:ui-actor id (get r 'revision)))))) created)
+                    (raise ex)])
+          (let* ([who head:ui-actor] [source (get value 'draft)]
+                 [multiline? (cond [(assq 'multiline? options) => cdr] [else #f])]
+                 [root-options (append (list (cons 'commands commands))
+                                 (filter (lambda (p) (memq (car p) '(profile choices))) options)
+                                 (if (assq 'choices options) '((capture . full)) '()))]
+                 [root (create-view! who request 'prompt 1 root-options '() request)]
+                 [input (create-view! who #f (if (assq 'choices options) 'column 'row) 1 '((spacing . normal)) '() request)]
+                 [label (create-view! who #f 'label 1
+                          (list (cons 'text (cond [(assq 'label options) => cdr] [else "Input:"]))
+                            (cons 'wrap (and (assq 'choices options) #t))) '() request)]
+                 [entry (create-view! who source (if multiline? 'editor 'entry) 1
+                          (filter values (list (assq 'mode options)
+                                           (let ([p (assq 'editing-policy options)]) (and p (cons 'policy (cdr p))))))
+                          (if multiline? '((0 . 0) (0 . 0) (0 . 0) #f) '((0 . 0) (0 . 0))) request)]
+                 [choices (create-view! who request 'prompt-choices 1 '() '() request)]
+                 [help (create-view! who request 'prompt-help 1
+                         (list (cons 'text (cond [(assq 'help options) => cdr] [else ""]))) '() request)])
+            (let-values ([(status rows)
+                          (view:arrange! who
+                            (list (list input 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1))) '((spacing . normal)))
+                              (list root 0 (list (list 'choices choices 'fit) (list 'help help 'fit) (list 'input input '(grow 1))) root-options)) '())])
+              (unless (eq? status 'applied) (error 'create! "cannot compose prompt" status)))
+            (let ([status (prompt-request:bind! who request (get r 'revision) root)])
+              (unless (eq? status 'applied) (error 'create! "request controller changed" status))) root)))))
 
-  (define (label-stem label)
-    (let* ([end (let loop ([i 0])
-                  (cond [(= i (string-length label)) i]
-                        [(memv (string-ref label i) '(#\: #\()) i]
-                        [else (loop (+ i 1))]))]
-           [end (let trim ([i end])
-                  (if (and (> i 0) (char-whitespace? (string-ref label (- i 1))))
-                      (trim (- i 1)) i))])
-      (if (= end 0) "prompt"
-          (list->string
-            (map (lambda (c) (if (char-whitespace? c) #\- (char-downcase c)))
-                 (string->list (substring label 0 end)))))))
+  (define (draft-context id)
+    (let* ([entry (widget:descendant id 'input 'entry)] [d (interaction:snapshot entry)])
+      (let-values ([(source d) (text-control:context entry (view:kind d) 'current)])
+        (let* ([mirror (text-control:mirror source)] [lines (text-control:lines source)]
+               [points (text-source:rebase (list (car (view:state d)))
+                         (text-source:changes mirror (or (view:basis d) (text-control:revision source)) (text-control:revision source)))]
+               [p (and points (car points))])
+          (unless p (error 'prompt "draft caret history is unavailable"))
+          (values entry source d (string:join (vector->list lines) "\n")
+            (+ (cdr p) (fold-left + 0 (map (lambda (r) (+ 1 (string-length (vector-ref lines r)))) (iota (car p))))))))))
+  (define (refresh-completion! id r)
+    (let-values ([(entry source d text position) (draft-context id)])
+      (let ([signature (list (text-control:revision source) position)])
+        (unless (or (text-control:pending? entry) (equal? signature (runtime-signature r)))
+          (when (and (>= (runtime-history-index r) 0)
+                  (not (string=? text (list-ref (option (runtime-profile r) 'history '()) (runtime-history-index r)))))
+            (runtime-history-index-set! r -1))
+          (let ([hint (cond [(option (runtime-profile r) 'ghost #f) => (lambda (ghost) (or (ghost text position) ""))] [else ""])])
+            (unless (string? hint) (error 'prompt "hint provider must return text or false"))
+            (runtime-message-set! r (cons 'ghost hint)))
+          (when (runtime-completion r) (completion-state:refresh! (runtime-completion r) text position) (refresh-kind! r))
+          (runtime-signature-set! r signature)
+          (repaint-completion! id)))))
+  (define (repaint-completion! id)
+    (for-each (lambda (name) (widget:repaint! (widget:descendant id name) #t)) '(choices help)))
+  (define (refresh-kind! r)
+    (let* ([snapshot (completion-state:snapshot (runtime-completion r))]
+           [source (list-ref snapshot 6)] [kind (and (completion:source? source) (completion:source-kind source))])
+      (runtime-kind-set! r (or (if (procedure? kind) (kind (cadr snapshot) (caddr snapshot)) kind) "symbol"))))
+  (define (input-position text offset)
+    (let loop ([at 0] [row 0] [column 0])
+      (if (= at offset) (cons row column)
+        (if (char=? (string-ref text at) #\newline) (loop (+ at 1) (+ row 1) 0) (loop (+ at 1) row (+ column 1))))))
+  (define (apply-completion! id r entry source d)
+    (let ([snapshot (completion-state:snapshot (runtime-completion r))])
+      (apply-text! id r entry source d (cadr snapshot) (caddr snapshot))))
+  (define (apply-text! id r entry source d text caret)
+    (guard (ex [else
+                (runtime-signature-set! r #f)
+                (guard (ignored [else (void)]) (refresh-completion! id r))
+                (raise ex)])
+      (let* ([position (input-position text caret)] [old (text-control:lines source)]
+             [lines (list->vector (string:lines text))])
+        (if (not (equal? old lines))
+          (let-values ([(span replacement) (text:difference old lines)])
+            (text-control:submit! entry source d old (text-control:revision source) span replacement
+              (list #f "Prompt input" (cons 'revision (text-control:revision source))) (list position)
+              (lambda (ps) (if (eq? (view:kind d) 'entry) (list (car ps) (car ps)) (list (car ps) (car ps) (car ps) #f)))))
+          (if (eq? (view:kind d) 'entry) (entry:select! entry (cdr position) (cdr position)) (editor:select! entry position position)))
+        (refresh-completion! id r) (repaint-completion! id))))
 
-  (define (prompt-window-command event)
-    (and (or (dispatch:pending?) (not (tty:key-event-character event)))
-      (let* ([reply (dispatch:resolve! (list 'prompt (head:current-window)) '((prompt (global) #f)) event)]
-             [status (car reply)] [action (caddr reply)]
-             [allowed (and (eq? status 'command) (assq action (kernel:registry-items allowed-commands)))])
-        (cond
-          [allowed (lambda () (guard (ex [else (string-append "  " (kernel:condition-text ex))])
-                                (if (cdr allowed) ((cdr allowed)) (begin (action) ""))))]
-          [(eq? status 'prefix) (lambda () (string-append "  " (keymap:sequence-text (list-ref reply 3)) "-"))]
-          [(or (memq status '(cancelled invalid)) (> (length (list-ref reply 3)) 1)) (lambda () "")]
-          [else #f]))))
+  (define (editing-runtime id)
+    (let-values ([(source d value) (context id)])
+      (let ([r (hashtable-ref live id #f)])
+        (and r (eq? (get value 'status) 'editing)
+          (not (runtime-delivered? r)) (not (runtime-closed? r))
+          (if (and (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
+                (eq? (runtime-profile-factory r) (profile-factory d))) r
+            (begin (release! id) #f))))))
 
-  (edoc "Read a line of input in the echo area with editing, history and completion; #f when cancelled."
-        (label string "the prompt text")
-        (rest (list-of any) "in order, each optional: a completer or completion procedure, the initial input, a history box, an alternate completer and a normalizer")
-        (returns (or string #f))
-        (prompts))
-  (define (prompt! label . rest)
-    ;; Each call owns its input, candidates and temporary view. A nested
-    ;; call can borrow the echo area without changing its parent's state.
-    (define (optional n)
-      (if (< n (length rest)) (list-ref rest n) #f))
-    (define complete (optional 0))
-    (define initial (or (optional 1) ""))
-    (define history (optional 2))
-    (define alt-complete (optional 3))
-    (define normalize (optional 4))
-    (define validator (validate-input))
-    (define draft (draft-input))
-    (define labeler (completion-label))
-    (define kind (completion-kind))
-    (define searcher-maker #f)
-    (define searcher #f)
-    (define searcher-needle #f)
-    (define search-hit #f)
-    (define previewed #f)
-    (define preview-undo #f)
-    (define previewed-input #f)
-    (define highlight? (completion-highlight))
-    (define styler (paint:echo-highlight))
-    (define ghost (prompt-ghost))
-    (define in-window? (and (prompt-in-window) (not (window-owner))))
-    (define body (and in-window? (content)))
-    (define owner (head:current-window))
-    (define input (if (and draft (unbox draft)) (car (unbox draft)) initial))
-    (define position (if (and draft (unbox draft)) (cdr (unbox draft)) (string-length input)))
-    (define note "")
-    (define hist-pos -1)
-    (define stash "")
-    (define last-edge #f)
-    (define completion-source #f)
-    (define completion-range #f)
-    (define prepared #f)
-    (define completion-options '())
-    (define completion-matches '())
-    (define option-index 0)
-    (define candidates #f)
-    (define candidate-rows '#())
-    (define candidate-width 0)
-    (define page 0)
-    (define pages 1)
-    (define view #f)
-    (define target #f)
-    (define previous #f)
-    (define borrowed '())
-    (define shown-rows '#())
-    (define clicked #f)
-    (define validation-message #f)
+  (edoc "Normalize this prompt's current token, then cycle equivalent spellings or completion pages. Work runs outside painting against a captured draft revision."
+        (id model "prompt controller") (backwards? boolean "visit the preceding live-search hit"))
+  (define (complete! id backwards?)
+    (let ([r (editing-runtime id)])
+      (when (and r (runtime-completion r))
+        (refresh-completion! id r)
+        (let-values ([(entry source d text position) (draft-context id)])
+          (completion-state:normalize! (runtime-completion r)
+            (if backwards? (option (runtime-profile r) 'alternate (runtime-source r)) (runtime-source r)) backwards?)
+          (refresh-kind! r)
+          (apply-completion! id r entry source d)))))
 
-    (define (view-windows)
-      (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))
-    (define (popup-height values)
-      ;; Rows for the candidate columns at the pop-up's width, at most half
-      ;; the screen; the layout keeps the windows above their minimum.
-      (let ([width (max 1 (if (> (head:window-width (head:popup)) 1)
-                              (head:window-content-width (head:popup))
-                              (paint:screen-cols)))])
-        (max 1 (min (quotient (paint:screen-rows) 2)
-                    (vector-length
-                      (format-columns values width (if completion-source (lambda (s) s) labeler) highlight?))))))
-    (define (release-view!)
-      (when view
-        (let ([gone? (not (memq view (head:buffers)))]
-              [fallback (if (memq previous (head:buffers)) previous
-                            (or (find (lambda (b) (not (eq? b view))) (head:buffers))
-                                (head:new-buffer! "*scratch*")))])
-          (head:call-with-display-update
-            (lambda ()
-              (for-each
-                (lambda (w)
-                  (when (and (not (head:popup? w))
-                             (or (eq? (head:window-buffer w) view)
-                                 (and gone? (memq w borrowed))))
-                    (head:set-window-buffer! w fallback)))
-                (head:windows))
-              ;; The pop-up hides again, unless an outer prompt's list is
-              ;; waiting to come back into it; any other buffer found there,
-              ;; a document shown in the pop-up by mistake, must not keep it
-              ;; open
-              (when (head:popup? target)
-                (if (and (memq previous (head:buffers)) (head:app-buffer? previous)
-                         (equal? (head:buffer-fact previous 'mode #f) "completions"))
-                    (head:set-window-buffer! target previous)
-                    (head:hide-popup!)))
-              (head:forget-buffer! view))))
-        (set! view #f) (set! target #f) (set! borrowed '())))
-    (define (window-lost?)
-      (and in-window?
-           (or (not (memq owner (head:windows)))
-               (not (eq? owner (head:current-window)))
-               (not (eq? (head:window-buffer owner) view))
-               (not (memq view (head:buffers))))))
-    (define (search-note)
-      ;; the live search's note: which match of how many, or that none matches
-      (cond [(not search-hit) ""]
-            [(car search-hit) (format " [~a of ~a]" (car search-hit) (cdr search-hit))]
-            [(> (string-length (or searcher-needle "")) 0) " [no match]"]
-            [else ""]))
-    (define (end-search! accepted?)
-      (when searcher
-        (guard (ex [else (void)]) ((searcher-done searcher) accepted?))
-        (set! searcher #f) (set! searcher-maker #f) (set! searcher-needle #f) (set! search-hit #f)))
-    (define (end-preview!)
-      (when preview-undo (guard (ex [else (void)]) (preview-undo)))
-      (set! previewed #f) (set! preview-undo #f) (set! previewed-input #f))
-    (define (preview! candidate)
-      ;; show the candidate now inserted, the previous showing undone; the
-      ;; showing lasts while the input stays as the completion left it
-      (unless (eq? candidate previewed)
-        (end-preview!)
-        (when (and (candidate? candidate) (candidate-preview candidate))
-          (set! previewed candidate)
-          (set! preview-undo (guard (ex [else #f]) ((candidate-preview candidate)))))))
-    (define (candidate-for text)
-      ;; the candidate whose insertion is text, among the current matches
-      (find (lambda (v) (and (candidate? v) (string=? (candidate-value v) text))) completion-matches))
-    (define (sync-searcher! s pos)
-      ;; the live search the completer wants at the cursor: started when the
-      ;; cursor enters a searching argument, fed the needle as it changes,
-      ;; ended as the cursor leaves
-      (let ([wanted (and (completer? complete) (completer-track complete)
-                         (guard (ex [else #f]) ((completer-track complete) s pos)))])
-        (cond
-          [(not wanted) (end-search! #f)]
-          [(and searcher (eq? (car wanted) searcher-maker))
-           (set! searcher-needle (cdr wanted))
-           (set! search-hit ((searcher-find searcher) searcher-needle))]
-          [else
-           (end-search! #f)
-           (set! searcher-maker (car wanted))
-           (set! searcher ((car wanted)))
-           (set! searcher-needle (cdr wanted))
-           (set! search-hit ((searcher-find searcher) searcher-needle))])))
-    (define (kind-text)
-      ;; what the completions are: the completer's own kind, else the
-      ;; completion-kind parameter, else the prompt's label stem
-      (let ([own (and (completer? completion-source) (completer-kind completion-source))])
-        (cond [(procedure? own) (or (guard (ex [else #f]) (own input position)) (label-stem label))]
-              [(string? own) own]
-              [kind kind]
-              [else (label-stem label)])))
-    (define (status-text b)
-      ;; the list's status line after its name, which the painter puts first:
-      ;; how many matches, of what, and the page when they take several --
-      ;; never key hints
-      (cond
-        [candidates
-         (let* ([count (length candidates)]
-                [head (format "~a match~a of ~a" count (if (= count 1) "" "es") (kind-text))])
-           (if (> pages 1) (format "~a; page ~a of ~a" head (+ page 1) pages) head))]
-        [(> pages 1) (format "page ~a of ~a" (+ page 1) pages)]
-        [else ""]))
-    (define (mouse! event)
-      (cond
-        [(and (or body candidates) (member event '("WHEEL-UP" "WHEEL-DOWN" "S-WHEEL-UP" "S-WHEEL-DOWN")))
-         (set! page (min (- pages 1) (max 0 (+ page (if (member event '("WHEEL-UP" "S-WHEEL-UP")) -1 1))))) #t]
-        [(and (string=? event "MOUSE-CLICK")
-              (or (not in-window?) (eq? (head:current-window) owner)))
-         (let ([at (head:app-event-buffer-position)])
-           (when (and at (<= 0 (car at)) (< (car at) (vector-length shown-rows)))
-             (let* ([row (vector-ref shown-rows (car at))] [source (row-input row)]
-                    [choice (choice-at (row-choices row) (cdr at))])
-               (cond [source
-                      (set! clicked
-                        (cons input (min (string-length input)
-                                      (max 0 (- (min (cdr source) (+ (car source) (cdr at)))
-                                                (string-length label))))))]
-                     [choice
-                      (let ([value (if (procedure? (caddr choice)) ((caddr choice)) (caddr choice))])
-                        (if value
-                            (set! clicked (if completion-source (replace-completion input value)
-                                            (cons value (string-length value))))
-                            (set! page 0)))]))))
-         (if in-window? #t 'keep-focus)]
-        [else #f]))
-    (define (take-view!)
-      ;; A window prompt shows its list in its own window; every other
-      ;; completion list opens the pop-up window above the echo area.
-      (unless view
-        (set! target (if in-window? owner (head:popup)))
-        (set! previous (head:window-buffer target))
-        (head:call-with-display-update
-          (lambda ()
-            (set! view
-              (head:register-app!
-                (head:new-local-buffer! (if in-window? (label-stem label) "completions"))
-                render! mouse!))
-            (mode:choose! (if in-window? "prompt" "completions") view)
-            (head:set-app-presentation! view 0 #f #f (if in-window? 'text 'default))
-            (head:set-app-status-position! view status-text)
-            (head:set-app-manages-viewport! view #t)
-            (when body (head:set-app-selectable! view #f))
-            (head:set-window-buffer! target view)
-            (set! borrowed (list target))
-            (unless in-window? (head:show-popup! (popup-height (or candidates '()))))))))
-    (define (dismiss-completions!)
-      (set! completion-source #f) (set! completion-range #f) (set! prepared #f)
-      (set! completion-options '()) (set! completion-matches '()) (set! option-index 0)
-      (set! candidates #f) (set! pages 1) (set! page 0)
-      (unless in-window? (release-view!)))
-    (define (replace-completion s value)
-      (cons (string-append (substring s 0 (car completion-range)) value
-                           (string:tail s (cdr completion-range)))
-            (+ (car completion-range) (string-length value))))
-    (define (prepared? completer s pos)
-      (and prepared (eq? completer (car prepared))
-           (string=? s (cadr prepared)) (= pos (caddr prepared))))
-    (define (set-candidates! values)
-      (unless (equal? values candidates)
-        (set! candidates values) (set! candidate-width 0) (set! page 0)
-        (when (and view (head:popup? target) (pair? values))
-          (head:show-popup! (popup-height values)))))
-    (define (invalidate-input! new-s new-pos)
-      (unless (and (string=? new-s input) (= new-pos position))
-        (unless (prepared? completion-source new-s new-pos) (set! prepared #f))
-        (if completion-source
-            (let-values ([(start end expansion values) ((completer-lookup completion-source) new-s new-pos)])
-              (if (and start (= start (car completion-range)))
-                  (begin (set! completion-range (cons start end))
-                         ;; A normalized or cycled spelling keeps its options,
-                         ;; but the matches underline the symbol as it now reads.
-                         (set! completion-matches values)
-                         (when candidates (set-candidates! values)))
-                  (dismiss-completions!)))
-            (unless (string=? new-s input) (dismiss-completions!)))))
-    (define (continue-or-end! completer s pos)
-      ;; after a sole completion: the session goes on when the completer
-      ;; still offers more than the token now at pos, one within what the
-      ;; completion wrote -- a directory's entries, inside the literal the
-      ;; completion opened, say -- and the list shows it; else the session ends
-      (let-values ([(start end options values) ((completer-lookup completer) s pos)])
-        (if (and start completion-range (<= (car completion-range) start pos) (pair? values)
-                 (not (and (null? (cdr values))
-                           (string=? (if (candidate? (car values)) (candidate-value (car values)) (car values))
-                                     (substring s start end)))))
-            (begin
-              (set! completion-range (cons start end))
-              (set! completion-matches values)
-              (set-candidates! values)
-              (take-view!))
-            (dismiss-completions!))))
-    (define (show-completions! values)
-      (if (equal? values candidates)
-          (set! page (mod (+ page 1) (max 1 pages)))
-          (set-candidates! values))
-      (take-view!))
-    (define (page-rows width available)
-      (cond [body
-             (let-values ([(lines count) ((content-view-render body) input target available page)])
-               (set! pages (max 1 count)) (set! page (mod page pages)) lines)]
-            [(not candidates) '()]
-            [else
-             (unless (= width candidate-width)
-               (set! candidate-rows
-                 (format-columns candidates width (if completion-source (lambda (s) s) labeler) highlight?))
-               (set! candidate-width width))
-             (let* ([all (vector-length candidate-rows)] [size (max 1 available)])
-               (set! pages (max 1 (div (+ all size -1) size)))
-               (set! page (min page (- pages 1)))
-               (let ([from (* page size)])
-                 (if (= available 0) '()
-                     (map (lambda (i) (vector-ref candidate-rows i))
-                          (map (lambda (i) (+ from i)) (iota (min size (- all from))))))))]))
-    (define (note-text)
-      (cond [(not (notice? note)) note]
-            [(time<? (current-time 'time-monotonic) (notice-deadline note))
-             (head:request-frame-at! (notice-deadline note)) (notice-text note)]
-            [else (set! note "") ""]))
-    (define (render-echo!)
-      (let ([shown-note (note-text)])
-        (set! message (string-append label input))
-        (set! echo-input-end (+ (string-length label) (string-length input)))
-        (set! message-ghost (if (string=? shown-note "") (or (ghost input) "") shown-note))
-        (set! echo-indent (string-length label))
-        (set! echo-cursor (+ (string-length label) position))))
-    (define (render!)
-      (when (and view target (memq target (head:windows))
-                 (eq? (head:window-buffer target) view))
-        (set! borrowed (view-windows))
-        (let* ([width (max 1 (head:window-content-width target))]
-               [height (max 1 (head:window-size target))]
-               [note (note-text)]
-               [text (string-append label input note)]
-               [tail (if (string=? note "") (or (ghost input) "") "")]
-               [content (string-append text tail)]
-               [end (+ (string-length label) (string-length input))]
-               [cursor (+ (string-length label) position)]
-               [styles (make-vector (string-length content) 'chrome)]
-               [inner
-                (let ([saved echo-input-end])
-                  (dynamic-wind
-                    (lambda () (set! echo-input-end end))
-                    (lambda () (and styler (guard (ex [else #f]) (styler text))))
-                    (lambda () (set! echo-input-end saved))))])
-          (style:fill-range! styles end (string-length content) 'ghost)
-          (do ([i (string-length label) (+ i 1)]) ((= i end))
-            (vector-set! styles i
-              (if (and inner (< i (vector-length inner))) (vector-ref inner i) 'plain)))
-          (let* ([all (if in-window? (input-rows content styles width) '())]
-                 [cursor-row
-                  (let loop ([rows all] [i 0])
-                    (if (or (null? rows) (null? (cdr rows))
-                            (< cursor (car (row-input (cadr rows))))) i
-                        (loop (cdr rows) (+ i 1))))]
-                 [count (min (length all) (max 1 (- height (cond [body (content-view-minimum-height body)]
-                                                             [candidates 1] [else 0]))))]
-                 [from (min cursor-row (max 0 (- (length all) count)))]
-                 [input-part (list-head (list-tail all from) count)]
-                 [choices (page-rows width (- height count))]
-                 [pad (if in-window? (max 0 (- height count (length choices))) 0)]
-                 [rows (if body (append choices (make-list pad (make-row "" '#() #f '())) input-part)
-                           (append (make-list pad (make-row "" '#() #f '())) choices input-part))]
-                 [point (if in-window?
-                            (cons (+ pad (length choices) (- cursor-row from))
-                              (- cursor (car (row-input (list-ref all cursor-row))))) '(0 . 0))])
-            (set! shown-rows (list->vector rows))
-            (head:view-replace! view (map row-text rows) '()
-              (list (cons target point) (cons (cons 'top target) '(0 . 0))))
-            (let ([lines (head:buffer-lines view)])
-              (do ([i 0 (+ i 1)]) ((= i (vector-length shown-rows)))
-                (let ([row (vector-ref shown-rows i)])
-                  (hashtable-set! line-presentation (vector-ref lines i)
-                    (cons (row-styles row)
-                          (map (lambda (choice) (list (car choice) (cadr choice)
-                                                  (if (pair? (cdddr choice)) (cadddr choice) 'hover)))
-                            (row-choices row)))))))))))
+  (edoc "Choose a completion from the displayed generation, refusing after another draft edit or provider result."
+        (id model "prompt controller") (generation integer "displayed completion generation")
+        (value string "insertion text") (returns boolean))
+  (define (choose! id generation value)
+    (let ([r (editing-runtime id)])
+      (and r (runtime-completion r)
+        (begin
+          (refresh-completion! id r)
+          (let-values ([(entry source d text position) (draft-context id)])
+            (and (completion-state:choose! (runtime-completion r) generation value)
+              (begin (apply-completion! id r entry source d) #t)))))))
 
-    (define (record-history! s)
-      (when (and history (> (string-length s) 0))
-        (let ([h (unbox history)])
-          (unless (and (pair? h) (string=? (car h) s))
-            (set-box! history (cons s h))))))
-    (define (clear-validation!)
-      (when (and validation-message (eq? (echo:text-owner) validation-message))
-        (set! message ""))
-      (set! validation-message #f))
-    (define (run-prompt)
-      (let loop ([s input] [pos position] [next-note ""])
-        (when (and (not in-window?) view
-                   (or (not (memq target (head:windows)))
-                       (not (eq? (head:window-buffer target) view))))
-          (dismiss-completions!))
-        (invalidate-input! s pos)
-        (sync-searcher! s pos)
-        ;; a previewed candidate stays shown while the input is as its
-        ;; completion left it; typing on ends the showing
-        (when previewed
-          (cond [(not previewed-input) (set! previewed-input s)]
-                [(not (string=? previewed-input s)) (end-preview!)]))
-        (set! input s) (set! position pos)
-        (set! note (if (and searcher (string=? next-note "")) (search-note) next-note))
-        (when draft (set-box! draft (cons s pos)))
-        (if (window-lost?) #f
-            (let ()
-              (define len (string-length s))
-              (define (edited new-s new-pos . completed)
-                (set! hist-pos -1)
-                (clear-validation!)
-                (let* ([reindent (prompt-reindent)]
-                       [result (if reindent
-                                   (guard (ex [else (cons new-s new-pos)]) (reindent new-s new-pos))
-                                   (cons new-s new-pos))])
-                  (when (pair? completed)
-                    (set! prepared (list (car completed) (car result) (cdr result))))
-                  (loop (car result) (cdr result) "")))
-              (define (history-show entry) (clear-validation!) (loop entry (string-length entry) ""))
-              (define (history-up)
-                (let ([h (if history (unbox history) '())])
-                  (if (< (+ hist-pos 1) (length h))
-                      (begin (when (= hist-pos -1) (set! stash s))
-                             (set! hist-pos (+ hist-pos 1)) (history-show (list-ref h hist-pos)))
-                      (loop s pos note))))
-              (define (history-down)
-                (cond [(= hist-pos -1) (loop s pos note)]
-                      [(= hist-pos 0) (set! hist-pos -1) (history-show stash)]
-                      [else (set! hist-pos (- hist-pos 1)) (history-show (list-ref (unbox history) hist-pos))]))
-              (define (vertical-move delta)
-                ;; Straight up or down on the screen, whatever each row's
-                ;; indent is.
-                (let* ([p (paint:echo-position echo-cursor)]
-                       [k (paint:echo-index-at (+ (car p) delta) (cdr p))])
-                  (loop s (min (max 0 (- k (string-length label))) len) note)))
-              (define (complete-input completer)
-                (set! hist-pos -1)
-                (if (completer? completer)
-                    (let-values ([(start end options values) ((completer-lookup completer) s pos)])
-                      (cond
-                        [(not start)
-                         ;; nothing open at point: the datum before it, a closed
-                         ;; string or form, is final, and Tab settles the input
-                         ;; around it, closing complete forms and stepping to a due
-                         ;; argument, whose candidates then show; else the note
-                         (let ([settled (if (completer-settle completer) ((completer-settle completer) s pos) (cons s pos))])
-                           (if (and (string=? (car settled) s) (= (cdr settled) pos))
-                               (begin (dismiss-completions!) (loop s pos " [No symbol]"))
-                               (begin
-                                 (set! completion-source completer) (set! completion-range (cons pos pos))
-                                 (continue-or-end! completer (car settled) (cdr settled))
-                                 (edited (car settled) (cdr settled)))))]
-                        [else
-                         (set! completion-source completer) (set! completion-range (cons start end))
-                         (cond
-                           [(null? values)
-                            (when candidates (set-candidates! values))
-                            (loop s pos " [No match]")]
-                           [(and (null? (cdr values)) (completer-settle completer))
-                            ;; One match: insert it, close the list, and let the
-                            ;; completer settle what follows the symbol.
-                            (let* ([options (if (procedure? options) (options) options)]
-                                   [value (car values)]
-                                   [text (if (pair? options) (car options)
-                                             (if (candidate? value) (candidate-value value) value))]
-                                   [next (replace-completion s text)]
-                                   [settled ((completer-settle completer) (car next) (cdr next))])
-                              (if (and (string=? (car settled) s) (= (cdr settled) pos))
-                                  (begin (dismiss-completions!) (loop s pos ""))
-                                  (begin
-                                    (preview! value)
-                                    (continue-or-end! completer (car settled) (cdr settled))
-                                    (edited (car settled) (cdr settled)))))]
-                           [(prepared? completer s pos)
-                            (if (null? (cdr completion-options))
-                                (begin (show-completions! completion-matches) (loop s pos ""))
-                                (begin
-                                  (set! option-index (mod (+ option-index 1) (length completion-options)))
-                                  (set-candidates! completion-matches) (take-view!)
-                                  (let* ([text (list-ref completion-options option-index)] [next (replace-completion s text)])
-                                    (preview! (candidate-for text))
-                                    (edited (car next) (cdr next) completer))))]
-                           [else
-                            (set! completion-options (if (procedure? options) (options) options)) (set! option-index 0)
-                            (set! completion-matches values)
-                            (when candidates (set-candidates! values))
-                            (let ([next (replace-completion s (car completion-options))])
-                              (preview! (candidate-for (car completion-options)))
-                              (if (string=? (car next) s)
-                                  (begin
-                                    (set! prepared (list completer s (cdr next)))
-                                    (loop s (cdr next) (if candidates ""
-                                                           (format " [~a matches; Tab to list]" (length values)))))
-                                  (edited (car next) (cdr next) completer)))])]))
-                    (begin
-                      (when completion-source (dismiss-completions!))
-                      (let ([values (completer s)])
-                        (cond [(null? values) (dismiss-completions!) (loop s pos " [No match]")]
-                          [(null? (cdr values))
-                           (dismiss-completions!)
-                           (if (string=? (car values) s) (loop s len " [Sole completion]")
-                             (edited (car values) (string-length (car values))))]
-                          [else
-                           (let ([prefix (string:common-prefix values)])
-                             (if (> (string-length prefix) len) (edited prefix (string-length prefix))
-                               (begin (show-completions! values) (loop s pos ""))))])))))
-              (if in-window? (render!) (render-echo!))
-              (paint:redraw!)
-              (let* ([event (head:read-key-event #t)]
-                     [action (and (not (eof-object? event)) (prompt-action event))]
-                     [previous-edge last-edge])
-                (set! last-edge #f)
-                (cond
-                  [(or (eof-object? event) (window-lost?)) #f]
-                  [(and (dispatch:pending?) (prompt-window-command event)) => (lambda (run) (loop s pos (run)))]
-                  [clicked
-                   (let ([change clicked])
-                     (set! clicked #f)
-                     (when completion-source (dismiss-completions!))
-                     (if (string=? (car change) s) (loop s (cdr change) "")
-                         (edited (car change) (cdr change))))]
-                  [(or (and (or body candidates) (member event '("PAGEUP" "PAGEDOWN")))
-                       (and body (string=? event "S-TAB")))
-                   (set! page (mod (+ page (if (member event '("PAGEUP" "S-TAB")) -1 1)) pages))
-                   (loop s pos "")]
-                  [(and body (content-action! body event)) (set! page 0) (loop s pos "")]
-                  [(and body (content-view-handle body) ((content-view-handle body) event))
-                   (set! page 0) (loop s pos "")]
-                  [(eq? action 'cancel) (end-search! #f) (set! message "Quit") #f]
-                  [(eq? action 'accept)
-                   (let* ([out (if normalize (normalize s) s)]
-                          [problem (and validator (validator out))])
-                     (if problem
-                         (begin
-                           (clear-validation!)
-                           (when (and in-window? (not (notice? problem)))
-                             (set! validation-message (list 'validation))
-                             (echo:set-text! problem validation-message))
-                           (loop out (if (string=? out s) pos (string-length out))
-                             (if (notice? problem) problem (string-append " [" problem "]"))))
-                         (begin (end-search! #t) (record-history! out) (set! message "") out)))]
-                  [(memq action '(beginning end))
-                   (set! last-edge action)
-                   (let ([move (prompt-edge-motion)])
-                     (loop s (if move (move action s pos (eq? previous-edge action))
-                                 (if (eq? action 'beginning) 0 len)) ""))]
-                  [(eq? action 'backward) (loop s (max 0 (- pos 1)) "")]
-                  [(eq? action 'forward) (loop s (min len (+ pos 1)) "")]
-                  [(eq? action 'up)
-                   (if (or in-window? (= (car (paint:echo-position echo-cursor)) 0))
-                       (history-up) (vertical-move -1))]
-                  [(eq? action 'down)
-                   (if (or in-window? (= (car (paint:echo-position echo-cursor)) (- (length echo-spans) 1)))
-                       (history-down) (vertical-move 1))]
-                  [(eq? action 'delete-forward)
-                   (if (< pos len) (edited (string:delete s pos (+ pos 1)) pos) (loop s pos ""))]
-                  [(eq? action 'delete-backward)
-                   (if (= pos 0) (loop s pos "") (edited (string:delete s (- pos 1) pos) (- pos 1)))]
-                  [(eq? action 'kill) (head:set-copy-text! (string:tail s pos)) (edited (substring s 0 pos) pos)]
-                  [(eq? action 'yank)
-                   (let ([text (head:copy-text)])
-                     (edited (string:insert s pos text) (+ pos (string-length text))))]
-                  ;; a live search visits its matches instead of completing
-                  [(eq? action 'complete)
-                   (cond [searcher (set! search-hit ((searcher-next searcher))) (loop s pos "")]
-                         [complete (complete-input complete)]
-                         [else (loop s pos "")])]
-                  [(eq? action 'alternate-complete)
-                   (cond [searcher (set! search-hit ((searcher-previous searcher))) (loop s pos "")]
-                         [alt-complete (complete-input alt-complete)]
-                         [else (loop s pos "")])]
-                  [(eq? action 'inspect)
-                   (let ([inspect (prompt-inspector)])
-                     (when inspect (guard (ex [else (void)]) (inspect s pos))))
-                   (loop s pos "")]
-                  [(eq? action 'newline)
-                   (let ([insert (prompt-multiline)])
-                     (if insert
-                         (let ([result (insert s pos "\n")]) (edited (car result) (cdr result)))
-                         (loop s pos "")))]
-                  [(eq? action 'paste)
-                   (let* ([lines (tty:paste-lines (head:read-paste))] [insert (prompt-multiline)])
-                     (if insert
-                         (let ([result (insert s pos (string:join lines "\n"))])
-                           (edited (car result) (cdr result)))
-                         (let ([text (string:join lines " ")])
-                           (edited (string:insert s pos text) (+ pos (string-length text))))))]
-                  [(and (pair? action) (eq? (car action) 'type))
-                   (edited (string:insert s pos (cdr action)) (+ pos (string-length (cdr action))))]
-                  [(prompt-window-command event) => (lambda (run) (loop s pos (run)))]
-                  [(tty:key-event-character event) => (lambda (c) (edited (string:insert s pos (string c)) (+ pos 1)))]
-                  [else (loop s pos "")]))))))
-    ;; no input yet, no reading: see query-key!
-    (if (not (head:input-live?)) #f
-      (interaction
-        (lambda ()
-          ;; These options belong to this invocation. Nested questions must
-          ;; not validate a filename, overwrite its draft or borrow its table.
-          (parameterize ([active-refresh (lambda ()
-                                           (when (and (not in-window?) (notice? note)) (render-echo!)))]
-                         [window-owner (if in-window? owner (window-owner))]
-                         [validate-input #f] [draft-input #f] [content #f])
-            (dynamic-wind
-              (lambda () (when in-window? (take-view!)))
-              run-prompt
-              (lambda ()
-                (end-preview!)
-                (end-search! #f)
-                (release-view!)
-                (clear-validation!)
-                (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)
-                (set! echo-scroll 0) (set! message-ghost ""))))))))
+  (edoc "Browse this request's captured history at an input edge; within multiline input, move the editor caret vertically. Returning past the newest item restores the unfinished draft."
+        (id model "prompt controller") (direction (one-of previous next) "history direction"))
+  (define (history! id direction)
+    (unless (memq direction '(previous next)) (error 'history! "invalid direction"))
+    (let ([r (editing-runtime id)])
+      (when r
+        (refresh-completion! id r)
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([row (car (input-position text caret))] [single? (eq? (view:kind d) 'entry)]
+                 [history (option (runtime-profile r) 'history '())] [index (runtime-history-index r)]
+                 [next (+ index (if (eq? direction 'previous) 1 -1))])
+            (if (and (not single?) (= index -1)
+                  (if (eq? direction 'previous) (> row 0) (< row (- (vector-length (text-control:lines source)) 1))))
+              (editor:move! entry (if (eq? direction 'previous) 'up 'down))
+              (when (and (<= -1 next) (< next (length history)) (not (and (= index -1) (eq? direction 'next))))
+                (when (= index -1) (runtime-stash-set! r text))
+                (let ([text (if (= next -1) (runtime-stash r) (list-ref history next))])
+                  (apply-text! id r entry source d text (string-length text))
+                  (runtime-history-index-set! r next)))))))))
 
-  (edoc "Ask a yes-or-no question with a single key."
-        (label string "the question")
-        (returns boolean)
-        (effects internal)
-        (prompts))
-  (define (confirm? label)
-    (let ([answer (query-key! (string-append label " y)es or n)o") "yn")])
-      (and answer (memv (char->integer answer) '(121 89)))))
-)
+  (edoc "Move to a prompt's line edge. A registered profile may define repeated-edge behavior, such as Scheme input's indentation and whole-expression endpoints."
+        (id model "prompt controller") (direction (one-of beginning end) "edge"))
+  (define (edge! id direction)
+    (unless (memq direction '(beginning end)) (error 'edge! "invalid edge"))
+    (let ([r (editing-runtime id)])
+      (when r
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([move (option (runtime-profile r) 'edge #f)] [turn (car (keymap:command-state))]
+                 [last (runtime-edge r)])
+            (if move
+              (apply-text! id r entry source d text (move direction text caret (and last (eq? direction (cdr last)) (= turn (+ 1 (car last))))))
+              ((if (eq? (view:kind d) 'entry) entry:move! editor:move!) entry (if (eq? direction 'beginning) 'home 'end)))
+            (runtime-edge-set! r (cons turn direction)))))))
+
+  (edoc "Inspect the name at this prompt's current caret through its explicit interaction profile."
+        (id model "prompt controller"))
+  (define (inspect! id)
+    (let* ([r (editing-runtime id)] [inspect (and r (option (runtime-profile r) 'inspect #f))])
+      (when inspect
+        (let-values ([(entry source d text caret) (draft-context id)]) (inspect text caret)))))
+
+  (edoc "Insert a newline through this prompt's multiline editor and its normal editing policy. Single-line prompts leave their input unchanged."
+        (id model "prompt controller"))
+  (define (newline! id)
+    (when (editing-runtime id)
+      (let ([entry (widget:descendant id 'input 'entry)])
+        (when (eq? (view:kind (interaction:snapshot entry)) 'editor) (editor:insert! entry "\n")))))
+
+  ;; The head owns its API corpus and prepared labels. Only authored input and
+  ;; the portable provider recipe belong in the base; painting never ships rows.
+  (define-record-type projection (fields id controller snapshot message kind (mutable width) (mutable rows)))
+  (define (completion-data id source inputs)
+    (let* ([controller (get (get source 'value) 'controller)] [r (hashtable-ref live controller #f)])
+      (make-projection id controller (and r (runtime-completion r) (completion-state:snapshot (runtime-completion r)))
+        (if r (runtime-message r) '(ghost . "")) (if r (runtime-kind r) "symbol") #f '#())))
+  (define (rows! data width)
+    (unless (equal? width (projection-width data))
+      (projection-width-set! data width)
+      (projection-rows-set! data (completion-layout:format-columns
+                                   (or (and (projection-snapshot data) (list-ref (projection-snapshot data) 3)) '())
+                                   (max 1 width) values (lambda (s) #f))))
+    (projection-rows data))
+  (define (choice-page data d width height range)
+    (let* ([rows (rows! data width)] [count (vector-length rows)]
+           [pages (max 1 (div (+ count (max 1 height) -1) (max 1 height)))]
+           [snapshot (projection-snapshot data)] [page (mod (if snapshot (list-ref snapshot 5) 0) pages)]
+           [start (min count (+ (* page (max 1 height)) (car range)))]
+           [rows (map (lambda (n) (vector-ref rows (+ start n))) (iota (min (cdr range) (- count start))))])
+      (list (projection-controller data) (and snapshot (car snapshot)) rows (projection-id data))))
+  (define (choice-render data d width height range) (map completion-layout:row-text (caddr data)))
+  (define (choice-decorate data d width height range)
+    (append (apply append
+              (map (lambda (row index)
+                     (let ([text (completion-layout:row-text row)] [styles (completion-layout:row-styles row)])
+                       (if (not styles) '()
+                         (let loop ([clusters (glyph:clusters text)] [character 0] [column 0] [out '()])
+                           (if (null? clusters) (reverse out)
+                             (loop (cdr clusters) (+ character (caar clusters)) (+ column (cdar clusters))
+                               (cons (list (list column (+ index (car range)) (cdar clusters) 1) (vector-ref styles character)) out)))))))
+                (caddr data) (iota (length (caddr data)))))
+      (let ([hover (hashtable-ref hovered (cadddr data) #f)])
+        (if (and hover (equal? (car hover) (cadr data))) (list (list (cdr hover) 'hover)) '()))))
+  (define (choice-at frame x y)
+    (let* ([data (widget:frame-data frame)] [rows (caddr data)]
+           [row (- y (- (cadr (widget:frame-clip frame)) (cadr (widget:frame-rect frame))))])
+      (and (<= 0 row) (< row (length rows))
+        (let* ([r (list-ref rows row)] [text (completion-layout:row-text r)]
+               [choice (find (lambda (c) (<= (glyph:cells (substring text 0 (car c))) x
+                                           (- (glyph:cells (substring text 0 (cadr c))) 1))) (completion-layout:row-choices r))])
+          (and choice (list choice text))))))
+  (define (choice-bindings frame x y)
+    (let ([hit (choice-at frame x y)] [data (widget:frame-data frame)])
+      (if hit (list (list '(click primary ()) (keymap:call choose! (car data) (cadr data) (caddr (car hit))))) '())))
+  (define (choice-event! id source d event)
+    (and (eq? (car event) 'pointer)
+      (let* ([frame (widget:event-frame)] [x (list-ref event 4)] [y (list-ref event 5)]
+             [hit (and (not (eq? (cadr event) 'leave)) (choice-at frame x y))]
+             [hover (and hit (let* ([choice (car hit)] [text (cadr hit)]
+                                    [a (glyph:cells (substring text 0 (car choice)))]
+                                    [b (glyph:cells (substring text 0 (cadr choice)))])
+                               (list (cadr (widget:frame-data frame)) a y (- b a) 1)))])
+        (unless (equal? hover (hashtable-ref hovered id #f))
+          (if hover (hashtable-set! hovered id hover) (hashtable-delete! hovered id)) (widget:repaint! id))
+        (and hit (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
+          (begin (keymap:run! (cadar (choice-bindings frame x y))) #t)))))
+  (define (help-text data d)
+    (let ([note (and (projection-snapshot data) (list-ref (projection-snapshot data) 4))]
+          [message (projection-message data)])
+      (cond [(eq? (car message) 'validation) (cdr message)]
+        [(and note (not (string=? note ""))) note]
+        [(and (projection-snapshot data) (list-ref (projection-snapshot data) 3))
+         => (lambda (candidates) (format "~a matches of ~a" (length candidates) (projection-kind data)))]
+        [(not (string=? (cdr message) "")) (cdr message)]
+        [else (get (view:options d) 'text)])))
+
+  (edoc "Register an outer host for linear prompt callers. Preparing captures (values parent-request origin attach); attach receives a request and root view and returns its cleanup thunk. The host owns placement and focus, never the prompt's input loop."
+        (prepare procedure "capture origin and an attachment capability"))
+  (define (register-host! prepare)
+    (unless (procedure? prepare) (error 'register-host! "expected a host preparation procedure"))
+    (kernel:registry-add! hosts prepare))
+
+  (define (accepted! id outcome)
+    (let ([entry (hashtable-ref tickets id #f)])
+      (when entry (suspension:resolve! (cdr entry) (string:join (vector->list (cadr outcome)) "\n")))))
+  (define (cancelled! id origin) (abandon! id))
+  (define (abandon! id)
+    (let ([entry (hashtable-ref tickets id #f)])
+      (when entry (suspension:cancel! (cdr entry)))))
+
+  (edoc "Read authored text through the installed host on the ordinary pump. This linear adapter parks its command, returning text or false after cancellation. Embedded applications bind named targets directly instead."
+        (label string "input label") (initial string "initial authored text")
+        (provider datum "completion recipe or false") (options list "prompt control options except label")
+        (returns (or string #f)) (prompts))
+  (define (read! label initial provider options)
+    (let ([prepare (kernel:registry-find hosts (lambda (entry) #t))])
+      (unless prepare (error 'read! "no prompt host is installed"))
+      (let-values ([(parent origin attach) (prepare)])
+        (suspension:wait!
+          (lambda (ticket)
+            (let ([request #f] [receiver #f] [detach #f])
+              (define (cleanup!)
+                (when receiver (hashtable-delete! tickets receiver))
+                (dynamic-wind void
+                  (lambda () (when detach (let ([close detach]) (set! detach #f) (close))))
+                  (lambda () (when request (prompt-request:close! head:ui-actor request)))))
+              (guard (ex [else (cleanup!) (raise ex)])
+                (set! request (prompt-request:create! head:ui-actor parent #f initial origin provider))
+                (set! receiver (view:create! head:ui-actor request 'prompt-continuation 1 '((modal . #t)) '() request))
+                (hashtable-set! tickets receiver (cons prepare ticket))
+                (let ([control (create! request (cons (cons 'label label) options)
+                                 (list (list 'accepted receiver 'accepted '()) (list 'cancelled receiver 'cancelled '())))])
+                  (let-values ([(status rows)
+                                (view:arrange! head:ui-actor
+                                  (list (list receiver 0 (list (list 'prompt control '(grow 1))) '((modal . #t)))) '())])
+                    (unless (eq? status 'applied) (error 'read! "cannot compose prompt receiver" status))))
+                (let ([close (attach request receiver)])
+                  (unless (procedure? close) (error 'read! "host must return a cleanup thunk"))
+                  (set! detach close))
+                (let* ([control (widget:descendant receiver 'prompt)]
+                       [entry (widget:descendant control 'input 'entry)]
+                       [position (input-position initial (string-length initial))])
+                  (if (eq? (view:kind (interaction:snapshot entry)) 'entry)
+                    (entry:select! entry (cdr position) (cdr position))
+                    (editor:select! entry position position)))
+                cleanup!)))))))
+
+  (edoc "Accept this prompt's exact authored draft revision once. A changed or closed request refuses; its named accepted target runs later on the ordinary pump with (revision lines origin)."
+        (id model "prompt view") (returns symbol))
+  (define (accept! id)
+    (service! id #f)
+    (let ([r (editing-runtime id)])
+      (when r
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([normalize (option (runtime-profile r) 'normalize values)] [value (normalize text)]
+                 [validate (option (runtime-profile r) 'validate #f)])
+            (unless (string? value) (error 'accept! "normalizer must return text"))
+            (unless (string=? value text) (apply-text! id r entry source d value (string-length value)))
+            (let ([problem (and validate (validate value))])
+              (if problem
+                (begin
+                  (unless (string? problem) (error 'accept! "validator must return false or text"))
+                  (runtime-message-set! r (cons 'validation (string-append "[" problem "]"))) (repaint-completion! id) 'invalid)
+                (accept-draft! id))))))))
+  (define (accept-draft! id)
+    (let-values ([(source d value) (context id)])
+      (let ([draft (text-source:lookup (cadr (get value 'draft)))])
+        (unless draft (error 'accept! "draft is unavailable"))
+        (let ([status (if (and (option (view:options d) 'choices #f)
+                            (not (valid-choice? (option (view:options d) 'choices #f) (string:join (vector->list (text-source:lines draft)) "\n")))) 'invalid
+                        (prompt-request:accept! head:ui-actor (get source 'id) (get source 'revision) (text-source:revision draft)))])
+          ;; Resolve the terminal outcome before the next input can acquire a
+          ;; route. An asynchronous invalidation alone can leave a fast chord
+          ;; addressed to the just-accepted prompt.
+          (model:snapshots (list (get source 'id)))
+          (service! id #f) (head:wake-main!) status))))
+
+  (edoc "Cancel this prompt and its nested requests. The named cancelled target runs later with the captured origin; repeated cancellation has no effect."
+        (id model "prompt view") (returns boolean))
+  (define (cancel! id)
+    (let-values ([(source d value) (context id)])
+      (let ([changed? (prompt-request:cancel! head:ui-actor (get source 'id))])
+        (model:snapshots (list (get source 'id)))
+        (service! id #f) (head:wake-main!) changed?)))
+
+  (define (valid-choice? choices text)
+    (and (string? text) (= (string-length text) 1)
+      (exists (lambda (c) (char-ci=? c (string-ref text 0))) (string->list choices))))
+  (define (capture-event! id source d event)
+    (let ([choices (option (view:options d) 'choices #f)])
+      (and choices (memq (car event) '(key text))
+        (let ([text (if (eq? (car event) 'text) (cadr event) (and (= (length event) 3) (caddr event)))])
+          (when (valid-choice? choices text)
+            (entry:set-text! (widget:descendant id 'input 'entry) text) (accept! id)) #t))))
+
+  (edoc "Ask for one of the stated character choices on the ordinary pump. Escape or C-g cancels with false; arrows and unrelated text do not answer the question."
+        (question string "question and choice labels") (allowed string "case-insensitive characters")
+        (returns (or char #f)) (prompts))
+  (define (key! question allowed)
+    (unless (and (string? allowed) (> (string-length allowed) 0)) (error 'key! "expected allowed characters"))
+    (and (head:input-live?)
+      (let ([answer (read! question "" #f (list (cons 'choices allowed)))])
+        (and answer (> (string-length answer) 0) (string-ref answer 0)))))
+
+  (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings.")
+  (define (init!)
+    (widget:register! 'prompt-continuation 1
+      (append (layout:container 'y)
+        (list (cons 'contexts (lambda (id d) (option (view:options d) 'contexts '())))
+          (cons 'release abandon!) (cons 'actions (list (cons 'accepted accepted!) (cons 'cancelled cancelled!))))))
+    (widget:register! 'prompt-choices 1
+      (list (cons 'prepare completion-data) (cons 'viewport choice-page) (cons 'render choice-render)
+        (cons 'decorate choice-decorate) (cons 'event choice-event!) (cons 'pointer-bindings choice-bindings)
+        (cons 'release (lambda (id) (hashtable-delete! hovered id)))
+        (cons 'measure (lambda (data d axis cross child)
+                         (if (eq? axis 'y) (list 0 (min 8 (vector-length (rows! data cross)))) '(0 1))))))
+    (widget:register! 'prompt-help 1
+      (list (cons 'prepare completion-data)
+        (cons 'measure (lambda (data d axis cross child)
+                         (if (eq? axis 'y) (if (string=? (help-text data d) "") '(0 0) '(1 1)) '(0 1))))
+        (cons 'render (lambda (data d width height range) (if (zero? (car range)) (list (glyph:fit (help-text data d) width)) '())))
+        (cons 'decorate (lambda (data d width height range) (list (list (list 0 0 width height) 'ghost))))))
+    (widget:register! 'prompt 1
+      (append (layout:container 'y)
+        (list (cons 'capture-contexts '(widget-prompt)) (cons 'capture-event capture-event!) (cons 'service service!) (cons 'release release!)
+          (cons 'actions (list (cons 'accept accept!) (cons 'cancel cancel!))))))
+    (keymap:bind-default! 'widget-prompt "RET" (keymap:call accept! widget:target))
+    (keymap:bind-default! 'widget-prompt "TAB" (keymap:call complete! widget:target #f))
+    (keymap:bind-default! 'widget-prompt "S-TAB" (keymap:call complete! widget:target #t))
+    (keymap:bind-default! 'widget-prompt "C-g" (keymap:call cancel! widget:target))
+    (keymap:bind-default! 'widget-prompt "ESC" (keymap:call cancel! widget:target))
+    (keymap:bind-default! 'widget-prompt "UP" (keymap:call history! widget:target 'previous))
+    (keymap:bind-default! 'widget-prompt "DOWN" (keymap:call history! widget:target 'next))
+    (keymap:bind-default! 'widget-prompt "C-a" (keymap:call edge! widget:target 'beginning))
+    (keymap:bind-default! 'widget-prompt "HOME" (keymap:call edge! widget:target 'beginning))
+    (keymap:bind-default! 'widget-prompt "C-e" (keymap:call edge! widget:target 'end))
+    (keymap:bind-default! 'widget-prompt "END" (keymap:call edge! widget:target 'end))
+    (keymap:bind-default! 'widget-prompt "M-." (keymap:call inspect! widget:target))
+    (keymap:bind-default! 'widget-prompt "M-RET" (keymap:call newline! widget:target))))

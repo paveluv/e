@@ -2,7 +2,7 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export arrange! bind! claim! flush! focus! publish! release! set-state! snapshot start!)
+  (export arrange! bind! claim! flush! focus! publish! reconcile! release! set-state! snapshot start!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:)
           (prefix (core identity) identity:)
@@ -12,6 +12,10 @@
           (prefix (state view) view:))
 
   (define owned (make-hashtable equal-hash equal?))
+  ;; Model notifications can arrive on a publication/client worker. Reading a
+  ;; local sequence and replacing its descriptor must be one operation; an
+  ;; acknowledgement must not overwrite a newer UI selection between them.
+  (define owned-lock (make-mutex))
   (define dirty? #f)
   (define queued '())
   (define owner #f)
@@ -48,11 +52,41 @@
           (values (car reply) (snapshot id))))))
 
   (define (adopt! rows)
-    (for-each (lambda (row)
-                (if (equal? owner (view:owner (cdr row)))
+    (with-mutex owned-lock
+      (for-each (lambda (row)
+                  (if (equal? owner (view:owner (cdr row)))
                     (hashtable-set! owned (datum:copy (car row)) (datum:copy (cdr row)))
                     (hashtable-delete! owned (car row)))) rows)
-    (set! dirty? #t))
+      (set! dirty? #t)))
+
+  (edoc "Reconcile acquired canonical descriptors with provisional interaction. Preserve newer local state only in the same ownership generation; retirement and release revoke it. This consumes mirrors without remote reads."
+        (rows list "(id . descriptor-or-false) entries"))
+  (define (reconcile! rows)
+    (with-mutex owned-lock
+      (for-each
+        (lambda (row)
+          (let* ([id (car row)] [canonical (cdr row)] [local (hashtable-ref owned id #f)])
+            (when (and local (or (not canonical) (>= (view:generation canonical) (view:generation local))))
+              (let ([next (and canonical (equal? owner (view:owner canonical))
+                            (if (and (= (view:generation local) (view:generation canonical))
+                                  (> (view:sequence local) (view:sequence canonical)))
+                              (descriptor:with canonical
+                                (map (lambda (key) (assq key local)) '(sequence basis state focus))) canonical))])
+                (unless (equal? local next)
+                  (if next (hashtable-set! owned id (datum:copy next)) (hashtable-delete! owned id))
+                  (set! dirty? #t)))))) rows)
+      ;; A retired descendant may have been the provisional focus of a parent
+      ;; whose newer selection has not reached the base yet.
+      (vector-for-each
+        (lambda (id)
+          (let* ([d (hashtable-ref owned id #f)] [focus (view:focus d)])
+            (when (and focus
+                    (not (let loop ([at focus] [seen '()])
+                           (and (not (member at seen))
+                             (let ([target (hashtable-ref owned at #f)])
+                               (and target (if (view:parent target) (loop (view:parent target) (cons at seen)) (equal? at id))))))))
+              (hashtable-set! owned id (descriptor:with d '((focus . #f)))) (set! dirty? #t))))
+        (hashtable-keys owned))))
 
   (edoc "Fence interaction and atomically arrange a tree through its owner."
         (actor actor "head") (changes list "parent changes") (leases list "root guards"))
@@ -75,43 +109,48 @@
   (edoc "Set the owned root's logical focus target locally."
         (id model "root") (target any "descendant or #f"))
   (define (focus! id target)
-    (let ([d (snapshot id)])
-      (unless d (error 'focus! "root is not owned" id))
-      (unless (equal? target (view:focus d))
-        (hashtable-set! owned id (descriptor:with d (list (cons 'focus target) (cons 'sequence (+ 1 (view:sequence d))))))
-        (set! dirty? #t))))
+    (with-mutex owned-lock
+      (let ([d (hashtable-ref owned id #f)])
+        (unless d (error 'focus! "root is not owned" id))
+        (unless (equal? target (view:focus d))
+          (hashtable-set! owned id (descriptor:with d (list (cons 'focus target) (cons 'sequence (+ 1 (view:sequence d))))))
+          (set! dirty? #t)))))
 
   (edoc "Read the owned view's latest provisional descriptor locally. An unclaimed view returns #f."
         (id model "view model id") (returns (or list #f)))
-  (define (snapshot id) (datum:copy (hashtable-ref owned id #f)))
+  (define (snapshot id)
+    (with-mutex owned-lock (datum:copy (hashtable-ref owned id #f))))
 
   (edoc "Change interaction immediately for an owned view, without waiting for publication. Otherwise update saved unmounted state at the base. Activation must carry this actual state and model basis, not reread saved selection."
         (actor actor "attribution is supplied by the connection") (id model "view model id")
         (basis (or integer #f) "model revision") (state datum "interaction state"))
   (define (set-state! actor id basis state)
     (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0))) (error 'set-state! "invalid basis" basis))
-    (let ([old (hashtable-ref owned id #f)])
-      (if old
-          (let ([next (if (equal? (list basis state) (list (view:basis old) (view:state old))) old
-                          (descriptor:with old (list (cons 'sequence (+ 1 (view:sequence old)))
-                                                     (cons 'basis basis) (cons 'state state))))])
-            (unless (eq? old next) (hashtable-set! owned id next) (set! dirty? #t))
-            (values 'applied (datum:copy next)))
-          (view:set-state! actor id basis state))))
+    (let ([result
+           (with-mutex owned-lock
+             (let ([old (hashtable-ref owned id #f)])
+               (and old
+                 (let ([next (if (equal? (list basis state) (list (view:basis old) (view:state old))) old
+                               (descriptor:with old (list (cons 'sequence (+ 1 (view:sequence old)))
+                                                      (cons 'basis basis) (cons 'state state))))])
+                   (unless (eq? old next) (hashtable-set! owned id next) (set! dirty? #t))
+                   (list 'applied (datum:copy next))))))])
+      (if result (apply values result) (view:set-state! actor id basis state))))
 
   (edoc "Queue the latest interaction after presentation or dispatch. One in-flight batch and one replacement serve every owned view; unchanged views send nothing.")
   (define (publish!)
-    (when dirty?
-      (let-values ([(ids descriptors) (hashtable-entries owned)])
-        (set! queued
-          (list-sort (lambda (a b) (< (cadar a) (cadar b)))
-            (filter (lambda (row) (> (caddr row) 0))
-              (map (lambda (id descriptor)
-                     (list id (view:generation descriptor) (view:sequence descriptor)
-                           (view:basis descriptor) (view:state descriptor) (view:focus descriptor)))
-                (vector->list ids) (vector->list descriptors))))))
-      (set! dirty? #f))
-    (when writer (publication:submit! writer queued)))
+    (let ([batch (with-mutex owned-lock
+                   (when dirty?
+                     (let-values ([(ids descriptors) (hashtable-entries owned)])
+                       (set! queued
+                         (list-sort (lambda (a b) (< (cadar a) (cadar b)))
+                           (filter (lambda (row) (> (caddr row) 0))
+                             (map (lambda (id descriptor)
+                                    (list id (view:generation descriptor) (view:sequence descriptor)
+                                      (view:basis descriptor) (view:state descriptor) (view:focus descriptor)))
+                               (vector->list ids) (vector->list descriptors))))))
+                     (set! dirty? #f)) queued)])
+      (when writer (publication:submit! writer batch))))
 
   (edoc "Publish and fence acknowledged view state before detach or release." (effects remote))
   (define (flush!) (publish!) (when writer (publication:flush! writer)))

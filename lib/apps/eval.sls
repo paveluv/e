@@ -21,32 +21,38 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
   (export call-with-evaluation! completion-candidates completion-extensions completion-hint completion-span
-          (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
+          (rename (evaluation:condition condition)) (rename (eval-copy-result copy-result))
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
           (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
-          (rename (evaluation-status status)) (rename (eval-top-level-form! top-level-form!)) type-fits?
-          (rename (evaluation-values values)))
+          (rename (evaluation:status status)) (rename (eval-top-level-form! top-level-form!)) type-fits?
+          (rename (evaluation:values values)))
   (import (chezscheme)
+          (prefix (apps describe) describe:)
+          (prefix (core evaluation) evaluation:)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation fuzzy) fuzzy:)
           (prefix (only (foundation scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (foundation string) string:)
+          (prefix (head completion) completion:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head edit) edit:)
           (prefix (head expression) expression:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
+          (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (only (service reference) signatures) reference:)
-          (prefix (only (sys sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
+          (prefix (state view) view:))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -483,13 +489,16 @@
       (let ([inserts (bare-inserts)])
         (if (eq? in-string? #t) (map string-escaped inserts) inserts))))
 
-  (define (candidate-preview type option)
+  (define (candidate-preview type option window)
     ;; the thunk showing a value candidate in the editor while it is the
     ;; inserted one, from its type's preview clause; #f for the rest
     (let ([p (and (option-value option) (edoc:type-preview type))])
-      (and p (lambda () (p (option-value option))))))
+      (and p window
+        (lambda ()
+          (let ([undo (head:with-window window (p (option-value option)))])
+            (and undo (lambda () (when (memq window (head:windows)) (head:with-window window (undo))))))))))
 
-  (define (typed-candidate type entry)
+  (define (typed-candidate type entry window)
     ;; a prompt candidate from (option . fragments): the label with its
     ;; matched characters underlined, the hint in grey, the insertion apart
     (let* ([option (car entry)] [fragments (cdr entry)]
@@ -502,7 +511,7 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (prompt:make-candidate (option-insert option) text styles (candidate-preview type option))))
+      (completion:make-candidate (option-insert option) text styles (candidate-preview type option window))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -587,45 +596,126 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) matched))
         fragments)
-      (prompt:make-candidate name label styles)))
+      (completion:make-candidate name label styles)))
 
-  (define (symbol-completer keep? typed?)
+  (define (receiver-matches declaration receivers)
+    (if (not (eq? (caadr declaration) 'view)) '()
+      (filter (lambda (r) (and (memq (cadr r) (cdadr declaration)) (widget:receiver-live? r))) receivers)))
+
+  (define (receiver-at sym index)
+    (exists
+      (lambda (sig)
+        (let ([r (edoc:signature-receiver sig)])
+          (and r (let loop ([args (edoc:signature-formals sig)] [i index])
+                   (and (pair? args) (if (zero? i) (and (eq? (car r) (car args)) r)
+                                         (loop (cdr args) (- i 1))))))))
+      (receiver-signatures sym)))
+
+  (define receiver-cache (make-weak-eq-hashtable))
+  (define (receiver-signatures sym)
+    (let ([proc (and (top-level-bound? sym) (top-level-value sym))])
+      (if (not (procedure? proc)) '()
+        (or (hashtable-ref receiver-cache proc #f)
+          (let ([sigs (filter (lambda (s) (edoc:signature-receiver s)) (or (edoc:edoc-of proc) '()))])
+            (hashtable-set! receiver-cache proc sigs) sigs)))))
+
+  (define (empty-receiver text pos receivers)
+    ;; Only whitespace at a fresh argument slot qualifies. An existing token,
+    ;; nested expression, literal or variable keeps ordinary typed completion.
+    (let ([frames (call-frames (substring text 0 pos))])
+      (and (> pos 0) (char-whitespace? (string-ref text (- pos 1))) (pair? frames)
+        (not (frame-quoted? (car frames))) (string? (frame-operator (car frames)))
+        (or (= pos (string-length text)) (memv (string-ref text pos) '(#\) #\] #\})))
+        (let ([r (receiver-at (string->symbol (frame-operator (car frames))) (frame-arguments (car frames)))])
+          (and r (receiver-matches r receivers))))))
+
+  (define (current-receivers)
+    (let* ([root (head:window-widget (head:current-window))] [d (and root (interaction:snapshot root))])
+      (if d (widget:receivers (or (view:focus d) root)) '())))
+
+  (define (validate-receivers! text receivers)
+    (define (walk form)
+      (when (and (pair? form) (list? form) (not (memq (car form) '(quote quasiquote))))
+        (when (symbol? (car form))
+          (for-each
+            (lambda (arg i)
+              (when (receiver-at (car form) i)
+                (let ([r (find (lambda (r) (equal? arg (list 'model (cadar r)))) receivers)])
+                  (when (and r (not (widget:receiver-live? r)))
+                    (raise (condition (kernel:make-refusal) (make-message-condition "The command's captured receiver is no longer available")))))))
+            (cdr form) (iota (length (cdr form)))))
+        (for-each walk form)))
+    (let ([p (open-input-string (string-append text (or (input-closers text) "")))])
+      (let loop ([form (read p)]) (unless (eof-object? form) (walk form) (loop (read p))))))
+
+  (define (symbol-completer keep? typed? . origin)
     ;; The status line describes the last lookup. It must not query a type's
     ;; live directory again while painting (some directories live at the base).
     (define kind (if typed? "symbol" "editor symbol"))
-    (prompt:make-completer
-      (lambda (s pos)
-        (define (symbols)
-          (let ([range (symbol-range s pos)])
-            (if (or (not range) (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
-                (let* ([part (substring s (car range) (cdr range))]
-                       ;; Symbols go in as they are: the matcher keeps each one
-                       ;; prepared across keystrokes.
-                       [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
-                       [names (map fuzzy:name ranked)])
-                  (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
-                    (map completion-candidate ranked))))))
-        ;; an argument with a documented type offers its own candidates; a
-        ;; sole one is what Tab inserts, else Tab extends the token as far as
-        ;; every candidate allows and lists them
-        (let* ([context (and typed? (argument-context s pos))]
-               [options (and context (typed-options context))])
-          (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
-          (if (not options) (symbols)
-              (values (cadr context) (caddr context)
-                (lambda () (typed-inserts s context options))
-                (map (lambda (o) (typed-candidate (car context) o)) options)))))
-      settle-completion
-      ;; what the list holds, for its status line: the argument's type at a
-      ;; typed position, else the symbols offered
-      (lambda (s pos) kind)
-      ;; a live search in place of a list, where the argument's type asks
-      ;; for one: a needle's matches highlight in the buffer as it is typed
-      (lambda (s pos)
-        (let ([context (and typed? (argument-context s pos))])
-          (and context (car (cddddr context))
-               (let ([make (edoc:type-searcher (car context))])
-                 (and make (cons make (cadddr context)))))))))
+    (define window (if (null? origin) (head:current-window) (car origin)))
+    (define receivers (if (and (pair? origin) (pair? (cdr origin))) (cadr origin) (current-receivers)))
+    (define (eligible? sym)
+      (and (keep? sym)
+        (let ([declared (map edoc:signature-receiver (receiver-signatures sym))])
+          (or (null? declared) (exists (lambda (d) (pair? (receiver-matches d receivers))) declared)))))
+    (define makers (make-eq-hashtable))
+    (completion-at-window (completion:make-source
+                            (lambda (s pos)
+                              (define (symbols)
+                                (let ([range (symbol-range s pos)])
+                                  (if (or (not range) (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
+                                    (let* ([part (substring s (car range) (cdr range))]
+                                           ;; Symbols go in as they are: the matcher keeps each one
+                                           ;; prepared across keystrokes.
+                                           [ranked (fuzzy:rank part (filter eligible? (environment-symbols (interaction-environment))))]
+                                           [names (map fuzzy:name ranked)])
+                                      (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
+                                        (map completion-candidate ranked))))))
+                              ;; an argument with a documented type offers its own candidates; a
+                              ;; sole one is what Tab inserts, else Tab extends the token as far as
+                              ;; every candidate allows and lists them
+                              (let* ([targets (and typed? (empty-receiver s pos receivers))]
+                                     [context (and typed? (argument-context s pos))]
+                                     [options (and (not (pair? targets)) context (typed-options context))])
+                                (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
+                                (cond [(pair? targets)
+                                       (set! kind "receiver")
+                                       (let ([literals (map (lambda (r) (format "(model ~a)" (cadar r))) targets)])
+                                         (values pos pos (if (null? (cdr literals)) literals '(""))
+                                           (map (lambda (r text)
+                                                  (completion:make-candidate text (format "~a  ~a" (list-ref r 5) text) #f)) targets literals)))]
+                                  [(not options) (symbols)]
+                                  [else
+                                   (values (cadr context) (caddr context)
+                                     (lambda () (typed-inserts s context options))
+                                     (map (lambda (o) (typed-candidate (car context) o window)) options))])))
+                            settle-completion
+                            ;; what the list holds, for its status line: the argument's type at a
+                            ;; typed position, else the symbols offered
+                            (lambda (s pos) kind)
+                            ;; a live search in place of a list, where the argument's type asks
+                            ;; for one: a needle's matches highlight in the buffer as it is typed
+                            (lambda (s pos)
+                              (let ([context (and typed? (argument-context s pos))])
+                                (and context (car (cddddr context))
+                                  (let ([make (edoc:type-searcher (car context))])
+                                    (and make window
+                                      (cons (or (hashtable-ref makers make #f)
+                                              (let ([scoped (lambda () (head:with-window window (make)))])
+                                                (hashtable-set! makers make scoped) scoped)) (cadddr context)))))))) window))
+
+  (define (completion-at-window source window)
+    (if (not window) source
+      (let ([buffer (head:window-buffer window)])
+        (define (scope proc)
+          (if (not (procedure? proc)) proc
+            (lambda arguments
+              (unless (and (memq window (head:windows)) (eq? buffer (head:window-buffer window)))
+                (error 'completion-at-window "the completion origin is no longer displayed"))
+              (head:with-window window (apply proc arguments)))))
+        (completion:make-source (scope (completion:source-lookup source))
+          (scope (completion:source-settle source)) (scope (completion:source-kind source))
+          (scope (completion:source-track source))))))
 
   (define (type-text type)
     ;; a type as the status line names it: a name as itself, a record type
@@ -1142,13 +1232,6 @@
                     (cons laid built) (+ offset (string-length laid) 1)
                     cursor))))))
 
-  (define (indent-scheme-insertion text pos inserted)
-    ;; Preserve multiline insertion as entered; the prompt's central edit path
-    ;; immediately runs reindent-scheme-input over the complete result.
-    (cons (string-append (substring text 0 pos) inserted
-                         (string:tail text pos))
-          (+ pos (string-length inserted))))
-
   (define (mx-edge-motion action text pos second?)
     ;; First C-a/C-e addresses the logical line; a consecutive second press
     ;; addresses the whole M-x input even when the first did not move point.
@@ -1185,51 +1268,20 @@
                       (lambda () (kernel:evaluate! form (interaction-environment)))
                       list)))))))
 
-  (edoc "An evaluation's outcome, before reporting or copying it."
-        (status symbol "ok, error or interrupted")
-        (values list "the returned values, empty on failure")
-        (condition (or condition #f) "the original condition, or #f on success")
-        (spoken any "private echo observation before execution"))
-  (define-record-type evaluation (fields status values condition spoken))
+  (define observations (make-weak-eq-hashtable))
 
-  (define evaluating? (make-thread-parameter #f))
-
-  (edoc "Run a thunk with C-g interruption, streamed stdout/stderr logging and one undo group. Return its values or original condition in an evaluation result, without reporting it. Nested calls share the outer capture and interruption scope. Runs on the head's main thread."
+  (edoc "Run a thunk with C-g interruption, streamed output logging and one undo group per uninterrupted command segment. Prompt suspension releases capture and closes the segment; resumption starts a fresh one. Return values or the original condition without reporting. Nested calls share capture and grouping. Runs on the head's main thread."
         (label string "the undo label")
         (thunk thunk "the computation, returning ordinary Scheme values")
         (returns (record evaluation)))
   (define (call-with-evaluation! label thunk)
-    (define spoken (echo:text))
-    (define (run)
-      (guard (ex [else (make-evaluation (if (head:interrupted? ex) 'interrupted 'error) '() ex spoken)])
-        (call-with-values
-          (lambda () (edit:call-as-one-edit! label thunk))
-          (lambda vals (make-evaluation 'ok vals #f spoken)))))
-    (if (evaluating?) (run)
-      (let ([lock (make-mutex)]
-            [terminal (sys:duplicate-standard-output-port)])
-        (define (record! channel line)
-          (parameterize ([sys:terminal-output-port terminal])
-            (with-mutex lock
-              (log:add! 'eval:call-with-evaluation! (cons channel line) (not (eq? channel 'compile))))))
-        (define compile-default (compile-library-handler))
-        (define (compile-quietly source object)
-          ;; A library compiled on import, once an extension enabled lazy
-          ;; compilation, is bookkeeping: a compile record naming its source
-          ;; for the log, nothing in the echo area, and Chez's own line
-          ;; withheld. A compilation that fails raises into the result.
-          (record! 'compile source)
-          (parameterize ([compile-file-message #f]) (compile-default source object)))
-        (dynamic-wind
-          void
-          (lambda ()
-            (parameterize ([sys:terminal-output-port terminal] [evaluating? #t]
-                           [compile-library-handler compile-quietly])
-              (sys:call-with-streamed-output
-                (lambda (line) (record! 'stdout line))
-                (lambda (line) (record! 'stderr line))
-                (lambda () (head:call-with-interrupt run)))))
-          (lambda () (close-port terminal))))))
+    (let* ([spoken (echo:text)]
+           [result (evaluation:call!
+                     (lambda () (text-source:call-segmented! head:ui-actor label thunk))
+                     (lambda (channel line)
+                       (log:add! 'eval:call-with-evaluation! (cons channel line) (not (eq? channel 'compile))))
+                     head:call-with-interrupt head:interrupted?)])
+      (hashtable-set! observations result spoken) result))
 
   (edoc "Report an evaluation under eval:report!, copying non-void values when copy-result is enabled and preserving a message a void command spoke. The datum is (destination . result): a symbol labels an extension's result; a string records M-x input and participates in its history."
         (outcome (record evaluation) "the execution result")
@@ -1240,20 +1292,20 @@
     ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
     ;; say, keeps its message: a void result is logged but not shown over
     ;; it. Spoken is the echo text before the evaluation, when known.
-    (let* ([failed? (not (eq? (evaluation-status outcome) 'ok))]
-           [vals (evaluation-values outcome)]
+    (let* ([failed? (not (eq? (evaluation:status outcome) 'ok))]
+           [vals (evaluation:values outcome)]
            [void? (and (not failed?)
                        (or (null? vals)
                          (and (null? (cdr vals))
                               (eq? (car vals) (void)))))]
            [result (if failed?
-                       (if (eq? (evaluation-status outcome) 'interrupted) "interrupted"
-                         (format "error: ~a" (kernel:condition-text (evaluation-condition outcome))))
+                       (if (eq? (evaluation:status outcome) 'interrupted) "interrupted"
+                         (format "error: ~a" (kernel:condition-text (evaluation:condition outcome))))
                        (string:join (map (lambda (v) (format "~s" v)) vals)
                                     ", "))]
            [spoke? (and void?
                         (let ([now (echo:text)])
-                          (and (string? now) (> (string-length now) 0) (not (equal? now (evaluation-spoken outcome))))))])
+                          (and (string? now) (> (string-length now) 0) (not (equal? now (hashtable-ref observations outcome #f))))))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:add! 'eval:report! (cons destination (if void? "#<void>" result)) #f)])
@@ -1304,15 +1356,14 @@
     ;; own top level.  The expression is logged (eval:report!, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let ([s (parameterize ([prompt:ghost input-ghost]
-                            [prompt:multiline indent-scheme-insertion]
-                            [prompt:edge-motion mx-edge-motion]
-                            [prompt:reindent reindent-scheme-input]
-                            [paint:echo-highlight mx-echo-styles])
-               (prompt:read! mx-label (symbol-completer (lambda (sym) #t) #t) initial
-                             (box (log:history 'eval:report! car))
-                             (symbol-completer kernel:editor-symbol? #f) normalize-input))])
+    (let* ([window (head:current-window)] [buffer (head:current-buffer)] [receivers (current-receivers)]
+           [s (prompt:read! "λ" initial '(scheme 1 ())
+                '((multiline? . #t) (profile scheme 1 ()) (editing-policy scheme-input 1) (mode . "scheme-prompt")))])
+      (unless s (echo:set-text! "Quit"))
       (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
+        (unless (and (memq window (head:windows)) (eq? buffer (head:window-buffer window)))
+          (raise (condition (kernel:make-refusal) (make-message-condition "The command's origin is no longer displayed"))))
+        (validate-receivers! s receivers)
         ;; Keep the prompt on screen while its expression evaluates --
         ;; forgiven parentheses included -- with the cursor parked at
         ;; its end, drawn as the evaluation-in-progress underline.
@@ -1333,8 +1384,39 @@
     ;; the prompt pretypes "(", deletable, so a bare symbol evaluates too
     (read-and-run! "("))
 
+  (define (origin-window origin)
+    ;; The default outer host supplies a slot for legacy local buffers too.
+    ;; Resolve it once during provider creation, before focus moves. Previews
+    ;; retain this actual window, never look up a possibly reused slot later.
+    (let ([root (cond [(assq 'view origin) => cdr] [else #f])])
+      (if root (find (lambda (w) (equal? root (head:window-widget w))) (head:windows))
+        (cond [(assq 'window origin) => (lambda (p) (head:window-numbered (cdr p)))] [else #f]))))
+
+  (define (input-offset text p)
+    (+ (cdr p) (fold-left + 0 (map (lambda (line) (+ 1 (string-length line))) (list-head (string:lines text) (car p))))))
+  (define (input-position text offset)
+    (let ([lines (string:lines (substring text 0 offset))]) (cons (- (length lines) 1) (string-length (car (reverse lines))))))
+
   (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e, C-M-x and M-x bindings.")
   (define (init!)
+    (mode:register! "scheme-prompt" '() '()
+      (lambda (text) (let ([scheme (mode:find "scheme")]) (and scheme (editorize! text ((mode:styles scheme) text))))) #f)
+    (edit:register-policy! 'scheme-input 1
+      (lambda (lines positions)
+        (let* ([text (string:join (vector->list lines) "\n")]
+               [results (map (lambda (p) (reindent-scheme-input text (input-offset text p))) positions)]
+               [text (caar results)])
+          (values (list->vector (string:lines text)) (map (lambda (r) (input-position text (cdr r))) results)))))
+    (completion:register! 'scheme 1
+      (lambda (configuration origin) (symbol-completer (lambda (sym) #t) #t (origin-window origin)
+                                       (cond [(assq 'receivers origin) => cdr] [else '()]))))
+    (prompt:register-profile! 'scheme 1
+      (lambda (configuration origin)
+        (list (cons 'history (log:history 'eval:report! car)) (cons 'normalize normalize-input)
+          (cons 'ghost (lambda (text caret) (input-ghost (substring text 0 caret))))
+          (cons 'transform reindent-scheme-input) (cons 'edge mx-edge-motion) (cons 'inspect describe:input!)
+          (cons 'alternate (symbol-completer kernel:editor-symbol? #f (origin-window origin)
+                             (cond [(assq 'receivers origin) => cdr] [else '()]))))))
     (doc:register!
       '(((eval:run!) (("procedure" . "(eval:run!)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f

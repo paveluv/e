@@ -1,231 +1,115 @@
 # Interactive prompts
 
-Prompts share one editing and presentation engine. `M-x`, describe,
-and command-specific text questions use
-the same movement, history, completion, wrapping, and styling behavior.
-The default [Finder](FINDER.md) and [Buffet](BUFFERS.md#the-buffet-app) pickers
-are table apps with their own navigation and filtering controls.
+Prompts are compositions of ordinary text, completion and help widgets.
+M-x and command questions use a temporary pop-up above the echo area. A
+custom host can place the same controls inside another widget tree.
 
 ## Editing
 
-Prompt input supports the familiar bindings:
-
 | Key | Action |
 |---|---|
-| `C-a`, `C-e`, Home, End | Move to an input or visual-line boundary |
-| `C-b`, `C-f`, Left, Right | Move by one character |
-| Up, Down | Browse history in window prompts; move through visual lines, then history in the echo area |
-| `C-k`, `C-y` | Use this head's copy buffer |
-| Tab | Complete |
-| `C-g`, Escape | Cancel |
+| C-a, C-e, Home, End | Move to a line boundary |
+| C-b, C-f, Left, Right | Move by one character |
+| Up, Down | Move through multiline input; browse history at its edges |
+| C-k, C-y | Kill and yank using this head's copy buffer |
+| Tab | Normalize completion, then cycle alternatives or pages |
+| Shift-Tab | Use the alternate completion source, if provided |
+| M-Return | Insert a newline in multiline input |
+| C-g, Escape | Cancel |
 | Return | Accept |
 
-Single-key questions, such as yes/no choices, briefly flash the echo area
-when a key is not one of the allowed answers. The question returns after
-about 50 ms without another keypress; repeated invalid keys extend the flash.
-The question stays active until you answer or cancel it.
+M-x uses Scheme highlighting and indentation. Pasted line breaks remain in
+multiline input; single-line inputs fold them into spaces. A consecutive
+second C-a or C-e in M-x addresses the whole expression. Unknown symbols
+and ghost hints are italic. Help and validation appear above the input.
 
-Prompt input wider than the screen wraps onto continuation rows marked with
-`\`. Continuations align beneath the prompt text. The echo area grows by
-shrinking windows to their configured minimum; after eight prompt rows, the
-prompt scrolls while keeping its cursor visible.
+Single-key questions accept only their listed characters, case-insensitively.
+Other text and navigation keys do not answer; Escape and C-g cancel.
 
-Every prompt key runs a `prompt:` command bound in the `prompt` context,
-`prompt:accept!` for Enter, `prompt:complete!` for Tab, `prompt:type!` with
-the character typed, so `C-x TAB` lists them while a prompt is open, together
-with the global commands allowed there.
+## Placement and focus
 
-## Window management during a prompt
+The default prompt host temporarily owns the pop-up. Nested questions share
+one composition; the inner question receives keyboard input until it ends.
+Accepting or cancelling restores the surviving origin and previous pop-up
+content. Replacing the prompt host or removing its registration cancels the
+waiting command. Transient prompts do not resume after detaching.
 
-A prompt does not lock the window layout. The window-management commands
--- focusing (Meta-arrows, `C-x o`), splitting (`C-x 2`, `C-x 3`),
-and closing (`C-x 0`, `C-x 1`) -- keep working while a prompt runs, and so do
-`C-x TAB` and `C-x S-TAB`, which list the prompt's own keys; all under whatever
-keys they are bound to: events resolve
-through the live global keymap, so rebound or newly bound chords work in
-every prompt as well. Only self-inserting characters always stay with
-the input. The mouse works too: clicks focus windows and the status-bar
-controls split and close as usual. An echo-area prompt keeps running, and
-the window focused when it is accepted is the command's target: an
-evaluation runs against that buffer. Chords
-that resolve to any other command are consumed without effect so their
-tail keys cannot leak into the input. A [prompt in the
-window](#prompts-in-the-window) differs in one respect: it belongs to its
-window, so focusing another window cancels it.
+The global window commands remain available through ordinary widget routing.
+You can focus another window while the prompt remains in its pop-up. Closing
+or clearing that pop-up cancels the interaction. C-x Tab opens the bindings
+reference beside a focused pop-up and shows the prompt's named commands and
+its text control's commands. There is no separate allowlist of prompt-safe keys.
 
-Resizing your terminal refreshes the layout without another keypress, even
-while a prompt is open. Your input stays intact. Each attached head uses its
-own terminal dimensions.
-
-## Multiline input
-
-Prompts that enable multiline input accept Meta+Return to insert a newline.
-Lines are automatically indented and the complete input is reindented after
-each edit, so a structural change can update following lines immediately.
-Pasted multiline input uses the same indentation pass.
-
-At line boundaries, the first `C-a` or `C-e` moves within the current visual
-line; a repeated command moves to the beginning or end of the complete input.
-The repetition is command-based rather than inferred from the cursor position.
-
-## Prompts in the window
-
-A prompt can use the current window instead of the echo area. Each invocation
-creates a temporary local view. The input sits at the bottom of the window,
-with the same editing keys, styles, suggestions and text cursor as an echo-area
-prompt. Clicking the input moves its insertion point. Finder and Buffet use
-their own table controls rather than this input editor.
-
-Long input wraps above the bottom row. Tab lists candidates above the input;
-repeated Tab pages through them. Every input change, including history
-recall, clears the old candidates. Up and Down browse history. Clicking a
-candidate fills the input with its complete value; Enter accepts it. The
-status line shows a page count as space permits. In small panes,
-the input clips around the cursor to leave a candidate row visible. A pane
-with only one text row asks you to enlarge it to see matches.
-
-Acceptance shows the result in the invoking window. `C-g` or Escape restores
-its previous buffer and position. Focusing another window, closing the
-prompt's window, or killing its temporary buffer also ends the interaction.
-An explicit buffer choice in a side `<buffet>` panel takes effect and ends
-the prompt. Any split copies of the temporary view are restored too; the
-temporary buffer disappears when the interaction ends.
-
-The caller may retain unfinished input in a per-window draft; drafts live
-only in the current head process. The echo area keeps showing messages while
-a window prompt is active.
-
-`(prompt:in-window #t)` in `config.e` makes `prompt:read!` use the current window.
-A nested prompt uses the echo area. Its own completion list takes the pop-up
-window temporarily, then returns to the outer prompt and its input.
+Completion previews retain the window captured when M-x opened. They do not
+retarget to the prompt or to a newly focused window. Resizing uses the host's
+current geometry without discarding input.
 
 ## Completion
 
-Ordinary prompts use prefix completion. Tab extends input to the longest
-common prefix. When an ambiguous prefix cannot be extended, Tab shows
-`<completions>` in the pop-up window (window 0), which appears above the echo
-area, or, for a window prompt, candidates above its input. Plain candidates
-fill columns; labelled ones, as M-x's, take a row each, a long label wrapping
-under its hint. Repeated Tab cycles
-through pages when the list is taller than the available space. Clicking a
-candidate fills the input without opening it or moving focus away from the
-prompt. Hover makes the candidate label bold with a dotted underline without
-changing the input; column padding remains clickable without being underlined.
-Finishing or dismissing the list hides the pop-up again; the other windows
-keep their buffers, points and viewports, and completion does not change the
-split layout.
+[M-x](EVAL.md) retains fuzzy symbol completion in any Scheme application
+position. The first Tab extends the token while preserving its matches; the
+next opens the candidate list. Typing updates the visible list. Further Tab
+presses cycle equivalent normalizations or completion pages. A prepared
+status names the candidate type and count.
 
-[M-x](EVAL.md) uses fuzzy symbol completion: the first Tab normalizes the token
-while preserving its matches, and the second opens the list. Further typing
-keeps that list up to date. Further Tab presses cycle distinct normalizations,
-or page when there is only one. PageUp/PageDown and the mouse wheel also page.
+Plain candidates fill columns; labelled candidates include their documentation.
+Clicking a candidate inserts its value without accepting the prompt. Hover
+uses the normal bold, dotted underline. Stale displayed choices refuse after
+the draft or provider changes. Rendering and pointer discovery use prepared
+data and never run the provider.
 
-Completion candidates use a shared semantic style:
-
-- an incomplete or unknown value is italic;
-- an exact ordinary match is upright;
-- a distinguished editor-defined value uses the editor face.
-
-File prompts apply the same mechanism component by component: the existing
-path prefix is upright and the nonexistent remainder is italic. File labels
-show literal basenames, including spaces and punctuation; directories end
-in `/`. Labels too wide for the pane end in `…`; clicking them still fills
-the complete path. Dotfiles appear when the final component starts with `.`.
-
-## Suggestions and inspection
-
-Prompts may display a grey, italic ghost tail after the input. All ghosts use
-the shared `ghost` face, including inline notices and echo-area result tails.
-`M-x` derives its tail from structured describe data, so module-published
-procedures receive the same parameter hints as built-in entries.
-
-`M-.` may inspect the value at the prompt cursor. In `M-x` it opens the live
-describe page for the Scheme symbol under or immediately before point.
+Typed arguments offer the existing value constructors, names, file paths,
+procedures and variables described by edoc. Search arguments retain their
+live match count and Tab navigation; cancelling restores their preview.
+M-. describes the Scheme name at the current input caret.
 
 ## Questions from other actors
 
-An agent or another actor can leave a question for you. The echo area shows
-the oldest pending question when no other message or prompt occupies it.
-The indicator updates while idle as questions arrive or are withdrawn,
-advancing to the next question or clearing when none remain. It also refits
-immediately when you resize the terminal. Other messages and anything you are
-typing into a prompt stay intact.
-Press `C-c a` (`edit:answer!`) to answer; Tab offers any supplied choices.
-Cancelling the prompt leaves the question pending so you can return to it.
-If it was withdrawn while you were typing, the editor says so when you submit.
-Once a named head has attached, questions can also arrive while it is absent.
-They wait in the running daemon for that name to return. Disconnecting the
-asking agent cancels its unanswered questions; disconnecting your head does
-not stop the agent or discard its questions.
-
-The protocol behind the question -- `actor:ask!`, tickets, the actor
-directory and agent sessions -- is documented in
-[Base, heads and agents](MULTIHEAD.md#questions-between-actors).
+An actor's pending question appears in the echo area. C-c a opens an answer
+through M-x. Cancelling that local prompt leaves the underlying question
+pending. See [Base, heads and agents](MULTIHEAD.md#questions-between-actors)
+for actor tickets and disconnect behavior.
 
 ## Prompt API
 
-`prompt:read!` accepts a label followed by optional completion, initial input,
-history box, alternate completion and input normalization procedures.
-Presentation can be customized with `paint:prompt-styler`, `paint:completion-styler`,
-`prompt:completion-label`, `prompt:completion-highlight`,
-`prompt:ghost`, `prompt:inspector`, `prompt:multiline`, `prompt:edge-motion`,
-and `prompt:reindent`. The echo area is a bordered box of at most `paint:echo-box-width` columns (100 by default), centered on the screen; a narrower screen is the whole box. Messages and prompts wrap inside its borders, row by row, with their text at the left border. `paint:echo-box-border` sets the one-cell glyph drawn on both sides (`┊` by default).
+`(prompt:read! label initial provider options)` is the linear interface for
+commands documented with `(prompts)`. `provider` is false or a portable
+`(namespace schema configuration)` recipe registered with
+`completion:register!`. Options include `multiline?`, `help`, `profile`,
+`editing-policy` and `mode`. The function returns accepted text or false on
+cancellation. It parks its continuation on the ordinary command pump; it
+does not read keyboard input recursively. An explicit edit group cannot
+span a prompt. Automatic evaluation undo groups end at suspension and start
+fresh on resumption.
 
-`prompt:completion-label` maps a full candidate to its displayed label;
-the default preserves the value. A normal completion procedure receives the
-input and returns a list of full replacement strings, using prefix completion.
-For normalization and live filtering, pass `(prompt:make-completer lookup)`
-as the completion or alternate-completion argument. `lookup` receives the input
-and cursor index and returns four values: the start and exclusive end of the
-token, its proposed expansions, and a list of candidate replacement strings.
-Expansions are a nonempty list or a zero-argument procedure returning that list.
-The procedure runs only when Tab starts a new normalization; live filtering
-and subsequent cycling do not call it. All expansions must preserve the same
-match set. Their order and the candidate order stay fixed while Tab cycles; editing starts a
-new cycle. Duplicate expansions should be removed by the source.
-Return `#f` as the start when there is no completable token. String candidates
-are displayed as supplied and styled with `prompt:completion-highlight`.
-For richer presentation, return `(prompt:make-candidate value label styles)`
-in place of a string: `value` is the replacement string, `label` is the displayed
-text, and `styles` is a vector with one face per label character. Labels clip
-at whole glyphs; generated ellipses and padding stay plain. Clicking any part
-of a candidate inserts only its value. Candidates replace only the token
-interval; `prompt:completion-label` applies to ordinary completion procedures.
-The caller owns matching and expansion; the prompt owns
-normalization and cycling, live refresh within the same token, pagination,
-and placing the cursor after a replacement. Lookup must have no command
-effects, because editing may call it repeatedly. An optional second argument, `(settle text position)`, receives the input after a Tab with exactly one match has inserted that match and closed the list, and returns the `(text . position)` to continue with; M-x uses it to close forms and step to the next argument.
+For embedded applications, create a base request with `prompt-request:create!`
+and a control tree with `prompt:create!`. Supply named accepted and cancelled
+targets, then mount the tree in your host. Acceptance captures an exact draft
+revision. The request owns its transient controls and any draft it creates;
+a borrowed authored buffer keeps its own lifetime. A fork can display the
+same draft without duplicating the controller's delivery.
 
-`prompt:validate` is `#f` or a procedure
-called on normalized input when Enter is pressed. It returns `#f` to accept
-or a short explanation to keep editing. Returning `(prompt:transient "message")`
-instead shows only an inline `[message]` ghost, cleared after two seconds or
-on editing, in both window and echo-area prompts. `prompt:draft` is `#f` or a box
-containing `#f` or `(input . cursor)`; the prompt starts from that draft and
-updates it as input changes. The caller decides when to retain it. Validation
-and draft ownership are local to each invocation; nested reads do not inherit
-those two options.
+`prompt:register-profile!` installs a versioned factory receiving configuration
+and the captured origin. Its alist can contain history strings, an alternate
+completion source, pure normalization/validation/ghost/transform/edge callbacks,
+and an inspection command. Validation returns false or an explanation;
+invalid text stays editable. Replacing the provider or profile cancels its
+mounted interaction. `edit:register-policy!` supplies shared proposed-text and
+logical-position normalization for Entry and multiline editor controls.
 
-An in-window prompt can replace the ordinary candidate grid with live content:
-parameterize `prompt:content` to `(prompt:make-content minimum-height render handle)`.
-The renderer receives `(input window available-height page)` on every refresh
-and returns two values: a list of `prompt:line` values and the page count.
-It must fit within the supplied height, wrapping the requested zero-based
-page into its current count. The minimum height reserves room above wrapped
-input; very small panes can still provide less. Keep filesystem work outside
-this renderer; publish background results and wake the head to refresh.
+`completion:make-source` takes a lookup procedure receiving text and caret.
+It returns replacement start and end, valid extensions, and candidates.
+Extensions may be deferred until Tab requests normalization; every extension
+must preserve the candidate set. Return false as the start when no token can
+complete. Optional settle, kind and live-search callbacks preserve typed
+completion behavior. Rich candidates use `completion:make-candidate` with an
+insertion string, display label, character styles and optional reversible
+preview. The provider owns matching; the prompt owns input, selection and
+lifetime.
 
-`(prompt:line text styles choices [hover-face])` describes one displayed row. Styles is
-a vector indexed by character; choices is a list of `(start end value)`
-intervals. Clicking a string value fills the input. An action value is called
-and may return new input, or `#f` to keep editing unchanged, as with a sort
-heading. Hover defaults to the standard `hover` face; `candidate-hover`
-adds the subtle row tint. `handle` is `#f` or a
-key handler returning true for consumed events; editing and prompt/window
-commands otherwise retain their usual meaning. The content's table pages
-with repeated Tab, PageUp/PageDown, Shift-Tab or wheel input. Content ownership,
-like validation and drafts, is scoped to one invocation and is not inherited
-by nested prompts.
-
-Use `paint:show-prompt-message!` when a non-`prompt:read!` interaction should retain the
-same styled label and wrapped layout.
+`prompt:register-host!` supplies placement for linear callers. Its preparation
+procedure returns parent request, portable captured origin, and an attachment
+procedure. Attachment receives the request and receiver root and returns a
+cleanup thunk. Hosts choose geometry and focus; controls contain no window
+identity or keyboard reader. See [Widgets](WIDGETS.md) for the shared model,
+view, binding and composition protocols.

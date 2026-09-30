@@ -1,3 +1,49 @@
+;; A prompt composition runs through real head input and the ordinary pump.
+(let ([saved (head-read a '(head:buffer-name (head:current-buffer)))])
+  (head-read a '(begin (kernel:load-module! "prompt-request") (kernel:load-module! "prompt") #t))
+  (head-read a
+    '(begin
+       (define wire-prompt-answer #f)
+       (define wire-prompt-lookups 0)
+       (define (wire-prompt-accepted! id value) (set! wire-prompt-answer value))
+       (completion:register! 'wire-prompt 1
+         (lambda (configuration origin)
+           (completion:make-source
+             (lambda (text caret)
+               (set! wire-prompt-lookups (+ 1 wire-prompt-lookups))
+               (values 0 (string-length text) '("value") '("value" "value-next"))))))
+       (widget:register! 'wire-prompt-host 1
+         (append (layout:container 'y) (list (cons 'actions (list (cons 'accepted wire-prompt-accepted!))))))
+       (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '()))
+       (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) '(wire-prompt 1 ())))
+       (define wire-prompt-view
+         (prompt:create! wire-prompt-request '((label . "Wire prompt:"))
+           (list (list 'accepted wire-prompt-host 'accepted '()))))
+       (view:arrange! head:ui-actor (list (list wire-prompt-host 0 (list (list 'prompt wire-prompt-view '(grow 1))) '())) '())
+       (window:show-widget! (head:current-window) wire-prompt-host)
+       #t))
+  (head-wait 'prompt-control-is-shown a (lambda () (head-sees? a "Wire prompt:")))
+  (head-send! a "val\t\t")
+  (head-wait 'prompt-completion-list-is-shown a (lambda () (head-sees? a "value-next")))
+  (test:check 'prompt-resize-and-pointer-discovery-use-prepared-candidates-without-wire
+    (head-read a
+      '(let ([io (lambda () (call-with-input-file "/proc/self/io"
+                              (lambda (p) (let loop () (let* ([key (read p)] [value (read p)])
+                                                         (if (eq? key 'wchar:) value (loop)))))))])
+         (let ([before (io)] [lookups wire-prompt-lookups])
+           (do ([i 0 (+ i 1)]) ((= i 20))
+             (widget:prepare! wire-prompt-host (+ 30 (mod i 3)) 5)
+             (widget:pointer-bindings 2 0))
+           (list (- (io) before) (- wire-prompt-lookups lookups))))) '(0 0))
+  (head-send! a "\r")
+  (head-wait 'prompt-outcome-delivered-by-pump a (lambda () (head-read a '(and wire-prompt-answer #t))))
+  (test:check 'prompt-real-head-input-and-base-outcome
+    (head-read a '(cdr wire-prompt-answer)) '(#("value") (captured-wire-origin)))
+  (head-read a `(begin (head:forget-buffer! (head:current-buffer))
+                       (head:show-buffer! (head:buffer-named ,saved)) #t))
+  (head-wait 'prompt-request-released-on-host-removal a
+    (lambda () (head-read a '(not (caddr (caadr (model:snapshots (list wire-prompt-request)))))))))
+
 ;; Editor views use the same journal across real clients. Warm navigation
 ;; and preparation read only mirrored text, even through mode callbacks.
 (let* ([source (head-read a '(store:create! head:ui-actor "editor wire" '("first" "second" "third") '((internal . #t))))]
@@ -162,8 +208,7 @@
          (parameterize ([kernel:registering-module 'completion-wire])
            (head:add-pre-redraw-hook!
              (lambda ()
-               (when (and (not completion-status-bytes) (prompt:active?) (head:popup)
-                       (string:prefix? "<completions" (head:buffer-name (head:window-buffer (head:popup)))))
+               (when (and (not completion-status-bytes) (prompt:active?) (head:popup))
                  ;; Exclude unrelated mirror workers: inspection itself runs
                  ;; on this UI thread and must not write to the base.
                  (let ([io (lambda () (call-with-input-file "/proc/thread-self/io"
@@ -264,10 +309,30 @@
                                       [b (window:show-widget! (head:current-window) host)])
                                  (head:show-buffer! b) host)))])
     (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
+    (test:check 'contextual-finder-and-table-completion-need-no-wire-reads
+      (head-read a
+        `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
+                [receivers (widget:receivers (widget:descendant table 'filter 'entry))]
+                [provider ((completion:provider '(scheme 1 ())) '() (list (cons 'receivers receivers)))]
+                [io (lambda () (call-with-input-file "/proc/self/io"
+                                 (lambda (p) (let loop () (let* ([key (read p)] [value (read p)])
+                                                            (if (eq? key 'wchar:) value (loop)))))))])
+           (let ([before (io)])
+             (list (map (lambda (text)
+                          (let-values ([(from to insertions candidates)
+                                        ((completion:source-lookup provider) text (string-length text))])
+                            (if (procedure? insertions) (insertions) insertions)))
+                     '("(finder:toggle-hidden! " "(table:sort-by! "))
+               (- (io) before)))))
+      (list (list (list (format "(model ~a)" (cadr (head-read a `(widget:descendant ',host 'app)))))
+              (list (format "(model ~a)" (cadr (head-read a `(widget:descendant ',host 'app 'table)))))) 0))
     (head-send! a "\t")
+    ;; Completion writes the entry before its new query rows are admitted.
     (head-wait 'finder-widget-wire-completed a
-      (lambda () (equal? (head-read a `(let-values ([(text revision) (store:snapshot ,(cadadr pair))]) text))
-                   (vector (string-append (current-directory) "/lib/service/file-query.sls")))))
+      (lambda () (head-read a
+                   `(let-values ([(text revision) (store:snapshot ,(cadadr pair))])
+                      (and (equal? text (vector ,(string-append (current-directory) "/lib/service/file-query.sls")))
+                        (cdr (assq 'selection (view:state (interaction:snapshot (widget:descendant ',host 'app 'table))))) #t)))))
     (test:check 'finder-client-entry-table-and-base-completion-compose
       (head-read a `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
                            [selection (cdr (assq 'selection (view:state (interaction:snapshot table))))])

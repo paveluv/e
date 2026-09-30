@@ -63,7 +63,7 @@
       (unless (eq? status 'applied) (error 'buffet "document changed; choose it again" status))))
 
   (edoc "Open the exact selected document through the host; archive selections restore that ID against its shown version first."
-        (id model "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
+        (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
   (define (choose! id selection basis)
     (unless (assq 'open (widget:commands id)) (error 'choose! "no open command is connected"))
     (let ([row (selected-row id selection basis)])
@@ -71,7 +71,7 @@
       (widget:invoke! id 'open (car row))))
 
   (edoc "Trash a selected live shared document, delete disposable output, or retire an attachment-local app; stale versions refuse. Every displaying window gets the ordinary fallback."
-        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+        (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (kill! id selection basis)
     (let* ([row (selected-row id selection basis)] [ref (car row)])
       (unless (eq? (caddr row) 'live) (error 'kill! "choose a live document"))
@@ -82,7 +82,7 @@
         (unless (catalogue-host:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
 
   (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
-        (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
+        (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (delete! id selection basis)
     (let ([row (selected-row id selection basis)])
       (when (eq? (caddr row) 'live) (error 'delete! "choose a Trash or Backups item"))
@@ -152,7 +152,7 @@
   (define (init!)
     (widget:register! 'buffet 1
       (append (layout:container 'y)
-        (list (cons 'capture-contexts '(buffet)) (cons 'event event!)
+        (list '(receivers (table table)) (cons 'capture-contexts '(buffet)) (cons 'event event!)
           (cons 'actions (list (cons 'choose choose!) (cons 'kill kill!) (cons 'delete delete!))))))
     (table:register-presentation! 'buffet 1
       (list (list 'modified 10 'text '(archived-at) clock) (list 'flags 7 'text '() (present flags))

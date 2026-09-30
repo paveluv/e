@@ -1504,6 +1504,25 @@
                (string-set! (vector-ref (car snapshot) 0) 0 #\X)
                (test:check 'client-mutation-cannot-change-the-base
                  (car (rpc head 'snapshot (car ids))) '#("hello λ")))
+             (let ([temporary (connect)])
+               (hello temporary '(head "prompt owner")) (receive temporary)
+               (let* ([id (rpc temporary 'prompt-create #f #f "input" '((origin . explicit)) '(head-symbols 1))]
+                      [record (caddr (caadr (rpc head 'model-read (list id))))]
+                      [draft (cadr (cdr (assq 'draft (cdr (assq 'value record)))))]
+                      [view (rpc temporary 'view-create (list 'buffer draft) 'entry 1 '() '((0 . 0) (0 . 0)) id)]
+                      [removed (rpc temporary 'view-create #f 'label 1 '() '() id)])
+                 (test:check 'prompt-wire-attribution-and-service-ownership
+                   (list (rpc head 'prompt-accept id 0 0)
+                     (rpc temporary 'prompt-accept id 0 0)
+                     (list-head (exchange temporary `(request 7 model-retire ,id 1)) 3)
+                     (list-head (exchange temporary `(request 7 model-retire ,removed 0)) 3)
+                     (rpc temporary 'view-retire removed 0))
+                   '(unavailable applied (reply 7 error) (reply 7 error) (applied #f)))
+                 (sys:close-connection! temporary)
+                 (test:await 'prompt-wire-departure-releases-owned-state
+                   (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
+                                (not (caddr (caadr (rpc head 'model-read (list view)))))
+                                (not (memv draft (rpc head 'buffers))))))))
              (test:check 'bad-hello-and-duplicate-name-preserve-the-owner
                (map (lambda (message)
                       (let ([duplicate (connect)])
@@ -2471,7 +2490,8 @@
                    (head-wait 'split-before-scroll a (lambda () (and (head-sees? a "scrolling") (frame-complete?))))
                    (vector-set! a 3 "")
                    (head-send! a (apply string-append (make-list 30 "\x1b;[B")))
-                   (head-wait 'held-down-scroll a (lambda () (and (head-sees? a "row 030") (frame-complete?))))
+                   (head-wait 'held-down-scroll a
+                     (lambda () (and (head-sees? a "row 030") (head-sees? a "L31 C1") (frame-complete?))))
                    (let* ([frames (vector-ref a 3)] [opened (occurrences frames "\x1b;[?2026h")]
                           [closed (occurrences frames "\x1b;[?2026l")])
                      (test:check 'attached-split-scrolling-uses-balanced-2026

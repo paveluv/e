@@ -9,7 +9,7 @@
     (rename (descriptor:options options))
     (rename (descriptor:owner owner))
     (rename (descriptor:parent parent)) publish! release!
-    release-owner! reset-owners!
+    release-owner! reset-owners! retire!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
@@ -28,7 +28,7 @@
   (define (row r) (cons (field r 'id) (value r)))
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
   ;; Every supported record read becomes a witness, even when unchanged.
-  (define (transaction! actor plan retry?)
+  (define (transaction! actor plan retry? . retired)
     (let loop ()
       (let ([reply
              (call/cc
@@ -43,7 +43,13 @@
                    (plan get need put read (lambda (status) (abort (list status '()))))
                    (let* ([records (filter supported? (vector->list (hashtable-values read)))]
                           [changes (map (lambda (r) (change r (or (hashtable-ref next (field r 'id) #f) (value r)))) records)])
-                     (let-values ([(status current) (model:commit! actor changes)])
+                     (let-values ([(status current)
+                                   (if (null? retired) (model:commit! actor changes)
+                                     (let* ([id (car retired)] [r (hashtable-ref read id #f)])
+                                       (let-values ([(status current)
+                                                     (model:retire! actor id (field r 'revision)
+                                                       (filter (lambda (c) (not (equal? (car c) id))) changes))])
+                                         (values status (if current (list current) '())))))])
                        (list (if (eq? status 'stale) 'retry status) (map row (filter supported? current))))))))])
         (if (and retry? (eq? (car reply) 'retry)) (loop)
             (values (if (eq? (car reply) 'retry) 'stale (car reply)) (cadr reply))))))
@@ -67,12 +73,47 @@
   (define (ownership d who)
     (descriptor:with d (list (cons 'owner who) (cons 'generation (+ 1 (descriptor:generation d))) (cons 'sequence 0))))
 
-  (edoc "Create an unparented persistent view; source is a model/buffer reference or #f for a container."
+  (edoc "Create an unparented view; source is a model/buffer reference or false for a container. An optional owning model gives the view its scope and persistence; otherwise it is session-persistent. Allocation witnesses the owner's lifetime."
         (actor actor "creator") (source datum "source reference") (kind symbol "widget contract")
-        (schema integer "contract version") (options list "logical options") (state datum "interaction") (returns model))
-  (define (create! actor source kind schema options state)
-    (let ([d (descriptor:make source kind schema options state)])
-      (model:create! actor 'widget-view 2 'session 'persistent (descriptor:references d) d)))
+        (schema integer "contract version") (options list "logical options") (state datum "interaction")
+        (scope (list-of model) "optional resource owner; distinct from containment or mount ownership") (returns model))
+  (define (create! actor source kind schema options state . scope)
+    (unless (and (<= (length scope) 1) (for-all model:reference? scope)) (error 'create! "expected one resource owner"))
+    (let* ([d (descriptor:make source kind schema options state)] [owner (and (pair? scope) (model:snapshot (car scope)))])
+      (when (and (pair? scope) (not owner)) (error 'create! "resource owner is unavailable" (car scope)))
+      (let ([ids (model:allocate! actor 1
+                   (lambda (ids)
+                     (list (list 'widget-view 2 (if owner (field owner 'id) 'session)
+                             (if owner (field owner 'persistence) 'persistent) (descriptor:references d) d)))
+                   (lambda (ids) (if owner (list (list (field owner 'id) (field owner 'revision) (field owner 'references) (value owner))) '())))])
+        (unless ids (error 'create! "resource owner changed; retry")) (car ids))))
+
+  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing its child subtrees as unowned roots. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke their scoped views on departure. Return status and current target envelope."
+        (actor actor "resource owner") (id model "view") (revision integer "expected model revision"))
+  (define (retire! actor id revision)
+    (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'retire! "expected a revision"))
+    (let-values ([(status rows)
+                  (transaction! actor
+                    (lambda (get need put read fail)
+                      (let* ([d (need id)] [r (hashtable-ref read id #f)] [parent (descriptor:parent d)]
+                             [subtree (walk get id fail)])
+                        (unless (= revision (field r 'revision)) (fail 'stale))
+                        (when parent
+                          (let* ([p (need parent)] [root (root-of need parent fail)] [root-d (need root)])
+                            (unless (member id (map cadr (descriptor:children p))) (fail 'invalid))
+                            (when (member (descriptor:focus root-d) subtree)
+                              (put root (descriptor:with root-d '((focus . #f)))))
+                            (put parent (descriptor:with (need parent)
+                                          (list (cons 'children (filter (lambda (c) (not (equal? id (cadr c)))) (descriptor:children p))))))))
+                        (for-each
+                          (lambda (child)
+                            (let ([root (cadr child)])
+                              (for-each
+                                (lambda (id)
+                                  (let* ([d (need id)] [d (if (descriptor:owner d) (ownership d #f) d)])
+                                    (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
+                                (walk get root fail)))) (descriptor:children d)))) #f id)])
+      (values status (model:snapshot id))))
 
   (edoc "Read a canonical descriptor, or #f if unavailable." (id model "view id") (returns any))
   (define (snapshot id) (let ([r (entry id)]) (and r (value r))))
@@ -174,12 +215,14 @@
                         (put id (if (and focus (or (not (equal? root id)) (not (member focus ids))))
                                     (descriptor:with d '((focus . #f))) d)))) ids))) new-roots)))) #f))
 
-  (edoc "Publish guarded entries (id generation sequence basis state focus); every entry applies or none do."
+  (edoc "Atomically publish the newest still-owned interaction snapshots. Retired views, old ownership generations and already acknowledged sequences are ignored. Focus outside the surviving root is cleared. Authored edits use the store's separate guarded command path."
         (actor actor "owner") (updates list "interaction entries"))
   (define (publish! actor updates)
     (unless (and (list? updates)
                  (for-all
-                   (lambda (r) (and (list? r) (= (length r) 6)))
+                   (lambda (r) (and (list? r) (= (length r) 6) (model:reference? (car r))
+                                 (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) (list (cadr r) (caddr r)))
+                                 (or (not (list-ref r 5)) (model:reference? (list-ref r 5)))))
                    updates)
                  (= (length updates) (length (unique (map car updates)))))
       (error 'publish! "expected distinct interaction entries"))
@@ -189,19 +232,19 @@
                     (lambda (get need put read fail)
                       (for-each
                         (lambda (r)
-                          (let* ([id (car r)] [d (need id)] [focus (list-ref r 5)])
-                            (unless (and (equal? actor (descriptor:owner d))
-                                         (= (cadr r) (descriptor:generation d))
-                                         (> (caddr r) (descriptor:sequence d)))
-                              (fail 'stale))
-                            (when focus
-                              (unless (and (not (descriptor:parent d))
-                                           (equal? id (root-of need focus fail)))
-                                (fail 'stale)))
-                            (put id
-                                 (descriptor:with
-                                   d
-                                   (map cons '(sequence basis state focus) (cddr r))))))
+                          (let* ([id (car r)] [d (get id)] [focus (list-ref r 5)])
+                            (when (and d (equal? actor (descriptor:owner d))
+                                       (= (cadr r) (descriptor:generation d))
+                                       (> (caddr r) (descriptor:sequence d)))
+                              (when (and focus
+                                      (not (and (not (descriptor:parent d))
+                                             (call/cc (lambda (absent)
+                                                        (equal? id (root-of get focus (lambda (status) (absent #f)))))))))
+                                (set! focus #f))
+                              (put id
+                                (descriptor:with
+                                  d
+                                  (map cons '(sequence basis state focus) (append (list-head (cddr r) 3) (list focus))))))))
                         updates))
                     #t)])
       (values status #f)))
@@ -216,7 +259,13 @@
   (edoc "Fork a supported subtree, sharing sources and resetting ownership; the new root id."
         (actor actor "creator") (id model "source view") (returns model))
   (define (fork! actor id)
-    (let ([rows (tree id)])
+    (let* ([rows (tree id)]
+           [originals (map (lambda (row)
+                             (let ([r (model:snapshot (car row))])
+                               (unless (and r (equal? (value r) (cdr row)))
+                                 (error 'fork! "composition changed during fork; retry")) r)) rows)]
+           [scopes (unique (filter model:reference? (map (lambda (r) (field r 'scope)) originals)))]
+           [owners (map (lambda (scope) (or (model:snapshot scope) (error 'fork! "resource owner is unavailable" scope))) scopes)])
       (unless (and (assoc id rows)
                    (for-all
                      (lambda (row)
@@ -229,17 +278,14 @@
           id))
       (car (connection:fork!
              actor
-             (map (lambda (row)
-                    (let ([r (model:snapshot (car row))])
-                      (unless (and r (equal? (value r) (cdr row)))
-                        (error 'fork! "composition changed during fork; retry")) r)) rows)
+             originals
              (lambda (ids)
                (let ([copies (map (lambda (row new) (cons (car row) new))
                                   rows
                                   ids)])
                  (define (mapped id)
                    (let ([found (assoc id copies)]) (and found (cdr found))))
-                 (map (lambda (row)
+                 (map (lambda (row original)
                         (let* ([old (cdr row)]
                                [d (descriptor:with
                                     old
@@ -260,9 +306,9 @@
                                                    (map (lambda (c) (list (car c) (or (mapped (cadr c)) (cadr c)) (caddr c) (cadddr c))) (cdr p))) p))
                                           (descriptor:options old)))
                                       '(generation . 0) '(sequence . 0)))])
-                          (list 'widget-view 2 'session 'persistent
+                          (list 'widget-view 2 (or (mapped (field original 'scope)) (field original 'scope)) (field original 'persistence)
                             (descriptor:references d) d)))
-                      rows)))))))
+                      rows originals))) owners))))
 
   (edoc "Release this disconnected head's descriptors, including detached or malformed trees."
         (actor actor "head"))

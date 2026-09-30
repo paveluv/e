@@ -40,9 +40,9 @@
           new-buffer! newline! next-line! next-list! open-line! page! page-down! page-up!
           (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
-          quit! redo! redraw-command! region-text reload! replace-region-text! reread! restore!
+          quit! redo! redraw-command! region-text (rename (text-control:register-policy! register-policy!)) reload! replace-region-text! reread! restore!
           rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
-          set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! undo-scope up-expression!
+          set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! (rename (text-control:undo-scope undo-scope)) up-expression!
           visit-file! with-region
           yank!)
   (import (chezscheme)
@@ -61,10 +61,10 @@
           (head literal)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head render) render:)
           (prefix (head style) style:)
           (prefix (head table) table:)
+          (prefix (head text-control) text-control:)
           (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:)
           (prefix (head window) window:)
@@ -202,15 +202,6 @@
         (returns any "what the thunk returns"))
   (define (call-as-one-edit! label thunk) (text-source:call-grouped! head:ui-actor label thunk))
 
-  (define (check-undo-scope scope)
-    (unless (memq scope '(mine all))
-      (error 'undo-scope "expected mine or all" scope))
-    scope)
-
-  (edoc "The default scope of undo!: mine, this head's own latest live action, or all, any actor's."
-        (value (one-of mine all)))
-  (define undo-scope (make-parameter 'mine check-undo-scope))
-
   (define (no-history verb)
     (format "No further ~a information" (string-downcase verb)))
 
@@ -231,8 +222,8 @@
         (edits))
   (define undo!
     (case-lambda
-      [() (history-shift! 'undo "Undo" (undo-scope))]
-      [(id) (editor:history! id 'undo (undo-scope))]))
+      [() (history-shift! 'undo "Undo" (text-control:undo-scope))]
+      [(id) (editor:history! id 'undo (text-control:undo-scope))]))
 
   (edoc "Reverse this head's latest undo in an explicit editor view, returning journal status and detail. Omitting the view uses the current window and echo report."
         (id model "editor view; omission addresses the current window")
@@ -1363,19 +1354,6 @@
           ("C-x C-w" ,(keymap:prefill save-file!)) ("C-x C-c" ,quit!)
           ("C-x k" ,(keymap:call kill-buffer! head:current-buffer))
           ("C-c a" ,(keymap:prefill answer!))))
-      (for-each
-        (lambda (entry)
-          (keymap:bind-default! 'prompt (car entry) (cadr entry)))
-        `(("C-g" ,prompt:cancel!) ("ESC" ,prompt:cancel!) ("RET" ,prompt:accept!)
-          ("C-a" ,prompt:beginning!) ("HOME" ,prompt:beginning!)
-          ("C-b" ,prompt:backward!) ("LEFT" ,prompt:backward!)
-          ("C-e" ,prompt:end!) ("END" ,prompt:end!) ("C-f" ,prompt:forward!) ("RIGHT" ,prompt:forward!)
-          ("UP" ,prompt:up!) ("DOWN" ,prompt:down!) ("C-d" ,prompt:delete-forward!)
-          ("DEL" ,prompt:delete-forward!) ("C-h" ,prompt:delete-backward!)
-          ("BS" ,prompt:delete-backward!) ("C-k" ,prompt:kill!) ("C-y" ,prompt:yank!)
-          ("TAB" ,prompt:complete!) ("S-TAB" ,prompt:alternate-complete!)
-          ("M-." ,prompt:inspect!) ("M-RET" ,prompt:newline!) ("PASTE" ,prompt:paste!)
-          ("SELF-INSERT" ,(keymap:call prompt:type! head:typed-text))))
       #t)
     ;; The loop's hooks live in (head): how to open the file
     ;; argument, how to quit (the modified-buffers check), and what runs

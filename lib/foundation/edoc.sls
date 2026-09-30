@@ -35,7 +35,7 @@
           edoc-template edoc-type edoc-type? edoc-types elibrary expression first-sentence forward-callee forwarding-name forwarding-steps inspection-value
           install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
-          signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
+          signature-receiver signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
           type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-portable? type-preview type-prose type-read
           type-searcher type-spelling
           type-text type-value type-within)
@@ -391,7 +391,8 @@
         (lambda (clause)
           ;; a flag, (prompts), (edits) or (effects kind), names no type
           (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause))
-                     (not (memq (car clause) '(prompts effects edits inspect)))
+                     (not (or (memq (car clause) '(prompts effects edits inspect))
+                              (and (eq? (car clause) 'receiver) (pair? (cddr clause)) (pair? (caddr clause)))))
                      (not (known? (cadr clause))))
             (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
         (cddr spec))))
@@ -503,6 +504,9 @@
       [_ (syntax-violation who "expected an edoc clause (name type note ...)" x clause)]))
 
   (meta define (clause-head clause) (syntax-case clause () [(head . _) (syntax->datum #'head)]))
+  (meta define (receiver-clause? clause)
+    (let ([d (syntax->datum clause)])
+      (and (pair? d) (eq? (car d) 'receiver) (pair? (cdr d)) (pair? (cddr d)) (pair? (caddr d)))))
 
   (meta define (flag-clause? clause)
     ;; (prompts), (effects internal) or (effects remote): what a procedure
@@ -511,6 +515,10 @@
       [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits inspect)))]
       [(head kind) (and (identifier? #'head) (identifier? #'kind)
                         (eq? (syntax->datum #'head) 'effects) (memq (syntax->datum #'kind) '(internal remote)) #t)]
+      [(head formal (category kind ...))
+       (and (eq? (syntax->datum #'head) 'receiver) (identifier? #'formal)
+         (pair? (syntax->list #'(kind ...))) (for-all identifier? (syntax->list #'(kind ...)))
+         (memq (syntax->datum #'category) '(view model)) #t)]
       [_ #f]))
 
   (meta define (check-free-clauses! who x doc)
@@ -523,6 +531,8 @@
          (syntax-case clauses ()
            [() (reverse seen)]
            [(clause . rest)
+            (when (receiver-clause? #'clause)
+              (syntax-violation who "a receiver requires procedure formals" x #'clause))
             (if (flag-clause? #'clause)
                 (loop #'rest seen returns?)
                 (begin
@@ -563,6 +573,17 @@
       (syntax-case doc ()
         [(summary clause ...)
          (begin
+           (let ([receivers (filter receiver-clause? (syntax->list #'(clause ...)))])
+             (unless (<= (length receivers) 1) (syntax-violation who "one receiver clause at most" x doc))
+             (for-each
+               (lambda (c)
+                 (unless (flag-clause? c) (syntax-violation who "expected (receiver formal (view-or-model kind))" x c))
+                 (let* ([name (cadr (syntax->datum c))] [entry (assq name names)]
+                        [argument (find (lambda (a) (and (not (receiver-clause? a)) (eq? (clause-head a) name))) (syntax->list #'(clause ...)))])
+                   (unless (and entry (not (rest? name)))
+                     (syntax-violation who "a receiver names a non-rest formal" x c))
+                   (unless (and argument (eq? (cadr (syntax->datum argument)) 'model))
+                     (syntax-violation who "a receiver formal has type model" x c)))) receivers))
            (unless (string? (syntax->datum #'summary))
              (syntax-violation who "the edoc summary must be a string" x #'summary))
            (let loop ([clauses #'(clause ...)] [seen '()] [returns? #f])
@@ -1130,6 +1151,10 @@
           (library (or string #f) "the defining library, (edit) say")
           (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote), (inspect)"))
     (fields kind formals summary arguments returns library flags))
+  (edefine (signature-receiver sig)
+    (edoc "The explicit contextual receiver declaration (formal (view-or-model kind)), or false. It describes discovery, without changing Scheme invocation."
+          (sig (record signature) "documented signature") (returns (or list #f)))
+    (cond [(assq 'receiver (signature-flags sig)) => cdr] [else #f]))
   (edefine-record-type argument
     (edoc "One typed clause of an edoc."
           (name symbol "the formal or field")
@@ -1157,10 +1182,14 @@
                     (map (lambda (f)
                            (let ([names (formal-symbols f)])
                              (make-signature kind f summary
-                               (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library flags)))
+                               (filter (lambda (a) (memq (argument-name a) names)) arguments) returns library
+                               (filter (lambda (f) (or (not (eq? (car f) 'receiver)) (memq (cadr f) names))) flags))))
                          lambda-lists)
                     (list (make-signature kind formals summary arguments returns library flags))))]
-             [(and (pair? (car clauses)) (memq (caar clauses) '(prompts effects edits inspect)))
+             [(and (pair? (car clauses))
+                   (or (memq (caar clauses) '(prompts effects edits inspect))
+                       (and (eq? (caar clauses) 'receiver) (pair? (cdar clauses))
+                         (pair? (cddar clauses)) (pair? (caddar clauses)))))
               (loop (cdr clauses) arguments returns library kind lambda-lists (cons (car clauses) flags))]
              [(and (pair? (car clauses)) (pair? (cdar clauses)))
               (let ([c (car clauses)])

@@ -19,6 +19,7 @@
           (prefix (service git) git:)
           (prefix (service log) log:)
           (prefix (service policy) policy:)
+          (prefix (service prompt-request) prompt-request:)
           (prefix (service reference) reference:)
           (prefix (service sandbox) sandbox:)
           (prefix (service session) session:)
@@ -38,7 +39,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
+      "prompt-request" "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -119,12 +120,23 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings))
+      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
     (case operation
-      [(view-create) (control!) (arity 5) (apply view:create! actor args)]
+      [(prompt-create) (control!) (head!) (arity 5) (apply prompt-request:create! actor args)]
+      [(prompt-bind) (control!) (head!) (arity 3) (apply prompt-request:bind! actor args)]
+      [(prompt-accept) (control!) (head!) (arity 3) (apply prompt-request:accept! actor args)]
+      [(prompt-cancel) (control!) (head!) (arity 1) (prompt-request:cancel! actor (car args))]
+      [(prompt-close) (control!) (head!) (arity 1) (prompt-request:close! actor (car args)) #t]
+      [(view-create) (control!)
+       (unless (<= 5 (length args) 6) (error 'wire "view-create expects optional resource owner"))
+       (apply view:create! actor args)]
+      [(view-retire) (control!) (arity 2)
+       (let ([d (view:snapshot (car args))])
+         (when (and d (view:owner d)) (error 'wire "unmount a view before retiring it")))
+       (call-with-values (lambda () (apply view:retire! actor args)) list)]
       [(view-read) (arity 1) (view:snapshot (car args))]
       [(view-tree) (arity 1) (view:tree (car args))]
       [(view-arrange) (control!) (arity 2) (call-with-values (lambda () (apply view:arrange! actor args)) list)]
@@ -168,8 +180,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings) (generic-kind! (cdr (assq 'kind r)))]
-             [(widget-view) (when (view:owner (cdr (assq 'value r))) (error 'wire "unmount a view before retiring it"))])))
+             [(connection-topology connection-bindings prompt-request widget-view) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
@@ -837,7 +848,9 @@
           (activity:call-with-retirement
             (lambda ()
               (when session
-                (when registered? (view:release-owner! (policy:session-actor session)))
+                (when registered?
+                  (prompt-request:close-owner! (policy:session-actor session))
+                  (view:release-owner! (policy:session-actor session)))
                 (policy:revoke! session))
               (kernel:retract-module! owner)))
           (when writer (thread-join writer))))))

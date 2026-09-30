@@ -1,8 +1,9 @@
-;; Guarded text commands shared by controls; policy and view state stay in callers.
+;; Guarded text commands and editing policies shared by authored controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-control)
-  (export basis-text call-with-intent! context current? history! lines mirror pending? revision submit!)
-  (import (chezscheme) (prefix (core kernel) kernel:)
+  (export basis-text call-with-intent! context current? history! lines mirror pending? register-policy! revision submit! undo-scope)
+  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:)
+          (prefix (foundation text) text:)
           (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
           (prefix (state view) view:))
@@ -10,6 +11,46 @@
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
 
   (define pending (make-parameter '()))
+  (define policies (kernel:make-registry car))
+
+  (edoc "Register a pure authored-text normalization policy shared by entries and editors. Given proposed line strings and logical result positions, return both normalized values. A view selects it with (policy name schema). Interactive insert/delete/paste applies it before one guarded journal edit; explicit whole-text proposals keep their supplied intent."
+        (name symbol "policy name") (schema integer "positive version")
+        (normalize procedure "(lines positions) returns values lines positions"))
+  (define (register-policy! name schema normalize)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? normalize))
+      (error 'register-policy! "invalid text policy"))
+    (kernel:registry-add! policies (cons (list name schema) normalize)))
+
+  (define (normalize d old span replacement positions context basis)
+    (let ([profile (assq 'policy (view:options d))])
+      (if (not profile) (values span replacement positions context)
+        (let ([policy (kernel:registry-find policies (lambda (p) (equal? (cdr profile) (car p))))])
+          (unless policy (refuse "Text editing policy is unavailable"))
+          (let-values ([(proposed delta) (text:apply-edit old span replacement)])
+            (let-values ([(lines points)
+                          ((cdr policy) proposed
+                           (map (lambda (p) (case p [(start) (text:span-start span)] [(end) (text:delta-new-end delta)] [else p])) positions))])
+              (unless (and (vector? lines) (> (vector-length lines) 0)
+                        (for-all (lambda (line)
+                                   (and (string? line)
+                                     (not (exists (lambda (c) (or (char=? c #\newline)
+                                                                (and (eq? (view:kind d) 'entry) (char=? c #\return)))) (string->list line))))) (vector->list lines))
+                        (or (not (eq? (view:kind d) 'entry)) (= (vector-length lines) 1))
+                        (list? points) (= (length points) (length positions))
+                        (for-all (lambda (p) (and (text:position? p) (< (car p) (vector-length lines))
+                                               (<= (cdr p) (string-length (vector-ref lines (car p)))))) points))
+                (refuse "Invalid normalized text or positions"))
+              (if (equal? lines proposed) (values span replacement points context)
+                (let-values ([(span replacement) (text:difference old lines)])
+                  (values span replacement points
+                    (append (or (property:edit-context context) '(#f "Normalize input")) (list (cons 'revision basis))))))))))))
+
+  (edoc "The default undo scope shared by authored text controls: mine for this head's actions, or all for every actor. The command environment exposes this as edit:undo-scope."
+        (value (one-of mine all)))
+  (define undo-scope
+    (make-parameter 'mine
+      (lambda (scope)
+        (unless (memq scope '(mine all)) (error 'undo-scope "expected mine or all" scope)) scope)))
 
   (edoc "Whether a text command is computing or admitting this view's intent. Idle anchor maintenance must wait; explicit user interactions remain allowed."
         (id model "text view") (returns boolean))
@@ -68,17 +109,22 @@
   (edoc "Submit stated text intent, adopt its receipt once and settle a still-current view. The state procedure maps accepted logical positions to the control's portable state."
         (id model "control") (source list "source snapshot") (d list "descriptor") (old vector "proposal text")
         (basis integer "proposal revision") (span any "replaced span") (replacement list "replacement lines")
-        (context any "journal grouping and witnesses") (positions list "desired result positions") (state procedure "portable state constructor"))
-  (define (submit! id source d old basis span replacement context positions state)
+        (context any "journal grouping and witnesses") (positions list "desired result positions") (state procedure "portable state constructor")
+        (policy (list-of boolean) "apply the view's editing policy, at most one flag"))
+  (define (submit! id source d old basis span replacement context positions state . policy)
+    (unless (and (<= (length policy) 1) (for-all boolean? policy)) (error 'submit! "invalid policy flag"))
     (call-with-intent! id (lambda ()
                             (unless (current? id source d) (refuse "The text view was closed or its source changed"))
                             (when (cond [(assq 'read-only (view:options d)) => cdr] [else #f]) (refuse "This text view is read-only"))
-                            (let ([m (mirror source)])
-                              (let-values ([(lines rev changes points committed)
-                                            (text-source:edit! head:ui-actor (list old (text-source:id m) basis) span replacement context positions)])
-                                (text-source:adopt! m basis lines rev changes)
-                                (head:note-ui-edit! (text-source:id m) committed)
-                                (settle! id source d m rev points state))))) )
+                            (let-values ([(span replacement positions context)
+                                          (if (and (pair? policy) (car policy)) (normalize d old span replacement positions context basis)
+                                            (values span replacement positions context))])
+                              (let ([m (mirror source)])
+                                (let-values ([(lines rev changes points committed)
+                                              (text-source:edit! head:ui-actor (list old (text-source:id m) basis) span replacement context positions)])
+                                  (text-source:adopt! m basis lines rev changes)
+                                  (head:note-ui-edit! (text-source:id m) committed)
+                                  (settle! id source d m rev points state)))))) )
 
   (edoc "Apply source undo/redo and rebase a still-current view's logical positions through the same journal."
         (id model "control") (source list "source snapshot") (d list "descriptor")

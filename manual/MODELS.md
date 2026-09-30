@@ -154,8 +154,12 @@ entries for the whole supported tree. A nested child cannot be claimed alone.
 An already owned tree returns `owned`, even to the same head. A successful
 claim increments generations and resets sequences to zero.
 `view:publish!` takes an actor and a batch of
-`(view-id generation sequence basis state focus)` updates. All owners/generations
-must match and each sequence must advance; otherwise nothing changes.
+`(view-id generation sequence basis state focus)` snapshots. The newest
+snapshots with matching owners and generations apply atomically. Retired
+views, former owners and acknowledged sequences are ignored, allowing live
+views to keep publishing when a temporary sibling disappears. Focus outside
+the surviving root clears. This is interaction publication; authored text
+continues to use the store's guarded edit commands.
 `view:release!` checks the root generation and releases its supported tree,
 retaining acknowledged state. An owned arrangement renews generations to
 prevent an old publication from overwriting corrected focus or removed state.

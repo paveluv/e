@@ -480,6 +480,19 @@ validate the actual target and revision before committing an effect.
 
 ## Definitions and lifetime
 
+Views are session-persistent by default. Pass an optional resource-owner model
+after the initial state in `view:create!` to give a view that model's scope and
+persistence. This is separate from containment and from the head's mount lease.
+Forking preserves resource lifetimes and remaps internal owners along with the
+copied tree. An allocation or fork refuses if its resource owner disappears.
+
+After unmounting, `view:retire!` takes actor, view and expected model revision.
+It atomically removes the view from its parent, clears affected host focus and
+releases its child subtrees as unowned roots. Sources and command targets are
+borrowed and survive. Use this operation for views; `model:retire!` handles
+ordinary model state. A resource-owning service may retire its scoped views
+when its request or session ends.
+
 `widget:register!` takes a kind, schema version and a definition alist.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
@@ -638,9 +651,12 @@ Finder uses it for conjunction separators and italic missing path components;
 the source still contains ordinary spaces. Its `context` input is connected
 to the collection's `summary` output, without polling or copying result rows.
 An independent `(policy name schema)` option selects a logical text-edit
-normalizer registered with `entry:register-policy!`: `(text caret) → (text caret)`.
-This handles typed leading paths without encoding terminal coordinates.
-Programmatic whole-field replacements already supply their intended text.
+normalizer registered with `edit:register-policy!`. It receives proposed line
+strings and logical result positions, returning both normalized values.
+Entries and editors apply the same policy before one guarded journal edit.
+This handles typed leading paths or Scheme indentation without terminal
+coordinates. Programmatic whole-field replacements already supply their
+intended text and bypass this policy.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or
@@ -788,6 +804,28 @@ from the focused leaf. A `full` capture stops unhandled input. Either policy
 can list first-key exceptions in `yield`; every suffix of a yielded chord
 keeps that first key's route. Bind named actions through
 `keymap:call` and use `widget:target` to obtain the explicit receiver.
+
+Public operations can declare a contextual receiver in their edoc:
+
+```scheme
+(edoc "Toggle hidden entries." (id model "Finder view")
+      (receiver id (view finder)))
+(define (toggle-hidden! id) ...)
+```
+
+The compiler checks that `id` is a non-rest formal with type `model`.
+Widget action registration checks that its kind matches the annotation.
+An operation shared by multiple kinds can declare `(view table list)`.
+This metadata affects discovery and argument assistance, not evaluation.
+M-x inserts an explicit model literal; scripts still supply ordinary values.
+
+M-x captures the focused view and its ancestors. A widget can additionally
+expose finite child paths with a definition field such as
+`(receivers (table table))`: the first symbol labels the receiver, and the
+remaining symbols name its child path. Unlisted siblings and private children
+are not searched. `widget:receivers` reads this structure from local mirrors;
+`widget:receiver-live?` checks a captured identity and ownership generation.
+Custom prompt hosts pass these rows in the origin's `receivers` field.
 
 `dispatch:input!` accepts a root and normalized `(key token text-fallback)`
 or `(text string source)` input. Optional trailing contexts belong to the

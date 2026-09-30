@@ -3,11 +3,12 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown status target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
@@ -46,6 +47,11 @@
   (define pending-scroll (make-hashtable equal-hash equal?))
   (define pending-reveal (make-hashtable equal-hash equal?))
   (define scroll-positions (make-hashtable equal-hash equal?))
+  ;; Subscribers run on publisher/client threads. They only enqueue a
+  ;; coalesced refresh; mount caches and source demand belong to the pump.
+  (define notifications (make-eq-hashtable))
+  (define notification-lock (make-mutex))
+  (define pump-thread (get-thread-id))
   (define (release-service! id)
     (let ([n (hashtable-ref nodes id #f)]) (when n (node-activity-set! n #f)))
     (let ([entry (hashtable-ref services id #f)])
@@ -54,6 +60,10 @@
 
   (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
   (define (pump!)
+    (for-each (lambda (refresh) (refresh))
+      (with-mutex notification-lock
+        (let ([ready (vector->list (hashtable-values notifications))])
+          (hashtable-clear! notifications) ready)))
     (vector-for-each
       (lambda (id)
         (let* ([n (hashtable-ref nodes id #f)] [d (and n (read-view id))] [entry (definition d)]
@@ -144,12 +154,49 @@
                         [(capture-contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
+                        [(receivers)
+                         (and (list? (cdr p))
+                           (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
+                                                  (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
                         [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy? status) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
+    (for-each
+      (lambda (action)
+        (for-each (lambda (sig)
+                    (let ([r (edoc:signature-receiver sig)])
+                      (when (and r (not (and (eq? (caadr r) 'view) (memq kind (cdadr r)))))
+                        (error 'register! "action receiver contract differs from its widget" kind (car action) r))))
+          (or (edoc:edoc-of (cdr action)) '())))
+      (field (cons #f definition) 'actions '()))
     (kernel:registry-add! definitions (cons (list kind schema) (map (lambda (p) (cons (car p) (cdr p))) definition))))
+
+  (edoc "Capture explicit receivers from a mounted view's ancestry and declared child paths. Each row is (id kind schema generation owner label). Only local mirrors are read; private descendants are not searched."
+        (id model "focused view") (returns list) (effects internal))
+  (define (receivers id)
+    (define (row id label)
+      (let ([d (read-view id)])
+        (and d (definition d)
+          (list id (view:kind d) (view:schema d) (view:generation d) (view:owner d)
+            (or label (option d 'name #f) (symbol->string (view:kind d)))))))
+    (mounted id)
+    (fold-left
+      (lambda (out at)
+        (let* ([d (read-view at)]
+               [extra (map (lambda (p) (row (apply descendant at (cdr p)) (symbol->string (car p))))
+                        (field (definition d) 'receivers '()))])
+          (fold-left (lambda (out r) (if (or (not r) (assoc (car r) out)) out (append out (list r))))
+            out (cons (row at #f) extra)))) '() (reverse (path id))))
+
+  (edoc "Whether a captured receiver still has its exact kind, schema, ownership generation and owner. No remote reads or implicit retargeting."
+        (receiver list "row from receivers") (returns boolean) (effects internal))
+  (define (receiver-live? receiver)
+    (let* ([id (car receiver)] [d (and (hashtable-contains? nodes id) (read-view id))])
+      (and d (definition d)
+        (equal? (list (view:kind d) (view:schema d) (view:generation d) (view:owner d))
+          (list-head (cdr receiver) 4)) #t)))
 
   (define (source-id id d)
     (and d (view:source d)
@@ -313,8 +360,31 @@
           (lambda result (head:wake-main!) (apply values result))))))
 
   (define (subscribe! mount tree)
-    (let ([tokens (list #f #f)] [demand #f] [endpoints (map car tree)])
+    (let ([tokens (list #f #f #f)] [demand #f] [endpoints (map car tree)]
+          [live? #t] [acquire? #f])
+      (define (refresh)
+        (let ([work (with-mutex notification-lock
+                      (and live? (let ([work (if acquire? 'acquire 'change)])
+                                   (set! acquire? #f) work)))])
+          (when work (when (eq? work 'acquire) (acquire)) (changed))))
+      (define (schedule! demand?)
+        (if (= pump-thread (get-thread-id))
+          (when live? (when demand? (acquire)) (changed))
+          (with-mutex notification-lock
+            (when live?
+              (set! acquire? (or demand? acquire?))
+              (hashtable-set! notifications tokens refresh))))
+        (head:wake-main!))
       (define (changed)
+        (interaction:reconcile!
+          (filter values
+            (map (lambda (row)
+                   (let ([r (caddr row)])
+                     (and (or (not r) (eq? (field r 'kind #f) 'widget-view))
+                       ;; A temporarily unavailable port contract does not
+                       ;; revoke the underlying view's ownership.
+                       (cons (car row) (and r (field r 'value #f))))))
+              (caddr (connection:snapshot endpoints)))))
         (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
         (head:wake-main!))
       (define (acquire)
@@ -329,16 +399,21 @@
                                    (if old (remq old texts) texts))))]
                   [(not (member source ids)) (set! ids (cons source ids))]))) tree)
           (unless (equal? demand ids)
-            (let ([fresh (model:subscribe! ids (lambda (notice) (changed)))] [old (car tokens)])
+            (let ([fresh (model:subscribe! ids (lambda (notice) (schedule! #f)))] [old (car tokens)])
               (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
           (for-each (lambda (p)
                       (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
           (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (connection:snapshot endpoints)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
-                       (when (cadr tokens) (connection:unsubscribe! (cadr tokens))) (raise ex)])
-        (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (acquire) (changed))))
+                       (when (cadr tokens) (connection:unsubscribe! (cadr tokens)))
+                       (when (caddr tokens) ((caddr tokens))) (raise ex)])
+        (set-car! (cddr tokens)
+          (lambda () (with-mutex notification-lock
+                       (set! live? #f) (hashtable-delete! notifications tokens))))
+        (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (schedule! #t))))
         (acquire) tokens)))
   (define (unsubscribe! token)
+    ((caddr token))
     (model:unsubscribe! (car token)) (connection:unsubscribe! (cadr token)))
   (define (reconcile! mount tree)
     (let ([ids (map car tree)])

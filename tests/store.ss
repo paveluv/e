@@ -21,6 +21,7 @@
              (prefix (core property) property:)
              (prefix (core port) port:)
              (prefix (service file) file:)
+             (prefix (service prompt-request) prompt-request:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation text) text:)
              (prefix (core kernel) kernel:)
@@ -41,6 +42,7 @@
      (include "tests/connection.sps")
      (include "tests/collection.sps")
      (include "tests/catalogue.sps")
+     (include "tests/prompt-request.sps")
 
      (define (span sl sc el ec) (text:make-span sl sc el ec))
      (define (edit! actor id basis sl sc el ec replacement)

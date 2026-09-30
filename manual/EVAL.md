@@ -35,6 +35,15 @@ While the prompt is active:
   including symbols in nested expressions. The first press normalizes the input;
   the second shows matches and cycles any alternative normalizations.
 - `Shift-TAB` completes only symbols published by e and its modules.
+- Widget commands participate when their declared receiver is available in
+  the widget where M-x started. For example, in Finder, complete
+  `finder:toggle-hidden!`, then press Tab at its empty argument to insert
+  the explicit `(model …)` receiver. Table sorting and terminal capture work
+  the same way. Multiple receivers require a choice; unrelated apps are
+  absent from discovery. Explicit calls remain ordinary Scheme.
+- Receiver assistance does not replace an existing variable or expression.
+  Nested calls use the same captured context, and a retired receiver refuses
+  execution rather than silently selecting another widget.
 - e-specific completion candidates use the editor highlight.
 - Unknown or partial symbols are italic, standard Scheme symbols are plain,
   and e-specific symbols use the editor highlight.
@@ -131,10 +140,8 @@ parameter `[value]`, a value its type in angle brackets, a keyword the parts
 of its form. A procedure without an `edoc` shows the parameters of its
 source, or its arity. A long hint wraps onto further rows, indented under
 itself. The hint is display-only: clicking anywhere in a candidate's rows
-inserts just the symbol. The list's status line shows its buffer's name,
-`<completions>`, then counts the matches and names what they are, `12
-matches of file` or `4 matches of symbol`, adding `; page 2 of 3` when they
-take several pages.
+inserts just the symbol. The prompt's help row counts the matches and names
+what they are, such as `12 matches of file` or `4 matches of symbol`.
 
 At an argument position of a documented procedure, Tab completes by the
 argument's type instead of by symbol. `(head:show-buffer! ` offers every live
@@ -406,9 +413,12 @@ The second argument labels the data: an extension passes a symbol such as
 `'worksheet`, producing `(worksheet . result)` without adding M-x history.
 M-x passes its actual input as a string, producing `(input . result)` with history.
 
-Run on the head's main thread. Nested calls share the outer capture and
-interruption scope and one undo group. A continuation escape cleans up and
-escapes normally; grouping is not a rollback of edits or arbitrary Scheme
-effects. Parse inside the thunk so read errors use the same reporting path.
+Run on the head's main thread. Nested calls share the outer capture,
+interruption scope and undo group. A prompt suspension releases capture
+resources and closes that automatic group; resuming starts a new capture
+segment and undo step, separate from intervening commands. An explicit
+`edit:call-as-one-edit!` group cannot suspend. A continuation escape cleans
+up and escapes normally; grouping is not a rollback of edits or arbitrary
+Scheme effects. Parse inside the thunk so read errors use the same reporting path.
 For result insertion, edit inside the thunk and return the original values
 with `apply values`, keeping the computation and insertion in one undo step.

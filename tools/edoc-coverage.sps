@@ -313,8 +313,8 @@
      open-input-file open-file-input-port open-string-input-port open-bytevector-input-port
      open-fd-input-port open-fd-output-port open-fd-input/output-port))
 (define prompting-procedures
-  ;; (library-name . names) whose call waits for a key
-  '(((head head) read-key-event)))
+  ;; Primitive input waits, including the single-pump continuation adapter.
+  '(((head head) read-key-event) ((head suspension) wait!)))
 
 (define editing-procedures
   ;; (library-name . names) whose call edits the current buffer's text: what
@@ -329,7 +329,7 @@
 (define higher-order
   ;; (form . positions): arguments that are procedures the form calls
   '((apply 0) (for-each 0) (map 0) (vector-for-each 0) (vector-map 0) (string-for-each 0)
-    (call-with-values 0 1) (dynamic-wind 0 1 2) (call-with-current-continuation 0) (call/cc 0)
+    (call-with-values 0 1) (dynamic-wind 0 1 2) (call-with-current-continuation 0) (call/cc 0) (call/1cc 0)
     (call-with-port 1) (call-with-string-output-port 0) (call-with-bytevector-output-port 0)
     (with-exception-handler 0 1) (hashtable-update! 2) (eq-hashtable-update! 2) (fork-thread 0)
     (fold-left 0) (fold-right 0) (filter 0) (find 0) (exists 0) (for-all 0) (partition 0) (assp 0) (memp 0)
@@ -711,7 +711,7 @@
   ;; direct witnesses, callees and prompting for one definition
   (let* ([v (hashtable-ref all-definitions key #f)] [path (car key)] [bodies (vector-ref v 12)])
     (when (eq? (vector-ref v 0) 'procedure)
-      (let ([witnesses '()] [callees '()] [prompts? #f] [edits? #f])
+      (let ([witnesses '()] [callees '()] [prompts? (and (prompting-key? key) #t)] [edits? #f])
         (define (witness! kind text) (set! witnesses (cons (cons kind text) witnesses)))
         (for-each
           (lambda (body)

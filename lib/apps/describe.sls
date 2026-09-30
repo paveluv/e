@@ -5,7 +5,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps describe)
-  (export (rename (describe-at-point! at-point!)) fetch-data! init!
+  (export (rename (describe-at-point! at-point!)) fetch-data! init! (rename (describe-input! input!))
           (rename (describe-key! key!)) (rename (describe! show!)) (rename (describe this)))
   (import (chezscheme)
           (prefix (only (apps markdown) companion companion!) markdown:)
@@ -16,7 +16,6 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head style) style:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
@@ -141,6 +140,8 @@
           [else (edit:set-message! "No symbol at point")])
     (void))
 
+  (edoc "Describe the Scheme name at an explicit input caret, without reading a buffer's point."
+        (text string "Scheme input") (pos integer "character offset"))
   (define (describe-input! text pos)
     ;; M-. at a prompt: describe the symbol at the cursor, or the one
     ;; just before it, trailing spaces skipped -- "vector-sort " M-.
@@ -326,6 +327,5 @@
          (("procedure" . "(describe:fetch-data!)")) "void"
          ("(apps describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
-    (prompt:inspector describe-input!)
     (keymap:bind-default! "C-h f" (keymap:prefill describe!))
     (keymap:bind-default! "M-." describe-at-point!)))

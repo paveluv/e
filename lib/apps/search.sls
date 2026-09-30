@@ -17,13 +17,13 @@
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
+          (prefix (head completion) completion:)
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (head literal)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head style) style:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
@@ -159,7 +159,8 @@
               (set! needle s)
               (set! basis revision)))))
       (define (show!)
-        (when at (goto-match! (list-ref hits at)))
+        (when (and at (memq window (head:windows)) (eq? (head:window-buffer window) b))
+          (head:with-window window (goto-match! (list-ref hits at))))
         (cons (and at (+ at 1)) (length hits)))
       (define (move step)
         (refresh! needle)
@@ -172,7 +173,7 @@
               (let ([n (if needle (string-length needle) 0)])
                 (append (if at (let ([p (list-ref hits at)]) (list (list (car p) (cdr p) (+ (cdr p) n) 'match-point))) '())
                         (map (lambda (p) (list (car p) (cdr p) (+ (cdr p) n) 'match)) hits))))))
-      (prompt:make-searcher
+      (completion:make-searcher
         (lambda (s)
           (refresh! s)
           (show!))
@@ -181,7 +182,8 @@
         (lambda (accepted?)
           (refresh! needle)
           (set! preview-highlights #f)
-          (when (and (eq? (head:window-buffer window) b) (window:focus! window)) (head:goto! origin))))))
+          (when (and (memq window (head:windows)) (eq? (head:window-buffer window) b))
+            (head:with-window window (head:goto! origin)))))))
 
   ;; The needle type: a string argument that searches while it is typed.
   ;; At M-x the prompt highlights the needle's matches in the current
@@ -331,14 +333,11 @@
   (define (search!)
     ;; The search owns C-g while it runs; the match highlighting goes
     ;; away however it exits.
-    (prompt:interaction
+    (head:call-uninterrupted
       (lambda ()
-        (dynamic-wind
-          void
-          run-search!
-          (lambda ()
-            (set! needle-now "")
-            (set! current-match #f))))))
+        (parameterize ([paint:cursor-in-echo #f])
+          (dynamic-wind dispatch:cancel! run-search!
+            (lambda () (dispatch:cancel!) (set! needle-now "") (set! current-match #f)))))))
 
   ;;; Matching -----------------------------------------------------------------------
 

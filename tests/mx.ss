@@ -13,10 +13,10 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:)
-             (prefix (head window) window:) (prefix (head widget) widget:)
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
+             (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
              (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
-             (prefix (state model) model:) (prefix (head table) table:)
+             (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
@@ -161,6 +161,43 @@
      ;; extends a token to the longest text every candidate still matches,
      ;; a sole candidate whole.
      (define (extensions text) (eval:completion-extensions text (string-length text)))
+     (let* ([expansions 0]
+            [source (completion:make-source
+                      (lambda (text caret)
+                        (values 0 (string-length text)
+                          (lambda () (set! expansions (+ expansions 1)) '("abc" "bca" "cba"))
+                          (if (string=? text "z") '() '("abc" "bca" "cba")))))]
+            [s (completion-state:create source #f)])
+       (completion-state:refresh! s "a" 1)
+       (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source #f)
+       (let ([page (completion-state:snapshot s)])
+         (check 'completion-normalizes-and-cycles-without-recomputing-extensions
+           (list (cadr page) (list-ref page 3) expansions) '("bca" ("abc" "bca" "cba") 1))
+         (completion-state:refresh! s "z" 1)
+         (check 'completion-refuses-stale-page-without-expansion-or-text-change
+           (list (completion-state:choose! s (car page) "abc")
+             (cadr (completion-state:snapshot s)) expansions) '(#f "z" 1)))
+       (completion-state:refresh! s "a" 1)
+       (completion-state:normalize! s source #f) (completion-state:normalize! s source #f)
+       (check 'completion-selects-current-value-and-hides-its-page
+         (list (completion-state:choose! s (car (completion-state:snapshot s)) "cba")
+           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)) '(#t "cba" #f)))
+     (let* ([events '()] [track-count 0]
+            [maker (lambda () (completion:make-searcher
+                                (lambda (needle) (set! track-count (+ track-count 1)) '(1 . 2))
+                                (lambda () '(2 . 2)) (lambda () '(1 . 2))
+                                (lambda (accepted?) (set! events (cons accepted? events)))))]
+            [source (completion:make-source (lambda (text caret) (values #f #f '() '())) #f #f
+                      (lambda (text caret) (cons maker text)))]
+            [s (completion-state:create source #f)])
+       (completion-state:refresh! s "needle" 6)
+       (completion-state:normalize! s source #f)
+       (completion-state:refresh! s "needle" 6)
+       (check 'completion-search-navigation-survives-unchanged-refresh
+         (list (list-ref (completion-state:snapshot s) 4) track-count) '(" [2 of 2]" 1))
+       (completion-state:finish! s #t) (completion-state:finish! s #f)
+       (check 'completion-search-finishes-once events '(#t)))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
          (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
@@ -344,16 +381,16 @@
      (define s (make))
      (check 'a-needle-searches-from-point
        (list (procedure? make) (edoc:type-searcher 'string)
-             ((prompt:searcher-find s) "alpha") (head:point)
-             ((prompt:searcher-next s)) (head:point)
-             ((prompt:searcher-previous s))
-             ((prompt:searcher-find s) "zeta") (head:point))
+             ((completion:searcher-find s) "alpha") (head:point)
+             ((completion:searcher-next s)) (head:point)
+             ((completion:searcher-previous s))
+             ((completion:searcher-find s) "zeta") (head:point))
        '(#t #f (2 . 3) (1 . 6) (3 . 3) (2 . 0) (2 . 3) (#f . 0) (1 . 6)))
-     ((prompt:searcher-done s) #f)
+     ((completion:searcher-done s) #f)
      (check 'ending-a-search-unaccepted-restores-point (head:point) '(0 . 3))
      (let ([s (make)])
-       ((prompt:searcher-find s) "gamma")
-       ((prompt:searcher-done s) #t))
+       ((completion:searcher-find s) "gamma")
+       ((completion:searcher-done s) #t))
      (check 'ending-an-accepted-preview-restores-point (head:point) '(0 . 3))
      (search:init!)
      (head:buffer-lines-set! needles '#("old OLD old"))
@@ -361,26 +398,79 @@
      (set-mark-command!)
      (head:goto! '(0 . 11))
      (let ([s (make)])
-       ((prompt:searcher-find s) "old")
+       ((completion:searcher-find s) "old")
        (check 'needle-highlights-use-the-commands-exact-matching
          (map (lambda (r) (list (cadr r) (caddr r)))
            (filter (lambda (r) (eq? (cadddr r) 'match)) (paint:highlight-ranges))) '((0 3) (8 11)))
-       ((prompt:searcher-done s) #t)
+       ((completion:searcher-done s) #t)
        (check 'accepting-a-needle-preserves-the-selected-command-region (search:count "old") 2))
      (head:buffer-marked-set! needles #f)
      (head:goto! '(0 . 0))
      (let ([s (make)])
-       ((prompt:searcher-find s) "old")
+       ((completion:searcher-find s) "old")
        (store:edit! '(head "other") (head:buffer-store-id needles) (head:buffer-store-rev needles)
          (text:make-span 0 0 0 0) '("prefix "))
        (head:before-frame!)
        (check 'needle-navigation-follows-foreign-edits
-         (list ((prompt:searcher-next s)) (head:point)) '((2 . 2) (0 . 15)))
-       ((prompt:searcher-done s) #f)
+         (list ((completion:searcher-next s)) (head:point)) '((2 . 2) (0 . 15)))
+       ((completion:searcher-done s) #f)
        (check 'cancelling-a-preview-restores-the-rebased-origin (head:point) '(0 . 7)))
      ;; a searching string is never settled shut
      (check 'a-needle-string-is-not-settled
        (settled "(search:replace! \"alpha")
        (let ([out "(search:replace! \"alpha"]) (cons out (string-length out))))
+
+     ;; Context is finite declared structure. A sibling only participates
+     ;; when its parent exposes it; ambiguity never chooses by numeric ID.
+     (eval:init!)
+     (eval '(edoc:elibrary (receiver-probe)
+              (export change! optional!) (import (chezscheme))
+              (edoc "A receiver command." (id model) (receiver id (view receiver-leaf)))
+              (define (change! id) id)
+              (edoc "An optional receiver." (id model) (receiver id (view receiver-leaf)))
+              (define optional! (case-lambda [() #f] [(id) id]))))
+     (eval '(import (prefix (receiver-probe) receiver-probe:)))
+     (let* ([a (view:create! head:ui-actor #f 'receiver-leaf 1 '((name . "First")) '())]
+            [b (view:create! head:ui-actor #f 'receiver-leaf 1 '((name . "Second")) '())]
+            [hidden (view:create! head:ui-actor #f 'receiver-leaf 1 '() '())]
+            [root (view:create! head:ui-actor #f 'receiver-parent 1 '() '())])
+       (widget:register! 'receiver-leaf 1 (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!))))))
+       (widget:register! 'receiver-parent 1 '((receivers (Other second))))
+       (view:arrange! head:ui-actor
+         (list (list root 0 (list (list 'first a 'fit) (list 'second b 'fit) (list 'hidden hidden 'fit)) '())) '())
+       (widget:mount! root 'receiver-test)
+       (let* ([captured (widget:receivers a)] [single (filter (lambda (r) (equal? (car r) a)) captured)]
+              [factory (completion:provider '(scheme 1 ()))]
+              [source (factory '() (list (cons 'receivers captured)))]
+              [one (factory '() (list (cons 'receivers single)))]
+              [none (factory '() '())])
+         (define (lookup source text)
+           (let-values ([(from to extensions candidates) ((completion:source-lookup source) text (string-length text))])
+             (list from to (if (procedure? extensions) (extensions) extensions)
+               (map completion:candidate-value candidates))))
+         (check 'receiver-capture-is-bounded-and-distinct
+           (list (map car captured) (map edoc:signature-receiver (edoc:edoc-of (eval 'receiver-probe:optional!))))
+           (list (list a root b) '(#f (id (view receiver-leaf)))))
+         (check 'receiver-registration-checks-the-declared-contract
+           (test:raises? (lambda () (widget:register! 'wrong-receiver 1
+                                      (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!)))))))) #t)
+         (let* ([text "(receiver-probe:change! "] [lit (format "(model ~a)" (cadr a))])
+           (check 'receiver-arguments-insert-only-a-sole-explicit-literal
+             (list (caddr (lookup one text)) (caddr (lookup source text))
+               (list-ref (lookup source text) 3))
+             (list (list lit) '("") (list lit (format "(model ~a)" (cadr b))))))
+         (check 'contextual-symbols-and-nested-calls-use-the-same-origin
+           (map (lambda (src) (list-ref (lookup src "(list (receiver-probe:ch") 3)) (list one none))
+           '(("receiver-probe:change!") ()))
+         (check 'existing-receiver-expressions-do-not-get-replaced
+           (map (lambda (text) (let ([r (lookup one text)])
+                                 (and (= (car r) (string-length text))
+                                   (not (string=? ((completion:source-kind one) text (string-length text)) "receiver")))))
+             '("(receiver-probe:change! existing " "(receiver-probe:change! (list " "'(receiver-probe:change! "))
+           '(#t #t #t))
+         (widget:unmount! root)
+         (check 'captured-receiver-retirement-removes-it-from-discovery
+           (list (widget:receiver-live? (car single))
+             (list-ref (lookup one "(receiver-probe:ch") 3)) '(#f ()))))
 
      (test:finish! 'mx)))

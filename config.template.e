@@ -68,8 +68,6 @@
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's copy buffer
 ;; (head:min-window-lines 3)      ; minimum text height allowed by a split
-;; (prompt:in-window #t)          ; default #f; prompts appear at the bottom of
-;;                                ; the current window instead of the echo area
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground

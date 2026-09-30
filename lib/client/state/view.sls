@@ -9,7 +9,7 @@
     (rename (descriptor:kind kind))
     (rename (descriptor:options options))
     (rename (descriptor:owner owner))
-    (rename (descriptor:parent parent)) publish! release!
+    (rename (descriptor:parent parent)) publish! release! retire!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
@@ -17,11 +17,16 @@
   (import (chezscheme) (prefix (core client) client:) (prefix (core descriptor) descriptor:)
           (prefix (state model) model:))
 
-  (edoc "Create a persistent view using this connection's identity; source is a model/buffer reference or #f for a container."
+  (edoc "Create a view using this connection's identity. An optional resource owner supplies its scope and persistence; otherwise it is session-persistent. Source is a model/buffer reference or false for a container."
         (actor actor "connection attribution") (source datum "source reference") (kind symbol "widget kind")
-        (schema integer "contract version") (options list "logical options") (state datum "initial interaction") (returns model))
-  (define (create! actor source kind schema options state)
-    (client:request 'view-create source kind schema options state))
+        (schema integer "contract version") (options list "logical options") (state datum "initial interaction")
+        (scope (list-of model) "optional resource owner") (returns model))
+  (define (create! actor source kind schema options state . scope)
+    (apply client:request 'view-create source kind schema options state scope))
+
+  (edoc "Retire an unmounted view against its revision, atomically detaching it and releasing its child subtrees. Sources and command targets survive. Return status and current target envelope."
+        (actor actor "connection attribution") (id model "view") (revision integer "expected model revision"))
+  (define (retire! actor id revision) (apply values (client:request 'view-retire id revision)))
 
   (edoc "Read a coherent canonical subtree." (id model "view") (returns list) (effects remote))
   (define (tree id) (client:request 'view-tree id))
@@ -43,7 +48,7 @@
         (actor actor "connection attribution") (id model "view id"))
   (define (claim! actor id) (apply values (client:request 'view-claim id)))
 
-  (edoc "Commit a batch of owner generations, sequences and interaction states at the base."
+  (edoc "Publish the newest still-owned interaction snapshots atomically. Retired views, former ownership generations and acknowledged sequences are ignored; focus outside a surviving root clears."
         (actor actor "connection attribution") (updates list "(id generation sequence basis state focus) entries"))
   (define (publish! actor updates) (apply values (client:request 'view-publish updates)))
 

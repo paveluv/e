@@ -15,8 +15,8 @@
           (prefix (head mode) mode:)
           (prefix (head mouse) mouse:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head widget) widget:)
+          (prefix (head window) window:)
           (prefix (sys glyph) glyph:))
 
   (define view #f) ; the <bindings> buffer while it is shown
@@ -210,10 +210,6 @@
     (or (head:app-buffer? b)
         (let ([guard (head:buffer-read-only b)]) (and guard (not (procedure? guard))))))
 
-  (define (prompt-context)
-    ;; the context of an open prompt's content view, or #f
-    (let ([body (prompt:content)]) (and body (prompt:content-context body))))
-
   (define (buffer-root b)
     (let ([w (find (lambda (w) (and w (eq? b (head:window-buffer w))))
                (cons* (head:current-window) (head:previous-window) (head:windows)))])
@@ -244,32 +240,17 @@
         (if scope (list (cons widget:target (car scope))) '()))))
 
   (define (listing b width)
-    ;; the keys that work now: with a prompt open, its content view's
-    ;; context, the prompt's keys and the global commands allowed in a
-    ;; prompt; else the buffer's mode contexts' bindings, an app's own keys
-    ;; among them, then the global ones; each context's keys less those a
-    ;; nearer context takes, and less the editing commands where the text
-    ;; is read-only, in the width given
-    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [prompting? (prompt:active?)]
-          [widget? (buffer-root b)])
-      (let loop ([contexts (if prompting?
-                               (append (if (prompt-context) (list (prompt-context)) '()) '(prompt global))
-                               (contexts b ""))]
-                 [nearer '()] [out '()])
-        (if (null? contexts)
-            (apply append (reverse out))
-            (let ([context (car contexts)])
-              (loop (cdr contexts) (cons context nearer)
-                    (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
-                                   (if (and prompting? (eq? context 'global))
-                                       (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
-                                       (if (and widget? (not prompting?))
-                                           (context-groups context '() (and (eq? context 'global) read-only?)
-                                             (lambda (binding) (reachable? b context binding))
-                                             (lambda (binding) (describe-binding b context binding)))
-                                           (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
-                                   width)
-                          out)))))))
+    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [widget? (buffer-root b)])
+      (let loop ([contexts (contexts b "")] [nearer '()] [out '()])
+        (if (null? contexts) (apply append (reverse out))
+          (let ([context (car contexts)])
+            (loop (cdr contexts) (cons context nearer)
+              (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
+                      (if widget?
+                        (context-groups context '() (and (eq? context 'global) read-only?)
+                          (lambda (binding) (reachable? b context binding))
+                          (lambda (binding) (describe-binding b context binding)))
+                        (context-groups context nearer read-only? #f #f)) width) out)))))))
 
   (define (heading? line)
     ;; a section title: a line that is not a row, rows starting with two spaces
@@ -343,9 +324,9 @@
     ;; comes last, so the rest compares on its own
     (let ([root (buffer-root b)])
       (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
-        (read-only-text? b) (prompt:active?) (prompt-context)
+        (read-only-text? b)
         (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
-        (if (and root (not (prompt:active?))) (widget:command-bindings root) '())
+        (if root (widget:command-bindings root) '())
         (listing-width))))
 
   (define (action-basis action)
@@ -395,13 +376,13 @@
     ;; the listing for a buffer into the view: from the top for a new
     ;; keyboard context; keep the reader's place through pointer or width changes
     (let* ([width (listing-width)]
-           [same? (and listed (equal? (list-head listed 5) (list-head now 5)))]
-           [keyboard-key (append (list-head now 5) (list (list-ref now 6) width))]
+           [same? (and listed (equal? (list-head listed 3) (list-head now 3)))]
+           [keyboard-key (append (list-head now 3) (list (list-ref now 4) width))]
            [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
            [lines (append (section "Mouse bindings"
                             (map (lambda (binding)
                                    (list (list (mouse:gesture-text (car binding))) (trace (cadr binding)) "")) pointer) width)
-                    keyboard (command-sections (list-ref now 6) width))]
+                    keyboard (command-sections (list-ref now 4) width))]
            [lines (if (null? lines) (list "no bindings") lines)])
       (set! keyboard-cache (cons keyboard-key keyboard))
       (set! listed now)
@@ -519,7 +500,7 @@
     (let ([starts (page-starts w)])
       (format "page ~a of ~a" (+ 1 (page-index w starts)) (length starts))))
 
-  (edoc "Inspect mouse, keyboard and widget command bindings in the read-only pop-up <bindings>, with their public APIs and documentation. Mouse bindings follow the pointer; keyboard and widget commands follow the active window. If already shown, page down, wrapping to the top past the end.")
+  (edoc "Inspect mouse, keyboard and widget command bindings in <bindings>, with their public APIs and documentation. Open beside a focused pop-up, otherwise in the pop-up. Mouse bindings follow the pointer; keyboard and widget commands follow the active window. If already shown, page down, wrapping to the top past the end.")
   (define (show!)
     (cond
       [(showing?)
@@ -530,10 +511,13 @@
       [else
        (let ([b (or (subject) (head:window-buffer (head:current-window)))])
          (ensure-view!)
-         (remember-over! (head:popup))
-         (head:set-window-buffer! (head:popup) view)
-         (refresh! b)
-         (head:show-popup! (head:popup-default-rows)))]))
+         (if (head:popup? (head:current-window))
+           (when (window:pop-up-or-reuse! view) (refresh! b))
+           (begin
+             (remember-over! (head:popup))
+             (head:set-window-buffer! (head:popup) view)
+             (refresh! b)
+             (head:show-popup! (head:popup-default-rows)))))]))
 
   (define (remember-over! w)
     ;; what a window shows before the listing takes it, for bindings:return!
@@ -578,7 +562,4 @@
     (keymap:bind-default! "C-x S-TAB" page-up!)
     (keymap:bind-default! 'bindings "ESC" return!)
     (keymap:bind-default! 'bindings "C-g" return!)
-    ;; both work everywhere, inside a prompt too, where the listing is the prompt's keys
-    (prompt:allow! show!)
-    (prompt:allow! page-up!)
     (head:add-pre-redraw-hook! follow!)))

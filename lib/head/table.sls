@@ -115,7 +115,7 @@
   (define (get xs key fallback) (cond [(and xs (assq key xs)) => cdr] [else fallback]))
 
   (edoc "Find the containing table in the local descriptor tree."
-        (id model "table or descendant") (returns model) (inspect))
+        (receiver id (view table list)) (id model "table or descendant") (returns model) (inspect))
   (define (root id)
     (let ([d (interaction:snapshot id)])
       (cond [(not d) (error 'table "unavailable view" id)]
@@ -328,7 +328,7 @@
           (list (list root 0 (append (if heading (list (list 'heading heading 'fit)) '()) (list (list 'body scroll '(grow 1)))) options)
             (list scroll 0 (list (list 'rows body '(grow 1))) '())) '()) root)))
 
-  (edoc "Select a stable row key, resolving its current rank asynchronously if needed." (id model "table or descendant") (key datum "row identity"))
+  (edoc "Select a stable row key, resolving its current rank asynchronously if needed." (receiver id (view table list)) (id model "table or descendant") (key datum "row identity"))
   (define (select! id key)
     (let* ([s (runtime id)]
            ;; Explicit selection is an action boundary. A filter edit may
@@ -343,7 +343,7 @@
       (if f (max 1 (cadddr (widget:frame-clip f))) 1)))
 
   (edoc "Move among selectable rows, clearing hover. Page motion uses the shown viewport height. Repeated uncached motion replaces bounded intent; activation waits for the destination."
-        (id model "table or descendant") (direction (one-of next previous first last page-next page-previous) "row or page motion"))
+        (receiver id (view table list)) (id model "table or descendant") (direction (one-of next previous first last page-next page-previous) "row or page motion"))
   (define (move! id direction)
     (let* ([s (runtime id)] [v (metadata s)] [pending (session-pending s)] [hover (hovered-row s)]
            [at (if hover (cadddr hover)
@@ -366,7 +366,7 @@
       (when (ready? v) (seek! s (session-pending s) v)) (repaint! s)))
 
   (edoc "Invoke a named command on the hovered or selected row, passing its selection and result basis. The default command is activate; pending or stale rows refuse."
-        (id model "table or descendant") (command (list-of symbol) "optional command binding, default activate") (returns any))
+        (receiver id (view table list)) (id model "table or descendant") (command (list-of symbol) "optional command binding, default activate") (returns any))
   (define (invoke! id . command)
     (unless (or (null? command) (and (= (length command) 1) (symbol? (car command))))
       (error 'invoke! "expected an optional command name"))
@@ -393,7 +393,7 @@
           (error 'invoke! "selection is pending or unavailable"))
         (widget:invoke! (root id) (if (null? command) 'activate (car command)) selection basis))))
 
-  (edoc "Set shared collection sorting using raw column values; selection remains local." (id model "table") (keys list "(column ascending-or-descending) entries"))
+  (edoc "Set shared collection sorting using raw column values; selection remains local." (receiver id (view table list)) (id model "table") (keys list "(column ascending-or-descending) entries"))
   (define (sort-by! id keys)
     (define (recipe r)
       (let ([v (get r 'value '())]) (map (lambda (key) (get v key #f)) '(source filter input-filter sort))))
@@ -407,14 +407,14 @@
               (if (and (eq? status 'stale) (> attempts 0) (equal? (recipe current) (recipe original)))
                 (retry current (- attempts 1)) (error 'sort-by! "collection changed; retry" status))))))))
 
-  (edoc "Cycle a stable column through ascending, descending and off, preserving compound priority." (id model "table") (column symbol "column name"))
+  (edoc "Cycle a stable column through ascending, descending and off, preserving compound priority." (receiver id (view table list)) (id model "table") (column symbol "column name"))
   (define (toggle-sort! id column)
     (let* ([s (runtime id)] [v (metadata s)] [keys (get v 'sort '())] [key (assq column keys)])
       (sort-by! id (cond [(not key) (append keys (list (list column 'ascending)))]
                      [(eq? (cadr key) 'descending) (remq key keys)]
                      [else (map (lambda (k) (if (eq? key k) (list column 'descending) k)) keys)]))))
 
-  (edoc "Choose visible columns in display order; the declared identity column must remain present." (id model "table") (names list "distinct column names"))
+  (edoc "Choose visible columns in display order; the declared identity column must remain present." (receiver id (view table list)) (id model "table") (names list "distinct column names"))
   (define (set-columns! id names)
     (let* ([s (runtime id)] [v (metadata s)] [id (session-id s)] [d (descriptor s)])
       (unless (and (pair? names) (list? names) (for-all (lambda (n) (assq n (get v 'columns '()))) names)
@@ -531,7 +531,7 @@
   (define emphasis (make-hashtable equal-hash equal?))
 
   (edoc "Emphasize a host's current document key without changing table selection or publishing interaction state. False clears the emphasis."
-        (id model "table view") (key datum "row identity or false"))
+        (receiver id (view table list)) (id model "table view") (key datum "row identity or false"))
   (define (emphasize! id key)
     (let ([id (root id)])
       (unless (equal? key (hashtable-ref emphasis id #f))
@@ -619,7 +619,7 @@
                 (and (eq? (car r) 'ready) (or (list-ref r 3) 0)))))) 0)))
 
   (edoc "Choose an explicitly identified displayed row and activate it if the table has an activate command. Refuse a stale result or a row no longer displayed; no deferred activation is queued."
-        (id model "table or descendant") (selection list "(collection generation key)"))
+        (receiver id (view table list)) (id model "table or descendant") (selection list "(collection generation key)"))
   (define (choose! id selection)
     (let* ([s (runtime id)] [current (metadata s)]
            [frame (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
@@ -674,7 +674,7 @@
                  (and binding (begin (keymap:run! (cadr binding)) #t))))))])))
 
   (edoc "Cycle sorting for a currently visible heading by position. An absent or unsortable heading does nothing."
-        (id model "table or descendant") (index integer "zero-based visible column position"))
+        (receiver id (view table list)) (id model "table or descendant") (index integer "zero-based visible column position"))
   (define (toggle-visible-sort! id index)
     (unless (natural? index) (error 'toggle-visible-sort! "expected a nonnegative column index" index))
     (let* ([s (runtime id)] [f (exists (lambda (p) (find-frame (car p) (child s 'heading))) (widget:shown))]
