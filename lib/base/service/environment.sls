@@ -239,7 +239,7 @@
 
   (edoc "Submit Scheme source in environment order and return its job model immediately. The job survives head detachment. Generation mismatch refuses without creating work."
     (actor actor "submitting actor") (id model "environment") (generation integer "expected namespace generation")
-    (source string "Scheme forms") (returns model))
+    (source string "Scheme forms") (returns model) (receiver id (model environment)))
   (define (evaluate! actor id generation source)
     (unless (string? source) (error 'evaluate! "expected source text"))
     (let ([g (group-for id)])
@@ -256,7 +256,7 @@
             (group-queue-set! g (append (group-queue g) (list job))) (start! g) job)))))
 
   (edoc "Cancel a queued job without changing definitions. A running job resets its entire environment generation and reaps the worker; committed external effects remain. Return queued, reset or finished."
-    (actor actor "caller") (id model "job") (returns symbol))
+    (actor actor "caller") (id model "job") (returns symbol) (receiver id (model evaluation-job)))
   (define (cancel! actor id)
     (let ([j (record id 'evaluation-job)] [old #f])
       (if (not j) 'finished
@@ -275,7 +275,7 @@
           (when old (worker:close! old)) result))))
 
   (edoc "Reset a namespace and its live handles at the expected generation. Pending jobs become reset; borrowed resources and completed portable results survive. The next evaluation lazily initializes the same recipe."
-    (actor actor "caller") (id model "environment") (generation integer "expected generation"))
+    (actor actor "caller") (id model "environment") (generation integer "expected generation") (receiver id (model environment)))
   (define (reset! actor id generation)
     (let ([g (group-for id)])
       (unless g (error 'reset! "environment is unavailable"))
@@ -283,7 +283,7 @@
         (when old (worker:close! old)))))
 
   (edoc "Release a completed job, its owned output and retained result. Running or queued jobs must be cancelled first. Releasing a view never implicitly releases its borrowed job."
-    (actor actor "caller") (id model "job") (returns boolean))
+    (actor actor "caller") (id model "job") (returns boolean) (receiver id (model evaluation-job)))
   (define (release! actor id)
     (let ([j (record id 'evaluation-job)])
       (and j (let ([g (group-for (get (get j 'value) 'environment))])
@@ -313,7 +313,7 @@
                      (let loop ([i offset]) (if (>= i end) '() (cons (vector-ref names i) (loop (+ i 1))))))))))))
 
   (edoc "Close an environment, reset/reap its worker and delete its owned jobs/output. Declared borrowed documents and models survive."
-    (actor actor "caller") (id model "environment") (generation integer "expected generation"))
+    (actor actor "caller") (id model "environment") (generation integer "expected generation") (receiver id (model environment)))
   (define (close! actor id generation)
     (let ([g (group-for id)])
       (unless g (error 'close! "environment is unavailable"))

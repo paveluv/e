@@ -236,6 +236,40 @@
                       lines)) '#("")))
   (head-read a `(begin (store:delete! head:ui-actor ,origin) (head:sync-foreign-edits!) #t)))
 
+;; Names are fetched once per shared environment, not while typing or painting.
+(head-read a '(let ([failures (kernel:load-modules! '("environment" "namespace"))])
+                (unless (null? failures) (raise (cdar failures))) #t))
+(let* ([env (head-read a
+              `(environment:create! head:ui-actor
+                 (list (cons 'directory ,root) '(roots) '(imports (chezscheme))) 'transient))]
+       [job (head-read a `(environment:evaluate! head:ui-actor ',env 1 "(define wire-private 42) wire-private"))])
+  (test:await 'environment-wire-catalogue
+    (lambda () (eq? (cdr (assq 'status (cdr (assq 'value (caddr (caadr (rpc head 'model-read (list job)))))))) 'ok)))
+  (head-read a `(begin
+                  (define wire-model-source ((completion:provider '(environment 1 ())) ',env '()))
+                  (define wire-model-source2 ((completion:provider '(environment 1 ())) ',env '())) #t))
+  (head-wait 'native-completion-ready a
+    (lambda () (head-read a
+                 '(begin (namespace:pump!)
+                    (let-values ([(from to extensions candidates)
+                                  ((completion:source-lookup wire-model-source) "(wirepriv" 9)])
+                      (and (member "wire-private" candidates) #t))))))
+  (test:check 'native-completion-and-shared-prompts-have-no-typing-traffic
+    (head-read a
+      '(let ([io (lambda () (call-with-input-file "/proc/self/io"
+                              (lambda (p) (let loop () (let* ([key (read p)] [value (read p)])
+                                                         (if (eq? key 'wchar:) value (loop)))))))])
+         (let* ([before (io)]
+                [answers (map (lambda (source)
+                                (let-values ([(from to extensions names)
+                                              ((completion:source-lookup source) "(list (wirepriv" 15)]) names))
+                           (list wire-model-source wire-model-source2))])
+           (list answers (- (io) before)))))
+    '((("wire-private") ("wire-private")) 0))
+  (head-read a `(begin ((completion:source-release wire-model-source))
+                       ((completion:source-release wire-model-source2))
+                       (environment:close! head:ui-actor ',env 1) #t)))
+
 ;; Exercise the real head bridge and connection-owned cleanup without another
 ;; terminal process. The provider sees raw local metadata, never fitted text.
 ;; Load before compiling expressions that refer to the newly imported names.

@@ -19,7 +19,9 @@
              (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
-             (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
+             (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:)
+             (prefix (head namespace) namespace:) (prefix (service environment) environment:)
+             (prefix (head control) control:) (prefix (head entry) entry:) (prefix (head layout) layout:))
 
      (define check test:check)
      (widget:init!) (edit:init!) (window:init!)
@@ -473,4 +475,5 @@
            (list (widget:receiver-live? (car single))
              (list-ref (lookup one "(receiver-probe:ch") 3)) '(#f ()))))
 
+     (include "tests/environment-widget.sps")
      (test:finish! 'mx)))

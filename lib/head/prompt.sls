@@ -213,7 +213,9 @@
             (+ (cdr p) (fold-left + 0 (map (lambda (r) (+ 1 (string-length (vector-ref lines r)))) (iota (car p))))))))))
   (define (refresh-completion! id r)
     (let-values ([(entry source d text position) (draft-context id)])
-      (let ([signature (list (text-control:revision source) position)])
+      (let ([signature (list (text-control:revision source) position
+                         (and (completion:source? (runtime-source r))
+                           ((completion:source-basis (runtime-source r)))))])
         (unless (or (text-control:pending? entry) (equal? signature (runtime-signature r)))
           (when (and (>= (runtime-history-index r) 0)
                   (not (string=? text (list-ref (option (runtime-profile r) 'history '()) (runtime-history-index r)))))

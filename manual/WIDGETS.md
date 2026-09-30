@@ -1096,3 +1096,34 @@ reset, and lazily starts fresh workers. History is never replayed. Completion
 uses the last completed symbol catalogue: `environment:completion` returns
 pages of at most 256 names at an explicit generation/catalogue basis. Fetch
 pages outside painting and filter cached names locally while typing.
+
+`eval:create-model-prompt! environment generation draft commands` composes
+multiline Scheme entry, completion and help over a borrowed draft. Its accepted
+outcome is `(draft-revision lines origin)`, with explicit environment/generation
+in `origin`; the host submits those forms through `environment:evaluate!`.
+Resetting the environment invalidates the old prompt. This is ordinary Scheme:
+variables and nested calls are unrestricted, and head commands do not leak into
+the model namespace's completions. The catalogue becomes available after the
+first evaluation initializes the worker; submitting empty source also initializes
+it. Additional prompts share cached pages, and typing performs no catalogue RPC.
+
+`eval:create-result-view! actor job` composes a shared output editor with a
+bounded result or diagnostic summary. It borrows the job and its output. Load
+[the environment example](../examples/environments.e) and run
+`(environment-example:open!)` for two panels sharing a namespace and a third
+independent panel. This demonstrates the pieces rather than a full worksheet
+history application. Its prompts are transient; reopening a composition after
+restart creates new prompts against the restored environment generation.
+
+A widget definition can explicitly expose its model source to M-x with
+`(source-receiver . label)`. Commands annotate it with
+`(receiver id (model environment))`, for example. Capture retains the source
+identity and hosting view lease, plus the model's `generation` when present.
+No arbitrary model traversal or implicit current-model alias is involved.
+Environment controls and result controls use this same receiver mechanism.
+
+Asynchronous completion sources may supply a local `basis` procedure and an
+idempotent `release` procedure as the fifth/sixth arguments to
+`completion:make-source`. A changed basis refreshes visible choices and fences
+old selections even when the draft has not changed. Cleanup releases shared
+catalogue demand; painting reads only prepared completion data.

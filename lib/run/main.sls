@@ -269,9 +269,9 @@
             (echo:set-text! msg)))
         (reverse
           (kernel:load-modules!
-            '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
+            '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "environment" "eval" "extension" "finder" "git-view"
               "glyph" "head" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
-              "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "render" "scheme-format"
+              "namespace" "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "render" "scheme-format"
               "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "widget" "window"))))
       (load-config!)
       ;; Config loads the local view providers before resolving their plain
