@@ -2,9 +2,26 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head completion)
   (export candidate-label candidate-preview candidate-styles candidate-value candidate?
-          make-candidate make-searcher make-source searcher-done searcher-find searcher-next searcher-previous searcher?
+          make-candidate make-searcher make-source provider register! searcher-done searcher-find searcher-next searcher-previous searcher?
           source-kind source-lookup source-settle source-track source?)
-  (import (rnrs))
+  (import (rnrs) (only (chezscheme) list-head) (prefix (core kernel) kernel:))
+
+  (define providers (kernel:make-registry car))
+
+  (edoc "Register a head completion namespace. The factory receives portable configuration and captured origin, and returns a source. It runs once per prompt outside painting; any filesystem or environment work stays in its owning service."
+        (name symbol "namespace") (schema integer "positive recipe version")
+        (factory procedure "configuration and origin -> completion source"))
+  (define (register! name schema factory)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? factory))
+      (error 'register! "invalid completion provider"))
+    (kernel:registry-add! providers (cons (list name schema) factory)))
+
+  (edoc "Resolve a portable (namespace schema configuration) recipe to its registered factory, or false. Resolving does not execute it; hosts can use factory identity to detect replacement."
+        (recipe datum "provider recipe") (returns any))
+  (define (provider recipe)
+    (and (list? recipe) (= (length recipe) 3)
+      (let ([entry (kernel:registry-find providers (lambda (p) (equal? (car p) (list-head recipe 2))))])
+        (and entry (cdr entry)))))
 
   ;; A cursor-aware source returns (values start end expansions candidates).
   ;; Expansions may be a thunk: resolve only for a new Tab normalization,

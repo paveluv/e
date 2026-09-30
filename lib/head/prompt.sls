@@ -43,6 +43,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
           (prefix (head completion) completion:)
+          (prefix (head completion-layout) completion-layout:)
           (prefix (head completion-state) completion-state:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
@@ -394,7 +395,6 @@
   ;; Rows retain their source coordinates. The same mapping places the
   ;; cursor and handles mouse input after wrapping, paging or clipping.
   ;; input is a source interval; choices are (start end value [hover-face]) intervals.
-  (define-record-type row (fields text styles input choices))
 
   (edoc "A row of a content view: its text, styles and (start end value) choices, hovered with a face."
         (text string "the row text")
@@ -403,7 +403,7 @@
         (hover-face (list-of symbol) "the face of a hovered choice, at most one")
         (returns (record row)))
   (define (line text styles choices . hover-face)
-    (make-row text styles #f
+    (completion-layout:make-row text styles #f
       (map (lambda (choice) (append choice (if (null? hover-face) '(hover) hover-face))) choices)))
   ;; Cache only styles and numeric choice spans: a row also owns its text,
   ;; which would keep the weak key alive after a prompt is dismissed.
@@ -441,84 +441,6 @@
                                 (trim (- end 1)) (list (car choice) end (caddr choice))))))))
             caddr)))))
 
-  (define (format-rows candidates width)
-    ;; One candidate per row. A label made of the value, two spaces and a
-    ;; hint wraps at word boundaries with its continuation rows indented to
-    ;; the hint; any other label wraps from the margin. Every row of a
-    ;; candidate chooses it.
-    (define (slice styles from to)
-      (let ([out (make-vector (- to from) 'plain)])
-        (do ([i from (+ i 1)]) ((= i to) out)
-          (when (< i (vector-length styles)) (vector-set! out (- i from) (vector-ref styles i))))))
-    (list->vector
-      (apply append
-        (map (lambda (value)
-               (let* ([rich? (completion:candidate? value)]
-                      [chosen (if rich? (completion:candidate-value value) value)]
-                      [label (if rich? (completion:candidate-label value) value)]
-                      [styles (if rich? (completion:candidate-styles value) (make-vector (string-length label) 'plain))]
-                      [head (+ (string-length chosen) 2)]
-                      [indent (if (and (< (* 2 head) width) (> (string-length label) head)
-                                       (string=? (substring label 0 head) (string-append chosen "  ")))
-                                  head 0)]
-                      [tail (substring label indent (string-length label))]
-                      [breaks (paint:compute-breaks tail (max 1 (- width indent)))]
-                      [count (vector-length breaks)])
-                 (map (lambda (i)
-                        (let* ([from (vector-ref breaks i)]
-                               [to (if (= (+ i 1) count) (string-length tail) (vector-ref breaks (+ i 1)))]
-                               [segment (substring tail from to)]
-                               [text (if (= i 0)
-                                         (string-append (substring label 0 indent) segment)
-                                         (string-append (make-string indent #\space) segment))]
-                               [faces (if (= i 0)
-                                          (slice styles 0 (+ indent to))
-                                          (list->vector
-                                            (append (make-list indent 'plain)
-                                                    (vector->list (slice styles (+ indent from) (+ indent to))))))])
-                          (make-row text faces #f (list (list 0 (string-length text) chosen)))))
-                      (iota count))))
-             candidates))))
-
-  (define (format-columns candidates width labeler highlight?)
-    ;; Labelled candidates take a row each; plain strings fill columns.
-    (if (exists completion:candidate? candidates)
-        (format-rows candidates width)
-        (format-grid candidates width labeler highlight?)))
-
-  (define (format-grid candidates width labeler highlight?)
-    (let* ([labels (map (lambda (value) (if (completion:candidate? value) (completion:candidate-label value) (labeler value)))
-                     candidates)]
-           [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
-           [columns (max 1 (div width (max 1 column)))])
-      (let rows ([values candidates] [labels labels] [out '()])
-        (if (null? values) (list->vector (reverse out))
-            (let fill ([values values] [labels labels] [count 0]
-                       [text ""] [styles '()] [choices '()])
-              (if (or (= count columns) (null? values))
-                  (rows values labels
-                    (cons (make-row text (list->vector (apply append (reverse styles)))
-                            #f (reverse choices)) out))
-                  (let* ([label (car labels)] [shown (glyph:fit label column)]
-                         [value (car values)]
-                         [base (if (completion:candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
-                         [faces (make-vector (string-length shown) base)]
-                         [start (string-length text)] [end (+ start (string-length shown))])
-                    (when (completion:candidate? value)
-                      ;; fit preserves a prefix of whole glyph clusters. Stop
-                      ;; copying at its ellipsis/padding so neither is underlined.
-                      (let ([visible
-                             (if (<= (glyph:cells label) column) (string-length label)
-                                 (let trim ([i (- (string-length shown) 1)])
-                                   (if (char=? (string-ref shown i) #\space) (trim (- i 1)) i)))])
-                        (do ([i 0 (+ i 1)]) ((= i visible))
-                          (vector-set! faces i (vector-ref (completion:candidate-styles value) i)))))
-                    (fill (cdr values) (cdr labels) (+ count 1)
-                      (string-append text shown)
-                      (cons (vector->list faces) styles)
-                      (cons (list start end (if (completion:candidate? value) (completion:candidate-value value) value))
-                        choices)))))))))
-
   (define (input-rows content styles width)
     ;; Prewrap through the normal cell/cluster geometry, then render a
     ;; bounded slice without a second viewport competing for the cursor.
@@ -540,7 +462,7 @@
                      [face (make-vector (string-length shown) 'chrome)])
                 (do ([j 0 (+ j 1)]) ((= j (min (- to from) (vector-length face))))
                   (vector-set! face j (vector-ref styles (+ from j))))
-                (visual (+ i 1) (cons (make-row shown face (cons from to) '()) out))))))))
+                (visual (+ i 1) (cons (completion-layout:make-row shown face (cons from to) '()) out))))))))
 
   (define (label-stem label)
     (let* ([end (let loop ([i 0])
@@ -629,7 +551,7 @@
                               (paint:screen-cols)))])
         (max 1 (min (quotient (paint:screen-rows) 2)
                     (vector-length
-                      (format-columns values width (if completion-source (lambda (s) s) labeler) highlight?))))))
+                      (completion-layout:format-columns values width (if completion-source (lambda (s) s) labeler) highlight?))))))
     (define (release-view!)
       (when view
         (let ([gone? (not (memq view (head:buffers)))]
@@ -689,8 +611,8 @@
               (or (not in-window?) (eq? (head:current-window) owner)))
          (let ([at (head:app-event-buffer-position)])
            (when (and at (<= 0 (car at)) (< (car at) (vector-length shown-rows)))
-             (let* ([row (vector-ref shown-rows (car at))] [source (row-input row)]
-                    [choice (choice-at (row-choices row) (cdr at))])
+             (let* ([row (vector-ref shown-rows (car at))] [source (completion-layout:row-input row)]
+                    [choice (choice-at (completion-layout:row-choices row) (cdr at))])
                (cond [source
                       (set! clicked
                         (cons input (min (string-length input)
@@ -748,7 +670,7 @@
             [else
              (unless (= width candidate-width)
                (set! candidate-rows
-                 (format-columns candidates width (if completion-source (lambda (s) s) labeler) highlight?))
+                 (completion-layout:format-columns candidates width (if completion-source (lambda (s) s) labeler) highlight?))
                (set! candidate-width width))
              (let* ([all (vector-length candidate-rows)] [size (max 1 available)])
                (set! pages (max 1 (div (+ all size -1) size)))
@@ -796,7 +718,7 @@
                  [cursor-row
                   (let loop ([rows all] [i 0])
                     (if (or (null? rows) (null? (cdr rows))
-                            (< cursor (car (row-input (cadr rows))))) i
+                            (< cursor (car (completion-layout:row-input (cadr rows))))) i
                         (loop (cdr rows) (+ i 1))))]
                  [count (min (length all) (max 1 (- height (cond [body (content-view-minimum-height body)]
                                                              [candidates 1] [else 0]))))]
@@ -804,23 +726,23 @@
                  [input-part (list-head (list-tail all from) count)]
                  [choices (page-rows width (- height count))]
                  [pad (if in-window? (max 0 (- height count (length choices))) 0)]
-                 [rows (if body (append choices (make-list pad (make-row "" '#() #f '())) input-part)
-                           (append (make-list pad (make-row "" '#() #f '())) choices input-part))]
+                 [rows (if body (append choices (make-list pad (completion-layout:make-row "" '#() #f '())) input-part)
+                           (append (make-list pad (completion-layout:make-row "" '#() #f '())) choices input-part))]
                  [point (if in-window?
                             (cons (+ pad (length choices) (- cursor-row from))
-                              (- cursor (car (row-input (list-ref all cursor-row))))) '(0 . 0))])
+                              (- cursor (car (completion-layout:row-input (list-ref all cursor-row))))) '(0 . 0))])
             (set! shown-rows (list->vector rows))
             (set! shown-generation (car (completion-state:snapshot completion-state)))
-            (head:view-replace! view (map row-text rows) '()
+            (head:view-replace! view (map completion-layout:row-text rows) '()
               (list (cons target point) (cons (cons 'top target) '(0 . 0))))
             (let ([lines (head:buffer-lines view)])
               (do ([i 0 (+ i 1)]) ((= i (vector-length shown-rows)))
                 (let ([row (vector-ref shown-rows i)])
                   (hashtable-set! line-presentation (vector-ref lines i)
-                    (cons (row-styles row)
+                    (cons (completion-layout:row-styles row)
                           (map (lambda (choice) (list (car choice) (cadr choice)
                                                   (if (pair? (cdddr choice)) (cadddr choice) 'hover)))
-                            (row-choices row)))))))))))
+                            (completion-layout:row-choices row)))))))))))
 
     (define (record-history! s)
       (when (and history (> (string-length s) 0))

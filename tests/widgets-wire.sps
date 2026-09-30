@@ -4,11 +4,18 @@
   (head-read a
     '(begin
        (define wire-prompt-answer #f)
+       (define wire-prompt-lookups 0)
        (define (wire-prompt-accepted! id value) (set! wire-prompt-answer value))
+       (completion:register! 'wire-prompt 1
+         (lambda (configuration origin)
+           (completion:make-source
+             (lambda (text caret)
+               (set! wire-prompt-lookups (+ 1 wire-prompt-lookups))
+               (values 0 (string-length text) '("value") '("value" "value-next"))))))
        (widget:register! 'wire-prompt-host 1
          (append (layout:container 'y) (list (cons 'actions (list (cons 'accepted wire-prompt-accepted!))))))
        (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '()))
-       (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) #f))
+       (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) '(wire-prompt 1 ())))
        (define wire-prompt-view
          (prompt-control:create! wire-prompt-request '((label . "Wire prompt:"))
            (list (list 'accepted wire-prompt-host 'accepted '()))))
@@ -16,7 +23,19 @@
        (window:show-widget! (head:current-window) wire-prompt-host)
        #t))
   (head-wait 'prompt-control-is-shown a (lambda () (head-sees? a "Wire prompt:")))
-  (head-send! a "value\r")
+  (head-send! a "val\t\t")
+  (head-wait 'prompt-completion-list-is-shown a (lambda () (head-sees? a "value-next")))
+  (test:check 'prompt-resize-and-pointer-discovery-use-prepared-candidates-without-wire
+    (head-read a
+      '(let ([io (lambda () (call-with-input-file "/proc/self/io"
+                              (lambda (p) (let loop () (let* ([key (read p)] [value (read p)])
+                                                         (if (eq? key 'wchar:) value (loop)))))))])
+         (let ([before (io)] [lookups wire-prompt-lookups])
+           (do ([i 0 (+ i 1)]) ((= i 20))
+             (widget:prepare! wire-prompt-host (+ 30 (mod i 3)) 5)
+             (widget:pointer-bindings 2 0))
+           (list (- (io) before) (- wire-prompt-lookups lookups))))) '(0 0))
+  (head-send! a "\r")
   (head-wait 'prompt-outcome-delivered-by-pump a (lambda () (head-read a '(and wire-prompt-answer #t))))
   (test:check 'prompt-real-head-input-and-base-outcome
     (head-read a '(cdr wire-prompt-answer)) '(#("value") (captured-wire-origin)))
