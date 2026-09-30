@@ -5,6 +5,10 @@ borrowed source document. Forked views share the base interpretation while
 keeping their selection and scrolling independent. Fitted text and hit maps
 belong to each head. Selection anchors identify a source block, source row,
 table field and character, rather than a wrapped display row.
+Arrow keys and Page Up/Down move through the presentation; `M-<` and `M->`
+acquire the beginning and end. Mouse dragging selects text. Return or a link
+click invokes the view's `open-uri` command with the source document ID and
+URI, letting the host choose where to open it. Link hover never fetches data.
 
 `control:create-filter!` composes a label, an `entry` over an existing text
 buffer, and an italic status label. Its root exposes the `text` output port;

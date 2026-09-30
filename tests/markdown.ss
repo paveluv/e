@@ -16,6 +16,7 @@
              (prefix (head markdown-control) control:)
              (prefix (head head) head:) (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head range) range:)
+             (prefix (head layout) layout:)
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state view) view:) (prefix (state model) model:)
              (prefix (foundation string) string:) (prefix (foundation text) text:)
@@ -151,6 +152,11 @@
        (check 'code-faces-address-characters
          (map vector-length faces) (map string-length text)))
 
+     (let-values ([(lines faces links rows anchors)
+                   (markdown-layout:render (markup:parse '("|a|many words here to wrap|" "|b|c|")) 12)])
+       (check 'table-continuation-padding-anchors-to-its-present-cell
+         (let ([p (vector-ref (cadr anchors) 0)]) (and (= (cadr p) 2) (> (caddr p) 0))) #t))
+
      ;; A nested pair shares one base query, but neither geometry nor selection.
      (let ()
        (define copied #f)
@@ -194,6 +200,49 @@
        (widget:prepare! root 0 0)
        (widget:unmount! root)
        (check 'markdown-hidden-view-releases-range-demand (model:demanded? query) #f)
+       (store:delete! actor source))
+
+     ;; Far navigation acquires a new page without publishing display-row
+     ;; offsets. A later interaction cancels the queued intent.
+     (let ()
+       (define actor head:ui-actor)
+       (define opened #f)
+       (define source (store:create! actor "Long Markdown"
+                        (apply append (map (lambda (i) (list (format "[Link ~a](target~a.md)" i i) "")) (iota 100)))))
+       (define child (markdown:create-view! actor source))
+       (define root (view:create! actor #f 'markdown-test 1 '() '()))
+       (define (state) (view:state (interaction:snapshot child)))
+       (define (show!)
+         (let ([f (widget:prepare! root 30 5)]) (widget:present! (list (list f 0 0))) f))
+       (define (pump!) (range:pump!) (widget:pump!) (show!))
+       (widget:register! 'markdown-test 1
+         (append (layout:container 'y)
+           (list (cons 'actions (list (cons 'open (lambda (id document uri) (set! opened (list document uri)))))))))
+       (view:arrange! actor
+         (list (list root 0 (list (list 'body child '(grow 1))) '())
+           (list child 0 '() (list (list 'commands (list 'open-uri root 'open '()))))) '())
+       (widget:mount! root 'markdown-navigation)
+       (test:await 'markdown-first-page
+         (lambda () (pump!) (equal? 0 (view:basis (interaction:snapshot child)))))
+       (markdown:move! child 'finish)
+       (test:await 'markdown-last-page (lambda () (pump!) (= (caar (state)) 198)))
+       (check 'markdown-end-acquires-last-page (caar (state)) 198)
+       (markdown:move! child 'start)
+       (interaction:set-state! actor child 0 (append (list-head (state) 3) '(#t)))
+       (pump!)
+       (check 'markdown-later-interaction-cancels-pending-motion (caar (state)) 198)
+       (markdown:move! child 'start)
+       (test:await 'markdown-return-to-first-page (lambda () (pump!) (= (caar (state)) 0)))
+       (widget:pointer! '(pointer press primary ()) 2 0)
+       (check 'markdown-link-uses-explicit-document-and-host opened (list source "target0.md"))
+       (widget:pointer! '(pointer press primary (shift)) 4 0)
+       (show!)
+       (widget:pointer! '(pointer move primary ()) 6 0)
+       (show!)
+       (widget:pointer! '(pointer release primary ()) 6 0)
+       (check 'markdown-pointer-drag-keeps-fixed-anchor (list (car (state)) (cadr (state)) (cadddr (state)))
+         '((0 0 0 6) (0 0 0 0) #t))
+       (widget:unmount! root)
        (store:delete! actor source))
 
      (test:finish! 'markdown)))

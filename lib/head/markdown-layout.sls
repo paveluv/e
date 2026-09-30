@@ -42,6 +42,9 @@
       (set! out-anchors
         (cons (if (pair? anchors) (car anchors)
                 (list->vector (map (lambda (i) (list row 0 i)) (iota (+ 1 (string-length line)))))) out-anchors)))
+    (define (chrome! line row)
+      (emit! line (make-vector (string-length line) 'chrome) '() row
+        (make-vector (+ 1 (string-length line)) (list row 0 0))))
     (define (longest-word-width text)
       (let loop ([i 0] [word 0] [best 0])
         (cond
@@ -251,7 +254,7 @@
                 (let* ([segments (map (lambda (lines)
                                         (if (< v (length lines))
                                             (list-ref lines v)
-                                            (list "" '#() '() 0)))
+                                            (list "" '#() '() #f)))
                                       wrapped)]
                        [parts (map (lambda (seg w) (pad-to (car seg) w))
                                    segments
@@ -260,7 +263,7 @@
                                  (string:join parts "  ")
                                  #f)]
                        [vec (make-vector (string-length joined) 'plain)]
-                       [anchors-map (make-vector (+ 1 (string-length joined)) (list (car anchors) 0 0))]
+                       [anchors-map (make-vector (+ 1 (string-length joined)) #f)]
                        [row-links '()])
                   (let paint ([at 0] [segs segments] [parts parts] [field 1])
                     (when (pair? segs)
@@ -270,8 +273,9 @@
                         (do ([p 0 (+ p 1)])
                             ((or (> p (+ 2 (string-length (car parts))))
                                (>= (+ at p) (vector-length anchors-map))))
-                          (vector-set! anchors-map (+ at p)
-                            (list (car anchors) field (+ (cadddr seg) (min p (string-length text))))))
+                          (when (cadddr seg)
+                            (vector-set! anchors-map (+ at p)
+                              (list (car anchors) field (+ (cadddr seg) (min p (string-length text)))))))
                         (do ([p 0 (+ p 1)])
                             ((or (= p (string-length text))
                                  (>= (+ at p) (vector-length vec))))
@@ -298,16 +302,19 @@
                           (+ at (string-length (car parts)) 2)
                           (cdr segs)
                           (cdr parts) (+ field 1)))))
+                  ;; Empty continuation cells have no character on this row.
+                  ;; Anchor their padding to the nearest present cell, so a
+                  ;; viewport starting here cannot jump back to the first row.
+                  (let fill ([i (- (vector-length anchors-map) 1)] [next (list (car anchors) 0 0)])
+                    (when (>= i 0)
+                      (let ([p (or (vector-ref anchors-map i) next)])
+                        (vector-set! anchors-map i p) (fill (- i 1) p))))
                   (emit! joined vec (reverse row-links) (car anchors) anchors-map)))
               (when (and first header?)
-                (emit!
+                (chrome!
                   (string:join
                     (map (lambda (w) (make-string w #\─)) widths)
                     "  ")
-                  (make-vector
-                    (+ (fold-left + 0 widths) (* 2 (- columns 1)))
-                    'chrome)
-                  '()
                   (car anchors)))
               (build (cdr rows) (cdr anchors) #f))))))
     (define (code! row end tag body)
@@ -320,7 +327,7 @@
                            body)
                          (+ 1 (display-width label)))]
              [top (string-append label (make-string (- width (display-width label)) #\┄))])
-        (emit! top (make-vector (string-length top) 'chrome) '() row)
+        (chrome! top row)
         (let ([mode (and (not (string=? tag "")) (mode:find tag))])
           (for-each
             (lambda (s row)
@@ -337,11 +344,7 @@
                 (emit! s faces '() row)))
             body
             (map (lambda (i) (+ row 1 i)) (iota (length body)))))
-        (emit!
-          (make-string width #\┄)
-          (make-vector width 'chrome)
-          '()
-          end)))
+        (chrome! (make-string width #\┄) end)))
     (for-each
       (lambda (block)
         (case (car block)
@@ -351,11 +354,7 @@
                (emit! text roles links (cadr block)))
              (presented (caddr block)))]
           [(rule)
-           (emit!
-             (make-string 40 #\─)
-             (make-vector 40 'chrome)
-             '()
-             (cadr block))]
+           (chrome! (make-string 40 #\─) (cadr block))]
           [(code) (apply code! (cdr block))]
           [(table) (table! (cadddr block) (caddr block))]))
       blocks)

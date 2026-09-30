@@ -1,7 +1,7 @@
 ;; Read-only semantic Markdown, independently fitted by each mounted view.
 (import (only (foundation edoc) elibrary))
 (elibrary (head markdown-control)
-  (export copy! create-view! move! register! scroll! select! set-mark!)
+  (export copy! create-view! follow! move! register! scroll! select! set-mark!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation text) text:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -14,10 +14,12 @@
     (let ([cell (assq 'block (caddr row))]) (and cell (eq? (cadr cell) 'ready) (caddr cell))))
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define-record-type session
-    (fields query token (mutable display) (mutable fitted) (mutable dimensions) (mutable goal)))
+    (fields query token (mutable display) (mutable fitted) (mutable dimensions) (mutable goal) (mutable intent) (mutable hover)))
   (define sessions (make-hashtable equal-hash equal?))
   (define copy-text! #f)
+  (define dragging #f)
   (define (release! id)
+    (when (equal? dragging id) (set! dragging #f))
     (let ([s (hashtable-ref sessions id #f)])
       (when s (range:release! (session-token s)) (hashtable-delete! sessions id))))
   (define (metadata s) (get (range:summary (session-query s)) 'value '()))
@@ -37,18 +39,23 @@
            [old (hashtable-ref sessions id #f)])
       (when (and old (not (equal? query (session-query old)))) (release! id) (set! old #f))
       (when query
-        (let* ([s (or old (let ([s (make-session query (range:acquire! query (lambda () (widget:repaint! id #t))) #f #f '(1 . 1) #f)])
+        (let* ([s (or old (let ([s (make-session query (range:acquire! query (lambda () (widget:repaint! id #t))) #f #f '(1 . 1) #f #f #f)])
                             (hashtable-set! sessions id s) s))]
                [v (metadata s)] [generation (get v 'generation 0)] [prior (session-display s)])
+          (when (and (session-intent s) (not (= (cadr (session-intent s)) (view:sequence d))))
+            (session-intent-set! s #f))
           (when frame (session-dimensions-set! s (cons (caddr (widget:frame-rect frame)) (cadddr (widget:frame-rect frame)))))
           (cond [(eq? (get v 'status #f) 'ready)
                  (unless (and prior (= (details (car prior) 'revision -1) (details v 'revision -2)))
                    (text-source:open! head:ui-actor (details v 'document #f) (or (view:basis d) (details v 'revision 0))))
-                 (let* ([state (anchors s d v)] [key (and state (car (caddr state)))]
+                 (let* ([state (anchors s d v)] [intent (session-intent s)]
+                        [key (and state (car (if (and intent (eq? (car intent) 'caret)) (car state) (caddr state))))]
                         [rank (and key (range:locate query generation key))]
-                        [at (and rank (eq? (car rank) 'ready) (or (list-ref rank 3) 0))]
-                        [start (max 0 (- (or at 0) 2))]
+                        [at (cond [(and intent (eq? (car intent) 'start)) 0]
+                              [(and intent (eq? (car intent) 'finish)) (max 0 (- (get v 'count 0) 1))]
+                              [else (and rank (eq? (car rank) 'ready) (or (list-ref rank 3) 0))])]
                         [count (min 256 (max 32 (* 2 (cdr (session-dimensions s)))))]
+                        [start (max 0 (- (or at 0) (div count 2)))]
                         [page (and at (range:read query generation start count '(block)))])
                    (range:request! (session-token s) generation start (if at count 0) '(block) (if key (list key) '()))
                    (when (and page (eq? (car page) 'ready))
@@ -61,7 +68,19 @@
                          (interaction:set-state! head:ui-actor id (details v 'revision #f) (list a a a #f))))
                      (let ([next (list v start (list-ref page 4))])
                        (unless (equal? prior next)
-                         (session-display-set! s next) (session-fitted-set! s #f) (widget:repaint! id #t)))))]
+                         (session-display-set! s next) (session-fitted-set! s #f) (widget:repaint! id #t))
+                       (when intent
+                         (session-intent-set! s #f)
+                         (let* ([f (fitted s (max 1 (car (session-dimensions s))))]
+                                [line (if (eq? (car intent) 'finish) (- (vector-length (fit-lines f)) 1) 0)]
+                                [at (cons line (if (eq? (car intent) 'finish) (string-length (vector-ref (fit-lines f) line)) 0))]
+                                [p (if (eq? (car intent) 'caret) (car state) (anchor f at))]
+                                [top (if (eq? (car intent) 'finish)
+                                       (anchor f (text-layout:move (fit-lines f) (fit-frame f) (fit-width f) at
+                                                   (- 1 (max 1 (cdr (session-dimensions s)))) 0)) p)])
+                           (interaction:set-state! head:ui-actor id (details v 'revision #f)
+                             (if (eq? (car intent) 'caret) (list (car state) (cadr state) p (cadddr state)) (list p p top #f)))
+                           (widget:repaint! id #t))))))]
             [(eq? (get v 'status #f) 'unavailable)
              (when prior (session-display-set! s #f) (session-fitted-set! s #f) (widget:repaint! id #t))])))))
 
@@ -132,7 +151,8 @@
     (if (not (list-ref g 4)) (if (zero? (car range)) (list (if (cadr g) "[Source anchor unavailable]" "")) '())
       (map (lambda (r) (substring (vector-ref (fit-lines (cadr g)) (cadr r)) (caddr r) (cadddr r))) (rows g range))))
   (define (decorate g d width height range)
-    (let ([f (cadr g)] [points (cadddr g)] [state (caddr g)])
+    (let* ([f (cadr g)] [points (cadddr g)] [state (caddr g)]
+           [s (hashtable-ref sessions (car g) #f)] [hover (and s (session-hover s))])
       (apply append
         (map (lambda (r)
                (let* ([y (car r)] [row (cadr r)] [start (caddr r)] [end (cadddr r)]
@@ -141,7 +161,10 @@
                  (let loop ([i start] [out '()])
                    (if (= i end) (reverse out)
                      (let* ([face (if (and selection (not (text:position<? (cons row i) (text:span-start selection)))
-                                           (text:position<? (cons row i) (text:span-end selection))) 'selection (vector-ref styles i))]
+                                           (text:position<? (cons row i) (text:span-end selection))) 'selection
+                                    (if (and hover (eq? (car hover) f) (= (cadr hover) row)
+                                          (<= (caaddr hover) i (- (cadr (caddr hover)) 1)))
+                                      '(md-link hover) (vector-ref styles i)))]
                             [x (- (render:column (fit-frame f) row i) (render:column (fit-frame f) row start))]
                             [w (- (render:column (fit-frame f) row (+ i 1)) (render:column (fit-frame f) row i))])
                        (loop (+ i 1) (if (or (zero? w) (eq? face 'plain)) out (cons (list (list x y w 1) face) out))))))))
@@ -184,23 +207,33 @@
         (session-goal-set! s #f))))
 
   (edoc "Move a Markdown caret in the mounted geometry; only semantic character anchors are published."
-        (id model "Markdown view") (direction (one-of up down left right home end) "motion")
+        (id model "Markdown view") (direction (one-of up down left right home end start finish page-up page-down) "motion")
         (extend (list-of boolean) "optional selection extension"))
   (define (move! id direction . extend)
-    (unless (and (memq direction '(up down left right home end)) (<= (length extend) 1) (for-all boolean? extend))
+    (unless (and (memq direction '(up down left right home end start finish page-up page-down)) (<= (length extend) 1) (for-all boolean? extend))
       (error 'move! "invalid Markdown motion"))
-    (let-values ([(d s g) (geometry id)])
-      (unless (car (cadddr g)) (refuse "Markdown caret is outside the acquired page"))
-      (let* ([f (cadr g)] [lines (fit-lines f)] [p (car (cadddr g))] [row (car p)] [col (cdr p)]
-             [w (list-ref g 5)] [n (string-length (vector-ref lines row))]
-             [goal (or (session-goal s) (car (caret g d w (list-ref g 6))))]
-             [next (case direction
-                     [(up down) (text-layout:move lines (fit-frame f) w p (if (eq? direction 'up) -1 1) goal)]
-                     [(home) (cons row 0)] [(end) (cons row n)]
-                     [(left right) (text-layout:adjacent lines p direction)])]
-             [marked? (if (pair? extend) (car extend) (cadddr (caddr g)))])
-        (publish! id d s g (list next (if marked? (cadr (cadddr g)) next) (list-ref g 4)) marked? #t)
-        (session-goal-set! s (and (memq direction '(up down)) goal)))))
+    (if (memq direction '(start finish))
+      (let* ([s (hashtable-ref sessions id #f)] [d (interaction:snapshot id)])
+        (unless s (refuse "Markdown view is not mounted"))
+        (session-intent-set! s (list direction (view:sequence d))) (head:wake-main!))
+      (let-values ([(d s g) (geometry id)])
+        (if (not (car (cadddr g)))
+          (begin (session-intent-set! s (list 'caret (view:sequence d))) (head:wake-main!))
+          (let* ([f (cadr g)] [lines (fit-lines f)] [p (car (cadddr g))] [row (car p)] [col (cdr p)]
+                 [w (list-ref g 5)] [n (string-length (vector-ref lines row))]
+                 [goal (or (session-goal s) (car (caret g d w (list-ref g 6))))]
+                 [next (case direction
+                         [(up down) (text-layout:move lines (fit-frame f) w p (if (eq? direction 'up) -1 1) goal)]
+                         [(page-up page-down) (text-layout:move lines (fit-frame f) w p (* (max 1 (list-ref g 6)) (if (eq? direction 'page-up) -1 1)) goal)]
+                         [(home) (cons row 0)] [(end) (cons row n)]
+                         [(left right)
+                          (let skip ([at p])
+                            (let ([next (text-layout:adjacent lines at direction)])
+                              (if (and (not (equal? next at)) (equal? (anchor f next) (anchor f p)))
+                                (skip next) next)))])]
+                 [marked? (if (pair? extend) (car extend) (cadddr (caddr g)))])
+            (publish! id d s g (list next (if marked? (cadr (cadddr g)) next) (list-ref g 4)) marked? #t)
+            (session-goal-set! s (and (memq direction '(up down)) goal)))))))
 
   (edoc "Scroll Markdown by displayed rows, retaining caret and selection."
         (id model "Markdown view") (delta integer "positive down") (returns integer "unconsumed rows"))
@@ -225,18 +258,56 @@
     (let-values ([(d s g) (geometry id)])
       (unless (and (cadddr (caddr g)) (cadr (cadddr g))) (refuse "No Markdown selection"))
       (copy-text! (text:to-string (list->vector (text:extract (fit-lines (cadr g)) (text-source:span (cadddr g)))) #f))))
-  (define (pointer-bindings frame x y)
+  (define (link-at f p)
+    (and p (find (lambda (link) (<= (car link) (cdr p) (- (cadr link) 1))) (vector-ref (fit-links f) (car p)))))
+
+  (edoc "Follow a Markdown link through the host's open-uri command, passing the source document and URI. Without an explicit URI, use the caret's link."
+        (id model "Markdown view") (uri (list-of string) "optional displayed URI"))
+  (define (follow! id . uri)
+    (unless (and (<= (length uri) 1) (for-all string? uri)) (error 'follow! "expected at most one URI"))
+    (let-values ([(d s g) (geometry id)])
+      (let* ([f (cadr g)] [link (and (null? uri) (link-at f (car (cadddr g))))]
+             [target (if (pair? uri) (car uri) (and link (caddr link)))])
+        (unless target (refuse "No Markdown link at the caret"))
+        (widget:invoke! id 'open-uri (details (car (fit-display f)) 'document #f) target))))
+  (define (pointer-point frame x y)
     (let* ([g (widget:frame-data frame)] [r (assv y (rows g (cons y 1)))])
-      (if (not r) '()
+      (and r
         (let* ([f (cadr g)] [line (vector-ref (fit-lines f) (cadr r))]
                [col (min (cadddr r) (render:character (fit-frame f) (cadr r)
-                                      (+ (render:column (fit-frame f) (cadr r) (caddr r)) x)))]
-               [p (anchor f (cons (cadr r) col))])
-          (list (list '(click primary ()) (keymap:call select! (widget:frame-id frame) p p)))))))
+                                      (+ (render:column (fit-frame f) (cadr r) (caddr r)) x)))])
+          (cons (cadr r) col)))))
+  (define (pointer-bindings frame x y)
+    (let* ([g (widget:frame-data frame)] [point (pointer-point frame x y)])
+      (if (not point) '()
+        (let* ([f (cadr g)] [p (anchor f point)] [id (widget:frame-id frame)]
+               [link (link-at f point)] [fixed (cadr (caddr g))])
+          (append
+            (list (list '(click primary ()) (if link (keymap:call follow! id (caddr link)) (keymap:call select! id p p))))
+            (list (list '(click primary (shift)) (keymap:call select! id p fixed))
+              (list '(drag primary ()) (keymap:call select! id p fixed))))))))
   (define (event! id source d event)
-    (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
-      (let ([bindings (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5))])
-        (and (pair? bindings) (begin (keymap:run! (cadar bindings)) #t)))))
+    (let ([s (hashtable-ref sessions id #f)])
+      (case (car event)
+        [(cancel blur) (when (equal? dragging id) (set! dragging #f))
+         (when s (session-hover-set! s #f) (widget:repaint! id #t)) #t]
+        [(pointer)
+         (let* ([frame (widget:event-frame)] [f (cadr (widget:frame-data frame))]
+                [p (and (not (eq? (cadr event) 'leave)) (pointer-point frame (list-ref event 4) (list-ref event 5)))]
+                [link (and p (link-at f p))] [hover (and link (list f (car p) link))])
+           (when (and s (not (equal? hover (session-hover s))))
+             (session-hover-set! s hover) (widget:repaint! id #t))
+           (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
+             [else
+              (and (eq? (caddr event) 'primary)
+                (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
+                (let* ([extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
+                       [bindings (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5))]
+                       [binding (assoc (if extend? '(click primary (shift)) '(click primary ())) bindings)])
+                  (and binding (begin (keymap:run! (cadr binding))
+                                 (when (and (eq? (cadr event) 'press) (or extend? (not link)))
+                                   (set! dragging id) (widget:capture! id)) #t))))]))]
+        [else #f])))
 
   (edoc "Register the Markdown control and its named keyboard/pointer operations."
         (copy procedure "head clipboard command"))
@@ -246,12 +317,15 @@
       (list (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) '(contexts . (widget-markdown))
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
-        (cons 'actions (list (cons 'scroll scroll!) (cons 'move move!) (cons 'select select!) (cons 'copy copy!)))))
+        (cons 'actions (list (cons 'scroll scroll!) (cons 'move move!) (cons 'select select!) (cons 'copy copy!) (cons 'follow follow!)))))
     (for-each (lambda (binding) (keymap:bind-default! 'widget-markdown (car binding) (keymap:call move! widget:target (cadr binding))))
       '(("UP" up) ("DOWN" down) ("LEFT" left) ("RIGHT" right) ("HOME" home) ("END" end)
-        ("C-p" up) ("C-n" down) ("C-b" left) ("C-f" right) ("C-a" home) ("C-e" end)))
+        ("C-p" up) ("C-n" down) ("C-b" left) ("C-f" right) ("C-a" home) ("C-e" end)
+        ("M-<" start) ("M->" finish) ("C-HOME" start) ("C-END" finish)
+        ("PAGEUP" page-up) ("PAGEDOWN" page-down) ("M-v" page-up) ("C-v" page-down)))
     (for-each (lambda (binding) (keymap:bind-default! 'widget-markdown (car binding) (keymap:call move! widget:target (cadr binding) #t)))
       '(("S-UP" up) ("S-DOWN" down) ("S-LEFT" left) ("S-RIGHT" right)))
     (keymap:bind-default! 'widget-markdown "C-@" (keymap:call set-mark! widget:target #t))
     (keymap:bind-default! 'widget-markdown "C-g" (keymap:call set-mark! widget:target #f))
+    (keymap:bind-default! 'widget-markdown "RET" (keymap:call follow! widget:target))
     (keymap:bind-default! 'widget-markdown "M-w" (keymap:call copy! widget:target))))
