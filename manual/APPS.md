@@ -31,7 +31,7 @@ You can also pass an existing local buffer to attach the app directly
 to that identity. Shared buffers
 are refused by this head-app API.
 `refresh!` takes no arguments and updates the registered buffer with
-`head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
+`head:view-replace!`. `handle-event!` receives one canonical
 event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
 For keyboard events it returns true when the app consumed the event; false
 lets the normal global key dispatcher handle it. A local app also hears
@@ -106,14 +106,6 @@ row text. Buffer text queries continue to
 read the common rows; changing only a window's formatting does not create
 a content revision. The buffet uses this facility to share filtering
 and sorting while fitting each pane independently.
-
-`(head:view-append! buffer lines [drop])` appends a line list and optionally
-drops that many old rows from the start. `drop` defaults to zero and must be
-an exact integer within the old row count. Windows whose point was at the
-old end follow the new end. Other points, marks and saved viewports move with
-surviving text; positions in dropped rows move to the start. Appending to an
-empty view replaces its placeholder row. Like replacement, this operation
-validates first and installs the complete local rendering before repaint.
 
 Use `(head:call-with-display-update thunk)` when a display operation also
 switches windows or places the cursor. Nested scopes defer repaint

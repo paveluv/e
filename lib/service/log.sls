@@ -3,7 +3,7 @@
 ;; and echo presentation subscribe; neither owns a second history.
 (import (only (foundation edoc) elibrary))
 (elibrary (service log)
-  (export actor add! component datum entries format-entry history progress register-formatter!
+  (export actor add! component datum entries format-entry history presentation-basis progress register-formatter!
           retention snapshot styler subscribe! time unsubscribe!)
   (import (rnrs)
           (only (chezscheme) format parameterize print-graph)
@@ -57,6 +57,12 @@
   ;;; Component presentation ------------------------------------------------
 
   (define formatters (kernel:make-registry))
+  (define basis 0)
+  (define changes (kernel:registry-observe! formatters (lambda (removed added) (set! basis (+ basis 1)))))
+
+  (edoc "The local formatter/styler definition basis, for invalidating presentation caches after registration or retraction."
+        (returns integer))
+  (define (presentation-basis) basis)
 
   (edoc "Register how a component's records are shown: a formatter from datum to text, and optionally a styler."
         (component symbol "the component")

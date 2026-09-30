@@ -260,7 +260,6 @@
     ;; The loader script is pure bootstrap; the extension modules are
     ;; loaded here, before the file argument needs their modes.
     (let ([file (startup:file)])
-      ;; the log-view module lists *log* from startup
       (for-each
         (lambda (failure)
           (let ([msg (format "Error in ~a: ~a"

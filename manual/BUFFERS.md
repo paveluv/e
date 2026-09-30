@@ -814,7 +814,7 @@ controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
 entries. `window:focus-up!`, `window:focus-down!`, `window:focus-left!`, and
 `window:focus-right!` expose directional focus to Scheme. App authors should
-use `head:view-replace!` and `head:view-append!` for generated content. Run
+use base documents or collection sources with explicit widget views for generated content. Run
 `M-x (describe:show!)` for live signatures and registered command documentation.
 
 `(head:new-buffer! name)` creates a shared buffer with one empty line and

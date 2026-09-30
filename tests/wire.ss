@@ -1905,6 +1905,9 @@
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
+                 (for-each (lambda (ui)
+                             (head-read ui `(begin (log-view:show!) (window:delete-others!)
+                                                   (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
                    (let ([view (rpc head 'view-create model 'value 1 '() 0)])
@@ -2037,13 +2040,15 @@
                           (head-read client
                             '(list head:ui-actor (actor:current)
                                    (head:buffer-name (head:find-tool-buffer "*log*"))
-                                   (vector-length (head:buffer-lines (head:find-tool-buffer "*log*")))
+                                   (let* ([root (head:buffer-fact (head:find-tool-buffer "*log*") 'widget-id #f)]
+                                          [view (cadr (assq 'app (view:children (view:snapshot root))))])
+                                     (view:kind (view:snapshot view)))
                                    (kernel:module-source "store")
                                    (kernel:module-requires? "main" "base")
                                    (guard (ex [else #t]) (kernel:reload-module! "store") #f)
                                    (guard (ex [else #t]) (actor:register! head:ui-actor (lambda (message) #f)) #f)))) (list a b))
                    (map (lambda (name)
-                          (list (list 'head name) (list 'head name) "<log>" 4096
+                          (list (list 'head name) (list 'head name) "<log>" 'log
                                 (string-append sources "/client/state/store.sls") #f #t #t)) '("screen A" "screen B")))
                  (test:check 'client-preparation-failures-preserve-connection-and-concurrent-replies
                    (head-read a

@@ -249,7 +249,6 @@
      (define before-local (store-ids))
      (define transient (head:register-view! "*transient*" void))
      (head:view-replace! transient '("one"))
-     (head:view-append! transient '("two"))
      (head:buffer-name-set! transient "transient renamed")
      (kill-buffer! transient)
      (check 'killed-tool-not-found (head:find-tool-buffer "*transient*") #f)
@@ -280,139 +279,7 @@
      (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
      (check 'git-rebinds-after-registry-retraction (head:app-buffer? new-git-log) #t)
 
-     ;; Simulate the registry retraction performed during module reload.
-     ;; Both log views must rebind, retain identity, and rebuild once.
-     (log:register-formatter! 'app-probe values (lambda (text) (make-vector (string-length text) 'string)))
-     (actor:call-as '(head "alice:\tλ") (lambda () (log:add! 'app-probe "before reload" #f)))
-     (define all-log #f)
-     (define filtered-log #f)
-     (parameterize ([kernel:registering-module 'log-view-test])
-       (log-view:init!)
-       (set! all-log (log-view:buffer!))
-       (set! filtered-log (log-view:buffer! 'app-probe)))
-     (head:buffer-name-set! all-log "renamed log")
-     (head:buffer-name-set! filtered-log "renamed filtered log")
-     (define old-all (head:buffer-lines all-log))
-     (define old-filtered (head:buffer-lines filtered-log))
-     (check 'log-actor-prefix-is-separate-from-component-styling
-       (let* ([line (vector-ref old-filtered 0)]
-              [styles ((mode:styles (mode:find "log")) line)]
-              [prefix (- (string-length line) (string-length "before reload"))])
-         (list (for-all (lambda (i) (eq? (vector-ref styles i) 'comment)) (iota prefix))
-               (for-all (lambda (i) (eq? (vector-ref styles (+ prefix i)) 'string))
-                        (iota (string-length "before reload")))))
-       '(#t #t))
-     (define log-records (log:entries))
-     (let ([views (list all-log filtered-log)])
-       (kernel:retract-module! 'log-view-test)
-       (check 'log-view-registrations-retracted (map head:app-buffer? views) '(#f #f))
-       (parameterize ([kernel:registering-module 'log-view-test]) (log-view:init!))
-       (check 'log-views-rebind-with-the-same-identities-and-renderings
-         (list (map eq? views (list (log-view:buffer!) (log-view:buffer! 'app-probe)))
-               (map head:app-buffer? views) (map head:buffer-lines views))
-         (list '(#t #t) '(#t #t) (list old-all old-filtered))))
-     (check 'rebuild-does-not-change-records (log:entries) log-records)
-     (log:add! 'app-probe "after reload" #f)
-     (head:show-buffer! filtered-log)
-     (head:refresh-visible-views!)
-     (check 'filtered-refresh-after-reload
-            (vector-length (head:buffer-lines filtered-log))
-            (+ 1 (vector-length old-filtered)))
-     (head:show-buffer! all-log)
-     (head:refresh-visible-views!)
-     (check 'log-refresh-after-reload
-            (vector-length (head:buffer-lines all-log))
-            (+ 1 (vector-length old-all)))
-
-     ;; A formatter may log while a refresh is building its rows.  That
-     ;; new record belongs to the next refresh, not to the completed one.
-     (define logged-during-refresh? #f)
-     (log:register-formatter! 'during-refresh
-       (lambda (datum)
-         (unless logged-during-refresh?
-           (set! logged-during-refresh? #t)
-           (log:add! 'during-refresh "arrived while formatting" #f)
-           (head:refresh-visible-views!))
-         datum))
-     (log:add! 'during-refresh "first" #f)
-     (define arrivals (log-view:buffer! 'during-refresh))
-     (check 'refresh-has-a-fixed-record-bound
-            (vector-length (head:buffer-lines arrivals)) 1)
-     (head:show-buffer! arrivals)
-     (head:refresh-visible-views!)
-     (check 'next-refresh-picks-up-interleaved-record
-            (vector-length (head:buffer-lines arrivals)) 2)
-     (set! logged-during-refresh? #f)
-     (log:add! 'during-refresh "visible formatter reentry" #f)
-     (head:refresh-visible-views!)
-     (check 'reentrant-refresh-does-not-adopt-the-same-batch-twice
-       (list (vector-length (head:buffer-lines arrivals))
-             (begin (head:refresh-visible-views!) (vector-length (head:buffer-lines arrivals))))
-       '(3 4))
-
-     ;; A runtime-created view is registered outside module init.  It
-     ;; survives owner retraction, but init must still replace its code.
-     (define runtime-refresh (head:app-refresh! (head:app-of arrivals)))
-     (parameterize ([kernel:registering-module 'log-view-test]) (log-view:init!))
-     (check 'runtime-log-identity-survives-reload
-            (eq? arrivals (log-view:buffer! 'during-refresh)) #t)
-     (check 'runtime-log-callback-is-rebound
-            (eq? runtime-refresh (head:app-refresh! (head:app-of arrivals))) #f)
-
-     ;; Views keep a recent window independently of the larger journal. Expiry
-     ;; removes complete multiline records and gaps from other components.
-     (let ([formatted 0] [w (head:current-window)])
-       (log:retention 10000)
-       (log:register-formatter! 'retention
-         (lambda (datum) (set! formatted (+ formatted 1)) datum))
-       (log:add! 'retention "expired\ntwo" #f)
-       (log:add! 'noise "between" #f)
-       (log:add! 'retention "kept\nthree\nlines" #f)
-       (let ([b (log-view:buffer! 'retention)])
-         (head:show-buffer! b)
-         (head:window-prow-set! w 2)
-         (head:window-pcol-set! w 5)
-         (head:window-top-set! w 2)
-         (head:buffer-mark-row-set! b 3)
-         (head:buffer-mark-col-set! b 6)
-         (do ([i 0 (+ i 1)]) ((= i 4094)) (log:add! 'noise i #f))
-         (head:refresh-visible-views!)
-         (check 'filtered-expiry-keeps-surviving-text-and-positions-without-reformatting
-           (list (vector-length (head:buffer-lines b)) (head:buffer-point b)
-                 (head:window-top w) (head:buffer-mark-row b) (head:buffer-mark-col b) formatted
-                 (map log:datum (log:entries 'retention)))
-           '(3 (0 . 5) 0 1 6 2 ("kept\nthree\nlines" "expired\ntwo")))
-         (head:show-buffer! all-log)
-         (head:refresh-visible-views!)
-         (check 'hidden-log-resyncs-to-the-retained-range-including-multiline-rows
-           (vector-length (head:buffer-lines all-log)) 4098)
-         (do ([i 0 (+ i 1)]) ((= i 4096)) (log:add! 'noise i #f))
-         (head:refresh-visible-views!)
-         (head:show-buffer! b)
-         (head:refresh-visible-views!)
-         (check 'views-expire-all-old-rows-even-with-no-new-matching-record
-           (list (head:buffer-lines b) (head:buffer-point b)
-                 (vector-length (head:buffer-lines all-log)))
-           '(#("") (0 . 0) 4096))
-         (log:add! 'retention "returned" #f)
-         (head:refresh-visible-views!)
-         (check 'empty-filtered-view-resumes-on-the-next-match
-           (list (vector-length (head:buffer-lines b))
-                 (let ([line (vector-ref (head:buffer-lines b) 0)])
-                   (substring line (- (string-length line) 8) (string-length line))))
-           '(1 "returned"))
-         (head:show-buffer! all-log)
-         (head:refresh-visible-views!)
-         (let ([before (let-values ([(records end first) (log:snapshot 0 0)]) end)])
-           (log:retention 3)
-           (head:refresh-visible-views!)
-           (log:retention 4096)
-           (head:refresh-visible-views!)
-           (check 'retention-shrink-refreshes-without-an-append-and-grow-keeps-expiry
-             (list (vector-length (head:buffer-lines all-log))
-                   (let-values ([(records end first) (log:snapshot 0 0)])
-                     (list (= end before) (- end first))))
-             '(3 (#t 3))))))
+     (include "tests/journal-widget.sps")
 
      ;; Mouse routing needs the handler's focus decision, not only truth.
      (let* ([previous (head:current-buffer)] [result #f]

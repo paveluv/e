@@ -91,7 +91,7 @@
     store-history! store-reset!
     store-resolve! store-resolve-picks! store-rewrite!
     sync-foreign-edits! tile! tool-buffer! transfer-split!
-    typed-text ui-actor view-append! view-buffer? view-replace!
+    typed-text ui-actor view-buffer? view-replace!
     view-review!  wait-for-frame! wake-main!
     weighted-first window window-at window-auto-scrollbar-set!
     window-buffer window-buffer-set! window-button-at
@@ -3538,41 +3538,6 @@
                     (app-refresh-error-set! a #f))))
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
                       (registered-apps))))
-
-  (edoc "Append lines to a local view buffer, tail anchors following the new end; with a prefix length to drop, surviving anchors keep their text and expired ones go to the start."
-        (b buffer "the local view buffer")
-        (lines list "the lines")
-        (drop integer "the rows to drop from the start"))
-  (define view-append!
-    (case-lambda
-      [(b lines)
-       (view-append! b lines 0)]
-      [(b lines drop)
-       ;; Append while optionally expiring a prefix. Tail points follow the
-       ;; new end; surviving anchors keep their text, expired ones go to the
-       ;; start. Reuse replacement's one adoption before repaint can reenter.
-       (unless (and (buffer? b) (not (buffer-store-id b)))
-         (error 'view-append! "expected a local buffer" b))
-       (let* ([v (buffer-lines b)] [n (vector-length v)])
-         (unless (and (list? lines) (fixnum? drop) (<= 0 drop n))
-           (error 'view-append! "expected lines and a prefix length to drop" lines drop))
-         (when (or (pair? lines) (> drop 0))
-           (let* ([virgin? (and (= n 1) (string=? (vector-ref v 0) ""))]
-                  [tails (filter (lambda (w)
-                                   (and (eq? (window-buffer w) b)
-                                        (= (window-prow w) (- n 1))
-                                        (= (window-pcol w) (string-length (vector-ref v (- n 1))))))
-                                 the-windows)]
-                  [new (text:normalize (append (list-tail (vector->list v) (if virgin? 1 drop)) lines))]
-                  [last (- (render:line-count new) 1)]
-                  [end (cons last (string-length (vector-ref new last)))])
-             (view-replace! b new '()
-               (map (lambda (entry)
-                      (cons (car entry)
-                        (cond [(memq (car entry) tails) end]
-                              [(< (cadr entry) drop) '(0 . 0)]
-                              [else (cons (- (cadr entry) drop) (cddr entry))])))
-                    (buffer-placements b))))))]))
 
   (edoc "Adopt a local view's rendering as one state: its lines, optional facts, numeric placements and per-window presentations."
         (b buffer "the local view buffer")

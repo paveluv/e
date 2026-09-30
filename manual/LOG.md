@@ -37,21 +37,25 @@ concurrent or deferred delivery preserves the requested presentation.
 
 ## The `<log>` view
 
-`<log>` is a dynamic, read-only view backed by structured records. It is always
-present in the buffer list. At the end of the buffer it tails new entries;
-elsewhere its viewport stays with the same text while records arrive. The base
+`<log>` is a read-only widget backed by structured records. Its default tool
+is created by `(log-view:show!)` and then retained in the buffer list.
+`M->` follows new entries; moving or scrolling
+away keeps the reader's place. Separate views scroll and select independently.
+The base
 retains the newest **1,000,000 records** across all components by default.
-Log views render the most recent **4,096 records**, filtering within that
-window, so opening a head does not fetch or format the entire journal. Older
+Log queries cover the most recent **4,096 records**, filtering within that
+window. Each head acquires and formats pages around visible record anchors;
+hidden views fetch no rows. Older
 retained records remain available to component queries and command histories.
 Views drop rows outside this window or the journal's retention on refresh;
-points, marks and viewports in surviving text move with it,
-and positions in expired text move to the start. Hidden views catch up when
+points, marks and viewports in surviving records retain their identity,
+and an expired viewport advances to the first surviving record. Hidden views catch up when
 shown again. A multiline record expires as a whole.
 
 This is recent, in-memory history for the lifetime of the base. Restarting
 the base clears it. The limit counts records, not payload bytes or rendered
-lines; an individual record or formatter result can still be large.
+lines. A record that exceeds the bounded presentation budget shows an
+explicit marker; its stored data remains available through journal queries.
 
 Set the shared retention in `base-config.e`:
 
@@ -70,10 +74,14 @@ change it through M-x; put it in `base-config.e` to keep it across restarts.
 Filtered log views are created dynamically:
 
 ```scheme
-(log-view:buffer! 'eval:report!)
+(log-view:show! 'eval:report!)
 ```
 
 This creates `<log eval:report!>` containing only that function's records.
+`(log-view:create! component)` returns an unmounted view for a custom host;
+use `#f` for all components. Selection anchors name a record, line and
+character, independent of wrapping. `M-w` copies across bounded pages and
+cancels when the selected result changes or expires.
 
 Each row shows a timestamp, actor identity, component, and value. The base
 keeps one history; each head's `<log>` and filtered views are local renderings.

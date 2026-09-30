@@ -205,7 +205,7 @@ modules. You can call it via `M-x`:
 ```scheme
 M-x (head:buffer-name (head:current-buffer))
 M-x (search:replace! "old" "new")
-M-x (log-view:buffer! 'eval:report!)
+M-x (log-view:show! 'eval:report!)
 M-x (terminal:open!)
 M-x (describe:this terminal:open!)
 ```
