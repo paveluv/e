@@ -24,6 +24,7 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head suspension) suspension:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
@@ -238,6 +239,13 @@
       (error 'set-startup-page! "expected a procedure or #f" proc))
     (set! startup-page proc))
 
+  (define (resume-commands!)
+    (suspension:drain! (lambda (ex) (log:add! 'main:resume-commands! (kernel:condition-text ex)))))
+
+  (define (run-command! thunk)
+    (suspension:call! head:ui-actor
+      (lambda () (head:run-on-main! resume-commands!)) thunk))
+
   (edoc "Run the head: the main loop against the base, as this head's actor."
         (returns integer "the exit status"))
   (define (run!)
@@ -300,9 +308,10 @@
         (head:start-input-reader!))
       (lambda ()
         (let ([file (startup:file)])
-          (when file (head:open-file! file)))
+          (when file (run-command! (lambda () (head:open-file! file)))))
         (let loop ()
           (unless (head:quitting?)
+            (resume-commands!)
             (head:run-deferred!)
             (paint:redraw! #t)
             ;; Queue the prepared state without waiting for the base. The
@@ -318,13 +327,14 @@
                        [(kernel:refusal? ex)
                         (echo:set-text! (condition-message ex))]
                        [else (log:add! 'main:run-head (kernel:condition-text ex))])
-              (dispatch:key! (parameterize ([head:in-main-pump #t])
-                               (head:read-key-event))))
+              (let ([event (parameterize ([head:in-main-pump #t]) (head:read-key-event))])
+                (run-command! (lambda () (dispatch:key! event)))))
             (head:after-key!)
             (loop))))
       (lambda ()
         ;; A dead connection or a failing shutdown hook must not prevent
         ;; restoration of the shell's terminal modes.
+        (suspension:close! head:ui-actor)
         (dynamic-wind void
           head:run-shutdown-hooks!
           (lambda ()

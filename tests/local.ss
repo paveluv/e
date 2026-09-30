@@ -12,10 +12,13 @@
 (eval
   '(begin
      (import (prefix (head head) head:)
+             (prefix (head suspension) suspension:) (prefix (head text-source) text-source:)
              (prefix (state store) store:)
              (prefix (foundation text) text:) (prefix (test) test:))
 
      (define check test:check)
+
+     (include "tests/suspension.sps")
 
      (define scratch (head:window-buffer (head:current-window)))
      (define scratch-id (head:buffer-store-id scratch))
