@@ -315,6 +315,15 @@
   (define (subscribe! mount tree)
     (let ([tokens (list #f #f)] [demand #f] [endpoints (map car tree)])
       (define (changed)
+        (interaction:reconcile!
+          (filter values
+            (map (lambda (row)
+                   (let ([r (caddr row)])
+                     (and (or (not r) (eq? (field r 'kind #f) 'widget-view))
+                       ;; A temporarily unavailable port contract does not
+                       ;; revoke the underlying view's ownership.
+                       (cons (car row) (and r (field r 'value #f))))))
+              (caddr (connection:snapshot endpoints)))))
         (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
         (head:wake-main!))
       (define (acquire)

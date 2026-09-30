@@ -194,15 +194,29 @@
       (list (map caddr (sent)) (view:state (view:snapshot view))) '((1 100) (selected . 100)))
     (view:release-owner! author)
     (view:claim! author view)
-    (test:check 'view-old-generation-and-out-of-order-batches-cannot-overwrite
+    (test:check 'view-current-generation-publishes-despite-an-unowned-peer
       (list (result (lambda () (view:publish! author (list (publish generation 101)))))
             (result (lambda () (view:release! author view generation)))
             (result (lambda () (view:publish! author (list (publish (+ generation 1) 1)
                                                        (list another 0 1 0 '(selected . 99) #f)))))
-            (view:state (view:snapshot view))) '(stale stale stale (selected . 100)))
+            (view:state (view:snapshot view)) (view:state (view:snapshot another)))
+      '(applied stale applied (selected . 1) (selected . 10)))
     (view:reset-owners!)
     (test:check 'view-restart-clears-owner-and-keeps-acknowledged-state
-      (list (view:owner (view:snapshot view)) (view:state (view:snapshot view))) '(#f (selected . 100))))
+      (list (view:owner (view:snapshot view)) (view:state (view:snapshot view))) '(#f (selected . 1))))
+  (let* ([root (view:create! author #f 'column 1 '() '())]
+         [child (view:create! author #f 'entry 1 '() '())])
+    (view:arrange! author (list (list root 0 (list (list 'input child 'fit)) '())) '())
+    (view:claim! author root)
+    (let ([generation (view:generation (view:snapshot root))])
+      (view:retire! author child (get (model:snapshot child) 'revision))
+      (test:check 'publication-after-retirement-keeps-live-state-and-clears-dead-focus
+        (list (car (call-with-values
+                     (lambda () (view:publish! author
+                                  (list (list child generation 1 #f 'lost #f)
+                                    (list root generation 1 #f 'survived child)))) list))
+          (view:state (view:snapshot root)) (view:focus (view:snapshot root)))
+        '(applied survived #f))))
   (let* ([root (view:create! author #f 'column 1 '() '())]
          [other (view:create! author #f 'row 1 '() '())]
          [a (view:create! author '(buffer 99) 'entry 1 '() '(0 0))]
@@ -225,7 +239,7 @@
               (view:owner (view:snapshot a)) (view:parent (view:snapshot a))
               (view:owner (view:snapshot b))
               (car (call-with-values (lambda () (view:publish! author (list (list root lease 1 #f 'old #f)))) list)))
-        (list 'owned 'applied #f #f author 'stale)))
+        (list 'owned 'applied #f #f author 'applied)))
     (view:claim! '(head "foreign") a)
     (let ([before (view:tree root)])
       (test:check 'view-foreign-child-refusal-does-not-change-owned-tree

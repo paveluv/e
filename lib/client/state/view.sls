@@ -48,7 +48,7 @@
         (actor actor "connection attribution") (id model "view id"))
   (define (claim! actor id) (apply values (client:request 'view-claim id)))
 
-  (edoc "Commit a batch of owner generations, sequences and interaction states at the base."
+  (edoc "Publish the newest still-owned interaction snapshots atomically. Retired views, former ownership generations and acknowledged sequences are ignored; focus outside a surviving root clears."
         (actor actor "connection attribution") (updates list "(id generation sequence basis state focus) entries"))
   (define (publish! actor updates) (apply values (client:request 'view-publish updates)))
 

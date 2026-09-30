@@ -2,7 +2,7 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export arrange! bind! claim! flush! focus! publish! release! set-state! snapshot start!)
+  (export arrange! bind! claim! flush! focus! publish! reconcile! release! set-state! snapshot start!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:)
           (prefix (core identity) identity:)
@@ -53,6 +53,34 @@
                     (hashtable-set! owned (datum:copy (car row)) (datum:copy (cdr row)))
                     (hashtable-delete! owned (car row)))) rows)
     (set! dirty? #t))
+
+  (edoc "Reconcile acquired canonical descriptors with provisional interaction. Preserve newer local state only in the same ownership generation; retirement and release revoke it. This consumes mirrors without remote reads."
+        (rows list "(id . descriptor-or-false) entries"))
+  (define (reconcile! rows)
+    (for-each
+      (lambda (row)
+        (let* ([id (car row)] [canonical (cdr row)] [local (hashtable-ref owned id #f)])
+          (when local
+            (let ([next (and canonical (equal? owner (view:owner canonical))
+                          (if (and (= (view:generation local) (view:generation canonical))
+                                (> (view:sequence local) (view:sequence canonical)))
+                            (descriptor:with canonical
+                              (map (lambda (key) (assq key local)) '(sequence basis state focus))) canonical))])
+              (unless (equal? local next)
+                (if next (hashtable-set! owned id (datum:copy next)) (hashtable-delete! owned id))
+                (set! dirty? #t)))))) rows)
+    ;; A retired descendant may have been the provisional focus of a parent
+    ;; whose newer selection has not reached the base yet.
+    (vector-for-each
+      (lambda (id)
+        (let* ([d (hashtable-ref owned id #f)] [focus (view:focus d)])
+          (when (and focus
+                  (not (let loop ([at focus] [seen '()])
+                         (and (not (member at seen))
+                           (let ([target (hashtable-ref owned at #f)])
+                             (and target (if (view:parent target) (loop (view:parent target) (cons at seen)) (equal? at id))))))))
+            (hashtable-set! owned id (descriptor:with d '((focus . #f)))) (set! dirty? #t))))
+      (hashtable-keys owned)))
 
   (edoc "Fence interaction and atomically arrange a tree through its owner."
         (actor actor "head") (changes list "parent changes") (leases list "root guards"))

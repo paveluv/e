@@ -215,12 +215,14 @@
                         (put id (if (and focus (or (not (equal? root id)) (not (member focus ids))))
                                     (descriptor:with d '((focus . #f))) d)))) ids))) new-roots)))) #f))
 
-  (edoc "Publish guarded entries (id generation sequence basis state focus); every entry applies or none do."
+  (edoc "Atomically publish the newest still-owned interaction snapshots. Retired views, old ownership generations and already acknowledged sequences are ignored. Focus outside the surviving root is cleared. Authored edits use the store's separate guarded command path."
         (actor actor "owner") (updates list "interaction entries"))
   (define (publish! actor updates)
     (unless (and (list? updates)
                  (for-all
-                   (lambda (r) (and (list? r) (= (length r) 6)))
+                   (lambda (r) (and (list? r) (= (length r) 6) (model:reference? (car r))
+                                 (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) (list (cadr r) (caddr r)))
+                                 (or (not (list-ref r 5)) (model:reference? (list-ref r 5)))))
                    updates)
                  (= (length updates) (length (unique (map car updates)))))
       (error 'publish! "expected distinct interaction entries"))
@@ -230,19 +232,19 @@
                     (lambda (get need put read fail)
                       (for-each
                         (lambda (r)
-                          (let* ([id (car r)] [d (need id)] [focus (list-ref r 5)])
-                            (unless (and (equal? actor (descriptor:owner d))
-                                         (= (cadr r) (descriptor:generation d))
-                                         (> (caddr r) (descriptor:sequence d)))
-                              (fail 'stale))
-                            (when focus
-                              (unless (and (not (descriptor:parent d))
-                                           (equal? id (root-of need focus fail)))
-                                (fail 'stale)))
-                            (put id
-                                 (descriptor:with
-                                   d
-                                   (map cons '(sequence basis state focus) (cddr r))))))
+                          (let* ([id (car r)] [d (get id)] [focus (list-ref r 5)])
+                            (when (and d (equal? actor (descriptor:owner d))
+                                       (= (cadr r) (descriptor:generation d))
+                                       (> (caddr r) (descriptor:sequence d)))
+                              (when (and focus
+                                      (not (and (not (descriptor:parent d))
+                                             (call/cc (lambda (absent)
+                                                        (equal? id (root-of get focus (lambda (status) (absent #f)))))))))
+                                (set! focus #f))
+                              (put id
+                                (descriptor:with
+                                  d
+                                  (map cons '(sequence basis state focus) (append (list-head (cddr r) 3) (list focus))))))))
                         updates))
                     #t)])
       (values status #f)))

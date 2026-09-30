@@ -82,6 +82,20 @@
     (list-ref (car (cadddr (car (widget:command-bindings button)))) 4) entry:insert!)
   (widget:unmount! root) (widget:invalidate!))
 
+;; Base resource retirement may race unpublished interaction. Reconcile the
+;; acquired topology while retaining the surviving view's newer local state.
+(let* ([actor head:ui-actor] [root (view:create! actor #f 'column 1 '() '())]
+       [child (view:create! actor #f 'label 1 '((text . "Temporary")) '())])
+  (view:arrange! actor (list (list root 0 (list (list 'child child 'fit)) '())) '())
+  (widget:mount! root 'retired-control)
+  (interaction:set-state! actor root #f 'newer)
+  (view:retire! actor child (cdr (assq 'revision (model:snapshot child))))
+  (interaction:flush!)
+  (check 'revocation-mirror-preserves-surviving-provisional-interaction
+    (list (interaction:snapshot child) (view:children (interaction:snapshot root))
+      (view:state (view:snapshot root))) '(#f () newer))
+  (widget:unmount! root))
+
 ;; Exact-revision proposals must refuse even endpoint edits, which ordinary
 ;; range rebasing intentionally accepts. Successful replacements remain undoable.
 (let* ([actor head:ui-actor] [source (store:create! actor "entry proposal" '("abc"))]
