@@ -69,9 +69,11 @@
                    (hashtable-set! groups (cadr id) g) g))))))
   (define (admit g generation thunk)
     (activity:call-with
-      (lambda () (with-mutex (group-lock g)
-                   (unless (and (= generation (group-generation g)) (record (group-id g) 'environment))
-                     (error 'environment "retired environment generation")) (thunk)))))
+      (lambda ()
+        (kernel:call-with-deferred-deliveries
+          (lambda () (with-mutex (group-lock g)
+                       (unless (and (= generation (group-generation g)) (record (group-id g) 'environment))
+                         (error 'environment "retired environment generation")) (thunk)))))))
   (define (jobs id)
     (filter (lambda (r) (and r (equal? (get (get r 'value) 'environment) id)))
       (map (lambda (id) (record id 'evaluation-job)) (model:ids 'evaluation-job))))
@@ -195,21 +197,21 @@
     (let loop ()
       (let ([work
              (activity:call-with
-               (lambda () (with-mutex (group-lock g)
-                            (cond
-                              [(and (group-worker g) (pair? (group-releases g)))
-                               (let ([ids (group-releases g)])
-                                 (group-releases-set! g '())
-                                 (list (group-generation g) #f (group-worker g) ids))]
-                              [(pair? (group-queue g))
-                               (let ([job (car (group-queue g))])
-                                 (group-queue-set! g (cdr (group-queue g))) (group-active-set! g job)
-                                 (list (group-generation g) job))]
-                              [else
-                               (group-running?-set! g #f) (group-active-set! g #f)
-                               (let ([r (record (group-id g) 'environment)])
-                                 (when (and r (eq? (get (get r 'value) 'status) 'running))
-                                   (update! '(base e) r (put (get r 'value) '(status . idle))))) #f]))))])
+               (lambda () (kernel:call-with-deferred-deliveries (lambda () (with-mutex (group-lock g)
+                                                                             (cond
+                                                                               [(and (group-worker g) (pair? (group-releases g)))
+                                                                                (let ([ids (group-releases g)])
+                                                                                  (group-releases-set! g '())
+                                                                                  (list (group-generation g) #f (group-worker g) ids))]
+                                                                               [(pair? (group-queue g))
+                                                                                (let ([job (car (group-queue g))])
+                                                                                  (group-queue-set! g (cdr (group-queue g))) (group-active-set! g job)
+                                                                                  (list (group-generation g) job))]
+                                                                               [else
+                                                                                (group-running?-set! g #f) (group-active-set! g #f)
+                                                                                (let ([r (record (group-id g) 'environment)])
+                                                                                  (when (and r (eq? (get (get r 'value) 'status) 'running))
+                                                                                    (update! '(base e) r (put (get r 'value) '(status . idle))))) #f]))))))])
         (when work
           (guard (ex [else
                       (let ([old (guard (ignored [else #f])
@@ -341,9 +343,10 @@
                     (store:set-property! '(base e) output 'internal #t))))
       (model:ids 'evaluation-job))
     (for-each (lambda (id)
-                (let ([g (group-for id)])
-                  (admit g (group-generation g)
-                    (lambda () (reset-group! '(base e) g "Base restarted; live bindings were reset")))))
+                (let* ([g (group-for id)]
+                       [old (admit g (group-generation g)
+                              (lambda () (reset-group! '(base e) g "Base restarted; live bindings were reset")))])
+                  (when old (worker:close! old))))
       (model:ids 'environment)))
 
   (edoc "Stop and reap native workers during base shutdown without changing the already saved model snapshot."

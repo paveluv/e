@@ -24,12 +24,13 @@
       (= (length xs) (length (unique (map (lambda (e) (list (car e) (cadr e))) xs))))))
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
   (define registrations
-    (begin
-      (model:register-kind! 'connection-topology 1
-        (lambda (v) (and (list? v) (or (= (length v) 2) (and (= (length v) 3) (list? (caddr v)))) (integer? (car v)) (>= (car v) 0)
-                      (list? (cadr v)) (for-all (lambda (p) (and (pair? p) (id? (car p)) (id? (cdr p)))) (cadr v))
-                      (= (length (cadr v)) (length (unique (map car (cadr v))))))))
-      (model:register-kind! 'connection-bindings 1 edges?)))
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (model:register-kind! 'connection-topology 1
+          (lambda (v) (and (list? v) (or (= (length v) 2) (and (= (length v) 3) (list? (caddr v)))) (integer? (car v)) (>= (car v) 0)
+                        (list? (cadr v)) (for-all (lambda (p) (and (pair? p) (id? (car p)) (id? (cdr p)))) (cadr v))
+                        (= (length (cadr v)) (length (unique (map car (cadr v))))))))
+        (model:register-kind! 'connection-bindings 1 edges?))))
   (define initialization-lock (make-mutex))
   (define (change r refs value) (list (field r 'id) (field r 'revision) refs value))
   (define (witness r) (change r (field r 'references) (field r 'value)))
@@ -46,9 +47,10 @@
                                         (list (change r (field r 'references) (list (+ 1 (car (field r 'value))) (owners r) ds))))])
             (unless (eq? status 'applied) (loop)))))))
   (define contracts
-    (port:observe! (lambda ()
-                     (set! catalogue (port:catalogue))
-                     (for-each synchronize-contracts! (model:ids 'connection-topology)))))
+    (kernel:call-with-runtime-registrations
+      (lambda () (port:observe! (lambda ()
+                                  (set! catalogue (port:catalogue))
+                                  (for-each synchronize-contracts! (model:ids 'connection-topology)))))))
 
   (edoc "Locate the canonical connection topology, initializing it lazily after recovery."
         (returns list) (effects internal))

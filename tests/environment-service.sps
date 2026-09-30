@@ -90,6 +90,18 @@
         (test:check 'worker-failure-fences-namespace-and-next-job-can-restart
           (get (done failed) 'status) 'reset)
         (test:check 'failed-worker-can-be-replaced (cadr (result (run alice a "seed"))) '(11)))
+      (let* ([reset? #f]
+             [watch (store:subscribe! shared
+                      (lambda (event)
+                        (when (and (not reset?) (eq? (car event) 'edit))
+                          (set! reset? #t)
+                          (environment:reset! alice a (generation a)))))]
+             [job (run alice a (format "(resource:edit! 'shared ~a '(0 0 0 0) '(\"kept \")) (display \"late\")"
+                                 (store:revision shared)))])
+        (test:check 'resource-observer-can-reset-its-worker-without-deadlock-or-late-effects
+          (list (get (done job) 'status) reset? (store:line shared 0)
+            (store:line (cadr (get (value job) 'output)) 0)) '(reset #t "kept abc" ""))
+        (store:unsubscribe! watch))
       (environment:close! alice a (generation a))
       (test:await 'workers-reaped (lambda () (equal? (test:child-pids) baseline)))
       (test:check 'closing-groups-keeps-borrowed-resources

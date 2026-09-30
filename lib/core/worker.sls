@@ -4,6 +4,7 @@
   (export close! open! request!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (sys sys) sys:))
   (define-record-type worker (fields process input gate lock (mutable closed?)))
+  (define request-owners (make-thread-parameter '()))
   (define (send w datum)
     (sys:write-process! (worker-process w) (string->utf8 (format "~s\n" datum)) #f))
 
@@ -20,30 +21,38 @@
         (emit procedure "message sink; blocking applies pipe backpressure")
         (broker procedure "operation and arguments -> portable response") (returns datum))
   (define (request! worker command emit broker)
-    (with-mutex (worker-gate worker)
-      (when (with-mutex (worker-lock worker) (worker-closed? worker)) (error 'request! "worker is closed"))
-      (guard (ex [else (with-mutex (worker-lock worker) (worker-closed?-set! worker #t))
-                       (sys:close-process! (worker-process worker)) (raise ex)])
-        (send worker command)
-        (let loop ([message (read (worker-input worker))])
-          (when (eof-object? message) (error 'request! "worker exited before completing its request"))
-          (case (car message)
-            [(done released) message]
-            [(output catalogue) (emit message) (loop (read (worker-input worker)))]
-            [(request)
-             (send worker
-               (guard (ex [else (list 'error (kernel:condition-text ex))])
-                 (list 'ok (apply broker (cadr message) (caddr message)))))
-             (loop (read (worker-input worker)))]
-            [else (error 'request! "invalid worker message" message)])))))
+    (parameterize ([request-owners (cons (cons (get-thread-id) worker) (request-owners))])
+      (with-mutex (worker-gate worker)
+        (when (with-mutex (worker-lock worker) (worker-closed? worker)) (error 'request! "worker is closed"))
+        (guard (ex [else (with-mutex (worker-lock worker) (worker-closed?-set! worker #t))
+                     (sys:close-process! (worker-process worker)) (raise ex)])
+          (send worker command)
+          (let loop ([message (read (worker-input worker))])
+            (when (eof-object? message) (error 'request! "worker exited before completing its request"))
+            (case (car message)
+              [(done released) message]
+              [(output catalogue) (emit message) (loop (read (worker-input worker)))]
+              [(request)
+               (send worker
+                 (guard (ex [else (list 'error (kernel:condition-text ex))])
+                   (list 'ok (apply broker (cadr message) (caddr message)))))
+               (loop (read (worker-input worker)))]
+              [else (error 'request! "invalid worker message" message)]))))))
 
   (edoc "Stop an evaluator, unblock its request owner and reap it. Running cancellation discards this namespace; a caller must fence its generation before calling."
         (worker any "worker"))
   (define (close! worker)
+    (define (dispose!)
+      (sys:close-process! (worker-process worker))
+      (unless (port-closed? (worker-input worker)) (close-port (worker-input worker))))
     (with-mutex (worker-lock worker)
       (unless (worker-closed? worker)
         (worker-closed?-set! worker #t)
         (sys:signal-process! (worker-process worker) 9)))
-    (with-mutex (worker-gate worker)
-      (sys:close-process! (worker-process worker))
-      (unless (port-closed? (worker-input worker)) (close-port (worker-input worker))))))
+    ;; An admitted resource's observer may reset this very worker. That
+    ;; callback already owns its request gate; close the ports and let the
+    ;; enclosing request unwind instead of waiting for ourselves.
+    (if (exists (lambda (owner) (and (eqv? (car owner) (get-thread-id)) (eq? (cdr owner) worker)))
+          (request-owners))
+      (dispose!)
+      (with-mutex (worker-gate worker) (dispose!)))))

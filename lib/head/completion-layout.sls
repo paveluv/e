@@ -57,8 +57,7 @@
         (format-grid candidates width labeler highlight?)))
 
   (define (format-grid candidates width labeler highlight?)
-    (let* ([labels (map (lambda (value) (if (completion:candidate? value) (completion:candidate-label value) (labeler value)))
-                     candidates)]
+    (let* ([labels (map labeler candidates)]
            [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
            [columns (max 1 (div width (max 1 column)))])
       (let rows ([values candidates] [labels labels] [out '()])
@@ -71,22 +70,12 @@
                             #f (reverse choices)) out))
                   (let* ([label (car labels)] [shown (glyph:fit label column)]
                          [value (car values)]
-                         [base (if (completion:candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
+                         [base (if (highlight? label) 'editor 'plain)]
                          [faces (make-vector (string-length shown) base)]
                          [start (string-length text)] [end (+ start (string-length shown))])
-                    (when (completion:candidate? value)
-                      ;; fit preserves a prefix of whole glyph clusters. Stop
-                      ;; copying at its ellipsis/padding so neither is underlined.
-                      (let ([visible
-                             (if (<= (glyph:cells label) column) (string-length label)
-                                 (let trim ([i (- (string-length shown) 1)])
-                                   (if (char=? (string-ref shown i) #\space) (trim (- i 1)) i)))])
-                        (do ([i 0 (+ i 1)]) ((= i visible))
-                          (vector-set! faces i (vector-ref (completion:candidate-styles value) i)))))
                     (fill (cdr values) (cdr labels) (+ count 1)
                       (string-append text shown)
                       (cons (vector->list faces) styles)
-                      (cons (list start end (if (completion:candidate? value) (completion:candidate-value value) value))
-                        choices)))))))))
+                      (cons (list start end value) choices)))))))))
 
 )

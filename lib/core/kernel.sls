@@ -6,7 +6,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (core kernel)
-  (export add-after-reload-hook! call-with-registration-update call-with-runtime-registrations
+  (export add-after-reload-hook! call-with-deferred-deliveries call-with-registration-update call-with-runtime-registrations
           condition-text config-file drain-deliveries! editor-symbol? enqueue-delivery! evaluate!
           fingerprint init-module! installation-directory load-config! load-module!
           load-modules! loaded-modules mailbox-peek mailbox-post! mailbox-receive! make-delivery-queue
@@ -175,9 +175,29 @@
              (delivery-queue-front-set! queue (cdr (delivery-queue-front queue)))
              next))))
 
-  (edoc "Run the queued deliveries in order, once, on the calling thread."
+  (define deferred-deliveries (make-thread-parameter #f))
+  (define (own-delivery-scope)
+    (let ([scope (deferred-deliveries)])
+      (and scope (eqv? (vector-ref scope 0) (get-thread-id)) scope)))
+
+  (edoc "Delay this thread's callback draining until a short operation releases its domain locks. Nested scopes share the batch; commits and queue order are unchanged. Never enclose a wait for another operation or arbitrary user computation."
+    (thunk thunk "short domain operation") (returns any))
+  (define (call-with-deferred-deliveries thunk)
+    (if (own-delivery-scope) (thunk)
+      (let ([scope (vector (get-thread-id) '())])
+        (dynamic-wind void
+          (lambda () (parameterize ([deferred-deliveries scope]) (thunk)))
+          (lambda () (for-each drain-deliveries! (reverse (vector-ref scope 1))))))))
+
+  (edoc "Run queued deliveries in order, or retain their drain until the current short domain scope releases its locks."
         (queue any "the queue"))
   (define (drain-deliveries! queue)
+    (let ([scope (own-delivery-scope)])
+      (if scope
+        (unless (memq queue (vector-ref scope 1))
+          (vector-set! scope 1 (cons queue (vector-ref scope 1))))
+        (drain-now! queue))))
+  (define (drain-now! queue)
     (let ([entered? #f] [owns? #f])
       (dynamic-wind
         (lambda ()

@@ -42,7 +42,7 @@
           previous-list!
           quit! redo! redraw-command! region-text (rename (text-control:register-policy! register-policy!)) reload! replace-region-text! reread! restore!
           rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
-          set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! (rename (text-control:undo-scope undo-scope)) up-expression!
+          transpose-expressions! trash type! undo! undo-actor! (rename (text-control:undo-scope undo-scope)) up-expression!
           visit-file! with-region
           yank!)
   (import (chezscheme)
@@ -1109,16 +1109,6 @@
                (head:goto! point)
                (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top))))))]
       [(id direction fraction) (editor:page! id direction fraction)]))
-
-  (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
-        (position position "where point goes"))
-  (define (set-point-without-scroll! position)
-    (let* ([v (head:window-text current-window)]
-           [row (max 0 (min (car position) (- (render:line-count v) 1)))])
-      (head:window-prow-set! current-window row)
-      (head:window-pcol-set! current-window
-                             (max 0 (min (cdr position)
-                                      (string-length (render:line-ref v row)))))))
 
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
