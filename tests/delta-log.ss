@@ -34,6 +34,7 @@
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (delta-log:init!)
      (define bot '(agent delta-test))
+     (include "tests/rewrite-draft.sps")
      (define b (head:new-buffer! "log-me"))
      (head:show-buffer! b)
      (head:goto! '(0 . 0))

@@ -435,10 +435,10 @@
   (define (log-entries id . selector)
     (apply client:request 'log id selector))
 
-  (edoc "A rewrite preview with entries disabled, from the base: (values text mapping conflicts)."
+  (edoc "A rewrite preview with entries disabled, from one base snapshot: (values text mapping conflicts revision)."
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable")
-        (returns any "(values text mapping conflicts)"))
+        (returns any "(values text mapping conflicts revision)"))
   (define (rewrite-preview id disabled)
     (apply values (client:request 'rewrite-preview id disabled)))
 

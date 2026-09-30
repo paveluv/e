@@ -1906,7 +1906,11 @@
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
                  (test:check 'rewrite-preview-crosses-the-client-seam
-                   (head-read a `(call-with-values (lambda () (store:rewrite-preview ,id '())) list)) '(#("shared text") () ()))
+                   (head-read a `(call-with-values (lambda () (store:rewrite-preview ,id '())) list)) '(#("shared text") () () 0))
+                 (test:check 'rewrite-draft-lifecycle-crosses-the-client-seam
+                   (head-read a `(let* ([draft (rewrite:create! head:ui-actor ,id)] [p (rewrite:preview draft)])
+                                   (rewrite:close! head:ui-actor draft 0)
+                                   (list (list-ref p 3) (list-ref p 6)))) '(#("shared text") 0))
                  (for-each (lambda (ui)
                              (head-read ui `(begin (log-view:show!) (window:delete-others!)
                                                    (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))

@@ -1826,10 +1826,10 @@
                        (begin (hashtable-set! seen r #t) #t)))
              (list-sort > revisions)))))
 
-  (edoc "A rewrite preview with entries disabled, the rest rebased over their absence: (values text mapping conflicts), the text as lines, the mapping the deltas taking the current text to it as data, oldest first, and the conflicts as (revision . cause) for the entries left applied -- the revision of a later entry overlapping one, or basis-too-old. Nothing changes; facts are not consulted."
+  (edoc "A rewrite preview with entries disabled, the rest rebased over their absence: (values text mapping conflicts revision), from one source snapshot. Text is lines; mapping contains the deltas taking current text to it, oldest first; conflicts are (revision . cause) for entries left applied, with a later overlapping revision or basis-too-old as cause. Nothing changes; facts are not consulted."
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable, repetitions counted once")
-        (returns any "(values text mapping conflicts)"))
+        (returns any "(values text mapping conflicts revision)"))
   (define (rewrite-preview id disabled)
     (locked
       (lambda ()
@@ -1841,7 +1841,7 @@
                           #f)])
             (values (if (null? steps) (buffer-text b) (car (car (reverse steps))))
                     (map (lambda (step) (text:delta->datum (cadr step))) steps)
-                    (datum:copy conflicts)))))))
+                    (datum:copy conflicts) (buffer-revision b)))))))
 
   (edoc "Disable entries of a buffer for everyone: their inverses, rebased across what followed, are installed as the actor's own action. Their original actions skip them while disabled; undoing the rewrite restores their membership. (values applied revision); (values blocked conflicts) as rewrite-preview reports them when any entry cannot be inverted or a fact it set changed; (values refused read-only|buffer)."
         (actor actor "the actor identity")

@@ -25,6 +25,7 @@
           (prefix (service policy) policy:)
           (prefix (service prompt-request) prompt-request:)
           (prefix (service reference) reference:)
+          (prefix (service rewrite) rewrite:)
           (prefix (service sandbox) sandbox:)
           (prefix (service search-request) search-request:)
           (prefix (service session) session:)
@@ -44,7 +45,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "rewrite" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -276,6 +277,11 @@
       [(rewrite-preview)
        (arity 2)
        (call-with-values (lambda () (store:rewrite-preview (car args) (cadr args))) list)]
+      [(rewrite-create) (control!) (arity 1) (rewrite:create! actor (car args))]
+      [(rewrite-toggle) (control!) (arity 3) (apply rewrite:toggle! actor args)]
+      [(rewrite-preview-draft) (control!) (arity 1) (rewrite:preview (car args))]
+      [(rewrite-settle) (control!) (arity 2) (call-with-values (lambda () (apply rewrite:settle! actor args)) list)]
+      [(rewrite-close) (control!) (arity 2) (apply rewrite:close! actor args)]
       [(rewrite)
        (arity 2)
        (call-with-values (lambda () (policy:session-rewrite! session (car args) (cadr args))) list)]

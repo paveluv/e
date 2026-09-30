@@ -434,6 +434,12 @@ M-x the `delta-log:` commands work on the current buffer's log:
   until they are toggled back. `(delta-log:revert!)` abandons the preview.
 - `(delta-log:rewrite-preview)` and `(delta-log:disabled)` report the active preview.
 
+For independent scripted reviews, `(rewrite:create! actor document)` creates a
+base draft. `rewrite:toggle!` and `rewrite:settle!` take its model ID and expected
+model revision; `rewrite:preview` returns its choices, derived text, mapping,
+conflicts and source revision. Drafts over the same document keep separate
+choices. `rewrite:close!` abandons one without changing the source.
+
 `C-x l` opens the **delta log browser**, `<delta-log>`, in the pop-up,
 window 0, and `(delta-log:open! (window n))` in any window, the current one
 without an argument; it lists one row per entry of every buffer a window
@@ -1092,7 +1098,7 @@ every head edit carries one, per action or per grouped command.
 `(revision actor labels delta origin state)`, narrowed by a selector alist
 among `count`, `actor`, `batch`, `since`, `until` and `state`; an entry is
 `disabled` while a live undo or rewrite reverts it. `(store:rewrite-preview id
-revisions)` gives `(values text mapping conflicts)`, the text with those
+revisions)` gives `(values text mapping conflicts revision)`, the text with those
 entries disabled and the rest rebased over their absence, the deltas
 taking the current text there, and `(revision . cause)` pairs for the
 entries a later entry overlaps, without changing anything;

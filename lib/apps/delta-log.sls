@@ -22,6 +22,7 @@
           (rename (delta-log-show-row! show-row!)) (rename (delta-log-toggle! toggle!)) (rename (delta-log-toggle-row! toggle-row!)))
   (import (rnrs)
           (only (chezscheme) hashtable-values parameterize format make-weak-eq-hashtable void)
+          (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
@@ -34,6 +35,8 @@
           (prefix (head table) table:)
           (prefix (head window) window:)
           (prefix (service log) log:)
+          (prefix (service rewrite) rewrite:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (sys glyph) glyph:))
 
@@ -43,8 +46,12 @@
   ;; view's text, the revisions disabled, and the conflicts the last rendering
   ;; found, (disabled . later) pairs naming a later entry that overlaps a
   ;; disabled one.
-  (define-record-type rewrite-preview (fields trunk buffer (mutable disabled) (mutable conflicts) (mutable key)))
+  (define-record-type rewrite-preview (fields trunk buffer draft token (mutable snapshot) (mutable conflicts) (mutable key)))
   (define the-rewrite #f)
+  (define (field r key) (cdr (assq key r)))
+  (define (rewrite-preview-disabled v) (field (field (rewrite-preview-snapshot v) 'value) 'disabled))
+  (define (adopt-rewrite! v r)
+    (when (and r (>= (field r 'revision) (field (rewrite-preview-snapshot v) 'revision))) (rewrite-preview-snapshot-set! v r)))
 
   (define (trunk-of b)
     ;; the shared buffer whose log b shows: b itself, or the trunk behind
@@ -554,17 +561,23 @@
     ;; a fresh view of the trunk in a local tool buffer sharing its mode; a
     ;; view of another buffer ends first, this head having one at a time
     (when the-rewrite (drop-rewrite! the-rewrite))
-    (let ([vb (head:fresh-buffer! (string-append "<rewrite: " (head:buffer-name trunk) ">"))])
+    (let* ([vb (head:fresh-buffer! (string-append "<rewrite: " (head:buffer-name trunk) ">"))]
+           [draft (rewrite:create! head:ui-actor (trunk-id trunk))] [v #f]
+           [token (kernel:call-with-runtime-registrations
+                    (lambda () (model:subscribe! (list draft)
+                                 (lambda (notice) (when v (adopt-rewrite! v (model:snapshot draft)) (head:wake-main!))))))])
       (head:buffer-fact-set! vb 'mode (head:buffer-fact trunk 'mode #f))
-      (set! the-rewrite (make-rewrite-preview trunk vb '() '() #f))
+      (set! v (make-rewrite-preview trunk vb draft token (model:snapshot draft) '() #f))
+      (set! the-rewrite v)
       the-rewrite))
 
   (define (render-rewrite! v)
     ;; the view's text in its buffer, shown where the trunk was, point
     ;; carried from the trunk through the view's mapping
     (let ([trunk (rewrite-preview-trunk v)] [vb (rewrite-preview-buffer v)])
-      (let-values ([(text mapping conflicts) (store:rewrite-preview (trunk-id trunk) (rewrite-preview-disabled v))])
-        (rewrite-preview-key-set! v (list (head:buffer-store-rev trunk) (rewrite-preview-disabled v)))
+      (let* ([snapshot (rewrite:preview (rewrite-preview-draft v))]
+             [text (list-ref snapshot 3)] [mapping (list-ref snapshot 4)] [conflicts (list-ref snapshot 5)])
+        (rewrite-preview-key-set! v (list (list-ref snapshot 6) (list-ref snapshot 2)))
         (rewrite-preview-conflicts-set! v conflicts)
         (let ([point (fold-left (lambda (p d) (text:rebase-position p (text:datum->delta d)))
                                 (head:buffer-point trunk) mapping)]
@@ -583,7 +596,11 @@
       (when (memq trunk (head:buffers))
         (for-each (lambda (w) (when (eq? (head:window-buffer w) vb) (head:set-window-buffer! w trunk))) (head:windows)))
       (head:forget-buffer! vb)
-      (set! the-rewrite #f)))
+      (set! the-rewrite #f)
+      (model:snapshots (list (rewrite-preview-draft v)))
+      (let ([r (model:snapshot (rewrite-preview-draft v))])
+        (when r (rewrite:close! head:ui-actor (rewrite-preview-draft v) (field r 'revision))))
+      (model:unsubscribe! (rewrite-preview-token v))))
 
   (define (report! v)
     (let ([n (length (rewrite-preview-disabled v))] [k (length (rewrite-preview-conflicts v))])
@@ -608,11 +625,8 @@
   (define (delta-log-toggle! . revisions)
     (let* ([trunk (current-trunk 'delta-log:toggle!)]
            [v (if (and the-rewrite (eq? (rewrite-preview-trunk the-rewrite) trunk)) the-rewrite (start-rewrite! trunk))])
-      (for-each
-        (lambda (r)
-          (let ([r (edoc:type-value 'revision r)])
-            (rewrite-preview-disabled-set! v (if (memv r (rewrite-preview-disabled v)) (remv r (rewrite-preview-disabled v)) (cons r (rewrite-preview-disabled v))))))
-        revisions)
+      (adopt-rewrite! v (rewrite:toggle! head:ui-actor (rewrite-preview-draft v) (field (rewrite-preview-snapshot v) 'revision)
+                          (map (lambda (r) (edoc:type-value 'revision r)) revisions)))
       (cond
         [(null? (rewrite-preview-disabled v)) (drop-rewrite! v) (edit:set-message! "View ended: nothing disabled") (follow!) '()]
         [else (render-rewrite! v) (report! v) (follow!) (rewrite-preview-disabled v)])))
@@ -620,12 +634,13 @@
   (edoc "Commit the view: the trunk rewritten for everyone with the view's entries disabled, their inverses this head's own undoable action, and the window back on the trunk; blocked when a later entry overlaps a disabled one, the conflicts named."
         (returns symbol "applied, blocked, refused or nothing"))
   (define (delta-log-commit!)
-    (let ([v (or the-rewrite (error 'delta-log:commit! "no view to commit"))])
-      (let-values ([(status detail) (head:store-rewrite! (rewrite-preview-trunk v) (rewrite-preview-disabled v))])
+    (let* ([v (or the-rewrite (error 'delta-log:commit! "no view to commit"))] [n (length (rewrite-preview-disabled v))])
+      (let-values ([(status detail) (rewrite:settle! head:ui-actor (rewrite-preview-draft v) (field (rewrite-preview-snapshot v) 'revision))])
         (case status
           [(applied)
-           (let ([n (length (rewrite-preview-disabled v))] [name (head:buffer-name (rewrite-preview-trunk v))])
+           (let ([name (head:buffer-name (rewrite-preview-trunk v))])
              (drop-rewrite! v)
+             (head:before-frame!)
              (edit:set-message! (format "Rewrote ~a: ~a entr~a disabled, now revision ~a" name n (if (= n 1) "y" "ies") detail))
              (follow!))]
           [(blocked) (edit:set-message! (format "Rewrite blocked, a later entry over a disabled one: ~s" detail))]
