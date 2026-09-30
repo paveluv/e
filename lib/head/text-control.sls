@@ -1,7 +1,7 @@
 ;; Guarded text commands shared by controls; policy and view state stay in callers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-control)
-  (export basis-text call-with-intent! context current? history! lines mirror pending? revision submit!)
+  (export basis-text call-with-intent! context current? history! lines mirror pending? revision submit! undo-scope)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
@@ -10,6 +10,13 @@
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
 
   (define pending (make-parameter '()))
+
+  (edoc "The default undo scope shared by authored text controls: mine for this head's actions, or all for every actor. The command environment exposes this as edit:undo-scope."
+        (value (one-of mine all)))
+  (define undo-scope
+    (make-parameter 'mine
+      (lambda (scope)
+        (unless (memq scope '(mine all)) (error 'undo-scope "expected mine or all" scope)) scope)))
 
   (edoc "Whether a text command is computing or admitting this view's intent. Idle anchor maintenance must wait; explicit user interactions remain allowed."
         (id model "text view") (returns boolean))

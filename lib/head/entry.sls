@@ -5,7 +5,6 @@
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation text) text:)
-          (prefix (only (head edit) undo-scope) edit:)
           (prefix (only (head head) ui-actor) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -210,7 +209,7 @@
         (id model "entry view") (scope (list-of any) "scope override, at most one"))
   (define (undo! id . scope)
     (unless (<= (length scope) 1) (error 'undo! "expected at most one scope" scope))
-    (history! id 'undo (if (pair? scope) (car scope) (edit:undo-scope))))
+    (history! id 'undo (if (pair? scope) (car scope) (text-control:undo-scope))))
 
   (edoc "Redo an entry's source through the editor's shared undo journal."
         (id model "entry view"))
