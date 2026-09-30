@@ -175,11 +175,12 @@
     (let-values ([(available? source) (raw-source! n d)])
       (let ([snapshot (field (definition d) 'snapshot #f)])
         (if (and available? snapshot source)
-          (let ([next (snapshot (node-id n) source)])
+          (let* ([next (snapshot (node-id n) source)]
+                 [revision (and (list? next) (for-all pair? next) (assq 'revision next))])
             (unless (or (not next)
-                      (and (equal? (field next 'id #f) (field source 'id #f))
-                        (integer? (field next 'revision #f))
-                        (<= 0 (field next 'revision #f) (field source 'revision #f))))
+                      (and revision (assq 'id next) (equal? (assq 'id next) (assq 'id source))
+                        (integer? (cdr revision)) (exact? (cdr revision))
+                        (<= 0 (cdr revision) (cdr (assq 'revision source)))))
               (error 'source! "snapshot must retain source identity and an acquired revision" (node-id n)))
             (values (and next #t) next))
           (values available? source)))))
@@ -647,8 +648,11 @@
         frame)))
 
   (edoc "Read the latest prepared frame, which may not have been displayed."
-        (id model "root view") (returns any))
-  (define (prepared id) (hashtable-ref preparations id #f))
+        (id model "mounted root or descendant") (returns any))
+  (define (prepared id)
+    (or (hashtable-ref preparations id #f)
+      (let ([n (hashtable-ref nodes id #f)])
+        (and n (find-frame (hashtable-ref preparations (mount-id (node-root n)) #f) id)))))
 
   (edoc "Adopt the exact frames whose output was successfully flushed. The painter calls this before publication hooks."
         (placements list "(frame screen-x screen-y) entries"))

@@ -25,7 +25,17 @@
   (check 'stopped-surface-remains-an-ordinary-selectable-editor
     (list (car (shown)) (view:state (interaction:snapshot id)))
     '(("new") ((0 . 0) (0 . 3) (0 . 0) #t)))
-  (widget:unmount! id))
+  (widget:unmount! id)
+  (let ([bad? #f] [view (view:create! actor (list 'buffer source) 'snapshot-fixture 1 '() '())])
+    (widget:register! 'snapshot-fixture 1
+      (list (cons 'snapshot (lambda (id envelope)
+                              (list (assq 'revision envelope) (cons 'id (if bad? '(buffer 99999) (list 'buffer source)))
+                                (assq 'value envelope))))))
+    (widget:mount! view 'snapshot-fixture)
+    (check 'snapshot-envelopes-are-order-independent-and-cannot-retarget-a-source
+      (list (refused? (lambda () (widget:context view)))
+        (begin (set! bad? #t) (refused? (lambda () (widget:context view))))) '(#f #t))
+    (widget:unmount! view)))
 
 ;; Two widths share text and the existing renderer, but never interaction.
 (let* ([actor head:ui-actor] [ambient (head:current-buffer)]

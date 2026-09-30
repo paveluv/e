@@ -36,6 +36,7 @@
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
              (prefix (head dispatch) dispatch:)
              (prefix (apps paren) paren:)
+             (prefix (apps terminal) terminal:)
              (prefix (apps pretty-scheme) pretty-scheme:)
              (prefix (apps git-view) git-view:)
              (prefix (apps log-view) log-view:))
@@ -902,6 +903,7 @@
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")
+     (include "tests/terminal-widget.sps")
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")

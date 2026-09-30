@@ -3,10 +3,13 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps terminal)
   (export (rename (terminal-close! close!)) (rename (terminal-color-scheme! color-scheme!))
+          (rename (control:create-view! create-view!))
           (rename (terminal-yank! edit:yank!))
+          (rename (control:follow! follow!))
           (rename (terminal-forward-clipboard-to-copy-buffer forward-clipboard-to-copy-buffer))
-          init! (rename (terminal! open!)) page-down! page-up! (rename (vt:scrollback scrollback))
-          (rename (terminal-send! send!)) (rename (vt:shell shell))
+          init! (rename (terminal! open!) (control:page! page!)) page-down! page-up!
+          (rename (control:paste! paste!) (control:pointer! pointer!) (control:press! press!)
+            (vt:scrollback scrollback) (terminal-send! send!) (control:set-capture! set-capture!) (vt:shell shell))
           (rename (terminal-toggle-capture! toggle-capture!)))
   (import (chezscheme)
           (prefix (core kernel) kernel:)
@@ -16,6 +19,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head terminal-control) control:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -45,20 +49,26 @@
         (list (max 1 (head:window-size w)) (head:window-content-width w)) paste?
         (head:host-color-scheme))))
 
-  (edoc "Send text to the terminal in the current buffer as typed input."
-        (text string "what to type"))
-  (define (terminal-send! text)
-    (send-input! text #f) (void))
+  (edoc "Send typed text to an explicit terminal view. The one-argument form temporarily serves legacy window placement."
+        (id model "terminal view") (text string "what to type"))
+  (define terminal-send!
+    (case-lambda
+      [(text) (send-input! text #f) (void)]
+      [(id text) (control:send! id text)]))
 
   (edoc "Send the copy buffer's text to the terminal in the current buffer as pasted input.")
   (define (terminal-yank!)
     (send-input! (edit:copy-text) #t) (void))
 
-  (edoc "Toggle whether the current terminal window captures every key, C-x and M-x included.")
-  (define (terminal-toggle-capture!)
-    (unless (and (terminal-id (head:current-buffer)) (head:app-buffer? (head:current-buffer)))
-      (error 'toggle-capture! "current buffer is not a live terminal"))
-    (let ([w (head:current-window)]) (head:set-full-capture! w (not (head:full-capture? w)))))
+  (edoc "Toggle whether a terminal captures every key, C-x and M-x included."
+        (id model "explicit terminal view; omission is the temporary current-window adapter"))
+  (define terminal-toggle-capture!
+    (case-lambda
+      [(id) (control:toggle-capture! id)]
+      [()
+       (unless (and (terminal-id (head:current-buffer)) (head:app-buffer? (head:current-buffer)))
+         (error 'toggle-capture! "current buffer is not a live terminal"))
+       (let ([w (head:current-window)]) (head:set-full-capture! w (not (head:full-capture? w))))]))
 
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
         (buffer* (list-of buffer) "the terminal buffer, at most one"))
@@ -126,6 +136,7 @@
 
   (edoc "Install the terminal app: its mode with the keys of its context, color scheme hooks, notices, the C-c t binding, the capture toggle and its describe entries.")
   (define (init!)
+    (control:register!)
     (mode:register! "terminal" '() '() (lambda (line) #f))
     (terminal-color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)

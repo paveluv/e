@@ -815,6 +815,11 @@ preserves focus and selection, and bubbles only its unconsumed remainder.
 
 ## Multiline editor views
 
+The editor's optional `follow` boolean input follows a service-provided
+cursor. This is derived from base output and does not publish a new selection
+for every frame. `editor:frame-state` captures the prepared logical selection
+and top anchor when a composition leaves follow mode.
+
 `(edit:create-view! actor document-id options)` creates an unmounted `editor`
 view over an existing store document. Mount it directly, compose it with
 other views, or pass its root to `window:show-widget!`. With `()` or
@@ -942,6 +947,34 @@ Callbacks use explicit `mode:source` text; they must avoid I/O and keep work
 bounded. The matching-bracket extension uses this interface, including in
 nested editors. Tool results acquired asynchronously use `annotations` instead.
 
-Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; search/conflict producers and window chrome have not
-yet moved to the nested editor.
+Ordinary editor windows mount this same editor. Their outer placement and
+chrome remain host responsibilities; search and conflict tools retain their
+adapters until those applications migrate.
+
+## Terminal views
+
+`(terminal:create-view! actor document-id)` creates an unmounted terminal
+composition over an existing base-owned process document. Its `text` child
+is the read-only editor. Multiple views share the process, output and grid,
+with independent capture, following and selection. View creation, forks and
+unmounting never spawn or terminate a process.
+
+Use `terminal:set-capture!` with `partial` or `full`, or
+`terminal:toggle-capture!`, with an explicit view. Partial capture yields
+`C-x` and `M-x`; `C-]` toggles capture. `terminal:send!` types text,
+`terminal:paste!` honors bracketed paste, and `terminal:press!` sends a
+normalized key. `terminal:pointer!` accepts a displayed frame address; the
+base rejects stale output and view generations.
+
+Accepted process input includes the view's latest grid size and claims
+resize control. Subsequent size offers are coalesced per view; observers,
+focus reports, painting and scrollback do not take control. Releasing a
+controller invalidates its lease and keeps the last grid.
+
+`terminal:page!` and ordinary wheel scrolling retain the shown position and
+leave cursor following. Explicit process mouse capture can consume the wheel
+instead. `terminal:follow!` resumes following; process-directed input also
+resumes it. The `following` output is connected to the editor's `follow`
+input, so repeated process output causes no interaction publication.
+After process exit, capture bindings disappear and the same child remains
+available for ordinary selection, copying and navigation.

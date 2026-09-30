@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row history! insert! insert-at! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -78,6 +78,8 @@
       (if (mount-backend? m)
         (and (mount-surface m) (equal? (assq 'id source) (assq 'id (car (mount-surface m))))
           (car (mount-surface m))) source)))
+  (define (following? inputs)
+    (let ([p (assq 'follow inputs)]) (and p (eq? (cadr p) 'ready) (caddr p))))
   (define (acquire-surface! id mirror d allocation)
     (let* ([m (mounted id)] [document (text-source:id mirror)]
            [backend? (store:property document 'manages-viewport #f)]
@@ -111,7 +113,7 @@
             ;; Idle views advance their logical anchors while the mirror still
             ;; has the delta chain. Admission itself owns settlement; adoption
             ;; callbacks must not manufacture a newer user interaction.
-            (when (and (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
+            (when (and (not (following? inputs)) (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
               (let ([ps (points source d)])
                 (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
                            (append ps (list (cadddr (editor-state:state d))))))))
@@ -133,7 +135,7 @@
       (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m)))
         (annotations id source inputs)
         (if (mount-mode m) (list-ref (mount-mode m) 4) (text-layout:wrap-lines))
-        (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)))))
+        (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)) (following? inputs))))
   (define (layout-width data d width)
     (let* ([own (option d 'wrap 'default)]
            [source (mode:source-fact (list-ref data 3) 'wrap 'default)]
@@ -153,7 +155,13 @@
   ;; addresses, horizontal cells and desired columns never enter the view.
   (define (project data d width height reveal?)
     (let* ([source (cadr data)] [lines (text-control:lines source)] [frame (caddr data)]
-           [ps (points source d)] [wrap (layout-width data d width)]
+           [header (and (list-ref data 8) (render:header frame))]
+           [cursor (and header (caddr header))]
+           [ps (if cursor
+                 (let* ([p (cons (car cursor) (render:character frame (car cursor) (cadr cursor)))]
+                        [start (max 0 (- (vector-length lines) (car (cadddr header))))])
+                   (list p p (cons (max start (- (car cursor) height -1)) 0))) (points source d))]
+           [wrap (layout-width data d width)]
            [ps (and ps (map (lambda (p) (snap lines frame p)) ps))])
       (if (not ps) (list data #f '(0 . 0) 0 width height)
         (let-values ([(caret top left) (text-layout:scroll lines frame wrap width height 0
@@ -234,9 +242,20 @@
             (list-ref projection 6))))))
   (define (caret projection d width height)
     (and (cadr projection)
-      (let* ([data (car projection)] [lines (text-control:lines (cadr data))])
-        (text-layout:locate lines (caddr data) (layout-width data d width)
-          (caddr projection) (cadddr projection) (caadr projection)))))
+      (let* ([data (car projection)] [lines (text-control:lines (cadr data))]
+             [header (and (list-ref data 8) (render:header (caddr data)))])
+        (and (or (not header) (not (caddr header)) (caddr (caddr header)))
+          (text-layout:locate lines (caddr data) (layout-width data d width)
+            (caddr projection) (cadddr projection) (caadr projection))))))
+
+  (edoc "Read a prepared editor's logical state, including a followed source cursor and top anchor. A host can retain this state once when leaving follow mode; no geometry or per-frame publication enters the base."
+        (frame any "prepared editor frame") (returns any))
+  (define (frame-state frame)
+    (let* ([g (widget:frame-data frame)] [data (car g)] [d (widget:frame-descriptor frame)])
+      (and (cadr g) (list (caadr g) (cadadr g)
+                      (text-layout:anchor (text-control:lines (cadr data))
+                        (layout-width data d (list-ref g 4)) (caddr g))
+                      (and (not (list-ref data 8)) (cadddr (editor-state:state d)))))))
 
   (edoc "Read a prepared editor display row for host gutters and decorations. Returns (line text rendition first-cell end-cell shown), or false after the source."
         (frame any "editor frame") (row integer "display row") (returns any))
