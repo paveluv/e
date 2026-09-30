@@ -33,6 +33,7 @@
           (prefix (foundation fuzzy) fuzzy:)
           (prefix (only (foundation scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (foundation string) string:)
+          (prefix (head completion) completion:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head edit) edit:)
@@ -502,7 +503,7 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (prompt:make-candidate (option-insert option) text styles (candidate-preview type option))))
+      (completion:make-candidate (option-insert option) text styles (candidate-preview type option))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -587,13 +588,13 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) matched))
         fragments)
-      (prompt:make-candidate name label styles)))
+      (completion:make-candidate name label styles)))
 
   (define (symbol-completer keep? typed?)
     ;; The status line describes the last lookup. It must not query a type's
     ;; live directory again while painting (some directories live at the base).
     (define kind (if typed? "symbol" "editor symbol"))
-    (prompt:make-completer
+    (completion:make-source
       (lambda (s pos)
         (define (symbols)
           (let ([range (symbol-range s pos)])

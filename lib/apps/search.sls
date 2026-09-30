@@ -17,6 +17,7 @@
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
+          (prefix (head completion) completion:)
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
@@ -172,7 +173,7 @@
               (let ([n (if needle (string-length needle) 0)])
                 (append (if at (let ([p (list-ref hits at)]) (list (list (car p) (cdr p) (+ (cdr p) n) 'match-point))) '())
                         (map (lambda (p) (list (car p) (cdr p) (+ (cdr p) n) 'match)) hits))))))
-      (prompt:make-searcher
+      (completion:make-searcher
         (lambda (s)
           (refresh! s)
           (show!))

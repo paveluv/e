@@ -174,7 +174,7 @@ and `prompt:reindent`. The echo area is a bordered box of at most `paint:echo-bo
 `prompt:completion-label` maps a full candidate to its displayed label;
 the default preserves the value. A normal completion procedure receives the
 input and returns a list of full replacement strings, using prefix completion.
-For normalization and live filtering, pass `(prompt:make-completer lookup)`
+For normalization and live filtering, pass `(completion:make-source lookup)`
 as the completion or alternate-completion argument. `lookup` receives the input
 and cursor index and returns four values: the start and exclusive end of the
 token, its proposed expansions, and a list of candidate replacement strings.
@@ -185,7 +185,7 @@ match set. Their order and the candidate order stay fixed while Tab cycles; edit
 new cycle. Duplicate expansions should be removed by the source.
 Return `#f` as the start when there is no completable token. String candidates
 are displayed as supplied and styled with `prompt:completion-highlight`.
-For richer presentation, return `(prompt:make-candidate value label styles)`
+For richer presentation, return `(completion:make-candidate value label styles)`
 in place of a string: `value` is the replacement string, `label` is the displayed
 text, and `styles` is a vector with one face per label character. Labels clip
 at whole glyphs; generated ellipses and padding stay plain. Clicking any part

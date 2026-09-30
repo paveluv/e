@@ -29,10 +29,10 @@
           (rename (prompt-down! down!)) (rename (draft-input draft)) (rename (prompt-edge-motion edge-motion))
           (rename (prompt-end! end!)) (rename (prompt-forward! forward!)) (rename (prompt-ghost ghost))
           (rename (prompt-in-window in-window)) (rename (prompt-inspect! inspect!)) (rename (prompt-inspector inspector))
-          interaction (rename (query-key! key!)) (rename (prompt-kill! kill!)) line make-candidate make-completer
-          (rename (make-content-view make-content)) make-searcher (rename (prompt-multiline multiline))
+          interaction (rename (query-key! key!)) (rename (prompt-kill! kill!)) line
+          (rename (make-content-view make-content)) (rename (prompt-multiline multiline))
           (rename (prompt-newline! newline!)) (rename (prompt-paste! paste!)) (rename (prompt! read!))
-          (rename (prompt-reindent reindent)) searcher-done searcher-find searcher-next searcher-previous searcher? transient
+          (rename (prompt-reindent reindent)) transient
           (rename (prompt-type! type!)) (rename (prompt-up! up!)) (rename (validate-input validate)) (rename (prompt-yank! yank!)))
   (import (rnrs)
           (rnrs r5rs)
@@ -42,6 +42,7 @@
                 current-time add-duration make-time time<?)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
+          (prefix (head completion) completion:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
@@ -319,62 +320,6 @@
   (edoc "Which completion labels take the editor face: (highlight? label)."
         (value procedure))
   (define completion-highlight (make-parameter (lambda (label) #f)))
-  ;; A cursor-aware source returns (values start end expansions candidates).
-  ;; Expansions may be a thunk: resolve only for a new Tab normalization,
-  ;; not when refreshing the live list or cycling already prepared results.
-  ;; Candidates replace [start,end); #f start means no completable token.
-  ;; Unlike a prefix completer, it normalizes on the first Tab and keeps its
-  ;; candidate list live after the second. Existing list procedures stay simple.
-  ;; An optional settle procedure, (settle text position), receives the input
-  ;; after a sole match has been inserted and returns the (text . position)
-  ;; to continue with: M-x closes forms and steps to the next argument. An
-  ;; optional kind, (kind text position) or a constant string, names what
-  ;; the completions are for the list's status line. An optional track,
-  ;; (track text position), gives (maker . needle) where a live search
-  ;; stands in for the list at the cursor: the prompt makes the searcher
-  ;; once, feeds it the needle as it changes, and ends it as the cursor
-  ;; leaves.
-  (define-record-type (completer %make-completer completer?) (fields lookup settle kind track))
-
-  (edoc "A cursor-aware completer: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line; an optional track, (track text position), gives (maker . needle) where a live search stands in for the list."
-        (lookup procedure "the completion source")
-        (settle (or procedure #f) "the settle step")
-        (kind (or procedure string #f) "what the completions are")
-        (track (or procedure #f) "where a live search stands in"))
-  (define make-completer
-    (case-lambda
-      [(lookup)
-       (%make-completer lookup #f #f #f)]
-      [(lookup settle)
-       (%make-completer lookup settle #f #f)]
-      [(lookup settle kind)
-       (%make-completer lookup settle kind #f)]
-      [(lookup settle kind track)
-       (%make-completer lookup settle kind track)]))
-
-  ;; A searcher stands in for the list at a typed argument: it finds the
-  ;; needle's matches in the current buffer and highlights them as a search
-  ;; would, Tab visits them in turn, and nothing is ever inserted.
-  (edoc "A live search standing in for a completion list: (find needle) refreshes the needle's matches, giving (index . count) with index #f when none; (next) and (previous) preview the neighbouring match, giving the same; (done accepted?) ends the preview and restores any temporary selection."
-        (find procedure "(find needle) giving (index . count)")
-        (next procedure "(next) giving (index . count)")
-        (previous procedure "(previous) giving (index . count)")
-        (done procedure "(done accepted?)"))
-  (define-record-type searcher (fields find next previous done))
-
-  ;; A display label and its character styles are independent of the string
-  ;; inserted on selection. The lookup result owns both, including during cycling.
-  (define-record-type (candidate %make-candidate candidate?)
-    (fields value label styles preview))
-
-  (edoc "A completion candidate: the text inserted on selection, the label the list shows with its styles, and an optional preview, a thunk that shows the candidate's value in the editor while it is the inserted one and gives the thunk undoing the showing."
-        (value string "the text inserted on selection")
-        (label string "the text shown in the list")
-        (styles (or vector #f) "the label's styles")
-        (preview (list-of procedure) "the preview thunk, at most one")
-        (returns (record candidate)))
-  (define (make-candidate value label styles . preview)
-    (%make-candidate value label styles (and (pair? preview) (car preview))))
 
   ;; A live completion view supplies its minimum height, renderer and key
   ;; handler. (render input window available-height page) returns styled lines
@@ -507,10 +452,10 @@
     (list->vector
       (apply append
         (map (lambda (value)
-               (let* ([rich? (candidate? value)]
-                      [chosen (if rich? (candidate-value value) value)]
-                      [label (if rich? (candidate-label value) value)]
-                      [styles (if rich? (candidate-styles value) (make-vector (string-length label) 'plain))]
+               (let* ([rich? (completion:candidate? value)]
+                      [chosen (if rich? (completion:candidate-value value) value)]
+                      [label (if rich? (completion:candidate-label value) value)]
+                      [styles (if rich? (completion:candidate-styles value) (make-vector (string-length label) 'plain))]
                       [head (+ (string-length chosen) 2)]
                       [indent (if (and (< (* 2 head) width) (> (string-length label) head)
                                        (string=? (substring label 0 head) (string-append chosen "  ")))
@@ -536,12 +481,12 @@
 
   (define (format-columns candidates width labeler highlight?)
     ;; Labelled candidates take a row each; plain strings fill columns.
-    (if (exists candidate? candidates)
+    (if (exists completion:candidate? candidates)
         (format-rows candidates width)
         (format-grid candidates width labeler highlight?)))
 
   (define (format-grid candidates width labeler highlight?)
-    (let* ([labels (map (lambda (value) (if (candidate? value) (candidate-label value) (labeler value)))
+    (let* ([labels (map (lambda (value) (if (completion:candidate? value) (completion:candidate-label value) (labeler value)))
                      candidates)]
            [column (min width (+ 2 (fold-left max 0 (map glyph:cells labels))))]
            [columns (max 1 (div width (max 1 column)))])
@@ -555,10 +500,10 @@
                             #f (reverse choices)) out))
                   (let* ([label (car labels)] [shown (glyph:fit label column)]
                          [value (car values)]
-                         [base (if (candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
+                         [base (if (completion:candidate? value) 'plain (if (highlight? label) 'editor 'plain))]
                          [faces (make-vector (string-length shown) base)]
                          [start (string-length text)] [end (+ start (string-length shown))])
-                    (when (candidate? value)
+                    (when (completion:candidate? value)
                       ;; fit preserves a prefix of whole glyph clusters. Stop
                       ;; copying at its ellipsis/padding so neither is underlined.
                       (let ([visible
@@ -566,11 +511,11 @@
                                  (let trim ([i (- (string-length shown) 1)])
                                    (if (char=? (string-ref shown i) #\space) (trim (- i 1)) i)))])
                         (do ([i 0 (+ i 1)]) ((= i visible))
-                          (vector-set! faces i (vector-ref (candidate-styles value) i)))))
+                          (vector-set! faces i (vector-ref (completion:candidate-styles value) i)))))
                     (fill (cdr values) (cdr labels) (+ count 1)
                       (string-append text shown)
                       (cons (vector->list faces) styles)
-                      (cons (list start end (if (candidate? value) (candidate-value value) value))
+                      (cons (list start end (if (completion:candidate? value) (completion:candidate-value value) value))
                         choices)))))))))
 
   (define (input-rows content styles width)
@@ -729,7 +674,7 @@
             [else ""]))
     (define (end-search! accepted?)
       (when searcher
-        (guard (ex [else (void)]) ((searcher-done searcher) accepted?))
+        (guard (ex [else (void)]) ((completion:searcher-done searcher) accepted?))
         (set! searcher #f) (set! searcher-maker #f) (set! searcher-needle #f) (set! search-hit #f)))
     (define (end-preview!)
       (when preview-undo (guard (ex [else (void)]) (preview-undo)))
@@ -739,33 +684,33 @@
       ;; showing lasts while the input stays as the completion left it
       (unless (eq? candidate previewed)
         (end-preview!)
-        (when (and (candidate? candidate) (candidate-preview candidate))
+        (when (and (completion:candidate? candidate) (completion:candidate-preview candidate))
           (set! previewed candidate)
-          (set! preview-undo (guard (ex [else #f]) ((candidate-preview candidate)))))))
+          (set! preview-undo (guard (ex [else #f]) ((completion:candidate-preview candidate)))))))
     (define (candidate-for text)
       ;; the candidate whose insertion is text, among the current matches
-      (find (lambda (v) (and (candidate? v) (string=? (candidate-value v) text))) completion-matches))
+      (find (lambda (v) (and (completion:candidate? v) (string=? (completion:candidate-value v) text))) completion-matches))
     (define (sync-searcher! s pos)
       ;; the live search the completer wants at the cursor: started when the
       ;; cursor enters a searching argument, fed the needle as it changes,
       ;; ended as the cursor leaves
-      (let ([wanted (and (completer? complete) (completer-track complete)
-                         (guard (ex [else #f]) ((completer-track complete) s pos)))])
+      (let ([wanted (and (completion:source? complete) (completion:source-track complete)
+                         (guard (ex [else #f]) ((completion:source-track complete) s pos)))])
         (cond
           [(not wanted) (end-search! #f)]
           [(and searcher (eq? (car wanted) searcher-maker))
            (set! searcher-needle (cdr wanted))
-           (set! search-hit ((searcher-find searcher) searcher-needle))]
+           (set! search-hit ((completion:searcher-find searcher) searcher-needle))]
           [else
            (end-search! #f)
            (set! searcher-maker (car wanted))
            (set! searcher ((car wanted)))
            (set! searcher-needle (cdr wanted))
-           (set! search-hit ((searcher-find searcher) searcher-needle))])))
+           (set! search-hit ((completion:searcher-find searcher) searcher-needle))])))
     (define (kind-text)
       ;; what the completions are: the completer's own kind, else the
       ;; completion-kind parameter, else the prompt's label stem
-      (let ([own (and (completer? completion-source) (completer-kind completion-source))])
+      (let ([own (and (completion:source? completion-source) (completion:source-kind completion-source))])
         (cond [(procedure? own) (or (guard (ex [else #f]) (own input position)) (label-stem label))]
               [(string? own) own]
               [kind kind]
@@ -845,7 +790,7 @@
       (unless (and (string=? new-s input) (= new-pos position))
         (unless (prepared? completion-source new-s new-pos) (set! prepared #f))
         (if completion-source
-            (let-values ([(start end expansion values) ((completer-lookup completion-source) new-s new-pos)])
+            (let-values ([(start end expansion values) ((completion:source-lookup completion-source) new-s new-pos)])
               (if (and start (= start (car completion-range)))
                   (begin (set! completion-range (cons start end))
                          ;; A normalized or cycled spelling keeps its options,
@@ -859,10 +804,10 @@
       ;; still offers more than the token now at pos, one within what the
       ;; completion wrote -- a directory's entries, inside the literal the
       ;; completion opened, say -- and the list shows it; else the session ends
-      (let-values ([(start end options values) ((completer-lookup completer) s pos)])
+      (let-values ([(start end options values) ((completion:source-lookup completer) s pos)])
         (if (and start completion-range (<= (car completion-range) start pos) (pair? values)
                  (not (and (null? (cdr values))
-                           (string=? (if (candidate? (car values)) (candidate-value (car values)) (car values))
+                           (string=? (if (completion:candidate? (car values)) (completion:candidate-value (car values)) (car values))
                                      (substring s start end)))))
             (begin
               (set! completion-range (cons start end))
@@ -1013,15 +958,15 @@
                   (loop s (min (max 0 (- k (string-length label))) len) note)))
               (define (complete-input completer)
                 (set! hist-pos -1)
-                (if (completer? completer)
-                    (let-values ([(start end options values) ((completer-lookup completer) s pos)])
+                (if (completion:source? completer)
+                    (let-values ([(start end options values) ((completion:source-lookup completer) s pos)])
                       (cond
                         [(not start)
                          ;; nothing open at point: the datum before it, a closed
                          ;; string or form, is final, and Tab settles the input
                          ;; around it, closing complete forms and stepping to a due
                          ;; argument, whose candidates then show; else the note
-                         (let ([settled (if (completer-settle completer) ((completer-settle completer) s pos) (cons s pos))])
+                         (let ([settled (if (completion:source-settle completer) ((completion:source-settle completer) s pos) (cons s pos))])
                            (if (and (string=? (car settled) s) (= (cdr settled) pos))
                                (begin (dismiss-completions!) (loop s pos " [No symbol]"))
                                (begin
@@ -1034,15 +979,15 @@
                            [(null? values)
                             (when candidates (set-candidates! values))
                             (loop s pos " [No match]")]
-                           [(and (null? (cdr values)) (completer-settle completer))
+                           [(and (null? (cdr values)) (completion:source-settle completer))
                             ;; One match: insert it, close the list, and let the
                             ;; completer settle what follows the symbol.
                             (let* ([options (if (procedure? options) (options) options)]
                                    [value (car values)]
                                    [text (if (pair? options) (car options)
-                                             (if (candidate? value) (candidate-value value) value))]
+                                             (if (completion:candidate? value) (completion:candidate-value value) value))]
                                    [next (replace-completion s text)]
-                                   [settled ((completer-settle completer) (car next) (cdr next))])
+                                   [settled ((completion:source-settle completer) (car next) (cdr next))])
                               (if (and (string=? (car settled) s) (= (cdr settled) pos))
                                   (begin (dismiss-completions!) (loop s pos ""))
                                   (begin
@@ -1140,11 +1085,11 @@
                      (edited (string:insert s pos text) (+ pos (string-length text))))]
                   ;; a live search visits its matches instead of completing
                   [(eq? action 'complete)
-                   (cond [searcher (set! search-hit ((searcher-next searcher))) (loop s pos "")]
+                   (cond [searcher (set! search-hit ((completion:searcher-next searcher))) (loop s pos "")]
                          [complete (complete-input complete)]
                          [else (loop s pos "")])]
                   [(eq? action 'alternate-complete)
-                   (cond [searcher (set! search-hit ((searcher-previous searcher))) (loop s pos "")]
+                   (cond [searcher (set! search-hit ((completion:searcher-previous searcher))) (loop s pos "")]
                          [alt-complete (complete-input alt-complete)]
                          [else (loop s pos "")])]
                   [(eq? action 'inspect)
