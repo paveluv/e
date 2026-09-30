@@ -11,6 +11,8 @@
 (eval
   '(begin
      (import (prefix (test) test:)
+             (prefix (foundation markup) markup:)
+             (prefix (head markdown-layout) markdown-layout:)
              (prefix (apps markdown) markdown:) (prefix (modes scheme-mode) scheme-mode:))
 
      (scheme-mode:init!)
@@ -125,5 +127,22 @@
      (let* ([r (render '("# Top" "" "body text"))]
             [rows (cadddr r)])
        (check 'source-rows-tracked rows '(0 1 2)))
+
+     ;; One portable interpretation fits two mounts without changing source
+     ;; anchors. Separator rows must not shift later table rows back by one.
+     (let* ([blocks (markup:parse '("|name|notes|" "|---|---|" "|one|a [link](x)|" "|---|---|" "|two|long words here|"))]
+            [before (format "~s" blocks)])
+       (check 'semantic-table-source-anchors
+         (map car (cadddr (car blocks))) '(0 2 4))
+       (let-values ([(wide faces links rows) (markdown-layout:render blocks 60)]
+                    [(narrow narrow-faces narrow-links narrow-rows) (markdown-layout:render blocks 12)])
+         (check 'independent-table-fitting
+           (list (> (length narrow) (length wide)) (car links)
+             (filter (lambda (row) (> row 0)) rows) (equal? before (format "~s" blocks)))
+           '(#t () (2 4) #t))))
+
+     (let-values ([(text faces links rows) (markdown:render '("```界" "body" "```"))])
+       (check 'code-faces-address-characters
+         (map vector-length faces) (map string-length text)))
 
      (test:finish! 'markdown)))
