@@ -721,7 +721,7 @@
                    [left (list-ref row 3)] [bound (list-ref row 4)] [shown (list-ref row 5)]
                    [styles (widget:frame-cell-styles f y)]
                    [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
-                   [links (cell-ranges frame i (text-hyperlinks b i line))]
+                   [links (cell-ranges frame i (line-hyperlinks b i line frame))]
                    [edge (if (window-wrapped? w)
                            (and (not (clean-wrap? w)) (< bound (render:width frame i (string-length line))) 'wrap)
                            (and (> bound (+ left width)) 'trunc))])

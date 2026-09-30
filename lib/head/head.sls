@@ -275,7 +275,7 @@
            [entry (assv source (window-document-views w))] [old (and entry (cdr entry))]
            [facts (app-facts b)] [owner (and facts (cdr (assq 'app facts)))]
            [terminal? (and owner (eq? (cadr owner) 'terminal))])
-      (if (not (and source (or terminal? (and (not facts) (not (render:header (buffer-rendition b)))))))
+      (if (not (and source (or terminal? (not facts))))
         (let ([d (and old (interaction:snapshot old))])
           (when d (interaction:release! ui-actor old (view:generation d))))
         (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-document-view the-current))]
@@ -1969,42 +1969,23 @@
            (render:prepare (buffer-rendition-raw b) (buffer-store-id b)
                            text revision ranges follow-height))))
 
-  (define (prepare-buffer-rendition b text revision changes facts)
-    ;; Fetch the current viewport and every row a viewport containing point
-    ;; could expose. Geometry can then scroll against one prepared generation
-    ;; without reading another frame halfway through layout. Project pending
-    ;; anchors before adoption, so a live grid's text and rendition can land
-    ;; together. Cache size stays bounded by window heights.
-    (define deltas (if changes (map caddr changes) '()))
-    (define (future-row row col)
-      (car (clamp-text-position text
-             (fold-left text:rebase-position (cons row col) deltas))))
-    (let* ([following (if (app-live? facts)
-                          (filter (lambda (w) (and (eq? (window-buffer w) b) (not (window-document-view w)) (app-following? w))) the-windows)
-                          '())]
-           [ranges
+  (define (prepare-buffer-rendition b)
+    ;; Only legacy local presentation uses this adapter. Mounted editors
+    ;; acquire their coherent source/rendition pair in their own service path.
+    (let* ([ranges
             (fold-left
               (lambda (out w)
-                (if (eq? (window-buffer w) b)
+                (if (and (eq? (window-buffer w) b) (not (window-widget w)))
                     (let ([height (max 1 (window-size w))]
-                          [point (future-row (window-prow w) (window-pcol w))]
-                          [top (future-row (window-top w) 0)])
+                          [point (window-prow w)]
+                          [top (window-top w)])
                       (cons* (cons 0 (buffer-sticky-lines b))
                              (cons top (+ top height))
                              (cons (- point height -1) (+ point height)) out))
                     out)) '() the-windows)]
-           [next (read-source-rendition b text revision ranges
-                   (fold-left (lambda (height w) (max height 1 (window-size w))) 0 following))])
-      (values next following)))
+           [next (and (pair? ranges) (read-rendition b ranges))]) next))
 
-  (define (app-grid? facts)
-    ;; An app owning the viewport needs its surface's geometry and cursor.
-    (and (app-live? facts) (app-fact facts 'manages-viewport #f)))
-
-  (define (rendition-ready? facts next)
-    (and next (or (not (app-grid? facts)) (render:header next))))
-
-  (define (install-buffer-rendition! b next following facts)
+  (define (install-buffer-rendition! b next)
     (let ([old (buffer-rendition-raw b)])
       (unless (eq? old next)
         (buffer-rendition-set! b next)
@@ -2015,11 +1996,8 @@
     ))
 
   (define (refresh-buffer-rendition! b)
-    (let ([facts (app-facts b)])
-      (let-values ([(next following)
-                    (prepare-buffer-rendition b (buffer-text b) (content-revision b) '() facts)])
-        (when (rendition-ready? facts next)
-          (install-buffer-rendition! b next following facts)))))
+    (let ([next (prepare-buffer-rendition b)])
+      (when next (install-buffer-rendition! b next))))
 
   (edoc "Rebuild the cell projection of every buffer shown in a window.")
   (define (refresh-renditions!)
@@ -2548,52 +2526,29 @@
       (buffer-mark-row-raw-set! b (car p))
       (buffer-mark-col-raw-set! b (cdr p))))
 
-  ;; A live grid may have committed text before its matching surface. Keep
-  ;; one retry id, not the intermediate text or an event backlog. Surface
-  ;; publication wakes the pump even after its store notice was consumed.
-  (define deferred-store-ids '())
-
   (define (adopt-snapshot! b basis text revision changes placements)
-    ;; All anchors use the same chain, including our own edits.  A command
-    ;; can explicitly place an anchor in its accepted result, but never
-    ;; writes a coordinate from an older revision after adoption returns.
-    ;; A callback may already have adopted part or all of this snapshot.
-    (let* ([old (buffer-store-rev b)]
-           [advance? (> revision old)]
+    ;; Mirrors adopt latest text independently of presentation. Each editor
+    ;; retains its own coherent source/surface packet across publication gaps.
+    (let* ([old (buffer-store-rev b)] [advance? (> revision old)]
            [complete? (and changes (<= basis old))]
-           [deltas (and complete? (filter (lambda (entry) (> (car entry) old)) changes))]
-           [facts (app-facts b)])
+           [deltas (and complete? (filter (lambda (entry) (> (car entry) old)) changes))])
       (when (>= revision old)
-        (let-values ([(next following)
-                      (if (app-grid? facts)
-                          (prepare-buffer-rendition b text revision deltas facts)
-                          (values #f '()))])
-          (if (and (app-grid? facts) (not (rendition-ready? facts next)))
-              (let ([id (buffer-store-id b)])
-                (unless (memv id deferred-store-ids)
-                  (set! deferred-store-ids (cons id deferred-store-ids))))
-              (begin
-                (when advance?
-                  (when (or (not complete?) (exists (lambda (entry) (not (equal? (cadr entry) ui-actor))) deltas))
-                    (flush-ui-audit! (buffer-store-id b)))
-                  (when deltas
-                    (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas)
-                    (rebase-published-marks! (buffer-store-id b) deltas revision))
-                  (adopt-text! b text revision deltas))
-                (apply-placements! b placements)
-                (clamp-buffer-positions! b)
-                (if (app-grid? facts)
-                    (install-buffer-rendition! b next following facts)
-                    (refresh-buffer-rendition! b))
-                ;; All head state is coherent before any callback can run.
-                ;; Adoption only reads shared truth; it never re-dirties a save.
-                (when advance?
-                  (unless complete?
-                    (invalidate-buffer-marks! (buffer-store-id b))
-                    (log:add! 'head:adopt-snapshot!
-                      (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
-                              (buffer-name b) old revision))
-                    (request-repaint!)))))))))
+        (when advance?
+          (when (or (not complete?) (exists (lambda (entry) (not (equal? (cadr entry) ui-actor))) deltas))
+            (flush-ui-audit! (buffer-store-id b)))
+          (when deltas
+            (for-each (lambda (entry) (rebase-buffer-positions! b (caddr entry))) deltas)
+            (rebase-published-marks! (buffer-store-id b) deltas revision))
+          (adopt-text! b text revision deltas))
+        (apply-placements! b placements)
+        (clamp-buffer-positions! b)
+        (refresh-buffer-rendition! b)
+        (when (and advance? (not complete?))
+          (invalidate-buffer-marks! (buffer-store-id b))
+          (log:add! 'head:adopt-snapshot!
+            (format "resync: ~s has no continuous history from revision ~a to ~a; positions clamped"
+              (buffer-name b) old revision))
+          (request-repaint!)))))
 
   (define source-observer
     (text-source:observe!
@@ -2618,11 +2573,10 @@
            [ids (append
                   (if pending (append initial-store-ids (map car pending))
                       (append (store:buffer-list) (filter values (map buffer-store-id the-buffers))))
-                  changed-ids deferred-store-ids)])
+                  changed-ids)])
       ;; Consume the initial inventory before callbacks, just like events.
       ;; Subsequent frames only visit buffers whose store state changed.
       (set! initial-store-ids '())
-      (set! deferred-store-ids '())
       (call-with-display-update
         (lambda ()
           ;; Reconcile each id once from current truth. Queued create/rename/
@@ -3263,15 +3217,13 @@
         (value (or window #f)))
   (define app-event-focus (make-thread-parameter #f))
 
-  (edoc "Whether a window follows a live shared app whose surface has a header."
+  (edoc "Whether a window's terminal view follows its live process."
         (w window "the window")
         (returns boolean))
   (define (app-following? w)
     (and (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
            (and d (eq? (view:kind d) 'terminal) (cadr (terminal-state:state d))))
-         (app-live? (app-facts (window-buffer w)))
-         (let ([header (render:header (buffer-rendition (window-buffer w)))])
-           (and header (caddr header) #t))))
+         (app-live? (app-facts (window-buffer w)))))
 
   (edoc "Deliver an event to the current legacy local app, preserving its focus decision. Widget hosts use recursive routing."
         (event string "normalized event") (returns any))
@@ -3396,15 +3348,13 @@
     (unless (app-of b) (error 'set-app-status-position! "not an app buffer" b))
     (set-buffer-status! b position))
 
-  (edoc "Whether the cursor shows in a window: its app's choice, a followed surface's, or yes."
+  (edoc "Whether a legacy local app permits the window cursor. Mounted widgets supply their own caret."
         (w window "the window")
         (returns boolean))
   (define (app-cursor-visible-in? w)
     (let* ([a (app-of (window-buffer w))]
            [visibility (and a (app-cursor-visible? a))])
-      (cond [(and (not a) (app-following? w))
-             (caddr (caddr (render:header (buffer-rendition (window-buffer w)))))]
-            [(not a) #t]
+      (cond [(not a) #t]
             [(eq? visibility 'default) #t]
             [(procedure? visibility)
              (guard (ex [else #t]) (visibility w))]

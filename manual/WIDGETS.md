@@ -989,6 +989,12 @@ input, so repeated process output causes no interaction publication.
 After process exit, capture bindings disappear and the same child remains
 available for ordinary selection, copying and navigation.
 
+The editor acquires service renditions on its service path, including styles,
+grapheme geometry and hyperlinks. It retains a coherent text/rendition pair
+across separate publications; the document mirror can advance independently.
+Surface-only changes wake the same widget pump. Painting and navigation use
+the prepared packet and do not request another rendition.
+
 Terminal clipboard requests and diagnostics are delivered on the service path,
 once per shared output source even with multiple views. Clipboard delivery uses
 the installed host capability and remains addressed to the controlling head.

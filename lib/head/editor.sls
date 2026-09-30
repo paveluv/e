@@ -9,7 +9,7 @@
           (prefix (head text-control) text-control:) (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
           (prefix (service document) document:) (prefix (state store) store:)
-          (prefix (state view) view:) (prefix (sys glyph) glyph:) (prefix (sys tty) tty:))
+          (prefix (state surface) surface:) (prefix (state view) view:) (prefix (sys glyph) glyph:) (prefix (sys tty) tty:))
 
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (option d key fallback) (cond [(assq key (view:options d)) => cdr] [else fallback]))
@@ -82,7 +82,7 @@
     (let ([p (assq 'follow inputs)]) (and p (eq? (cadr p) 'ready) (caddr p))))
   (define (acquire-surface! id mirror d allocation)
     (let* ([m (mounted id)] [document (text-source:id mirror)]
-           [backend? (store:property document 'manages-viewport #f)]
+           [backend? (or (store:property document 'manages-viewport #f) (and (surface:snapshot document) #t))]
            [old (and (mount-surface m)
                   (equal? (cdr (assq 'id (car (mount-surface m)))) (list 'buffer document)) (mount-surface m))])
       (unless (eq? backend? (mount-backend? m)) (widget:repaint! id #t))
@@ -140,7 +140,7 @@
     (let* ([own (option d 'wrap 'default)]
            [source (mode:source-fact (list-ref data 3) 'wrap 'default)]
            [setting (if (eq? own 'default) source own)])
-      (and (if (eq? setting 'default) (list-ref data 6) setting) (max 1 width))))
+      (and (not (render:header (caddr data))) (if (eq? setting 'default) (list-ref data 6) setting) (max 1 width))))
 
   (define (contexts id d)
     (let ([signature (mount-mode (mounted id))])
