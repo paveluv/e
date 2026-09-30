@@ -498,9 +498,10 @@
                   (if value (append (reverse (spaced value)) out) out))))))
 
   (define (app-status-values w active?)
-    (let* ([b (head:window-buffer w)] [status (head:app-status b)]
+    (let* ([b (head:window-buffer w)] [root (head:window-widget w)] [status (head:app-status b)]
            [context (mode:key-context b)] [capture (and context (keymap:context-capture context))])
-      (cond [(or (not status) (string=? status "")) '()]
+      (cond [root (widget:status root active?)]
+            [(or (not status) (string=? status "")) '()]
             [capture
              ;; Insert the window's control beside the producer's first status
              ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix;
@@ -520,8 +521,10 @@
       (if (null? spans) (reverse out)
           (let* ([span (car spans)] [end (+ column (glyph:cells (car span)))])
             (loop (cdr spans) end
-              (if (and (procedure? (cdr span)) (<= end visible-cells))
+              (if (and (status-action? (cdr span)) (<= end visible-cells))
                   (cons (list column end (cdr span)) out) out))))))
+
+  (define (status-action? action) (or (procedure? action) (keymap:call-action? action)))
 
   (define conflicts-action #f)
 
@@ -1022,10 +1025,10 @@
                             (case (cdr value)
                               [(italic) (ansi! "\x1b;[3m")]
                               [(red) (ansi! "\x1b;[31m")])
-                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                            (when (and (status-action? (cdr value)) (eq? (cdr value) hovered))
                               (ansi! (style:code 'hover)))
                             (ansi! (substring text at end))
-                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                            (when (and (status-action? (cdr value)) (eq? (cdr value) hovered))
                               (ansi! "\x1b;[0m" bar))
                             (case (cdr value)
                               [(italic) (ansi! "\x1b;[23m")]
@@ -1748,7 +1751,6 @@
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [(echo:cursor) "\x1b;[0 q"]
-                      [widget-caret "\x1b;[6 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(text) "\x1b;[0 q"]
@@ -1758,6 +1760,7 @@
                          [(blinking-block) "\x1b;[1 q"]
                          [(blinking-underline) "\x1b;[3 q"]
                          [(blinking-bar) "\x1b;[5 q"])]
+                      [widget-caret "\x1b;[6 q"]
                       ;; a bar where typing cannot land: a read-only buffer
                       [(head:buffer-read-only (head:window-buffer (head:current-window)))
                        "\x1b;[5 q"]
@@ -1829,7 +1832,7 @@
                                      (head:buffer-sticky-lines (head:window-buffer w))))
                              (head:windows)))])
         (for-each (lambda (entry)
-                    (let* ([w (car entry)] [id (head:window-editor w)])
+                    (let* ([w (car entry)] [id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
                       (if (and id (guard (ex [else #f]) (widget:host id)))
                         (begin (widget:set-active! id (eq? w (head:current-window)))
                           (widget:prepare! id (if (window-wrapped? w) (wrap-width w) (head:window-content-width w)) (caddr entry)))

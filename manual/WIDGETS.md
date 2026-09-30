@@ -953,6 +953,15 @@ adapters until those applications migrate.
 
 ## Terminal views
 
+Ordinary terminal windows mount this same composition. Splitting forks the
+view's capture and scroll state; switching buffers and resuming a named head
+retain the view identity. The process and its output remain shared.
+
+A definition may provide `status`, a pure `(id descriptor active?)` procedure
+returning text spans. Each span is `(text . style-or-action)`; a
+`keymap:call` makes it a clickable, inspectable control. Hosts decide where to
+present these spans. Reading status must use already acquired state.
+
 `(terminal:create-view! actor document-id)` creates an unmounted terminal
 composition over an existing base-owned process document. Its `text` child
 is the read-only editor. Multiple views share the process, output and grid,

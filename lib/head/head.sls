@@ -82,7 +82,7 @@
     set-app-status-position! set-buffer-status! set-buffers!
     set-copy-text! set-current! set-current-keys! set-departure!
     set-directory-opener! set-dividers! set-drag!
-    set-file-opener! set-frame-hook! set-full-capture!
+    set-editor-state-reader! set-file-opener! set-frame-hook! set-full-capture!
     set-last-command! set-layout-root! set-mouse-handler!
     set-mouse-position! set-pending-paste! set-point-mover! set-quit-command!
     set-repaint-hook! set-review-viewer! set-root!
@@ -128,6 +128,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
+          (prefix (head terminal-state) terminal-state:)
           (prefix (head text-source) text-source:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -205,7 +206,7 @@
         (view any "a local app's presentation of its rows, or #f")
         (full-capture? boolean "whether every key goes to the app")
         (status-actions list "the painted status-line controls")
-        (editors list "retained document/editor identities; no copied interaction state"))
+        (document-views list "retained document/widget identities; no copied interaction state"))
   (define-record-type (window %make-window window?)
     (fields
       ;; the window's number, shown at the left of its status line: 0
@@ -243,7 +244,7 @@
       ;; never to the shared process. Only the preference is checkpointed.
       (mutable full-capture?)
       (mutable status-actions)
-      (mutable editors)))
+      (mutable document-views)))
 
   (define-record-type view (fields owner source lines frame))
 
@@ -254,15 +255,17 @@
   (edoc "The editor view retained for this window's current shared document, or false for a legacy app. Reading it performs no acquisition."
         (w window "outer placement") (returns (or model #f)))
   (define (window-editor w)
-    (let* ([b (window-buffer w)] [entry (assv (buffer-store-id b) (window-editors w))])
-      ;; Backend surfaces retain their existing host until their renderer
-      ;; becomes a widget. They are not ordinary document editor bodies.
-      (and entry (interaction:snapshot (cdr entry)) (not (render:header (buffer-rendition b))) (cdr entry))))
+    (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
+      (and d (if (eq? (view:kind d) 'terminal) (cadr (assq 'text (view:children d))) id))))
+
+  (define (window-document-view w)
+    (let ([entry (assv (buffer-store-id (window-buffer w)) (window-document-views w))])
+      (and entry (interaction:snapshot (cdr entry)) (cdr entry))))
 
   (edoc "The widget root hosted by a window, or false for a legacy app. This reads placement identity without acquiring a source or querying the base."
         (w window "outer placement") (returns (or model #f)))
   (define (window-widget w)
-    (or (and window-mounter (window-editor w))
+    (or (and window-mounter (window-document-view w))
       (let ([b (window-buffer w)])
         (and (not (buffer-store-id b)) (buffer-fact b 'widget-id #f)))))
 
@@ -274,32 +277,47 @@
     (set! window-mounter proc)
     (for-each proc the-windows))
 
-  (define (ensure-window-editor! w)
+  (define (ensure-window-document-view! w)
     (let* ([b (window-buffer w)] [source (buffer-store-id b)]
-           [entry (assv source (window-editors w))] [old (and entry (cdr entry))])
-      (if (not (and source (not (app-facts b)) (not (render:header (buffer-rendition b)))))
+           [entry (assv source (window-document-views w))] [old (and entry (cdr entry))]
+           [facts (app-facts b)] [owner (and facts (cdr (assq 'app facts)))]
+           [terminal? (and owner (eq? (cadr owner) 'terminal))])
+      (if (not (and source (or terminal? (and (not facts) (not (render:header (buffer-rendition b)))))))
         (let ([d (and old (interaction:snapshot old))])
           (when d (interaction:release! ui-actor old (view:generation d))))
-        (let ([id (or old (editor-state:create! ui-actor source
-                            (cons (cons 'wrap (window-wrap-raw w)) (if (popup? w) '((read-only . #t)) '()))))])
+        (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-document-view the-current))]
+               [id (or old
+                     (if terminal?
+                       (if peer (begin (interaction:flush!) (view:fork! ui-actor peer)) (terminal-state:create! ui-actor source))
+                       (editor-state:create! ui-actor source
+                         (cons (cons 'wrap (window-wrap-raw w)) (if (popup? w) '((read-only . #t)) '())))))])
           (let-values ([(status d) (interaction:claim! ui-actor id)])
-            (unless (eq? status 'applied) (error 'ensure-window-editor! "cannot claim editor" id status))
+            (unless (eq? status 'applied) (error 'ensure-window-document-view! "cannot claim editor" id status))
             (unless old
-              (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-editor the-current) the-current)]
-                     [state (and peer (window-editor-state peer))])
-                (interaction:set-state! ui-actor id (content-revision b)
-                  (list (cons (window-prow-raw w) (window-pcol-raw w))
-                    (if state (cadr state) (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
-                    (cons (window-top-raw w) 0) (if state (cadddr state) (buffer-marked-raw b)))))
-              (window-editors-set! w (cons (cons source id) (window-editors w)))))))))
+              (unless terminal?
+                (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-editor the-current) the-current)]
+                       [state (and peer (window-editor-state peer))])
+                  (interaction:set-state! ui-actor id (content-revision b)
+                    (list (cons (window-prow-raw w) (window-pcol-raw w))
+                      (if state (cadr state) (cons (buffer-mark-row-raw b) (buffer-mark-col-raw b)))
+                      (cons (window-top-raw w) 0) (if state (cadddr state) (buffer-marked-raw b))))))
+              (window-document-views-set! w (cons (cons source id) (window-document-views w)))))))))
+
+  (define editor-state-reader (lambda (id) #f))
+
+  (edoc "Install the outer host's read-only adapter for a viewport's derived logical state. The callback must use an already prepared frame."
+        (reader procedure "editor view -> logical state or false"))
+  (define (set-editor-state-reader! reader) (set! editor-state-reader reader))
 
   (define (window-editor-state w)
     (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
       (and d
-        (let* ([b (window-buffer w)] [state (editor-state:state d)]
-               [points (editor-state:points (buffer-source b) (content-revision b) d)])
-          (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))
-            (list (cadddr state)))))))
+        (or (let* ([root (window-document-view w)] [parent (and root (interaction:snapshot root))])
+              (and parent (eq? (view:kind parent) 'terminal) (cadr (terminal-state:state parent)) (editor-state-reader id)))
+          (let* ([b (window-buffer w)] [state (editor-state:state d)]
+                 [points (editor-state:points (buffer-source b) (content-revision b) d)])
+            (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))
+              (list (cadddr state))))))))
 
   (edoc "The text wrapping preference of this placement: default follows the source and head preference. Editor preferences belong to the retained view."
         (w window "outer placement") (returns (or boolean (one-of default))))
@@ -333,11 +351,11 @@
                                    (model:reference? (cdr p)))) entries)
          (= (length entries) (length (fold-left (lambda (xs p) (if (memv (car p) xs) xs (cons (car p) xs))) '() entries)))))
 
-  (define (restore-window-editors! w entries)
-    (window-editors-set! w
+  (define (restore-window-document-views! w entries)
+    (window-document-views-set! w
       (filter (lambda (p)
                 (let* ([id (cdr p)] [d (or (interaction:snapshot id) (view:snapshot id))])
-                  (and d (eq? (view:kind d) 'editor) (= (view:schema d) 1)
+                  (and d (memq (view:kind d) '(editor terminal)) (= (view:schema d) 1)
                     (equal? (view:source d) (list 'buffer (car p)))
                     (buffer-of-store-id (car p))
                     (or (not (view:owner d)) (equal? (view:owner d) ui-actor))))) entries)))
@@ -570,7 +588,7 @@
   (edoc "Replace the seat's window list."
         (ws (list-of window) "the windows"))
   (define (set-windows! ws)
-    (let ([retained (apply append (map window-editors ws))])
+    (let ([retained (apply append (map window-document-views ws))])
       (for-each
         (lambda (w)
           (unless (memq w ws)
@@ -578,7 +596,7 @@
                         (unless (exists (lambda (kept) (equal? (cdr kept) (cdr p))) retained)
                           (let ([d (interaction:snapshot (cdr p))])
                             (when d (interaction:release! ui-actor (cdr p) (view:generation d))))))
-              (window-editors w)))) the-windows))
+              (window-document-views w)))) the-windows))
     (set! the-windows ws))
 
   (edoc "The root of the layout tree."
@@ -614,7 +632,7 @@
     (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
                size xoff width wrap 'default #f #t #f #f '() '())])
       (window-buffer-set! w (placed-buffer! w buffer the-windows))
-      (ensure-window-editor! w) (when window-mounter (window-mounter w)) w))
+      (ensure-window-document-view! w) (when window-mounter (window-mounter w)) w))
 
   (edoc "Say whether a window sends every key to its app, and repaint."
         (w window "the window")
@@ -1978,7 +1996,7 @@
       (car (clamp-text-position text
              (fold-left text:rebase-position (cons row col) deltas))))
     (let* ([following (if (app-live? facts)
-                          (filter (lambda (w) (and (eq? (window-buffer w) b) (window-following? w))) the-windows)
+                          (filter (lambda (w) (and (eq? (window-buffer w) b) (not (window-document-view w)) (window-following? w))) the-windows)
                           '())]
            [ranges
             (fold-left
@@ -2899,7 +2917,7 @@
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
                     (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-full-capture? node) (window-line-numbers node) (window-editors node))
+                    (window-full-capture? node) (window-line-numbers node) (window-document-views node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
@@ -3078,8 +3096,8 @@
                   (clamp-buffer-positions! b)))) buffers)
           (for-each (lambda (entry)
                       (let ([w (car entry)])
-                        (restore-window-editors! w (cdr entry))
-                        (ensure-window-editor! w) (when window-mounter (window-mounter w)))) editor-placements)
+                        (restore-window-document-views! w (cdr entry))
+                        (ensure-window-document-view! w) (when window-mounter (window-mounter w)))) editor-placements)
           (request-repaint!)
           #t)) state))
 
@@ -3174,7 +3192,7 @@
     (set! frame-deadline #f)
     (sync-foreign-edits!)
     (refresh-renditions!)
-    (for-each (lambda (w) (ensure-window-editor! w) (when window-mounter (window-mounter w))) the-windows)
+    (for-each (lambda (w) (ensure-window-document-view! w) (when window-mounter (window-mounter w))) the-windows)
     (flush-ui-audit! 'stale)
     (publish-head-marks!)
     (for-each (lambda (hook) (guard (ex [else (void)]) (hook)))
@@ -3273,7 +3291,9 @@
         (w window "the window")
         (returns boolean))
   (define (app-following? w)
-    (and (window-following? w) (app-live? (app-facts (window-buffer w)))
+    (and (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
+           (if (and d (eq? (view:kind d) 'terminal)) (cadr (terminal-state:state d)) (window-following? w)))
+         (app-live? (app-facts (window-buffer w)))
          (let ([header (render:header (buffer-rendition (window-buffer w)))])
            (and header (caddr header) #t))))
 
@@ -3317,7 +3337,7 @@
     ;; One offer per focused endpoint/window/grid. The producer decides which
     ;; head owns sizing. Install the receipt before delivery can reenter.
     (let* ([w the-current] [b (window-buffer w)] [facts (app-facts b)]
-           [next (and (app-live? facts)
+           [next (and (not (window-widget w)) (app-live? facts)
                       (list (app-fact facts 'app #f) (buffer-store-id b) w
                             (max 1 (window-size w)) (window-content-width w)))])
       (unless (equal? next last-app-size)
@@ -3338,7 +3358,7 @@
            [handler (and a (app-handle-event! a))])
       (if a (and handler (handler event))
           (let ([facts (app-facts b)])
-            (and (app-live? facts)
+            (and (not (window-widget w)) (app-live? facts)
                  (captures? (app-fact facts 'capture #f) event)
                  (let* ([frame (buffer-rendition b)] [header (render:header frame)]
                         [point (or (app-event-buffer-position) (cons (window-prow w) (window-pcol w)))]
@@ -3843,14 +3863,14 @@
           (buffer-spot-row-set! old (window-prow w))
           (buffer-spot-col-set! old (window-pcol w))
           (buffer-spot-top-set! old (window-top w)))
-        (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+        (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
           (when d (interaction:release! ui-actor id (view:generation d))))
         (window-buffer-set! w b)
         (window-following?-set! w #t)
         (window-prow-raw-set! w (buffer-spot-row b))
         (window-pcol-raw-set! w (buffer-spot-col b))
         (window-top-raw-set! w (buffer-spot-top b))
-        (ensure-window-editor! w)
+        (ensure-window-document-view! w)
         (unless (window-editor w)
           (window-prow-set! w (buffer-spot-row b))
           (window-pcol-set! w (buffer-spot-col b))

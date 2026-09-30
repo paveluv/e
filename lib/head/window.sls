@@ -24,6 +24,7 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head terminal-control) terminal:)
           (prefix (head widget) widget:)
           (prefix (state view) view:))
 
@@ -47,7 +48,7 @@
       (set! mounted (filter (lambda (p) (member (car p) visible)) mounted))))
 
   (define (mount-window! w)
-    (let ([id (head:window-editor w)])
+    (let ([id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
       ;; A document remains the actual window buffer. The window is merely
       ;; an opaque host slot for its retained editor view.
       (for-each (lambda (p)
@@ -158,7 +159,7 @@
                        (let ([id (buffer-widget b)])
                          (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (head:buffers)))
         (filter values (map (lambda (w)
-                              (let ([id (head:window-editor w)])
+                              (let ([id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
                                 (and id (guard (ex [else #f]) (and (eq? (widget:host id) w) (cons id w)))))) (head:windows)))))
     (widget:register! 'window-tool 1
       (append (layout:container 'y)
@@ -176,10 +177,14 @@
                            b)))))
     (head:add-pre-redraw-hook! release-hidden!)
     (head:set-window-mounter! mount-window!)
+    (head:set-editor-state-reader! (lambda (id) (let ([f (widget:prepared id)]) (and f (editor:frame-state f)))))
     (head:set-point-mover!
       (lambda (w p)
         (let ([id (and (head:window-widget w) (head:window-editor w))])
-          (and id (begin (editor:move! id p) #t)))))
+          (and id (begin
+                    (let* ([root (head:window-widget w)] [d (interaction:snapshot root)])
+                      (when (eq? (view:kind d) 'terminal) (terminal:follow! root #f)))
+                    (editor:move! id p) #t)))))
     (head:add-buffer-kill-hook!
       (lambda (b) (let ([id (buffer-widget b)])
                     (when id (widget:unmount! id) (set! mounted (remp (lambda (p) (equal? id (car p))) mounted))))))

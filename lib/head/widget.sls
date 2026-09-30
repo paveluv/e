@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown status target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -100,6 +100,12 @@
   (define (definition d)
     (and d (kernel:registry-find definitions
              (lambda (entry) (equal? (car entry) (list (view:kind d) (view:schema d)))))))
+
+  (edoc "Read a mounted view's optional status spans without acquisition. Each span pairs text with a style, false, or an inspectable keymap call."
+        (id model "view") (active? boolean "host focus") (returns list) (effects internal))
+  (define (status id active?)
+    (let* ([d (read-view id)] [provider (field (definition d) 'status #f)])
+      (if provider (provider id d active?) '())))
   (define (field entry name fallback)
     (cond [(and entry (assq name (cdr entry))) => cdr] [else fallback]))
   (define (mounted id)
@@ -139,7 +145,7 @@
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy?) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy? status) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))

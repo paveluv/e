@@ -2549,7 +2549,7 @@
                    (head-read b '(begin (head:set-copy-text! "screen B kill")
                                         (terminal:toggle-capture!) #t))
                    (test:check 'shared-terminal-capture-is-local-to-each-head
-                     (list (head-read a '(head:full-capture? (head:current-window)))
+                     (list (head-read a '(eq? 'full (car (view:state (view:snapshot (head:window-widget (head:current-window)))))))
                            (and (head-sees? a "▶ ◐") #t) (and (head-sees? b "▶ ●") #t)) '(#f #t #t))
                    (head-send! a "\x18;\x03;")
                    (head-wait 'real-head-detaches a

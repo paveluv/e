@@ -97,7 +97,8 @@
          (lambda (control)
            (let ([action (car control)] [w (cdr control)])
              (unless (head:popup? w) (window:focus! w))
-             (if (procedure? action) (action)
+             (if (or (procedure? action) (keymap:call-action? action))
+               (if (procedure? action) (action) (keymap:run! action))
                (case action
                  [(below) (window:split-below!)]
                  [(right) (window:split-right!)]
@@ -398,16 +399,19 @@
     (unless (<= (length locations) 1) (error 'bindings "expected at most one screen cell"))
     (let ([at (if (pair? locations) (car locations) (position))])
       (if (not at) '()
-        (let* ([x (car at)] [y (cdr at)] [widget (widget:pointer-bindings (- x 1) (- y 1))])
-          (if widget widget
-            (if (or (head:window-button-at (- x 1) (- y 1)) (head:divider-at (- x 1) (- y 1))
-                  (head:window-at (- x 1) (- y 1)
-                    (lambda (entry)
-                      (or (= (- y 1) (+ (cadr entry) (caddr entry)))
-                        (not (head:window-widget (car entry)))))))
-              (append
-                (map (lambda (button) (list (list 'click button '()) (keymap:call click! x y button))) '(primary middle secondary))
-                (map (lambda (direction) (list (list 'wheel direction '()) (keymap:call scroll! x y direction))) '(up down left right))) '()))))))
+        (let* ([x (car at)] [y (cdr at)] [widget (widget:pointer-bindings (- x 1) (- y 1))]
+               [control (head:window-button-at (- x 1) (- y 1))])
+          (cond [widget widget]
+            [(and control (keymap:call-action? (car control))) (list (list '(click primary ()) (car control)))]
+            [else
+             (if (or (head:window-button-at (- x 1) (- y 1)) (head:divider-at (- x 1) (- y 1))
+                   (head:window-at (- x 1) (- y 1)
+                     (lambda (entry)
+                       (or (= (- y 1) (+ (cadr entry) (caddr entry)))
+                         (not (head:window-widget (car entry)))))))
+               (append
+                 (map (lambda (button) (list (list 'click button '()) (keymap:call click! x y button))) '(primary middle secondary))
+                 (map (lambda (direction) (list (list 'wheel direction '()) (keymap:call scroll! x y direction))) '(up down left right))) '())])))))
 
   (edoc "Install the mouse: the handler the head's pump applies to every parsed mouse report.")
   (define (init!)

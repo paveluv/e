@@ -42,12 +42,8 @@
     (and (terminal-facts buffer) (head:buffer-store-id buffer)))
 
   (define (send-input! text paste?)
-    (let* ([w (head:current-window)] [id (terminal-id (head:current-buffer))])
-      (unless id (error 'terminal "current buffer is not a terminal"))
-      (head:follow-app! w #t)
-      (vt:send! head:ui-actor id text
-        (list (max 1 (head:window-size w)) (head:window-content-width w)) paste?
-        (head:host-color-scheme))))
+    (let ([id (head:window-widget (head:current-window))])
+      ((if paste? control:paste! control:send!) id text)))
 
   (edoc "Send typed text to an explicit terminal view. The one-argument form temporarily serves legacy window placement."
         (id model "terminal view") (text string "what to type"))
@@ -68,7 +64,7 @@
       [()
        (unless (and (terminal-id (head:current-buffer)) (head:app-buffer? (head:current-buffer)))
          (error 'toggle-capture! "current buffer is not a live terminal"))
-       (let ([w (head:current-window)]) (head:set-full-capture! w (not (head:full-capture? w))))]))
+       (control:toggle-capture! (head:window-widget (head:current-window)))]))
 
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
         (buffer* (list-of buffer) "the terminal buffer, at most one"))
@@ -99,7 +95,6 @@
                      (head:host-color-scheme))))
         (set! buffer (head:adopt-store-buffer! id))
         (head:show-buffer! buffer)
-        (head:set-full-capture! (head:current-window) #f)
         (void))))
 
   ;; UI effects consume published data on the head pump. Claims precede
@@ -142,9 +137,6 @@
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (head:add-pre-redraw-hook! present-notices!)
     (keymap:bind-default! "C-c t" terminal!)
-    (keymap:set-context-capture! 'terminal "C-]" terminal-toggle-capture! '("C-x" "M-x"))
-    (keymap:bind-default! 'terminal "S-PGUP" page-up!)
-    (keymap:bind-default! 'terminal "S-PGDN" page-down!)
     (doc:register!
       '(((terminal:open!)
          (("procedure" . "(terminal:open! [command])")) "void"

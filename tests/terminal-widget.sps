@@ -38,6 +38,10 @@
   (terminal:set-capture! a 'full) (key "C-x") (key "F10")
   (check 'capture-is-independent-between-two-process-views
     (list (map cadddr (take)) (map car (map state (list a b)))) '(("C-x" "F10") (full partial)))
+  (let* ([spans (widget:status a #t)] [control (find (lambda (span) (keymap:call-action? (cdr span))) spans)])
+    (keymap:run! (cdr control))
+    (check 'terminal-status-control-is-the-explicit-public-command
+      (list (car control) (car (state a)) (keymap:call-action-arguments (cdr control))) (list "●" 'partial (list a))))
   (show! 16) (widget:pointer! '(scroll 0 -3 cells) 1 0)
   (check 'ordinary-wheel-leaves-following-without-sending-process-input
     (list (cadr (state a)) (take)) '(#f ()))
