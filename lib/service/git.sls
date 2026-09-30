@@ -364,7 +364,7 @@
         (map (lambda (line) (make-git-patch-line (patch-kind line) line))
              (split-at
                (run-git (repository-path repository)
-                        (list "show" "--format=" "--no-ext-diff" "--patch"
+                        (list "--literal-pathspecs" "show" "--format=" "--no-ext-diff" "--no-textconv" "--patch"
                               id "--" path))
                #\newline)))))
 

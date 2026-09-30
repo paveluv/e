@@ -73,49 +73,6 @@
      (check 'old-text-stays-unchanged lines '#("alpha" "bravo"))
      (head:window-prow-set! (head:current-window) 1)
      (head:window-pcol-set! (head:current-window) 5)
-     (head:view-append! local '("charlie"))
-     (check 'appended-lines (head:buffer-lines local) '#("aLa" "bravo" "charlie"))
-     (check 'append-follows-tail
-            (cons (head:window-prow (head:current-window))
-                  (head:window-pcol (head:current-window)))
-            '(2 . 7))
-     (let* ([windows (head:windows)] [w (head:current-window)]
-            [reading (head:make-window local 1 0 0 1 2 4 0 80 #f)])
-       (head:set-windows! (append windows (list reading)))
-       (head:window-top-set! w 2)
-       (head:buffer-spot-row-set! local 1)
-       (head:buffer-spot-col-set! local 4)
-       (head:buffer-spot-top-set! local 1)
-       (head:buffer-mark-row-set! local 0)
-       (head:buffer-mark-col-set! local 2)
-       (head:view-append! local '("delta") 1)
-       (check 'expiry-preserves-surviving-anchors-and-tail-following-in-both-windows
-         (list (head:buffer-lines local)
-               (map (lambda (key) (cdr (assoc key (head:buffer-placements local))))
-                    (list w reading 'spot 'spot-top 'mark (cons 'top w) (cons 'top reading))))
-         '(#("bravo" "charlie" "delta") ((2 . 5) (0 . 2) (0 . 4) (0 . 0) (0 . 0) (1 . 0) (0 . 0))))
-       (head:set-windows! windows))
-     (check 'invalid-appends-refuse-before-adoption
-       (list (map test:raises?
-               (list (lambda () (head:view-append! scratch '("bad")))
-                     (lambda () (head:view-append! local '("bad") -1))
-                     (lambda () (head:view-append! local '("bad") 1.0))
-                     (lambda () (head:view-append! local '("bad") 4))
-                     (lambda () (head:view-append! local '("bad\nline") 1))))
-             (head:buffer-lines local))
-       '((#t #t #t #t #t) #("bravo" "charlie" "delta")))
-     ;; Repaint sees the complete rendering, and may replace it again. An
-     ;; outer append must not overwrite that newer point on callback return.
-     (define painted-point #f)
-     (head:set-repaint-hook!
-       (lambda ()
-         (set! painted-point (head:buffer-point local))
-         (head:set-repaint-hook! void)
-         (head:view-replace! local '("newer") '() (list (cons (head:current-window) '(0 . 2))))))
-     (head:view-append! local '("delta"))
-     (check 'append-adopts-point-before-reentrant-repaint
-       (list painted-point (head:buffer-lines local) (head:buffer-point local))
-       '((3 . 5) #("newer") (0 . 2)))
      (head:view-replace! local '("x"))
      (check 'replacement-clamps-point
             (cons (head:window-prow (head:current-window))

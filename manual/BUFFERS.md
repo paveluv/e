@@ -398,8 +398,11 @@ temporary presentation: edits take effect immediately and attribution/history
 does not disappear with the tint.
 
 `(blame:tint-seconds 8)` sets the lifetime in seconds; fractional values work.
-Zero prevents new tints, while existing ones keep their deadlines.
-`M-x blame:at-point!` reports recent authorship from the retained edit log.
+Zero clears existing tints and prevents new ones. Tint preparation reads only
+the editor's acquired source; painting and expiry make no wire requests.
+`M-x (blame:at-point! ` selects an editor receiver and reports recent
+authorship from the retained edit log. `(blame:describe document position)`
+returns the same text for an extension's own label or pop-up.
 
 ## The delta log
 
@@ -811,7 +814,7 @@ controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
 entries. `window:focus-up!`, `window:focus-down!`, `window:focus-left!`, and
 `window:focus-right!` expose directional focus to Scheme. App authors should
-use `head:view-replace!` and `head:view-append!` for generated content. Run
+use base documents or collection sources with explicit widget views for generated content. Run
 `M-x (describe:show!)` for live signatures and registered command documentation.
 
 `(head:new-buffer! name)` creates a shared buffer with one empty line and

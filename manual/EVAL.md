@@ -359,8 +359,8 @@ Open the live log view through the buffer list or with:
 
 ```scheme
 (log-view:show!)
-(log-view:buffer! 'eval:report!)
-(log-view:buffer! 'eval:call-with-evaluation!)
+(log-view:show! 'eval:report!)
+(log-view:show! 'eval:call-with-evaluation!)
 ```
 
 The result is posted after both output streams close, so it remains the final

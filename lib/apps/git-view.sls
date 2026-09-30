@@ -1,284 +1,91 @@
-;; git-view.sls -- interactive Git history and patch views.
-
+;; Git's domain queries live in the base; these views compose ordinary controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps git-view)
-  (export init! (rename (git-log! log!)) (rename (git-log-of! log-of!)) (rename (git-log-refresh! refresh!)))
-  (import (chezscheme)
-          (prefix (foundation string) string:)
-          (prefix (head edit) edit:)
-          (prefix (head head) head:)
-          (prefix (head keymap) keymap:)
-          (prefix (head mode) mode:)
-          (prefix (head paint) paint:)
-          (prefix (head style) style:)
-          (prefix (head window) window:)
-          (prefix (service doc) doc:)
-          (prefix (service git) git:))
+  (export choose! create! init! log! log-of! refresh!)
+  (import (chezscheme) (prefix (foundation string) string:)
+          (prefix (head head) head:) (prefix (head interaction) interaction:)
+          (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head mode) mode:)
+          (prefix (head table) table:) (prefix (head widget) widget:) (prefix (head window) window:)
+          (prefix (service file) file:) (prefix (service git-source) git-source:)
+          (prefix (state model) model:) (prefix (state view) view:))
+  (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
+  (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
 
-  (define log-buffer #f)
-  (define diff-buffer #f)
-  (define repository #f)
-  (define log-rows '())
-  (define log-lines '())
-  (define selected-patch #f)
-  (define log-dirty? #t)
-  (define diff-dirty? #t)
-  (define refresh-label "[refresh]")
-  (define refresh-column 0)
-  (define refresh-pressed? #f)
+  (edoc "Create an unmounted Git browser with a history table and an independent read-only patch editor. Enter or click a commit to expand its files, then select a file to inspect its patch. No window is created."
+        (path file "path inside the repository") (returns model) (public))
+  (define (create! path)
+    (let* ([query (git-source:create! head:ui-actor path)] [patch (git-source:create-patch! head:ui-actor)]
+           [root (view:create! head:ui-actor query 'git-history 1 '() '() query)]
+           [table (table:create! head:ui-actor query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
+           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '())]
+           [label (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '())]
+           [refresh (view:create! head:ui-actor #f 'action-text 1
+                      (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '())]
+           [preview (view:create! head:ui-actor (car patch) 'git-patch 1 '() '() (car patch))]
+           [editor (view:create! head:ui-actor (list 'buffer (cadr patch)) 'editor 1
+                     '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch))]
+           [d (view:snapshot table)])
+      (view:arrange! head:ui-actor
+        (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'patch preview '(grow 1))) '())
+          (list heading 0 (list (list 'label label '(grow 1)) (list 'refresh refresh 'fit)) '((spacing . normal)))
+          (list table 1 (view:children d) (cons (list 'commands (list 'activate root 'choose '())) (view:options d)))
+          (list preview 0 (list (list 'text editor '(grow 1))) '())) '()) root))
 
-  (define (pad text width)
-    (string-append text (make-string (max 0 (- width (string-length text)))
-                                     #\space)))
+  (edoc "Expand a displayed commit or select a displayed file into this browser's patch request. The base validates the shown result before changing domain state."
+        (receiver id (view git-history)) (id model "Git browser") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
+  (define (choose! id selection basis)
+    (unless (and (list? selection) (= (length selection) 3) (equal? (car selection) (view:source (interaction:snapshot id))))
+      (error 'choose! "selection does not belong to this browser"))
+    (case (car (caddr selection))
+      [(commit) (git-source:expand! head:ui-actor selection basis)]
+      [(file) (git-source:select-patch! head:ui-actor (view:source (interaction:snapshot (child id 'patch))) selection basis)]
+      [else (error 'choose! "expected a commit or file")]))
 
-  (define (state-letter state)
-    (case state
-      [(modified) "M"] [(added) "A"] [(deleted) "D"]
-      [(renamed) "R"] [(copied) "C"] [(type-changed) "T"]
-      [(unmerged) "U"] [else "?"]))
-
-  (define (short-hash commit)
-    (substring (git:commit-hash commit) 0
-               (min 10 (string-length (git:commit-hash commit)))))
-
-  (define (commit-date commit)
-    (let ([date (time-utc->date
-                  (make-time 'time-utc 0 (git:commit-time commit)))])
-      (format "~4,'0d-~2,'0d-~2,'0d"
-              (date-year date) (date-month date) (date-day date))))
-
-  (define (change-label change)
-    (let ([path (git:diff-path change)]
-          [old (git:diff-original-path change)])
-      (if old (format "~a -> ~a" old path) path)))
-
-  (define (load-log! repo)
-    (let ([rows '()] [lines '()])
-      (for-each
-        (lambda (commit)
-          (set! rows (cons (list 'commit commit) rows))
-          (set! lines
-            (cons (format "~a  ~a  ~a  ~a"
-                          (short-hash commit) (commit-date commit)
-                          (pad (git:commit-author-name commit) 20)
-                          (git:commit-subject commit))
-                  lines))
-          (for-each
-            (lambda (change)
-              (set! rows (cons (list 'file commit change) rows))
-              (set! lines
-                (cons (format "    ~a  ~a"
-                              (state-letter (git:diff-status change))
-                              (change-label change))
-                      lines)))
-            (git:commit-files repo commit)))
-        (git:log repo 20))
-      (set! log-rows (reverse rows))
-      (let ([prefix (format "Git log: ~a  " (git:repository-path repo))])
-        (set! refresh-column (string-length prefix))
-        (set! log-lines
-          (cons (string-append prefix refresh-label) (reverse lines))))
-      (set! log-dirty? #t)))
-
-  (define (refresh-log!)
-    (when log-dirty?
-      (head:view-replace! log-buffer log-lines)
-      (set! log-dirty? #f)))
-
-  (define (refresh-diff!)
-    (when diff-dirty?
-      (head:view-replace!
-        diff-buffer
-        (if selected-patch
-            (cons (format "~a  ~a  ~a"
-                          (git:patch-path selected-patch)
-                          (substring (git:patch-commit selected-patch) 0 10)
-                          (git:repository-path repository))
-                  (map git:patch-line-text
-                       (git:patch-lines selected-patch)))
-            '("No patch selected")))
-      (set! diff-dirty? #f)))
-
-  (define (row-at-point)
-    (let ([row (car (head:point))])
-      (and (<= 1 row (length log-rows))
-           (list-ref log-rows (- row 1)))))
-
-  (define (move-row! delta)
-    (when (pair? log-rows)
-      (head:goto!
-        (cons (min (length log-rows)
-                   (max 1 (+ (max 1 (car (head:point))) delta)))
-              0))))
-
-  (define (show-row-diff!)
-    (let ([row (row-at-point)])
-      (when (and row (eq? (car row) 'file))
-        (set! selected-patch
-          (git:file-patch repository (cadr row)
-                          (git:diff-path (caddr row))))
-        (set! diff-dirty? #t)
-        (refresh-diff!)
-        (head:show-buffer! diff-buffer))))
-
-  (define (reload-log!)
-    (unless repository (error 'git-log-refresh! "Git log is not open"))
-    (load-log! repository)
-    (refresh-log!)
-    (when (eq? (head:current-buffer) log-buffer)
-      (head:goto! (cons (if (null? log-rows) 0 1) 0)))
-    (edit:set-message! "Git log refreshed"))
-
-  (edoc "Reload the git log app's commits and redraw, showing the refresh as a pressed button.")
-  (define (git-log-refresh!)
-    (let ([visible? (eq? (head:current-buffer) log-buffer)]
-          [started (real-time)])
-      (dynamic-wind
-        (lambda ()
-          (when visible?
-            (set! refresh-pressed? #t)
-            (paint:redraw!)))
-        reload-log!
-        (lambda ()
-          (when visible?
-            ;; Keep a very fast refresh visible as a press instead of a
-            ;; one-frame color flicker.
-            (let ([remaining (- 80 (- (real-time) started))])
-              (when (> remaining 0)
-                (sleep (make-time 'time-duration (* remaining 1000000) 0))))
-            (set! refresh-pressed? #f))))))
-
-  (define (log-hit at)
-    ;; Clicks and hover use raw source coordinates: empty viewport space
-    ;; must not activate the last file through the clamped editor point.
-    (and at
-         (let ([row (car at)] [column (cdr at)])
-           (cond [(and (= row 0)
-                       (<= refresh-column column (- (+ refresh-column (string-length refresh-label)) 1)))
-                  (list refresh-column (+ refresh-column (string-length refresh-label)) 'refresh)]
-                 [(and (<= 1 row (length log-rows))
-                       (eq? (car (list-ref log-rows (- row 1))) 'file))
-                  (list 0 (string-length (head:buffer-line log-buffer row)) 'file)]
-                 [else #f]))))
-
-  (define (handle-log-event! event)
-    (cond [(member event '("UP" "C-p")) (move-row! -1) #t]
-          [(member event '("DOWN" "C-n")) (move-row! 1) #t]
-          [(member event '("r" "R")) (git-log-refresh!) #t]
-          [(string=? event "RET") (show-row-diff!) #t]
-          [(string=? event "MOUSE-CLICK")
-           (let ([hit (log-hit (head:app-event-buffer-position))])
-             (cond [hit
-                    (if (eq? (caddr hit) 'refresh) (git-log-refresh!) (show-row-diff!))
-                    'keep-focus]
-                   [else 'ignore-click]))]
-          [else #f]))
-
-  (define (fill-style line style)
-    (make-vector (string-length line) style))
-
-  (define (log-styles line)
-    (cond [(string:prefix? "Git log:" line)
-           (let ([styles (fill-style line 'bold)])
-             (when (<= (+ refresh-column (string-length refresh-label))
-                       (string-length line))
-               (style:fill-range!
-                 styles refresh-column
-                 (+ refresh-column (string-length refresh-label))
-                 (if refresh-pressed? 'active 'editor)))
-             styles)]
-          [(string:prefix? "    " line)
-           (let ([styles (fill-style line 'plain)])
-             (when (> (string-length line) 5)
-               (vector-set! styles 4 'keyword))
-             styles)]
-          [else
-           (let ([styles (fill-style line 'plain)])
-             (style:fill-range! styles 0 (min 10 (string-length line))
-                                'keyword)
-             (when (> (string-length line) 12)
-               (style:fill-range! styles 12
-                                  (min 22 (string-length line)) 'comment))
-             styles)]))
-
+  (edoc "Refresh this browser's history and selected patch asynchronously. Keyboard and the refresh control use the same operation."
+        (receiver id (view git-history)) (id model "Git browser"))
+  (define (refresh! id)
+    (git-source:refresh! head:ui-actor (view:source (interaction:snapshot id)))
+    (git-source:refresh! head:ui-actor (view:source (interaction:snapshot (child id 'patch)))))
+  (define (busy? id d)
+    (let* ([r (model:snapshot (view:source d))] [v (and r (get r 'value '()))])
+      (and v (eq? (get v 'status #f) 'pending))))
+  (define (present proc)
+    (lambda (cell cells attributes) (list (if (eq? (car cell) 'ready) (proc (cadr cell) attributes) ""))))
+  (define (date seconds attributes)
+    (let ([d (time-utc->date (make-time 'time-utc 0 seconds))])
+      (format "~4,'0d-~2,'0d-~2,'0d" (date-year d) (date-month d) (date-day d))))
   (define (diff-styles line)
-    (cond [(or (string:prefix? "@@" line)
-               (string:prefix? "+++ " line)
-               (string:prefix? "--- " line))
-           (fill-style line 'keyword)]
-          [(string:prefix? "+" line) (fill-style line 'string)]
-          [(string:prefix? "-" line) (fill-style line 'rainbow1)]
-          [(or (string:prefix? "diff --git " line)
-               (string:prefix? "index " line))
-           (fill-style line 'comment)]
-          [else (fill-style line 'plain)]))
+    (make-vector (string-length line)
+      (cond [(exists (lambda (prefix) (string:prefix? prefix line)) '("@@" "+++ " "--- ")) 'keyword]
+        [(string:prefix? "+" line) 'string] [(string:prefix? "-" line) 'rainbow1]
+        [(exists (lambda (prefix) (string:prefix? prefix line)) '("diff --git " "index ")) 'comment]
+        [(string:prefix? "[" line) 'ghost] [else 'plain])))
 
-  (define (ensure-git-buffers!)
-    ;; Git views are application state, not startup furniture. Create them
-    ;; together on first use; re-register existing buffers after a hot reload
-    ;; without making fresh sessions expose empty Git buffers.
-    (unless (and log-buffer (memq log-buffer (head:buffers))
-                 (head:app-buffer? log-buffer))
-      (set! log-buffer
-        (head:register-app! "*git-log*" refresh-log! handle-log-event!))
-      (set! log-dirty? #t)
-      (head:set-app-presentation! log-buffer 1 #t)
-      (mode:choose! "git:log" log-buffer))
-    (unless (and diff-buffer (memq diff-buffer (head:buffers))
-                 (head:app-buffer? diff-buffer))
-      (set! diff-buffer (head:register-view! "*git-diff*" refresh-diff!))
-      (set! diff-dirty? #t)
-      (head:set-app-presentation! diff-buffer 1 #t)
-      (mode:choose! "git:diff" diff-buffer)))
+  (edoc "Open the retained Git browser for a path in the current window. Different paths retain independent queries and selections."
+        (path file "path inside the repository") (returns model))
+  (define (log-of! path)
+    (let* ([path (file:expand path)] [root (window:tool! (string-append "git " (file:abbreviate path))
+                                             (lambda (commands) (create! path)) (string-append "git:" path))])
+      (window:show-widget! (head:current-window) root)
+      (let ([app (child root 'app)]) (widget:focus! root (child (child (child app 'table) 'body) 'rows)) app)))
 
-  (edoc "Open the interactive git log app for the repository containing the current file, or the working directory when the buffer has none; Up and Down navigate, Enter shows a file's patch.")
-  (define (git-log!)
-    (git-log-of! (or (head:buffer-file (head:current-buffer)) ".")))
+  (edoc "Open Git history for the current file, or the working directory. Repository work remains asynchronous.")
+  (define (log!) (log-of! (or (head:buffer-file (head:current-buffer)) ".")))
 
-  (edoc "Open the interactive git log app for the repository containing a path; Up and Down navigate, Enter shows a file's patch."
-        (path file "a path inside the repository"))
-  (define (git-log-of! path)
-    (ensure-git-buffers!)
-    (set! repository (git:open path))
-    (load-log! repository)
-    (refresh-log!)
-    (let ([w (window:display! log-buffer)])
-      (when w
-        (window:focus! w)
-        (head:goto! '(1 . 0))))
-    (void))
-
-  (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings." (public))
+  (edoc "Register the Git composition, patch highlighting and named bindings without opening a repository or tool." (public))
   (define (init!)
-    (mode:register! "git:log" '() '() log-styles)
+    (widget:register! 'git-history 1
+      (append (layout:container 'y)
+        (list '(receivers (table table)) (cons 'capture-contexts '(git-history))
+          (cons 'actions (list (cons 'choose choose!) (cons 'refresh refresh!))))))
+    (widget:register! 'git-patch 1 (append (layout:container 'y) (list (cons 'busy? busy?))))
+    (table:register-presentation! 'git 1
+      (list (list 'status 1 'text '() (present (lambda (value attrs)
+                                                 (case value [(added) "A"] [(modified) "M"] [(deleted) "D"] [(renamed) "R"] [(copied) "C"] [else "?"]))))
+        (list 'commit 10 'text '() (present (lambda (value attrs) (if (> (get attrs 'depth 0) 0) "" (substring value 0 (min 10 (string-length value)))))))
+        (list 'date 10 'text '() (present date))
+        (list 'author 12 'text '() (present (lambda (value attrs) value)))
+        (list 'subject 16 'text '() (present (lambda (value attrs) value)))))
     (mode:register! "git:diff" '() '() diff-styles)
-    ;; A reload after Git was opened reconnects its surviving app buffers;
-    ;; ordinary startup remains lazy.
-    (when (or (head:find-tool-buffer "*git-log*")
-              (head:find-tool-buffer "*git-diff*"))
-      (ensure-git-buffers!))
-    (doc:register!
-      '(((git-view:log!) (("procedure" . "(git-view:log!)")) "void"
-         ("(apps git-view)") git-view "Git" #f
-         "Open the interactive `<git-log>` app for the repository containing the current file; `(git-view:log-of! path)` opens another repository's. Navigate commits and changed files with Up and Down; press Enter on a file to show its read-only patch in the target window.")
-        ((git-view:refresh!)
-         (("procedure" . "(git-view:refresh!)")) "void"
-         ("(apps git-view)") git-view "Git" #f
-         "Reload commits and changed files in the open `<git-log>` app. The header's `[refresh]` button and the app's `r` key invoke this command.")))
-    (paint:add-highlighter!
-      (lambda ()
-        (append
-          (paint:hover-ranges
-            (lambda (w row column)
-              (and (eq? (head:window-buffer w) log-buffer) (log-hit (cons row column)))))
-          ;; Keyboard navigation is bold; only actionable mouse targets
-          ;; get the shared hover face, scoped to the pointed window.
-          (if (and log-buffer (memq log-buffer (head:buffers)))
-              (let ([row (head:with-buffer log-buffer (car (head:point)))])
-                (if (<= 1 row (- (head:buffer-line-count log-buffer) 1))
-                    (list (list log-buffer row 0
-                                (string-length (head:buffer-line log-buffer row))
-                                'candidate))
-                    '()))
-              '()))))
-    (keymap:bind-default! "C-x g" git-log!)))
+    (for-each (lambda (key) (keymap:bind-default! 'git-history key (keymap:call refresh! widget:target))) '("r" "C-r"))
+    (keymap:bind-default! "C-x g" log!)))

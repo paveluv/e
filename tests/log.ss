@@ -9,6 +9,7 @@
 (eval
   '(begin
      (import (prefix (service log) log:) (prefix (state actor) actor:)
+             (prefix (service journal-source) journal-source:) (prefix (state collection) collection:) (prefix (state model) model:)
              (prefix (core kernel) kernel:) (prefix (test) test:))
      (define (record-count)
        (let-values ([(records end first) (log:snapshot 0 0)]) end))
@@ -248,4 +249,5 @@
              (map log:datum (log:entries 'history-cap 2)))
        (list (map (lambda (i) (number->string (- 204 i))) (iota 200)) '("foreign") '("foreign" "foreign")))
 
+     (include "tests/journal-source.sps")
      (test:finish! 'log)))
