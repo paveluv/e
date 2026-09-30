@@ -87,6 +87,12 @@
      (check 'search-folded (string:search "ABC" "bc" 0 3 #t) 1)
      (check 'search-exact-is-case-sensitive (string:search "ABC" "bc" 0 3) #f)
      (check 'search-overlapping-prefix (string:search "aaab" "aab" 0 4) 1)
+     (let* ([checks 0] [line (string-append (make-string 4094 #\x) "ababac")]
+            [find (string:searcher "ababac" #f (lambda () (set! checks (+ checks 1))))])
+       (check 'cooperative-search-keeps-prefix-across-checkpoint (list (find line 0 (string-length line)) checks) '(4094 1))
+       (check 'cooperative-search-can-cancel-without-finishing-scan
+         (call/cc (lambda (stop)
+                    ((string:searcher "missing" #f (lambda () (stop 'cancelled))) line 0 (string-length line)))) 'cancelled))
 
      ;; -- lines --------------------------------------------------------------
 

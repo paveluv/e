@@ -1532,6 +1532,22 @@
                    (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
                                 (not (caddr (caadr (rpc head 'model-read (list view)))))
                                 (not (memv draft (rpc head 'buffers))))))))
+             (let* ([temporary (connect)] [document (car (rpc head 'buffers))])
+               (hello temporary '(head "search owner")) (receive temporary)
+               (let* ([target (rpc temporary 'view-create (list 'buffer document) 'editor 1 '() '((0 . 0) (0 . 0) (0 . 0) #f))]
+                      [request (map cons '(target document basis sequence start needle fold? visible)
+                                 (list target document 0 0 '(0 . 0) "hello" #f '(0 0 0 7)))]
+                      [id (rpc temporary 'search-create request)])
+                 (test:check 'search-wire-owner-and-generation-fences
+                   (list (rpc head 'search-configure id 0 request)
+                     (rpc temporary 'search-configure id 0 request)
+                     (rpc temporary 'search-configure id 0 request)
+                     (list-head (exchange temporary `(request 7 model-retire ,id 1)) 3))
+                   '(#f 1 #f (reply 7 error)))
+                 (sys:close-connection! temporary)
+                 (test:await 'search-wire-departure-releases-request
+                   (lambda () (not (caddr (caadr (rpc head 'model-read (list id)))))))
+                 (rpc head 'view-retire target 0)))
              (let* ([temporary (connect)] [gate (string-append root "/environment-continue")])
                (hello temporary '(head "environment owner")) (receive temporary)
                (let* ([environment (rpc temporary 'environment-create

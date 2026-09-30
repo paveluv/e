@@ -131,9 +131,12 @@
       [(s needle start limit fold?)
        ((searcher needle fold?) s start limit)]))
 
-  (edoc "Compile a literal search for repeated use, returning (find text start limit)."
-        (needle string "what to find") (fold? boolean "whether to ignore case") (returns procedure))
-  (define (searcher needle fold?)
+  (edoc "Compile a literal search for repeated use, returning (find text start limit). An optional checkpoint cooperates during long scans without losing matches across chunks."
+        (needle string "what to find") (fold? boolean "whether to ignore case")
+        (checkpoint (list-of procedure) "optional zero-argument checkpoint") (returns procedure))
+  (define (searcher needle fold? . checkpoint)
+    (unless (and (<= (length checkpoint) 1) (for-all procedure? checkpoint))
+      (error 'searcher "expected at most one checkpoint procedure"))
     (let ([eq? (if fold? char-ci=? char=?)]
           [len (string-length needle)])
       (if (= len 0)
@@ -151,17 +154,19 @@
                    (build i (vector-ref failure (- matched 1)))]
                   [else (build (+ i 1) 0)])))
             (lambda (s start limit)
-              (let scan ([i start] [matched 0])
+              (let scan ([i start] [matched 0] [stop (if (pair? checkpoint) (min limit (+ start 4096)) limit)])
                 (cond
-                  [(>= i limit) #f]
+                  [(>= i stop)
+                   (if (>= i limit) #f
+                     (begin ((car checkpoint)) (scan i matched (min limit (+ i 4096)))))]
                   [(eq? (string-ref s i) (string-ref needle matched))
                    (let ([matched (+ matched 1)])
                      (if (= matched len)
                          (+ (- i len) 1)
-                         (scan (+ i 1) matched)))]
+                         (scan (+ i 1) matched stop)))]
                   [(> matched 0)
-                   (scan i (vector-ref failure (- matched 1)))]
-                  [else (scan (+ i 1) 0)])))))))
+                   (scan i (vector-ref failure (- matched 1)) stop)]
+                  [else (scan (+ i 1) 0 stop)])))))))
 
   (edoc
     "Remove trailing ASCII spaces and, when leading? is true, leading spaces too. Other whitespace is retained."

@@ -2,10 +2,11 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service filesystem)
   (export complete! configure! create-query! create-source! refresh!)
-  (import (chezscheme) (prefix (core kernel) kernel:)
+  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core work-queue) work-queue:)
           (prefix (foundation path-filter) path-filter:) (prefix (foundation string) string:)
           (prefix (service directory) directory:) (prefix (service file) file:)
           (prefix (service file-query) file-query:)
+          (prefix (service log) log:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (sys sys) sys:))
 
@@ -23,10 +24,7 @@
   (define sortable '(name size modified created permissions count))
   (define metadata '(size modified created permissions))
   (define lock (make-mutex))
-  (define ready (make-condition))
-  (define pending (make-hashtable equal-hash equal?))
-  (define order '())
-  (define running? #f)
+  (define worker (work-queue:create))
   (define epoch 0)
   (define cache #f) ; touched only by the filesystem worker
   (define cache-epoch -1)
@@ -41,51 +39,10 @@
       (mutable skipped) (mutable done?) (mutable completion) (mutable intent) wanted (mutable enriching?) (mutable proposal)))
   (define (obsolete? job)
     (or ((job-cancelled? job)) (with-mutex lock (not (= epoch (job-epoch job))))))
-  (define (enqueue! key run)
-    (with-mutex lock
-      (unless (hashtable-contains? pending key) (set! order (append order (list key))))
-      (hashtable-set! pending key run)
-      (unless running? (set! running? #t) (fork-thread work!))
-      (condition-signal ready)))
-
-  ;; Cooperative continuations let independent queries alternate on one cache
-  ;; owner. Only domain checkpoints yield; never suspend under a model/store
-  ;; writer or a range callback. Replacing a queued key drops obsolete work.
-  (define leave #f)
-  (define (work!)
-    (let loop ()
-      (let-values ([(key run)
-                    (with-mutex lock
-                      (let wait () (when (null? order) (condition-wait ready lock) (wait)))
-                      (let* ([key (car order)] [run (hashtable-ref pending key #f)])
-                        (set! order (cdr order)) (hashtable-delete! pending key) (values key run)))])
-        (call/cc
-          (lambda (return)
-            (set! leave return)
-            (run)
-            (leave #f))))
-      (loop)))
   (define (queue-job! job kind procedure)
-    (let ([key (list (field (job-query job) 'id) kind)] [deadline (sys:after 0.005)] [ticks 0])
-      (define (check!)
-        (set! ticks (+ ticks 1))
-        (when (or (zero? (mod ticks 64)) (= ticks 1))
-          (when (obsolete? job) (leave #f))
-          (when (and (time>=? (current-time 'time-monotonic) deadline) (with-mutex lock (pair? order)))
-            (call/cc (lambda (resume)
-                       ;; Do not overwrite a newer task for this same key.
-                       (with-mutex lock
-                         (unless (hashtable-contains? pending key)
-                           (set! order (append order (list key)))
-                           (hashtable-set! pending key (lambda () (resume #f)))))
-                       (leave #f)))
-            (when (obsolete? job) (leave #f))
-            (set! deadline (sys:after 0.005)))))
-      (enqueue! key
-        (lambda ()
-          (unless (obsolete? job)
-            (guard (ex [else (unless (obsolete? job) ((job-publish job) #f (kernel:condition-text ex)))])
-              (procedure check!)))))))
+    (work-queue:submit! worker (list (field (job-query job) 'id) kind)
+      (lambda () (not (obsolete? job))) procedure
+      (lambda (ex) ((job-publish job) #f (kernel:condition-text ex)))))
   (define (inventory!)
     (let ([current (with-mutex lock epoch)])
       (unless (= cache-epoch current)
@@ -285,8 +242,8 @@
                   (job-completion-set! job answer) (publish! job))))) intent))))
   (define (cleanup! ids)
     (when (with-mutex lock (or (not ids) (exists (lambda (id) (hashtable-contains? tracked id)) ids)))
-      (enqueue! 'cleanup
-        (lambda ()
+      (work-queue:submit! worker 'cleanup (lambda () #t)
+        (lambda (check!)
           (for-each (lambda (j)
                       (let ([id (field (job-query j) 'id)] [source (field (job-source j) 'id)])
                         (unless (and (model:snapshot id) (model:snapshot source) (not (obsolete? j)))
@@ -297,7 +254,8 @@
             (with-mutex lock (vector->list (hashtable-keys tracked))))
           (when (null? (model:ids 'filesystem-source))
             (when cache (directory:close! cache) (set! cache #f))
-            (hashtable-clear! existence) (set! cache-epoch -1))))))
+            (hashtable-clear! existence) (set! cache-epoch -1)))
+        (lambda (ex) (log:add! 'filesystem:cleanup! (kernel:condition-text ex))))))
   (define cleanup
     (list (model:subscribe! #f (lambda (notice) (cleanup! (cadr notice))))
       (model:observe-demand! cleanup!))))
