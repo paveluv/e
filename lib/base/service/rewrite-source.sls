@@ -10,7 +10,7 @@
   (define worker (work-queue:create))
   (define lock (make-mutex))
   (define jobs (make-hashtable equal-hash equal?))
-  (define-record-type job (fields query draft document cancelled? publish (mutable stamp)))
+  (define-record-type job (fields query draft document selector cancelled? publish (mutable stamp)))
   (define (record id)
     (let ([r (model:snapshot id)])
       (unless (and r (eq? (get r 'kind) 'rewrite-draft)) (error 'rewrite-source "draft is unavailable")) r))
@@ -24,7 +24,7 @@
     (let* ([r (record (job-draft j))] [v (get r 'value)] [document (job-document j)]
            [revision (store:revision document)] [stamp (list (get r 'revision) revision)])
       (unless (equal? stamp (job-stamp j))
-        (let* ([entries (store:log document)] [positions (make-hashtable equal-hash equal?)]
+        (let* ([entries (store:log document (job-selector j))] [positions (make-hashtable equal-hash equal?)]
                [rows (list->vector
                        (map (lambda (e)
                               (check!)
@@ -56,9 +56,13 @@
     (model:observe-demand! (lambda (ids)
                              (with-mutex lock (for-each (lambda (id) (unless (model:demanded? id) (hashtable-delete! jobs id))) ids)))))
   (define (start! source query cancelled? publish)
-    (unless (and (string=? (get query 'filter) "") (null? (get query 'sort)))
+    (unless (null? (get query 'sort))
       (error 'start! "Rewrite history retains revision order"))
-    (let ([j (make-job (get query 'id) (get source 'id) (get (get source 'value) 'document) cancelled? publish #f)])
+    (let* ([input (get query 'filter)]
+           [selector (if (string=? input "") '()
+                       (let* ([p (open-input-string input)] [value (read p)])
+                         (unless (and (list? value) (eof-object? (read p))) (error 'start! "expected a history selector")) value))]
+           [j (make-job (get query 'id) (get source 'id) (get (get source 'value) 'document) selector cancelled? publish #f)])
       (with-mutex lock (hashtable-set! jobs (job-query j) j)) (queue! j)))
   (define provider (collection:register! 'rewrite-draft 1 start!))
   (define (review query generation basis)

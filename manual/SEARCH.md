@@ -49,10 +49,9 @@ was. Every occurrence is an entry of the buffer's delta log, all under one
 batch, and the whole replacement is one undo step. Reviewing the occurrences
 happens in the delta log rather than one question at a time: the buffer shows
 the result at once, and `C-x l` opens the delta log browser in the pop-up,
-where `(delta-log:filter! ` followed by Tab offers the buffer's batches
-newest first; narrowed to the replacement's, one row per occurrence, a
-replacement that should not have happened is toggled out of a view and the
-view committed, or the whole step undone.
+where `(delta-log:filter! review (batch '(...)))` narrows an explicit review
+to the replacement's entries. An unwanted occurrence can be omitted from the
+rewrite preview and the draft settled, or the whole replacement undone.
 
 The text to find is a `needle`: while you type it at M-x, its matches
 highlight in the current buffer as a search would, the prompt notes `[1 of

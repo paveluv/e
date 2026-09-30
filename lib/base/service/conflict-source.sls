@@ -80,7 +80,7 @@
 
   (edoc "Choose a side for an exact displayed conflict row. The query generation, result basis and complete draft revision fence the choice; no alternative text crosses the command channel."
         (actor actor "caller") (selection row-selection "shown query, generation and conflict key") (basis datum "result basis")
-        (side (one-of mine disk) "choice"))
+        (side (one-of mine disk flip) "choice, or flip the reviewed choice"))
   (define (choose! actor selection basis side)
     (unless (row:selection? selection) (error 'choose! "expected a shown selection"))
     (let* ([r (review (car selection) (cadr selection) basis)] [key (caddr selection)]
@@ -89,7 +89,8 @@
                 (find (lambda (e) (= (car key) (get e 'document))) (active-records r)))])
       (unless e (error 'choose! "conflict row is unavailable"))
       (conflict-review:choose! actor (get r 'id) (get r 'revision)
-        (list (list (car key) (assv (cadr key) (get e 'alternatives)))) side) (void)))
+        (list (list (car key) (assv (cadr key) (get e 'alternatives))))
+        (if (eq? side 'flip) (if (memv (cadr key) (get e 'mine)) 'disk 'mine) side)) (void)))
 
   (edoc "Choose one side for all documents in the exact displayed review, without settling. An incompatible Mine group refuses before any choices change."
         (actor actor "caller") (query row-source "review rows") (generation integer "shown generation")

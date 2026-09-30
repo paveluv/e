@@ -30,6 +30,7 @@
     (let ([r (model:snapshot id)])
       (unless (and r (memq (get r 'kind) '(conflict-review rewrite-draft))) (error 'review-preview "draft is unavailable")) r))
   (define (replace r key value) (map (lambda (p) (if (eq? key (car p)) (cons key value) p)) r))
+  (define (pending message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (alive? job)
     (and (with-mutex lock (eq? job (hashtable-ref active (job-id job) #f)))
       (model:demanded? (job-id job)) (record (job-id job))))
@@ -66,7 +67,7 @@
            (unless (and row (eq? (car row) 'ready) (pair? (list-ref row 4)) (list? key) (= (length key) 2)
                      (equal? (get q 'source) (get r 'id))
                      (if rewrite? (= (car key) (get v 'document)) (memv (car key) (get v 'scope))))
-             (error 'review-preview "selection is pending or belongs to another draft")) key)]
+             (pending "selection is pending or belongs to another draft")) key)]
         [rewrite? (list (get v 'document) #f)]
         [(pair? (get v 'scope)) (list (car (get v 'scope)) #f)]
         [else #f])))
@@ -108,7 +109,7 @@
                               (values #f #f)))])
               (when old (model:unsubscribe! old))
               (unless installed? (model:unsubscribe! token))))))
-      (unless (and r (eq? (car selection) 'ready)) (error 'review-preview "selection is unavailable"))
+      (unless (and r (eq? (car selection) 'ready)) (pending "selection is unavailable"))
       (let ([target (target d (cadr selection))])
         (job-source-set! job (and target (car target)))
         (list r d target (list (get d 'revision) (cadr selection)
@@ -139,7 +140,10 @@
         ;; Preserve the last coherent text while selection or source changes.
         (job-stamp-set! job #f)
         (let ([r (record (job-id job))])
-          (when r (update! r 'unavailable #f '() #f))))))
+          (when r
+            (let ([v (get r 'value)])
+              (if (kernel:refusal? ex) (update! r 'pending (get v 'basis) (get v 'annotations) (get v 'truncated?))
+                (update! r 'unavailable #f '() #f))))))))
   (define (schedule! id)
     (let ([r (record id)])
       (if (not (and r (model:demanded? id)))

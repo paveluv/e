@@ -72,6 +72,15 @@ selected region; `truncated?` in the request reports omitted highlights.
 `review-preview:close!` takes the actor and request, retiring its scoped views
 and owned output while preserving the draft and source documents.
 
+`delta-log:create!` composes these services with a table, Mine/Disk cell
+commands, explicit bulk/settle controls and an editor. Supply host commands,
+`conflicts` or `rewrite`, and an ordered list of document IDs (one for a
+rewrite). Each constructor call has its own draft and query. Row navigation
+publishes ordinary view interaction; base derivation follows the connection.
+The query owns its draft, preview request and output. Hiding the composition
+releases demand while keeping choices; retiring its query removes those
+resources. Source documents are borrowed and remain intact.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown

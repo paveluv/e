@@ -5,7 +5,7 @@
 
   (edoc "Choose Mine or Disk for an exact displayed conflict row, fenced by query generation, basis and draft revision."
         (actor actor "connection attribution") (selection row-selection "shown conflict") (basis datum "result basis")
-        (side (one-of mine disk) "choice"))
+        (side (one-of mine disk flip) "choice, or flip the reviewed choice"))
   (define (choose! actor selection basis side) (client:request 'conflict-source-choose selection basis side))
 
   (edoc "Choose a side for all documents in the exact shown review, without settling."
