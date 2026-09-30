@@ -1504,6 +1504,20 @@
                (string-set! (vector-ref (car snapshot) 0) 0 #\X)
                (test:check 'client-mutation-cannot-change-the-base
                  (car (rpc head 'snapshot (car ids))) '#("hello λ")))
+             (let ([temporary (connect)])
+               (hello temporary '(head "prompt owner")) (receive temporary)
+               (let* ([id (rpc temporary 'prompt-create #f #f "input" '((origin . explicit)) '(head-symbols 1))]
+                      [record (caddr (caadr (rpc head 'model-read (list id))))]
+                      [draft (cadr (cdr (assq 'draft (cdr (assq 'value record)))))])
+                 (test:check 'prompt-wire-attribution-and-service-ownership
+                   (list (rpc head 'prompt-accept id 0 0)
+                     (rpc temporary 'prompt-accept id 0 0)
+                     (list-head (exchange temporary `(request 7 model-retire ,id 1)) 3))
+                   '(unavailable applied (reply 7 error)))
+                 (sys:close-connection! temporary)
+                 (test:await 'prompt-wire-departure-releases-owned-state
+                   (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
+                                (not (memv draft (rpc head 'buffers))))))))
              (test:check 'bad-hello-and-duplicate-name-preserve-the-owner
                (map (lambda (message)
                       (let ([duplicate (connect)])
