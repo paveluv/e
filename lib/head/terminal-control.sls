@@ -53,7 +53,7 @@
   (define (witness id d) (list id (view:generation d)))
 
   (edoc "Choose partial capture (yield C-x and M-x) or full capture for an explicit live terminal view."
-        (id model "terminal view") (capture (one-of partial full) "input policy"))
+        (receiver id (view terminal)) (id model "terminal view") (capture (one-of partial full) "input policy"))
   (define (set-capture! id capture)
     (unless (memq capture '(partial full)) (error 'set-capture! "expected partial or full"))
     (let-values ([(document d) (context id)])
@@ -61,13 +61,13 @@
       (interaction:set-state! head:ui-actor id #f (list capture (cadr (terminal-state:state d))))))
 
   (edoc "Toggle partial/full capture for an explicit live terminal view."
-        (id model "terminal view"))
+        (receiver id (view terminal)) (id model "terminal view"))
   (define (toggle-capture! id)
     (let-values ([(document d) (context id)])
       (set-capture! id (if (eq? (car (terminal-state:state d)) 'full) 'partial 'full))))
 
   (edoc "Follow the process cursor or retain the shown selection and scrollback position. Following derives its cursor from base output without publishing one interaction per output frame."
-        (id model "terminal view") (following? boolean "whether to follow"))
+        (receiver id (view terminal)) (id model "terminal view") (following? boolean "whether to follow"))
   (define (follow! id following?)
     (unless (boolean? following?) (error 'follow! "expected a boolean"))
     (when (and following? (not (live? id))) (refuse "The terminal process has exited"))
@@ -93,22 +93,22 @@
             (append data (list (cons 'view lease) (cons 'size grid) (cons 'color-scheme (head:host-color-scheme)))))))))
 
   (edoc "Type text into the process displayed by an explicit terminal view."
-        (id model "terminal view") (text string "typed text"))
+        (receiver id (view terminal)) (id model "terminal view") (text string "typed text"))
   (define (send! id text)
     (unless (string? text) (error 'send! "expected text")) (emit! id "TEXT" (list (cons 'text text))))
 
   (edoc "Paste text into a terminal process, honoring its bracketed-paste mode."
-        (id model "terminal view") (text string "pasted text"))
+        (receiver id (view terminal)) (id model "terminal view") (text string "pasted text"))
   (define (paste! id text)
     (unless (string? text) (error 'paste! "expected text")) (emit! id "PASTE" (list (cons 'paste text))))
 
   (edoc "Send a normalized key event to a terminal process."
-        (id model "terminal view") (key string "key token, for example C-x or UP"))
+        (receiver id (view terminal)) (id model "terminal view") (key string "key token, for example C-x or UP"))
   (define (press! id key)
     (unless (string? key) (error 'press! "expected a key token")) (emit! id key '()))
 
   (edoc "Send a process pointer event against a displayed VT grid. The base refuses stale revisions, generations and out-of-grid coordinates."
-        (id model "terminal view") (event string "normalized VT pointer token")
+        (receiver id (view terminal)) (id model "terminal view") (event string "normalized VT pointer token")
         (address list "(text-revision surface-generation row column button-code)"))
   (define (pointer! id event address)
     (unless (and (member event '("MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP" "WHEEL-DOWN" "WHEEL-LEFT" "WHEEL-RIGHT"))
@@ -121,7 +121,7 @@
                       (cons 'cell (cons (caddr address) (cadddr address))) (cons 'button (list-ref address 4)))))
 
   (edoc "Page an explicit terminal's read-only viewport, leaving process-cursor following."
-        (id model "terminal view") (direction integer "-1 up or 1 down"))
+        (receiver id (view terminal)) (id model "terminal view") (direction integer "-1 up or 1 down"))
   (define (page! id direction) (follow! id #f) (editor:page! (child id) direction 1))
 
   (define (captured? id event)

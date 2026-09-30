@@ -41,15 +41,18 @@
           (prefix (head edit) edit:)
           (prefix (head expression) expression:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
           (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
-          (prefix (only (service reference) signatures) reference:))
+          (prefix (only (service reference) signatures) reference:)
+          (prefix (state view) view:))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -595,11 +598,66 @@
         fragments)
       (completion:make-candidate name label styles)))
 
+  (define (receiver-matches declaration receivers)
+    (if (not (eq? (caadr declaration) 'view)) '()
+      (filter (lambda (r) (and (memq (cadr r) (cdadr declaration)) (widget:receiver-live? r))) receivers)))
+
+  (define (receiver-at sym index)
+    (exists
+      (lambda (sig)
+        (let ([r (edoc:signature-receiver sig)])
+          (and r (let loop ([args (edoc:signature-formals sig)] [i index])
+                   (and (pair? args) (if (zero? i) (and (eq? (car r) (car args)) r)
+                                         (loop (cdr args) (- i 1))))))))
+      (receiver-signatures sym)))
+
+  (define receiver-cache (make-weak-eq-hashtable))
+  (define (receiver-signatures sym)
+    (let ([proc (and (top-level-bound? sym) (top-level-value sym))])
+      (if (not (procedure? proc)) '()
+        (or (hashtable-ref receiver-cache proc #f)
+          (let ([sigs (filter (lambda (s) (edoc:signature-receiver s)) (or (edoc:edoc-of proc) '()))])
+            (hashtable-set! receiver-cache proc sigs) sigs)))))
+
+  (define (empty-receiver text pos receivers)
+    ;; Only whitespace at a fresh argument slot qualifies. An existing token,
+    ;; nested expression, literal or variable keeps ordinary typed completion.
+    (let ([frames (call-frames (substring text 0 pos))])
+      (and (> pos 0) (char-whitespace? (string-ref text (- pos 1))) (pair? frames)
+        (not (frame-quoted? (car frames))) (string? (frame-operator (car frames)))
+        (or (= pos (string-length text)) (memv (string-ref text pos) '(#\) #\] #\})))
+        (let ([r (receiver-at (string->symbol (frame-operator (car frames))) (frame-arguments (car frames)))])
+          (and r (receiver-matches r receivers))))))
+
+  (define (current-receivers)
+    (let* ([root (head:window-widget (head:current-window))] [d (and root (interaction:snapshot root))])
+      (if d (widget:receivers (or (view:focus d) root)) '())))
+
+  (define (validate-receivers! text receivers)
+    (define (walk form)
+      (when (and (pair? form) (list? form) (not (memq (car form) '(quote quasiquote))))
+        (when (symbol? (car form))
+          (for-each
+            (lambda (arg i)
+              (when (receiver-at (car form) i)
+                (let ([r (find (lambda (r) (equal? arg (list 'model (cadar r)))) receivers)])
+                  (when (and r (not (widget:receiver-live? r)))
+                    (raise (condition (kernel:make-refusal) (make-message-condition "The command's captured receiver is no longer available")))))))
+            (cdr form) (iota (length (cdr form)))))
+        (for-each walk form)))
+    (let ([p (open-input-string (string-append text (or (input-closers text) "")))])
+      (let loop ([form (read p)]) (unless (eof-object? form) (walk form) (loop (read p))))))
+
   (define (symbol-completer keep? typed? . origin)
     ;; The status line describes the last lookup. It must not query a type's
     ;; live directory again while painting (some directories live at the base).
     (define kind (if typed? "symbol" "editor symbol"))
     (define window (if (null? origin) (head:current-window) (car origin)))
+    (define receivers (if (and (pair? origin) (pair? (cdr origin))) (cadr origin) (current-receivers)))
+    (define (eligible? sym)
+      (and (keep? sym)
+        (let ([declared (map edoc:signature-receiver (receiver-signatures sym))])
+          (or (null? declared) (exists (lambda (d) (pair? (receiver-matches d receivers))) declared)))))
     (define makers (make-eq-hashtable))
     (completion-at-window (completion:make-source
                             (lambda (s pos)
@@ -609,20 +667,28 @@
                                     (let* ([part (substring s (car range) (cdr range))]
                                            ;; Symbols go in as they are: the matcher keeps each one
                                            ;; prepared across keystrokes.
-                                           [ranked (fuzzy:rank part (filter keep? (environment-symbols (interaction-environment))))]
+                                           [ranked (fuzzy:rank part (filter eligible? (environment-symbols (interaction-environment))))]
                                            [names (map fuzzy:name ranked)])
                                       (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
                                         (map completion-candidate ranked))))))
                               ;; an argument with a documented type offers its own candidates; a
                               ;; sole one is what Tab inserts, else Tab extends the token as far as
                               ;; every candidate allows and lists them
-                              (let* ([context (and typed? (argument-context s pos))]
-                                     [options (and context (typed-options context))])
+                              (let* ([targets (and typed? (empty-receiver s pos receivers))]
+                                     [context (and typed? (argument-context s pos))]
+                                     [options (and (not (pair? targets)) context (typed-options context))])
                                 (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
-                                (if (not options) (symbols)
-                                  (values (cadr context) (caddr context)
-                                    (lambda () (typed-inserts s context options))
-                                    (map (lambda (o) (typed-candidate (car context) o window)) options)))))
+                                (cond [(pair? targets)
+                                       (set! kind "receiver")
+                                       (let ([literals (map (lambda (r) (format "(model ~a)" (cadar r))) targets)])
+                                         (values pos pos (if (null? (cdr literals)) literals '(""))
+                                           (map (lambda (r text)
+                                                  (completion:make-candidate text (format "~a  ~a" (list-ref r 5) text) #f)) targets literals)))]
+                                  [(not options) (symbols)]
+                                  [else
+                                   (values (cadr context) (caddr context)
+                                     (lambda () (typed-inserts s context options))
+                                     (map (lambda (o) (typed-candidate (car context) o window)) options))])))
                             settle-completion
                             ;; what the list holds, for its status line: the argument's type at a
                             ;; typed position, else the symbols offered
@@ -1290,13 +1356,14 @@
     ;; own top level.  The expression is logged (eval:report!, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let* ([window (head:current-window)] [buffer (head:current-buffer)]
+    (let* ([window (head:current-window)] [buffer (head:current-buffer)] [receivers (current-receivers)]
            [s (prompt:read! "λ" initial '(scheme 1 ())
                 '((multiline? . #t) (profile scheme 1 ()) (editing-policy scheme-input 1) (mode . "scheme-prompt")))])
       (unless s (echo:set-text! "Quit"))
       (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
         (unless (and (memq window (head:windows)) (eq? buffer (head:window-buffer window)))
           (raise (condition (kernel:make-refusal) (make-message-condition "The command's origin is no longer displayed"))))
+        (validate-receivers! s receivers)
         ;; Keep the prompt on screen while its expression evaluates --
         ;; forgiven parentheses included -- with the cursor parked at
         ;; its end, drawn as the evaluation-in-progress underline.
@@ -1341,13 +1408,15 @@
                [text (caar results)])
           (values (list->vector (string:lines text)) (map (lambda (r) (input-position text (cdr r))) results)))))
     (completion:register! 'scheme 1
-      (lambda (configuration origin) (symbol-completer (lambda (sym) #t) #t (origin-window origin))))
+      (lambda (configuration origin) (symbol-completer (lambda (sym) #t) #t (origin-window origin)
+                                       (cond [(assq 'receivers origin) => cdr] [else '()]))))
     (prompt:register-profile! 'scheme 1
       (lambda (configuration origin)
         (list (cons 'history (log:history 'eval:report! car)) (cons 'normalize normalize-input)
           (cons 'ghost (lambda (text caret) (input-ghost (substring text 0 caret))))
           (cons 'transform reindent-scheme-input) (cons 'edge mx-edge-motion) (cons 'inspect describe:input!)
-          (cons 'alternate (symbol-completer kernel:editor-symbol? #f (origin-window origin))))))
+          (cons 'alternate (symbol-completer kernel:editor-symbol? #f (origin-window origin)
+                             (cond [(assq 'receivers origin) => cdr] [else '()]))))))
     (doc:register!
       '(((eval:run!) (("procedure" . "(eval:run!)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f

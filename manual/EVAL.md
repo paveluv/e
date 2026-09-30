@@ -35,6 +35,15 @@ While the prompt is active:
   including symbols in nested expressions. The first press normalizes the input;
   the second shows matches and cycles any alternative normalizations.
 - `Shift-TAB` completes only symbols published by e and its modules.
+- Widget commands participate when their declared receiver is available in
+  the widget where M-x started. For example, in Finder, complete
+  `finder:toggle-hidden!`, then press Tab at its empty argument to insert
+  the explicit `(model …)` receiver. Table sorting and terminal capture work
+  the same way. Multiple receivers require a choice; unrelated apps are
+  absent from discovery. Explicit calls remain ordinary Scheme.
+- Receiver assistance does not replace an existing variable or expression.
+  Nested calls use the same captured context, and a retired receiver refuses
+  execution rather than silently selecting another widget.
 - e-specific completion candidates use the editor highlight.
 - Unknown or partial symbols are italic, standard Scheme symbols are plain,
   and e-specific symbols use the editor highlight.

@@ -309,6 +309,23 @@
                                       [b (window:show-widget! (head:current-window) host)])
                                  (head:show-buffer! b) host)))])
     (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
+    (test:check 'contextual-finder-and-table-completion-need-no-wire-reads
+      (head-read a
+        `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
+                [receivers (widget:receivers (widget:descendant table 'filter 'entry))]
+                [provider ((completion:provider '(scheme 1 ())) '() (list (cons 'receivers receivers)))]
+                [io (lambda () (call-with-input-file "/proc/self/io"
+                                 (lambda (p) (let loop () (let* ([key (read p)] [value (read p)])
+                                                            (if (eq? key 'wchar:) value (loop)))))))])
+           (let ([before (io)])
+             (list (map (lambda (text)
+                          (let-values ([(from to insertions candidates)
+                                        ((completion:source-lookup provider) text (string-length text))])
+                            (if (procedure? insertions) (insertions) insertions)))
+                     '("(finder:toggle-hidden! " "(table:sort-by! "))
+               (- (io) before)))))
+      (list (list (list (format "(model ~a)" (cadr (head-read a `(widget:descendant ',host 'app)))))
+              (list (format "(model ~a)" (cadr (head-read a `(widget:descendant ',host 'app 'table)))))) 0))
     (head-send! a "\t")
     ;; Completion writes the entry before its new query rows are admitted.
     (head-wait 'finder-widget-wire-completed a

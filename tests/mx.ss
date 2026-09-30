@@ -16,7 +16,7 @@
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
              (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
              (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
-             (prefix (state model) model:) (prefix (head table) table:)
+             (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:))
@@ -419,5 +419,58 @@
      (check 'a-needle-string-is-not-settled
        (settled "(search:replace! \"alpha")
        (let ([out "(search:replace! \"alpha"]) (cons out (string-length out))))
+
+     ;; Context is finite declared structure. A sibling only participates
+     ;; when its parent exposes it; ambiguity never chooses by numeric ID.
+     (eval:init!)
+     (eval '(edoc:elibrary (receiver-probe)
+              (export change! optional!) (import (chezscheme))
+              (edoc "A receiver command." (id model) (receiver id (view receiver-leaf)))
+              (define (change! id) id)
+              (edoc "An optional receiver." (id model) (receiver id (view receiver-leaf)))
+              (define optional! (case-lambda [() #f] [(id) id]))))
+     (eval '(import (prefix (receiver-probe) receiver-probe:)))
+     (let* ([a (view:create! head:ui-actor #f 'receiver-leaf 1 '((name . "First")) '())]
+            [b (view:create! head:ui-actor #f 'receiver-leaf 1 '((name . "Second")) '())]
+            [hidden (view:create! head:ui-actor #f 'receiver-leaf 1 '() '())]
+            [root (view:create! head:ui-actor #f 'receiver-parent 1 '() '())])
+       (widget:register! 'receiver-leaf 1 (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!))))))
+       (widget:register! 'receiver-parent 1 '((receivers (Other second))))
+       (view:arrange! head:ui-actor
+         (list (list root 0 (list (list 'first a 'fit) (list 'second b 'fit) (list 'hidden hidden 'fit)) '())) '())
+       (widget:mount! root 'receiver-test)
+       (let* ([captured (widget:receivers a)] [single (filter (lambda (r) (equal? (car r) a)) captured)]
+              [factory (completion:provider '(scheme 1 ()))]
+              [source (factory '() (list (cons 'receivers captured)))]
+              [one (factory '() (list (cons 'receivers single)))]
+              [none (factory '() '())])
+         (define (lookup source text)
+           (let-values ([(from to extensions candidates) ((completion:source-lookup source) text (string-length text))])
+             (list from to (if (procedure? extensions) (extensions) extensions)
+               (map completion:candidate-value candidates))))
+         (check 'receiver-capture-is-bounded-and-distinct
+           (list (map car captured) (map edoc:signature-receiver (edoc:edoc-of (eval 'receiver-probe:optional!))))
+           (list (list a root b) '(#f (id (view receiver-leaf)))))
+         (check 'receiver-registration-checks-the-declared-contract
+           (test:raises? (lambda () (widget:register! 'wrong-receiver 1
+                                      (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!)))))))) #t)
+         (let* ([text "(receiver-probe:change! "] [lit (format "(model ~a)" (cadr a))])
+           (check 'receiver-arguments-insert-only-a-sole-explicit-literal
+             (list (caddr (lookup one text)) (caddr (lookup source text))
+               (list-ref (lookup source text) 3))
+             (list (list lit) '("") (list lit (format "(model ~a)" (cadr b))))))
+         (check 'contextual-symbols-and-nested-calls-use-the-same-origin
+           (map (lambda (src) (list-ref (lookup src "(list (receiver-probe:ch") 3)) (list one none))
+           '(("receiver-probe:change!") ()))
+         (check 'existing-receiver-expressions-do-not-get-replaced
+           (map (lambda (text) (let ([r (lookup one text)])
+                                 (and (= (car r) (string-length text))
+                                   (not (string=? ((completion:source-kind one) text (string-length text)) "receiver")))))
+             '("(receiver-probe:change! existing " "(receiver-probe:change! (list " "'(receiver-probe:change! "))
+           '(#t #t #t))
+         (widget:unmount! root)
+         (check 'captured-receiver-retirement-removes-it-from-discovery
+           (list (widget:receiver-live? (car single))
+             (list-ref (lookup one "(receiver-probe:ch") 3)) '(#f ()))))
 
      (test:finish! 'mx)))

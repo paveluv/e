@@ -220,6 +220,21 @@
              (signature-kind (car (edoc-of signature-kind))) (signature-kind (car (edoc-of edoc-types))))
        '((syntax syntax) procedure "(foundation edoc)" accessor value))
 
+     (check 'receiver-annotations-check-real-formals-during-expansion
+       (map rejection
+         '((elibrary (bad-receiver-name) (export f) (import (rnrs))
+             (edoc "x" (id model) (receiver missing (view finder))) (define (f id) id))
+           (elibrary (bad-receiver-rest) (export f) (import (rnrs))
+             (edoc "x" (ids (list-of model)) (receiver ids (view finder))) (define (f . ids) ids))
+           (elibrary (bad-receiver-type) (export f) (import (rnrs))
+             (edoc "x" (id integer) (receiver id (view finder))) (define (f id) id))
+           (elibrary (bad-receiver-kind) (export f) (import (rnrs))
+             (edoc "x" (id model) (receiver id (view 1))) (define (f id) id))
+           (elibrary (bad-receiver-duplicate) (export f) (import (rnrs))
+             (edoc "x" (id model) (receiver id (view finder)) (receiver id (view finder))) (define (f id) id))))
+       '("a receiver names a non-rest formal" "a receiver names a non-rest formal"
+         "a receiver formal has type model" "expected (receiver formal (view-or-model kind))" "one receiver clause at most"))
+
      ;; The command layer's definitions read back, and every documented
      ;; editor procedure's clauses match its formals.
      (define (formal-list formals)

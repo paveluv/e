@@ -805,6 +805,28 @@ can list first-key exceptions in `yield`; every suffix of a yielded chord
 keeps that first key's route. Bind named actions through
 `keymap:call` and use `widget:target` to obtain the explicit receiver.
 
+Public operations can declare a contextual receiver in their edoc:
+
+```scheme
+(edoc "Toggle hidden entries." (id model "Finder view")
+      (receiver id (view finder)))
+(define (toggle-hidden! id) ...)
+```
+
+The compiler checks that `id` is a non-rest formal with type `model`.
+Widget action registration checks that its kind matches the annotation.
+An operation shared by multiple kinds can declare `(view table list)`.
+This metadata affects discovery and argument assistance, not evaluation.
+M-x inserts an explicit model literal; scripts still supply ordinary values.
+
+M-x captures the focused view and its ancestors. A widget can additionally
+expose finite child paths with a definition field such as
+`(receivers (table table))`: the first symbol labels the receiver, and the
+remaining symbols name its child path. Unlisted siblings and private children
+are not searched. `widget:receivers` reads this structure from local mirrors;
+`widget:receiver-live?` checks a captured identity and ownership generation.
+Custom prompt hosts pass these rows in the origin's `receivers` field.
+
 `dispatch:input!` accepts a root and normalized `(key token text-fallback)`
 or `(text string source)` input. Optional trailing contexts belong to the
 outer host. Paste uses the text path alone. Chords advance one event at a

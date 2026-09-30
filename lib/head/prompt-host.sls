@@ -51,6 +51,7 @@
            [s (and (visible? current) (eq? w (head:popup)) current)]
            [parent (and s (car (car (reverse (surface-prompts s)))))]
            [origin (list (cons 'window (head:window-index w)) (cons 'view root) (cons 'generation (and d (view:generation d)))
+                     (cons 'receivers (if d (widget:receivers (or (view:focus d) root)) '()))
                      (cons 'focus (and d (view:focus d))) (cons 'source (and d (view:source d))))])
       (values parent origin
         (lambda (request receiver)

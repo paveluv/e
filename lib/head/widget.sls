@@ -3,11 +3,12 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown status target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
           (prefix (foundation datum) datum:)
+          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
@@ -153,12 +154,49 @@
                         [(capture-contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
+                        [(receivers)
+                         (and (list? (cdr p))
+                           (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
+                                                  (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
                         [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy? status) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
+    (for-each
+      (lambda (action)
+        (for-each (lambda (sig)
+                    (let ([r (edoc:signature-receiver sig)])
+                      (when (and r (not (and (eq? (caadr r) 'view) (memq kind (cdadr r)))))
+                        (error 'register! "action receiver contract differs from its widget" kind (car action) r))))
+          (or (edoc:edoc-of (cdr action)) '())))
+      (field (cons #f definition) 'actions '()))
     (kernel:registry-add! definitions (cons (list kind schema) (map (lambda (p) (cons (car p) (cdr p))) definition))))
+
+  (edoc "Capture explicit receivers from a mounted view's ancestry and declared child paths. Each row is (id kind schema generation owner label). Only local mirrors are read; private descendants are not searched."
+        (id model "focused view") (returns list) (effects internal))
+  (define (receivers id)
+    (define (row id label)
+      (let ([d (read-view id)])
+        (and d (definition d)
+          (list id (view:kind d) (view:schema d) (view:generation d) (view:owner d)
+            (or label (option d 'name #f) (symbol->string (view:kind d)))))))
+    (mounted id)
+    (fold-left
+      (lambda (out at)
+        (let* ([d (read-view at)]
+               [extra (map (lambda (p) (row (apply descendant at (cdr p)) (symbol->string (car p))))
+                        (field (definition d) 'receivers '()))])
+          (fold-left (lambda (out r) (if (or (not r) (assoc (car r) out)) out (append out (list r))))
+            out (cons (row at #f) extra)))) '() (reverse (path id))))
+
+  (edoc "Whether a captured receiver still has its exact kind, schema, ownership generation and owner. No remote reads or implicit retargeting."
+        (receiver list "row from receivers") (returns boolean) (effects internal))
+  (define (receiver-live? receiver)
+    (let* ([id (car receiver)] [d (and (hashtable-contains? nodes id) (read-view id))])
+      (and d (definition d)
+        (equal? (list (view:kind d) (view:schema d) (view:generation d) (view:owner d))
+          (list-head (cdr receiver) 4)) #t)))
 
   (define (source-id id d)
     (and d (view:source d)
