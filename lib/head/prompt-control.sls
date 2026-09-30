@@ -1,7 +1,7 @@
 ;; Prompt controls own no keyboard reader or window. The host places the tree.
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt-control)
-  (export accept! cancel! choose! complete! create! drain! init!)
+  (export accept! cancel! choose! complete! create! drain! init! read! register-host!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:)
           (prefix (head completion) completion:) (prefix (head completion-layout) completion-layout:)
@@ -16,8 +16,16 @@
   (define (get r key) (cdr (assq key r)))
   (define live (make-hashtable equal-hash equal?))
   (define hovered (make-hashtable equal-hash equal?))
+  (define hosts (kernel:make-registry))
+  (define tickets (make-hashtable equal-hash equal?))
+  (define host-changes
+    (kernel:registry-observe! hosts
+      (lambda (removed added)
+        (let-values ([(ids entries) (hashtable-entries tickets)])
+          (vector-for-each
+            (lambda (entry) (when (memq (car entry) removed) (suspension:cancel! (cdr entry)))) entries)))))
   (define pending '())
-  (define-record-type runtime (fields request generation factory source completion
+  (define-record-type runtime (fields request (mutable generation) factory source completion
                                 (mutable signature) (mutable delivered?) (mutable closed?)))
   (define (queue! thunk)
     (when (null? pending) (head:run-on-main! drain!))
@@ -73,6 +81,10 @@
                         (when (and recipe (not factory)) (error 'prompt "completion provider is unavailable" recipe))
                         (hashtable-set! live id r) r)))])
           (when r
+            ;; Re-arranging a still-mounted composition renews its lease. An
+            ;; editing controller follows that lease; queued outcomes retain
+            ;; the generation captured when they became terminal.
+            (when (eq? status 'editing) (runtime-generation-set! r generation))
             (unless (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
               (release! id))
             (when (and (runtime-completion r) (eq? status 'editing) (not (runtime-closed? r)))
@@ -80,6 +92,7 @@
           ;; The base identifies the controller, independent of mount order.
           ;; Mounting a terminal outcome never replays it, including reload.
           (unless (or (not r) (runtime-delivered? r) (runtime-closed? r) (eq? status 'editing))
+            (runtime-generation-set! r generation)
             (runtime-delivered?-set! r #t)
             (when (runtime-completion r) (completion-state:finish! (runtime-completion r) (eq? status 'accepted)))
             (let ([outcome (if (eq? status 'accepted) (get value 'outcome) (get value 'origin))])
@@ -265,6 +278,57 @@
     (let ([note (and (projection-snapshot data) (list-ref (projection-snapshot data) 4))])
       (if (and note (not (string=? note ""))) note (get (view:options d) 'text))))
 
+  (edoc "Register an outer host for linear prompt callers. Preparing captures (values parent-request origin attach); attach receives a request and root view and returns its cleanup thunk. The host owns placement and focus, never the prompt's input loop."
+        (prepare procedure "capture origin and an attachment capability"))
+  (define (register-host! prepare)
+    (unless (procedure? prepare) (error 'register-host! "expected a host preparation procedure"))
+    (kernel:registry-add! hosts prepare))
+
+  (define (accepted! id outcome)
+    (let ([entry (hashtable-ref tickets id #f)])
+      (when entry (suspension:resolve! (cdr entry) (string:join (vector->list (cadr outcome)) "\n")))))
+  (define (cancelled! id origin) (abandon! id))
+  (define (abandon! id)
+    (let ([entry (hashtable-ref tickets id #f)])
+      (when entry (suspension:cancel! (cdr entry)))))
+
+  (edoc "Read authored text through the installed host on the ordinary pump. This linear adapter parks its command, returning text or false after cancellation. Embedded applications bind named targets directly instead."
+        (label string "input label") (initial string "initial authored text")
+        (provider datum "completion recipe or false") (options list "prompt control options except label")
+        (returns (or string #f)) (prompts))
+  (define (read! label initial provider options)
+    (let ([prepare (kernel:registry-find hosts (lambda (entry) #t))])
+      (unless prepare (error 'read! "no prompt host is installed"))
+      (let-values ([(parent origin attach) (prepare)])
+        (suspension:wait!
+          (lambda (ticket)
+            (let ([request #f] [receiver #f] [detach #f])
+              (define (cleanup!)
+                (when receiver (hashtable-delete! tickets receiver))
+                (dynamic-wind void
+                  (lambda () (when detach (let ([close detach]) (set! detach #f) (close))))
+                  (lambda () (when request (prompt-request:close! head:ui-actor request)))))
+              (guard (ex [else (cleanup!) (raise ex)])
+                (set! request (prompt-request:create! head:ui-actor parent #f initial origin provider))
+                (set! receiver (view:create! head:ui-actor request 'prompt-continuation 1 '((modal . #t)) '() request))
+                (hashtable-set! tickets receiver (cons prepare ticket))
+                (let ([control (create! request (cons (cons 'label label) options)
+                                 (list (list 'accepted receiver 'accepted '()) (list 'cancelled receiver 'cancelled '())))])
+                  (let-values ([(status rows)
+                                (view:arrange! head:ui-actor
+                                  (list (list receiver 0 (list (list 'prompt control '(grow 1))) '((modal . #t)))) '())])
+                    (unless (eq? status 'applied) (error 'read! "cannot compose prompt receiver" status))))
+                (let ([close (attach request receiver)])
+                  (unless (procedure? close) (error 'read! "host must return a cleanup thunk"))
+                  (set! detach close))
+                (let* ([control (widget:descendant receiver 'prompt)]
+                       [entry (widget:descendant control 'input 'entry)]
+                       [position (input-position initial (string-length initial))])
+                  (if (eq? (view:kind (interaction:snapshot entry)) 'entry)
+                    (entry:select! entry (cdr position) (cdr position))
+                    (editor:select! entry position position)))
+                cleanup!)))))))
+
   (edoc "Accept this prompt's exact authored draft revision once. A changed or closed request refuses; its named accepted target runs later on the ordinary pump with (revision lines origin)."
         (id model "prompt view") (returns symbol))
   (define (accept! id)
@@ -283,6 +347,9 @@
 
   (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings.")
   (define (init!)
+    (widget:register! 'prompt-continuation 1
+      (append (layout:container 'y)
+        (list (cons 'release abandon!) (cons 'actions (list (cons 'accepted accepted!) (cons 'cancelled cancelled!))))))
     (widget:register! 'prompt-choices 1
       (list (cons 'prepare completion-data) (cons 'viewport choice-page) (cons 'render choice-render)
         (cons 'decorate choice-decorate) (cons 'event choice-event!) (cons 'pointer-bindings choice-bindings)

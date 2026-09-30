@@ -107,4 +107,33 @@
         (check (list 'prompt-host-lifetime-fences-queued-delivery reason)
           (list (model:snapshot request) outcomes) (list #f before))
         (widget:unmount! root) (widget:unmount! receiver) (prompt-control:drain!)
-        (view:retire! who receiver (field (model:snapshot receiver) 'revision)))) '(unmount reload)))
+        (view:retire! who receiver (field (model:snapshot receiver) 'revision)))) '(unmount reload))
+  (let ([answers '()] [original (head:current-window)] [buffer (head:current-buffer)] [requests '()])
+    (define (start! text)
+      (suspension:call! who void
+        (lambda () (set! answers (cons (prompt-control:read! "Input:" text #f '()) answers))))
+      (widget:pump!)
+      (let* ([root (head:window-widget (head:popup))]
+             [receiver (cadr (car (reverse (view:children (interaction:snapshot root)))))]
+             [request (view:source (interaction:snapshot receiver))])
+        (set! requests (cons request requests))
+        (widget:descendant receiver 'prompt)))
+    (define (settle!)
+      (widget:pump!) (prompt-control:drain!)
+      (suspension:drain! raise) (prompt-control:drain!))
+    (parameterize ([kernel:registering-module 'prompt-host-fixture]) (prompt-host:init!))
+    (let* ([outer (start! "outer")] [inner (start! "inner")])
+      (check 'linear-prompts-park-and-capture-parent
+        (list answers (field (field (model:snapshot (car requests)) 'value) 'parent)) (list '() (cadr requests)))
+      (prompt-control:cancel! inner) (settle!)
+      (check 'nested-prompt-cancellation-keeps-outer-mounted
+        (list answers (field (field (model:snapshot (cadr requests)) 'value) 'status)) '((#f) editing))
+      (prompt-control:accept! outer) (settle!)
+      (check 'linear-prompt-restores-host-and-retires-request-tree
+        (list answers (eq? original (head:current-window)) (eq? buffer (head:current-buffer)) (map model:snapshot requests))
+        '(("outer" #f) #t #t (#f #f))))
+    (start! "reload")
+    (kernel:retract-module! 'prompt-host-fixture)
+    (settle!)
+    (check 'prompt-host-removal-cancels-suspended-caller
+      (list answers (model:snapshot (car requests))) '((#f "outer" #f) #f))))

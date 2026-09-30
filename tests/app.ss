@@ -36,6 +36,7 @@
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
              (prefix (head dispatch) dispatch:)
              (prefix (head prompt-control) prompt-control:) (prefix (service prompt-request) prompt-request:)
+             (prefix (head prompt-host) prompt-host:) (prefix (head suspension) suspension:)
              (prefix (head layout) layout:) (prefix (head completion) completion:)
              (prefix (apps paren) paren:)
              (prefix (apps terminal) terminal:)
