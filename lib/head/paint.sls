@@ -710,9 +710,11 @@
     (let* ([b (head:window-buffer w)] [current? (eq? w (head:current-window))]
            [gutter (head:window-line-number-width w)]
            [x (+ (head:window-xoff w) (if (eq? (head:window-scrollbar? w) 'left) 1 0))]
-           [width (head:window-content-width w)] [n (head:buffer-line-count b)])
+           [width (head:window-content-width w)] [n (head:buffer-line-count b)]
+           [top (head:window-top w)] [wrapped? (window-wrapped? w)]
+           [clean? (and wrapped? (clean-wrap? w))])
       (do ([y 0 (+ y 1)]) ((= y height))
-        (paint-scrollbar! w (+ start y) y height 0 (head:window-top w) n)
+        (paint-scrollbar! w (+ start y) y height 0 top n)
         (let ([row (editor:frame-row f y)])
           (paint-line-number! (+ start y) x gutter (and row (car row)) (and row (zero? (list-ref row 3))))
           (if (not row)
@@ -722,8 +724,8 @@
                    [styles (widget:frame-cell-styles f y)]
                    [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
                    [links (cell-ranges frame i (line-hyperlinks b i line frame))]
-                   [edge (if (window-wrapped? w)
-                           (and (not (clean-wrap? w)) (< bound (render:width frame i (string-length line))) 'wrap)
+                   [edge (if wrapped?
+                           (and (not clean?) (< bound (render:width frame i (string-length line))) 'wrap)
                            (and (> bound (+ left width)) 'trunc))])
               (paint! (+ start y) (+ x gutter) (list 'editor shown left bound styles marks links edge width)
                 (lambda () (display-editor-line! shown shown #f marks links left styles edge width bound left)))))))))

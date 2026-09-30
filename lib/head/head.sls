@@ -249,8 +249,9 @@
   (edoc "The editor view retained for this window's current shared document, or false for a legacy app. Reading it performs no acquisition."
         (w window "outer placement") (returns (or model #f)))
   (define (window-editor w)
-    (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
-      (and d (if (eq? (view:kind d) 'terminal) (cadr (assq 'text (view:children d))) id))))
+    (let* ([entry (assv (buffer-store-id (window-buffer w)) (window-document-views w))]
+           [d (and entry (interaction:snapshot (cdr entry)))])
+      (and d (if (eq? (view:kind d) 'terminal) (cadr (assq 'text (view:children d))) (cdr entry)))))
 
   (define (window-document-view w)
     (let ([entry (assv (buffer-store-id (window-buffer w)) (window-document-views w))])
@@ -304,10 +305,13 @@
   (define (set-editor-state-reader! reader) (set! editor-state-reader reader))
 
   (define (window-editor-state w)
-    (let* ([id (window-editor w)] [d (and id (interaction:snapshot id))])
+    (let* ([entry (assv (buffer-store-id (window-buffer w)) (window-document-views w))]
+           [parent (and entry (interaction:snapshot (cdr entry)))]
+           [terminal? (and parent (eq? (view:kind parent) 'terminal))]
+           [id (and parent (if terminal? (cadr (assq 'text (view:children parent))) (cdr entry)))]
+           [d (if terminal? (interaction:snapshot id) parent)])
       (and d
-        (or (let* ([root (window-document-view w)] [parent (and root (interaction:snapshot root))])
-              (and parent (eq? (view:kind parent) 'terminal) (cadr (terminal-state:state parent)) (editor-state-reader id)))
+        (or (and terminal? (cadr (terminal-state:state parent)) (editor-state-reader id))
           (let* ([b (window-buffer w)] [state (editor-state:state d)]
                  [points (editor-state:points (buffer-source b) (content-revision b) d)])
             (append (or points (map (lambda (p) (clamp-text-position (buffer-text b) p)) (list-head state 3)))

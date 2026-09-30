@@ -24,7 +24,7 @@
   (define definitions (kernel:make-registry car))
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
-  (define-record-type mount (fields id slot (mutable subscription) (mutable ids)))
+  (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable bundle)))
 
   (edoc "The opaque host slot supplied when this tree was mounted."
         (id model "mounted view or descendant") (returns any) (effects internal))
@@ -333,7 +333,10 @@
   (define (inputs! id)
     (let ([cache (input-reads)])
       (if (and cache (hashtable-contains? cache id)) (hashtable-ref cache id #f)
-        (let* ([bundle (connection:snapshot (list id))] [rows (caddr bundle)])
+        ;; Acquire one coherent dependency bundle per mount invalidation on
+        ;; the service path. Provisional view state and mirrored text below
+        ;; remain live; painting does not recapture/copy the whole graph.
+        (let* ([bundle (mount-bundle (node-root (mounted id)))] [rows (caddr bundle)])
           (define (get id)
             (let* ([row (assoc id rows)] [r (and row (cadr row) (caddr row))]
                    [d (and r (eq? (field r 'kind #f) 'widget-view) (interaction:snapshot id))])
@@ -396,6 +399,7 @@
               (hashtable-set! notifications tokens refresh))))
         (head:wake-main!))
       (define (changed)
+        (mount-bundle-set! mount (connection:snapshot endpoints))
         (interaction:reconcile!
           (filter values
             (map (lambda (row)
@@ -404,7 +408,7 @@
                        ;; A temporarily unavailable port contract does not
                        ;; revoke the underlying view's ownership.
                        (cons (car row) (and r (field r 'value #f))))))
-              (caddr (connection:snapshot endpoints)))))
+              (caddr (mount-bundle mount)))))
         (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
         (head:wake-main!))
       (define (acquire)
@@ -423,7 +427,8 @@
               (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
           (for-each (lambda (p)
                       (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
-          (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (connection:snapshot endpoints)))))
+          (mount-bundle-set! mount (connection:snapshot endpoints))
+          (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (mount-bundle mount)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
                        (when (cadr tokens) (connection:unsubscribe! (cadr tokens)))
                        (when (caddr tokens) ((caddr tokens))) (raise ex)])
@@ -459,7 +464,7 @@
            (lambda ()
              (let-values ([(status d) (interaction:claim! head:ui-actor id)])
                (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
-               (let* ([m (make-mount (datum:copy id) slot #f '())] [tree (rows id)])
+               (let* ([m (make-mount (datum:copy id) slot #f '() #f)] [tree (rows id)])
                  (guard (ex [else
                              (when (mount-subscription m) (unsubscribe! (mount-subscription m)))
                              (when d (interaction:release! head:ui-actor id (view:generation d)))

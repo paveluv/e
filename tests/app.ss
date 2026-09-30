@@ -746,7 +746,13 @@
              (cadr (connection:read consumer 'choice)))
            '("next" "first" "first"))
          (interaction:flush!)
-         (check 'widget-published-input-is-visible-at-base (cadr (connection:read consumer 'choice)) "next"))
+         (check 'widget-published-input-is-visible-at-base (cadr (connection:read consumer 'choice)) "next")
+         (interaction:bind! head:ui-actor root (list (list consumer 'choice (list producer 'choice) #f)))
+         (check 'widget-dependency-bundle-refreshes-on-rewiring-without-changing-shown-input
+           (list (widget:act! consumer 'inspect)
+             (parameterize ([widget:event-frame shown]) (widget:act! consumer 'inspect))
+             (string:prefix? "default" (car (widget:frame-lines (cadr (widget:frame-children (widget:prepare! root 30 2)))))))
+           '("default" "first" #t)))
        (widget:unmount! root) (widget:invalidate!))
 
      (model:register-kind! 'widget-view 3 string?)

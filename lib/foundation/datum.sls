@@ -16,13 +16,38 @@
           [(or (null? value) (symbol? value) (number? value) (boolean? value) (char? value)) value]
           [else (copy-leaf value)]))
 
+  ;; Most UI snapshots are small trees. A bounded preflight proves those
+  ;; acyclic without allocating a descent table. Count leaves too, so a wide
+  ;; vector cannot turn the preflight into an unbounded second traversal.
+  ;; Cycles or larger values fall through to the general linear-time walker.
+  (define (small-tree-budget value budget)
+    (and (> budget 0)
+      (let ([budget (- budget 1)])
+        (cond [(pair? value)
+               (let ([left (small-tree-budget (car value) budget)])
+                 (and left (small-tree-budget (cdr value) left)))]
+          [(vector? value)
+           (let loop ([i 0] [budget budget])
+             (if (= i (vector-length value)) budget
+               (let ([next (small-tree-budget (vector-ref value i) budget)])
+                 (and next (loop (+ i 1) next)))))]
+          [else budget]))))
+  (define (copy-tree value copy-leaf)
+    (cond [(pair? value) (cons (copy-tree (car value) copy-leaf) (copy-tree (cdr value) copy-leaf))]
+      [(vector? value) (vector-map (lambda (v) (copy-tree v copy-leaf)) value)]
+      [else (copy-atom value copy-leaf)]))
+
   (edoc "A deep copy of plain protocol data, sharing nothing mutable: cycles and runtime objects raise an invalid condition, unless a leaf copier preserves a domain's opaque leaves."
         (value datum "the data")
         (copy-leaf procedure "(copy-leaf leaf) giving a leaf's copy; omitted, an opaque leaf is invalid")
         (returns datum))
   (define copy
     (case-lambda
-      [(value) (copy value (lambda (leaf) (invalid! "expected plain protocol data" leaf)))]
+      [(value)
+       (let ([copy-leaf (lambda (leaf) (invalid! "expected plain protocol data" leaf))])
+         (if (and (or (pair? value) (vector? value)) (small-tree-budget value 128))
+           (copy-tree value copy-leaf)
+           (copy value copy-leaf)))]
       [(value copy-leaf)
        ;; Sharing is allowed, cycles and runtime objects are not. Readers own
        ;; every mutable part; no retained data changes without a seam operation.
@@ -32,6 +57,8 @@
        ;; a list spine is walked once, so long lists cost one step per pair.
        ;; Most property reads copy an atom. Only compound data can cycle;
        ;; keep the descent table and recursive walker off the leaf path.
+       ;; A custom leaf copier may mutate its input graph. Keep validation
+       ;; interleaved with copying for that case, without a preflight.
        (if (not (or (pair? value) (vector? value)))
            (copy-atom value copy-leaf)
          (let ([active (make-eq-hashtable)])
