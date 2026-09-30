@@ -192,7 +192,7 @@
                (equal? (mode:name-of (head:current-buffer)) "scheme"))
       (edit:format-buffer!)))
 
-  (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries.")
+  (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries." (public))
   (define (init!)
     (mode:register! "scheme"
                     '(".scm" ".ss" ".sls" ".sps" ".sc" ".e")

@@ -75,5 +75,5 @@
                       (head:wake-main!)))))))))
       (hashtable-values entries)))
 
-  (edoc "Integrate namespace catalogue adoption with the ordinary head service pump.")
+  (edoc "Integrate namespace catalogue adoption with the ordinary head service pump." (public))
   (define (init!) (head:add-pre-redraw-hook! pump!)))

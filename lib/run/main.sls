@@ -250,7 +250,7 @@
       (lambda () (head:run-on-main! resume-commands!)) thunk))
 
   (edoc "Run the head: the main loop against the base, as this head's actor."
-        (returns integer "the exit status"))
+        (returns integer "the exit status") (public))
   (define (run!)
     (kernel:pin-modules! '("main"))
     (parameterize ([exit-handler (exit-handler)] [abort-handler (abort-handler)] [reset-handler (reset-handler)])

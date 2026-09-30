@@ -43,7 +43,7 @@
 
   (edoc "A log record's data."
         (e list "the record")
-        (returns any))
+        (returns any) (public))
   (define (datum e)
     (cadddr e))
 

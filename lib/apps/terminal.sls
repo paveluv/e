@@ -31,7 +31,7 @@
     (and (terminal-facts buffer) (head:buffer-store-id buffer)))
 
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
-        (buffer* (list-of buffer) "the terminal buffer, at most one"))
+        (buffer* (list-of buffer) "the terminal buffer, at most one") (public))
   (define (terminal-close! . buffer*)
     (cond [(terminal-id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (head:current-buffer))) => vt:close!])
     (void))
@@ -61,7 +61,7 @@
         (head:show-buffer! buffer)
         (void))))
 
-  (edoc "Install the terminal app: its mode with the keys of its context, color scheme and clipboard capabilities, the C-c t binding and its describe entries.")
+  (edoc "Install the terminal app: its mode with the keys of its context, color scheme and clipboard capabilities, the C-c t binding and its describe entries." (public))
   (define (init!)
     (control:register! edit:copy-text!)
     (mode:register! "terminal" '() '() (lambda (line) #f))

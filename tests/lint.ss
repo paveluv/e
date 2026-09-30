@@ -16,6 +16,7 @@
 (include "tools/log-sources.ss")
 (include "tools/source.ss")
 (include "tools/code-health.ss")
+(include "tools/code-audit.ss")
 
 (eval
   '(begin
@@ -51,6 +52,36 @@
              (equal? (source-normalize '(lambda (x) (f x)) values)
                      (source-normalize '(lambda (x) (g x)) values)))
        '(#t #f))
+     ;; A pattern must reconstruct each input; repeated substitutions are
+     ;; one parameter, and its cost includes both actual arguments.
+     (let* ([a '(lambda (x) (if (small? x) (send! x "left") (send! x "left")))]
+            [b '(lambda (x) (if (small? x) (send! x "right") (send! x "right")))])
+       (let-values ([(pattern holes) (common-pattern a b)])
+         (define (instantiate x side)
+           (cond [(and (vector? x) (eq? (vector-ref x 0) 'hole))
+                  (list-ref (car (list-ref holes (vector-ref x 1))) side)]
+                 [(pair? x) (map (lambda (x) (instantiate x side)) x)] [else x]))
+         (test:check 'pattern-reconstruction-and-cost
+           (list (length holes) (instantiate pattern 0) (instantiate pattern 1)
+             (> (pattern-saving a b pattern holes) 0)
+             (< (pattern-saving '(f a) '(g b) '#(hole 0) '((((f a) (g b)) . 0))) 0))
+           (list 1 a b #t #t))))
+     (let* ([form '(library (apps probe) (export called external unused)
+                     (import (chezscheme))
+                     (define (called) #t)
+                     (edoc "External API." (public)) (define (external) #t)
+                     (define (unused) #t))]
+            [bridge '(library (apps bridge) (export (rename (called exported)))
+                       (import (only (apps probe) called)))]
+            [caller '(library (apps caller) (export run!)
+                       (import (prefix (rename (only (apps bridge) exported) (exported renamed)) p:))
+                       (define (run!) (p:renamed)))]
+            [sources (map (lambda (form path) (list path "" form (health-library form (lambda args (void)))))
+                       (list form bridge caller) '("lib/apps/probe.sls" "lib/apps/bridge.sls" "lib/apps/caller.sls"))])
+       (test:check 'api-inventory-respects-imports-public-and-evidence
+         (map (lambda (c) (list (vector-ref c 1) (vector-ref c 3)))
+           (audit-apis sources '((manual probe:unused))))
+         '((unused manual) (run! unreferenced))))
      ;; One table exercises attribution independently of the current tree.
      ;; Callbacks keep their owner; public spellings come from exports.
      (for-each

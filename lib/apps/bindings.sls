@@ -528,7 +528,7 @@
   (define (page-up!)
     (if (showing?) (page! -1) (show!)))
 
-  (edoc "Show the bindings listing in the current window as the read-only buffer <bindings>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there.")
+  (edoc "Show the bindings listing in the current window as the read-only buffer <bindings>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there." (public))
   (define (open!)
     (let ([b (head:current-buffer)])
       (ensure-view!)
@@ -554,7 +554,7 @@
     (set! over '())
     (drop-view!))
 
-  (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints.")
+  (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints." (public))
   (define (init!)
     (mode:register! "bindings" '() '() styles #f row-styles '(symbolic-spans))
     (head:register-resume! 'bindings (lambda (b positions) (values #f positions)) (lambda args #f))

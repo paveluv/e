@@ -248,7 +248,7 @@
         (head:goto! '(1 . 0))))
     (void))
 
-  (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings.")
+  (edoc "Register the git log and diff modes, reconnect surviving app buffers, and install the describe entries and bindings." (public))
   (define (init!)
     (mode:register! "git:log" '() '() log-styles)
     (mode:register! "git:diff" '() '() diff-styles)

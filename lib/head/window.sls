@@ -333,17 +333,17 @@
     (split! 'right #f))
 
   (edoc "Split the selected window into a stacked pair; the new window is above and shows the same buffer. The new window, or #f with a message when there is no room."
-        (returns (or window #f)))
+        (returns (or window #f)) (public))
   (define (split-above!)
     (split! 'below #t))
 
   (edoc "Split the selected window into a side-by-side pair; the new window is to the left and shows the same buffer. The new window, or #f with a message when there is no room."
-        (returns (or window #f)))
+        (returns (or window #f)) (public))
   (define (split-left!)
     (split! 'right #t))
 
   (edoc "Move the boundary of the nearest enclosing stacked split."
-        (delta integer "rows to give the selected side; negative takes them"))
+        (delta integer "rows to give the selected side; negative takes them") (public))
   (define (resize! delta)
     (let loop ([child (head:current-window)])
       (let ([parent (head:layout-parent (head:root) child)])
@@ -426,7 +426,7 @@
 
   (edoc "Register a tag for links between windows, with a description for its completion; target is registered already, the window a chooser in the linked window opens its pick in."
         (tag symbol "the tag")
-        (description string "what a link so tagged means"))
+        (description string "what a link so tagged means") (public))
   (define (register-link-tag! tag description)
     (unless (symbol? tag) (error 'register-link-tag! "expected a symbol" tag))
     (unless (string? description) (error 'register-link-tag! "expected a description" description))
@@ -448,12 +448,12 @@
 
   (edoc "Link the current window to another as its target, the window a chooser in this one opens its pick in: the files app opens a chosen file in every target and keeps its own window. The link as data."
         (w window "the target window")
-        (returns list))
+        (returns list) (public))
   (define (link-target! w) (link! w 'target))
 
   (edoc "Remove the current window's links to another, under one tag or under all of them."
         (w window "the window linked to")
-        (tag (list-of window-link-tag) "the tag, at most one; all tags without"))
+        (tag (list-of window-link-tag) "the tag, at most one; all tags without") (public))
   (define (unlink! w . tag)
     (let ([to (edoc:type-value 'window w)] [from (head:current-window)])
       (set! links (remp (lambda (l) (and (eq? (car l) from) (eq? (cadr l) to) (or (null? tag) (eq? (caddr l) (car tag)))))
@@ -469,7 +469,7 @@
       (map cadr (filter (lambda (l) (and (eq? (car l) from) (eq? (caddr l) tag))) (live-links)))))
 
   (edoc "Every live link between windows as data, (from to tag) by window indexes, in the order made."
-        (returns list))
+        (returns list) (public))
   (define (links-data) (map link-data (live-links)))
 
   ;;; The window's settings ---------------------------------------------------------
@@ -539,7 +539,7 @@
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the default window keys, including C-x ESC and C-x C-g to empty the pop-up.")
+  (edoc "Install the default window keys, including C-x ESC and C-x C-g to empty the pop-up." (public))
   (define (init!)
     (init-widget-host!)
     (for-each

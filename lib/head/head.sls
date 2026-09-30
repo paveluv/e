@@ -1643,7 +1643,7 @@
 
   (edoc "Set how a buffer's long lines wrap, a fact every head shares: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
         (b buffer "the buffer to set")
-        (setting (or (one-of default #t #f clean) pair) "the wrap setting"))
+        (setting (or (one-of default #t #f clean) pair) "the wrap setting") (public))
   (define (buffer-wrap-set! b setting)
     ;; clean wraps like #t but draws no continuation marks and lets the
     ;; text use the full width -- for formatted read-only presentations;

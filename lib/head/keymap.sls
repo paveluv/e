@@ -285,7 +285,7 @@
   (edoc "The action bound to a key spelling in a context, or #f."
         (context symbol "the keymap context")
         (spec key "the spelling")
-        (returns (or procedure symbol #f)))
+        (returns (or procedure symbol #f)) (public))
   (define key-binding
     (case-lambda
       [(spec)
@@ -520,7 +520,7 @@
 
   (edoc "Unbind a key spelling as a user override, in a context or in the global map when none is given."
         (context symbol "the keymap context")
-        (spec key "the spelling"))
+        (spec key "the spelling") (public))
   (define unbind-key!
     (case-lambda
       [(spec)
@@ -555,7 +555,7 @@
 
   (edoc "Command names with their current keys, M-n next-conflict! say, comma-separated; bare when unbound."
         (syms (list-of symbol) "the command names")
-        (returns string))
+        (returns string) (public))
   (define (command-hint syms)
     ;; "M-n next-conflict!, M-m keep-mine!" for a list of command
     ;; names: each with its current key, or bare when unbound.

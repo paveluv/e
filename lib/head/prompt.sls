@@ -510,7 +510,7 @@
       (let ([answer (read! question "" #f (list (cons 'choices allowed)))])
         (and answer (> (string-length answer) 0) (string-ref answer 0)))))
 
-  (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings.")
+  (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings." (public))
   (define (init!)
     (widget:register! 'prompt-continuation 1
       (append (layout:container 'y)

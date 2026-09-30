@@ -888,7 +888,7 @@
   (edoc "Install Markdown lines as the input of a local view buffer: read-only, in markdown-view mode and rendered now."
         (b buffer "a local buffer")
         (lines (list-of string) "the Markdown lines")
-        (returns buffer))
+        (returns buffer) (public))
   (define (markdown-view-install! b lines)
     ;; Literal input belongs to an existing local view.
     ;; Rendering can never replace a shared buffer's source text.
@@ -1094,7 +1094,7 @@
            (set! hint-shown #f)])))
     '())
 
-  (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings.")
+  (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings." (public))
   (define (init!)
     (register-md-faces!)
     (mode:register! "markdown-view" '() '() (lambda (line) #f)

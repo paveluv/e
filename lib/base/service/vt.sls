@@ -284,7 +284,7 @@
   (edoc "A standalone terminal emulator of a size, for tests and tools."
         (rows integer "the rows")
         (cols integer "the columns")
-        (returns (record terminal-state)))
+        (returns (record terminal-state)) (public))
   (define (make-terminal-emulator rows cols)
     (unless (and (integer? rows) (exact? rows) (> rows 0)
                  (integer? cols) (exact? cols) (> cols 0))
@@ -294,7 +294,7 @@
 
   (edoc "Feed program output to an emulator."
         (emulator (record terminal-state) "the emulator")
-        (text string "the output"))
+        (text string "the output") (public))
   (define (terminal-emulator-feed! emulator text)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-feed! "expected a terminal emulator" emulator))
@@ -308,7 +308,7 @@
   (edoc "Resize an emulator's screen."
         (emulator (record terminal-state) "the emulator")
         (rows integer "the rows")
-        (cols integer "the columns"))
+        (cols integer "the columns") (public))
   (define (terminal-emulator-resize! emulator rows cols)
     (unless (terminal-emulator? emulator)
       (error 'terminal-emulator-resize! "expected a terminal emulator" emulator))
@@ -337,7 +337,7 @@
 
   (edoc "An emulator's screen as a vector of row strings."
         (emulator (record terminal-state) "the emulator")
-        (returns vector))
+        (returns vector) (public))
   (define (terminal-emulator-screen emulator)
     (read-emulator emulator 'emulator-screen
       (lambda ()
@@ -347,7 +347,7 @@
 
   (edoc "An emulator's screen styles, a vector of per-cell style rows."
         (emulator (record terminal-state) "the emulator")
-        (returns vector))
+        (returns vector) (public))
   (define (terminal-emulator-styles emulator)
     (read-emulator emulator 'emulator-styles
       (lambda ()
@@ -357,7 +357,7 @@
 
   (edoc "The hyperlinks on an emulator's screen, a vector of per-cell link rows."
         (emulator (record terminal-state) "the emulator")
-        (returns vector))
+        (returns vector) (public))
   (define (terminal-emulator-hyperlinks emulator)
     (read-emulator emulator 'emulator-hyperlinks
       (lambda ()
@@ -367,7 +367,7 @@
 
   (edoc "An emulator's state as an alist: size, scrollback, wrapped rows, cursor, modes and more."
         (emulator (record terminal-state) "the emulator")
-        (returns list))
+        (returns list) (public))
   (define (terminal-emulator-state emulator)
     (read-emulator emulator 'emulator-state
       (lambda ()
@@ -415,7 +415,7 @@
   (edoc "The bytes a key event sends to the program, under the emulator's input modes."
         (emulator (record terminal-state) "the emulator")
         (event string "the key event")
-        (returns string))
+        (returns string) (public))
   (define (terminal-emulator-input emulator event)
     (unless (string? event)
       (error 'terminal-emulator-input "expected an event string" event))
@@ -423,13 +423,13 @@
 
   (edoc "The replies the emulator owes the program, oldest first."
         (emulator (record terminal-state) "the emulator")
-        (returns list))
+        (returns list) (public))
   (define (terminal-emulator-replies emulator)
     (read-emulator emulator 'emulator-replies (lambda () (reverse (terminal-state-replies emulator)))))
 
   (edoc "The control sequences the emulator saw and does not implement."
         (emulator (record terminal-state) "the emulator")
-        (returns list))
+        (returns list) (public))
   (define (terminal-emulator-unsupported emulator)
     (read-emulator emulator 'emulator-unsupported
       (lambda () (unsupported emulator))))
@@ -3070,7 +3070,7 @@
 
   (edoc "One owned (text rows cursor size facts) snapshot for the surface publisher, or #f during a synchronized update."
         (emulator (record terminal-state) "the emulator")
-        (returns (or list #f)))
+        (returns (or list #f)) (public))
   (define (terminal-emulator-frame emulator)
     ;; One owned (text rows cursor size facts) snapshot, ready for the
     ;; store/surface publisher. A child composing a synchronized frame gets
@@ -3284,7 +3284,7 @@
         (x integer "the column")
         (y integer "the row")
         (release? boolean "whether the button was released")
-        (returns string))
+        (returns string) (public))
   (define (terminal-emulator-mouse-input emulator code x y release?)
     (unless (and (integer? code) (integer? x) (> x 0)
                  (integer? y) (> y 0) (boolean? release?))

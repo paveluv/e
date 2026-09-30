@@ -562,3 +562,31 @@ bodies, allowing Bindings to show dispatch routes without running commands.
 Unregistered forwarding is a compiler error. See
 [Widgets](WIDGETS.md#forwarding-and-inspection), [Describe](DESCRIBE.md) and
 [Logging](LOG.md).
+## Keeping the code small
+
+`scheme --script tools/elinter.sps` rejects unreachable private definitions,
+including isolated recursive groups. It follows references, not just calls:
+passing a callback keeps it live. Exports, effectful initialization and opaque
+syntax are retained conservatively. The checker reads source; it never loads
+libraries, runs their macros or deletes code.
+
+Use `(public)` in an edoc for intentional user, configuration or extension
+APIs, such as `search:replace!`. An export without that label is still retained:
+absence of a repository caller is not proof that an external API is unused.
+`--apis` lists candidates for review with evidence from the manual,
+`config.template.e`, startup and tests. These references are evidence, not an
+automatic instruction to preserve or remove a definition. Aliases inherit
+their origin's documentation.
+
+`--clones` compares structural patterns, including blocks with different
+local names, literals or subexpressions. It derives a common template with
+parameter holes and estimates the syntax nodes saved after adding the helper,
+parameters, calls and substitutions. Repeated differences share a parameter;
+large substitutions and small wrappers usually do not justify extraction.
+Suggestions are ranked and overlapping smaller matches are suppressed.
+
+These are bounded, advisory searches, not proofs that an extraction is safe
+or exhaustive. Review lexical scope, mutation, evaluation order and base/head
+ownership before factoring a pattern. Do not move domain behavior into a
+shared layer merely to eliminate similar syntax. `--audit` runs both reports;
+the ordinary suite keeps the cheap mandatory checks.

@@ -683,7 +683,7 @@
         (let ([name (car (list-ref (columns s (visible-metadata v)) (car (list-ref spans index))))])
           (when (memq name (get (visible-metadata v) 'sortable '())) (toggle-sort! id name))))))
 
-  (edoc "Install list/table compositions, virtual rows, headings and their canonical commands.")
+  (edoc "Install list/table compositions, virtual rows, headings and their canonical commands." (public))
   (define (init!)
     (row:init!)
     (for-each (lambda (kind)

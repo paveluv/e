@@ -148,7 +148,7 @@
     (client:request 'buffers))
 
   (edoc "How many days the base keeps a trashed buffer before deleting it."
-        (returns integer))
+        (returns integer) (public))
   (define (trash-retention)
     (client:request 'trash-retention))
 
@@ -173,7 +173,7 @@
   (edoc "The id of the buffer visiting a file, or #f."
         (path file "the file")
         (returns (or integer #f))
-        (effects internal))
+        (effects internal) (public))
   (define (find-file path)
     (let ([id (client:request 'find-file path)])
       (when id (forget! id))
@@ -294,7 +294,7 @@
         (actor actor "the actor identity")
         (name string "the name")
         (lines (or list vector) "the lines read")
-        (facts list "the file facts"))
+        (facts list "the file facts") (public))
   (define (visit! actor name lines facts)
     (check-actor actor)
     (let ([result (client:request 'visit name lines facts)])
@@ -329,7 +329,7 @@
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (name string "the wanted name")
-        (returns string))
+        (returns string) (public))
   (define (rename! actor id name)
     (mutate actor id 'rename (list name)))
 
@@ -411,14 +411,14 @@
 
   (edoc "The actors with retained live actions in a buffer, newest first."
         (id integer "the buffer id")
-        (returns list))
+        (returns list) (public))
   (define (undo-authors id)
     (client:request 'undo-authors id))
 
   (edoc "A buffer's newest applied edits as plain data, newest first."
         (id integer "the buffer id")
         (count (list-of integer) "how many, at most one")
-        (returns list))
+        (returns list) (public))
   (define (history id . count)
     (apply client:request 'history id count))
 

@@ -412,6 +412,6 @@
                  (map (lambda (button) (list (list 'click button '()) (keymap:call click! x y button))) '(primary middle secondary))
                  (map (lambda (direction) (list (list 'wheel direction '()) (keymap:call scroll! x y direction))) '(up down left right))) '())])))))
 
-  (edoc "Install the mouse: the handler the head's pump applies to every parsed mouse report.")
+  (edoc "Install the mouse: the handler the head's pump applies to every parsed mouse report." (public))
   (define (init!)
     (head:set-mouse-handler! apply-mouse-event!)))

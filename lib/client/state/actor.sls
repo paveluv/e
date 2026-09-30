@@ -55,19 +55,19 @@
 
   (edoc "Whether an actor is registered."
         (actor actor "the actor identity")
-        (returns boolean))
+        (returns boolean) (public))
   (define (registered? actor)
     (and (describe actor) #t))
 
   (edoc "Detach this head by closing its connection; a head detaches only itself."
-        (actor actor "the actor identity"))
+        (actor actor "the actor identity") (public))
   (define (detach! actor)
     (unless (equal? actor (client:identity)) (error 'detach! "a head detaches itself"))
     (client:close!))
 
   (edoc "Watch the directory: (procedure batch) with (detached actor) and (attached actor) entries; the token unsubscribes."
         (procedure procedure "the observer")
-        (returns any))
+        (returns any) (public))
   (define (subscribe! procedure)
     (let ([old (map car (attached))])
       (client:subscribe! 'presence

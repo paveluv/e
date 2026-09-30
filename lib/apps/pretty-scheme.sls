@@ -305,25 +305,25 @@
     (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
     (void))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct." (public))
   (define (pretty-scheme-clusters!)
     ;; Toggle the current buffer between scheme and pretty-scheme-clusters:
     ;; construct-cluster parens.
     (toggle-mode! "pretty-scheme-clusters"))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose paren glyph pairs rotate with nesting depth.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose paren glyph pairs rotate with nesting depth." (public))
   (define (pretty-scheme-depth!)
     ;; Toggle pretty-scheme-depth: parens by nesting level, the pair rotation
     ;; cycling as the tree deepens.
     (toggle-mode! "pretty-scheme-depth"))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view that colors parens by nesting depth.")
+  (edoc "Toggle the current Scheme buffer between its normal mode and a view that colors parens by nesting depth." (public))
   (define (pretty-scheme-rainbow!)
     ;; Toggle pretty-scheme-rainbow: plain characters, colored by nesting
     ;; level through the rainbow.
     (toggle-mode! "pretty-scheme-rainbow"))
 
-  (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding.")
+  (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding." (public))
   (define (init!)
     (doc:register!
       '(((pretty-scheme:clusters!)

@@ -150,7 +150,7 @@
   (define (c-row-styles source row line)
     (c-row source row))
 
-  (edoc "Register the c mode for .c and .h files and tcc scripts.")
+  (edoc "Register the c mode for .c and .h files and tcc scripts." (public))
   (define (init!)
     (mode:register! "c" '(".c" ".h") '("tcc")
                     c-styles #f c-row-styles)))

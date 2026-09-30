@@ -219,7 +219,7 @@
                        (when (eq? (cadr event) 'press) (widget:capture! id) (set! dragging id)) #t))))])]
       [else #f]))
 
-  (edoc "Register the single-line entry definition and its ordinary keymap bindings.")
+  (edoc "Register the single-line entry definition and its ordinary keymap bindings." (public))
   (define (init!)
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)

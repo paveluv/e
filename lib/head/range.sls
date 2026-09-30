@@ -226,5 +226,5 @@
                        (if (zero? left) (answer at) (loop (+ at step) (- left 1) at (- budget 1)))]
                       [else (loop (+ at step) left last (- budget 1))]))]))))])))
 
-  (edoc "Integrate range adoption and demand with the existing head frame pump.")
+  (edoc "Integrate range adoption and demand with the existing head frame pump." (public))
   (define (init!) (head:add-pre-redraw-hook! pump!)))

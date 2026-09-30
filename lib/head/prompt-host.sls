@@ -76,5 +76,5 @@
               (window:focus! (head:popup))
               (lambda () (detach! s request))))))))
 
-  (edoc "Install the default prompt placement in the outer pop-up. Nested input shares one overlay tree; removing or replacing the host cancels its waiting callers.")
+  (edoc "Install the default prompt placement in the outer pop-up. Nested input shares one overlay tree; removing or replacing the host cancels its waiting callers." (public))
   (define (init!) (prompt:register-host! prepare)))

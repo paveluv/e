@@ -250,7 +250,7 @@
           [(and (pair? c) (eq? (car c) 'pending)) " [Completing…]"] [else ""])
         (if (> unreadable 0) (format " [~a unreadable]" unreadable) ""))))
 
-  (edoc "Install Finder's composition, path presentation and domain actions. Shared entries and tables own editing, selection, sorting, pointer interaction and wheel scrolling.")
+  (edoc "Install Finder's composition, path presentation and domain actions. Shared entries and tables own editing, selection, sorting, pointer interaction and wheel scrolling." (public))
   (define (init!)
     (widget:register! 'finder 1
       (append (layout:container 'y)

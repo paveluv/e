@@ -118,7 +118,7 @@
 
   (edoc "Query the base for live model ids, optionally restricted to one kind without reading payloads."
         (kinds (list-of symbol) "at most one kind")
-        (returns list) (effects remote))
+        (returns list) (effects remote) (public))
   (define (ids . kinds) (apply client:request 'model-ids kinds))
 
   (edoc "Query compact (reference kind) metadata for live models in allocation order, without requesting payloads. Retired models are absent; unknown kinds remain inspectable."
@@ -128,15 +128,15 @@
   (edoc "Create base-owned non-authored model state, attributed to this connection."
         (actor actor "attribution is supplied by the connection") (kind symbol "the registered kind") (schema integer "its version")
         (scope datum "the ownership scope") (persistence (one-of transient persistent) "restart policy")
-        (references list "resource references") (value datum "initial value") (returns model))
+        (references list "resource references") (value datum "initial value") (returns model) (public))
   (define (create! actor kind schema scope persistence references value)
     (client:request 'model-create kind schema scope persistence references value))
 
   (edoc "Commit a guarded model batch at the base; this connection supplies attribution."
-        (actor actor "attribution is supplied by the connection") (changes list "(id revision references value) entries"))
+        (actor actor "attribution is supplied by the connection") (changes list "(id revision references value) entries") (public))
   (define (commit! actor changes) (apply values (client:request 'model-commit changes)))
 
   (edoc "Retire non-authored model state at its revision; this connection supplies attribution."
-        (actor actor "attribution is supplied by the connection") (id model "the tagged model id") (revision integer "expected revision"))
+        (actor actor "attribution is supplied by the connection") (id model "the tagged model id") (revision integer "expected revision") (public))
   (define (retire! actor id revision) (apply values (client:request 'model-retire id revision)))
 )

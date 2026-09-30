@@ -371,7 +371,7 @@
 
   (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
         (needle needle "the text to count, within one line")
-        (returns integer))
+        (returns integer) (public))
   (define (count needle)
     (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
 
@@ -408,7 +408,7 @@
         (format "(search:replace! ~s ~s)" from to)
         (lambda () (edit:rewrite-regions! basis (occurrences r))))))
 
-  (edoc "Install search: its describe entry, the match highlighters, C-s with the search keymap, and M-% prefilling replace!.")
+  (edoc "Install search: its describe entry, the match highlighters, C-s with the search keymap, and M-% prefilling replace!." (public))
   (define (init!)
     (doc:register!
       '(((search:incremental!) (("procedure" . "(search:incremental!)")) "void"
