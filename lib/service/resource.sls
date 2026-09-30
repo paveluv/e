@@ -15,15 +15,15 @@
     (apply broker op args))
 
   (edoc "Read a declared resource's revision and value from its owning base."
-        (name symbol "recipe resource name") (returns list "(revision value)"))
+        (name symbol "recipe resource name") (returns list "(revision value)") (public))
   (define (read name) (request 'read (list name)))
 
   (edoc "Edit a declared text resource at an exact revision, under the active job's actor."
         (name symbol "recipe resource name") (revision integer "expected revision")
         (span list "(start-row start-column end-row end-column)") (lines (list-of string) "replacement text")
-        (returns datum))
+        (returns datum) (public))
   (define (edit! name revision span lines) (request 'edit (list name revision span lines)))
 
   (edoc "Replace a declared data model's value at an exact revision; references and ownership stay with the base."
-        (name symbol "recipe resource name") (revision integer "expected revision") (value datum "new value") (returns datum))
+        (name symbol "recipe resource name") (revision integer "expected revision") (value datum "new value") (returns datum) (public))
   (define (commit! name revision value) (request 'commit (list name revision value))))

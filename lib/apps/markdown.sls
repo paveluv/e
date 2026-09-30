@@ -226,6 +226,15 @@
                   (+ j 1) j)])
       (substring s j (string-length s))))
 
+  (define (trim-spaces text leading?)
+    ;; Scan once and slice once; table cells and fence tags use ASCII space,
+    ;; while assembled table rows preserve their leading alignment padding.
+    (let* ([n (string-length text)]
+           [from (if leading?
+                   (let loop ([i 0]) (if (and (< i n) (char=? (string-ref text i) #\space)) (loop (+ i 1)) i)) 0)]
+           [to (let loop ([i n]) (if (and (> i from) (char=? (string-ref text (- i 1)) #\space)) (loop (- i 1)) i))])
+      (if (and (= from 0) (= to n)) text (substring text from to))))
+
   (define (split-cells s)
     ;; The inner cells of a | row, trimmed.
     (let* ([i (indentation s)]
@@ -239,15 +248,7 @@
                                   #\|))
                      (substring body 0 (- (string-length body) 1)) body)])
       (map (lambda (cell)
-             (let trim-front ([s cell])
-               (cond [(and (> (string-length s) 0)
-                           (char=? (string-ref s 0) #\space))
-                      (trim-front (substring s 1 (string-length s)))]
-                     [(and (> (string-length s) 0)
-                           (char=? (string-ref s (- (string-length s) 1))
-                                   #\space))
-                      (trim-front (substring s 0 (- (string-length s) 1)))]
-                     [else s])))
+             (trim-spaces cell #t))
            (split-parameter-cells body))))
 
   (define (split-parameter-cells body)
@@ -486,21 +487,7 @@
                ;; a verbatim block between two rules: the fence's
                ;; language tag sits on the top one
                (let* ([i (indentation s)]
-                      [tag (let trim ([t (substring s (+ i 3)
-                                                    (string-length s))])
-                             (cond [(and (> (string-length t) 0)
-                                         (char=? (string-ref t 0) #\space))
-                                    (trim (substring t 1
-                                                     (string-length t)))]
-                                   [(and (> (string-length t) 0)
-                                         (char=? (string-ref
-                                                   t (- (string-length t)
-                                                        1))
-                                                 #\space))
-                                    (trim (substring t 0
-                                                     (- (string-length t)
-                                                        1)))]
-                                   [else t]))])
+                      [tag (trim-spaces (substring s (+ i 3) (string-length s)) #t)])
                  (let scan ([j (+ r 1)] [rows '()])
                    (if (or (>= j count) (fence? (line j)))
                        (let* ([body (reverse rows)]
@@ -680,16 +667,7 @@
                                                     (pad-to (car seg) w))
                                                   segments widths)]
                                       [joined
-                                       (let trim ([text (string:join
-                                                          parts "  ")])
-                                         (let ([n (string-length text)])
-                                           (if (and (> n 0)
-                                                    (char=? (string-ref
-                                                              text (- n 1))
-                                                            #\space))
-                                               (trim (substring
-                                                       text 0 (- n 1)))
-                                               text)))]
+                                       (trim-spaces (string:join parts "  ") #f)]
                                       [vec (make-vector
                                              (string-length joined)
                                              'plain)]
@@ -888,7 +866,7 @@
   (edoc "Install Markdown lines as the input of a local view buffer: read-only, in markdown-view mode and rendered now."
         (b buffer "a local buffer")
         (lines (list-of string) "the Markdown lines")
-        (returns buffer))
+        (returns buffer) (public))
   (define (markdown-view-install! b lines)
     ;; Literal input belongs to an existing local view.
     ;; Rendering can never replace a shared buffer's source text.
@@ -1094,7 +1072,7 @@
            (set! hint-shown #f)])))
     '())
 
-  (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings.")
+  (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings." (public))
   (define (init!)
     (register-md-faces!)
     (mode:register! "markdown-view" '() '() (lambda (line) #f)

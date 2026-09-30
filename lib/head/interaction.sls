@@ -96,7 +96,7 @@
       (when (eq? status 'applied) (adopt! rows)) (values status rows)))
 
   (edoc "Fence owned interaction before rewiring a composition and adopt its new input generations."
-        (actor actor "owner") (owner model "containing view") (changes list "connection input changes"))
+        (actor actor "owner") (owner model "containing view") (changes list "connection input changes") (public))
   (define (bind! actor owner changes)
     (flush!)
     (let* ([leases (filter values (map (lambda (c)

@@ -442,14 +442,14 @@
     (preview preview-conflict!))
 
   (edoc "The current buffer's pending reload conflicts as data, newest first, (revision actor labels region mine disk) each: the disabled entry's revision, actor and labels, the region the disk's side occupies, the entry's lines and the disk's."
-        (returns list))
+        (returns list) (public))
   (define (delta-log-conflicts)
     (store:conflicts (trunk-id (current-trunk 'delta-log:conflicts))))
 
   (edoc "Settle a reload conflict: disk keeps the disk's side and drops the pending mark, mine writes the entry's side over the disk's region, replacement lines write those; a write is one undoable edit."
         (conflict conflict "the conflict")
         (choice (or (one-of disk mine) (list-of string)) "disk, mine or the replacement lines")
-        (returns symbol "applied, refused or nothing"))
+        (returns symbol "applied, refused or nothing") (public))
   (define (delta-log-resolve! conflict choice)
     (let* ([trunk (current-trunk 'delta-log:resolve!)] [revision (edoc:type-value 'conflict conflict)])
       (let-values ([(status detail) (head:store-resolve! trunk revision choice)])
@@ -497,7 +497,7 @@
 
   (edoc "Settle every pending reload conflict of the current buffer, or the browser's current row's buffer: as picked by default, or all mine or disk when given. The target buffer is the same with or without a choice."
         (choice (list-of (one-of disk mine)) "disk or mine for them all, at most one")
-        (returns integer "how many were settled"))
+        (returns integer "how many were settled") (public))
   (define (delta-log-resolve-all! . choice)
     (unless (or (null? choice) (and (null? (cdr choice)) (memq (car choice) '(disk mine))))
       (error 'delta-log:resolve-all! "expected at most one choice, mine or disk" choice))
@@ -511,7 +511,7 @@
   (edoc "Pick the side a reload conflict shows, mine or disk, in the preview where the buffer is, nothing settled yet; a mine pick over text another mine pick already covers sends that one back to disk."
         (conflict conflict "the conflict")
         (side (one-of mine disk) "the side to show")
-        (returns (or symbol #f) "the side, or #f when the alternative changed meanwhile"))
+        (returns (or symbol #f) "the side, or #f when the alternative changed meanwhile") (public))
   (define (delta-log-pick! conflict side)
     (let* ([trunk (current-trunk 'delta-log:pick!)] [revision (edoc:type-value 'conflict conflict)])
       (unless (memq side '(mine disk)) (error 'delta-log:pick! "expected mine or disk" side))
@@ -537,13 +537,13 @@
 
   (edoc "Flip the side a reload conflict shows, mine for disk and back, as delta-log:pick! does."
         (conflict conflict "the conflict")
-        (returns (or symbol #f) "the side shown now, or #f when the alternative changed meanwhile"))
+        (returns (or symbol #f) "the side shown now, or #f when the alternative changed meanwhile") (public))
   (define (delta-log-flip! conflict)
     (let* ([trunk (current-trunk 'delta-log:flip!)] [c (conflict-at trunk (edoc:type-value 'conflict conflict))])
       (pick-conflict! trunk c (if (eq? (side-of trunk c) 'mine) 'disk 'mine))))
 
   (edoc "The sides the current buffer's pending conflicts show, (revision . side) each in the order of their regions."
-        (returns list))
+        (returns list) (public))
   (define (delta-log-picks)
     (let ([trunk (current-trunk 'delta-log:picks)])
       (map (lambda (c) (cons (car c) (side-of trunk c))) (sorted-conflicts trunk))))
@@ -598,7 +598,7 @@
 
   (edoc "The current buffer's delta log as data, newest first, (revision actor labels delta origin state) each, the log behind its view when a view is current; a selector narrows it by count, actor, batch, since, until or state, and a batch given alone selects its entries."
         (selector (list-of (or list batch)) "the selector or a batch, at most one")
-        (returns list))
+        (returns list) (public))
   (define (delta-log-entries . selector)
     (apply store:log (trunk-id (current-trunk 'delta-log:log)) (map selector-of selector)))
 
@@ -632,7 +632,7 @@
           [else (edit:set-message! (format "Rewrite ~a: ~s" status detail))])
         status)))
 
-  (edoc "Abandon the view: the window shows the trunk again, nothing rewritten.")
+  (edoc "Abandon the view: the window shows the trunk again, nothing rewritten." (public))
   (define (delta-log-revert!)
     (when the-view
       (let ([name (head:buffer-name (view-trunk the-view))])
@@ -641,17 +641,17 @@
         (follow!))))
 
   (edoc "The live view as data, (trunk-name disabled conflicts), or #f without one."
-        (returns (or list #f)))
+        (returns (or list #f)) (public))
   (define (delta-log-view)
     (and the-view (list (head:buffer-name (view-trunk the-view)) (view-disabled the-view) (view-conflicts the-view))))
 
   (edoc "The revisions the live view disables, newest first; () without a view."
-        (returns (list-of integer)))
+        (returns (list-of integer)) (public))
   (define (delta-log-disabled)
     (if the-view (list-sort > (view-disabled the-view)) '()))
 
   (edoc "Describe an entry of the current buffer's log in the echo area: its actor, where it wrote, what it removed and inserted."
-        (revision revision "the entry"))
+        (revision revision "the entry") (public))
   (define (delta-log-show! revision)
     (let* ([trunk (current-trunk 'delta-log:show!)] [rows (store:log (trunk-id trunk))]
            [revision (edoc:type-value 'revision revision)])
@@ -1048,7 +1048,7 @@
     (show-browser! conflicts-browser (target-window w*)))
 
   (edoc "Narrow the delta log browser's rows to the entries a selector picks, as for delta-log:log, or to a batch's; #f shows every entry again."
-        (selector (or list batch #f) "the selector, a batch or #f"))
+        (selector (or list batch #f) "the selector, a batch or #f") (public))
   (define (delta-log-filter! selector)
     (set! browser-filter (if selector (selector-of selector) '()))
     (hashtable-clear! (browser-cache log-browser))
@@ -1161,7 +1161,7 @@
   (define (bind-keys! context table)
     (for-each (lambda (entry) (for-each (lambda (key) (keymap:bind-default! context key (cadr entry))) (car entry))) table))
 
-  (edoc "Install the delta log: the two browsers' modes with their keys bound in the delta-log and conflicts contexts, C-x l and C-x ! opening them in the pop-up, the highlighter marking a previewed or browsed entry's span, a browsed conflict's region and a flip's, and the browsers following the windows and the store before every frame; C-x TAB lists the keys.")
+  (edoc "Install the delta log: the two browsers' modes with their keys bound in the delta-log and conflicts contexts, C-x l and C-x ! opening them in the pop-up, the highlighter marking a previewed or browsed entry's span, a browsed conflict's region and a flip's, and the browsers following the windows and the store before every frame; C-x TAB lists the keys." (public))
   (define (init!)
     (mode:register! "delta-log" '() '() (lambda (line) #f) #f styles)
     (mode:register! "conflicts" '() '() (lambda (line) #f) #f styles)

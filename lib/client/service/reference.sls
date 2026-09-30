@@ -91,7 +91,7 @@
 
   (edoc "Every entry, optionally filtered."
         (predicate (list-of procedure) "a predicate on entries, at most one")
-        (returns (list-of (record doc-entry))))
+        (returns (list-of (record doc-entry))) (public))
   (define (entries . predicate)
     (let ([entries (map doc:from-datum (client:request 'reference-entries (documents)))])
       (if (pair? predicate) (filter (car predicate) entries) entries)))

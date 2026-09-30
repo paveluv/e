@@ -37,7 +37,7 @@
   (edoc "Load an entry module from a local repository's lib directory, managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional, one directory or a list; relative repository paths use the installation, relative library roots use the repository."
         (repository directory "the extension checkout")
         (entry string "its module name, such as worksheet-mode")
-        (roots (or directory (list-of directory)) "additional R6RS source roots, one or several"))
+        (roots (or directory (list-of directory)) "additional R6RS source roots, one or several") (public))
   (define load!
     (case-lambda
       [(repository entry) (load! repository entry '())]

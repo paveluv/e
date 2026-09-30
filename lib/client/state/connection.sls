@@ -91,7 +91,7 @@
           (append (car closure) (cadr closure))) (cadr closure))))
 
   (edoc "Resolve an acquired model port locally; mounted hosts use snapshot to supply provisional descriptors and mirrored text."
-        (id list "endpoint") (name symbol "port") (returns list))
+        (id list "endpoint") (name symbol "port") (returns list) (public))
   (define (read id name)
     (let ([bundle (snapshot (list id))])
       (port:resolve id name (cadr bundle) get (lambda (id) #f))))

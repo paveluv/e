@@ -556,7 +556,7 @@
                   (hashtable-size (cdr next)))))
       (void)))
 
-  (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the index; one fetch at a time.")
+  (edoc "Download the reference corpus, TSPL and CSUG, and rebuild the index; one fetch at a time." (public))
   (define (fetch!)
     (claim-fetch!)
     (dynamic-wind void run-fetch! release-fetch!))

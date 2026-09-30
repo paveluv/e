@@ -914,7 +914,7 @@
   (edoc "Whether an actor is in a buffer's audience; a missing buffer is never visible."
         (actor actor "the actor identity")
         (id integer "the buffer id")
-        (returns boolean))
+        (returns boolean) (public))
   (define (visible? actor id)
     ;; Audience is presentation/routing, not permission to read the store.
     ;; Missing content is never visible; an absent audience means all; a
@@ -987,7 +987,7 @@
 
   (edoc "The id of the buffer with a name, or #f."
         (wanted string "the name")
-        (returns (or integer #f)))
+        (returns (or integer #f)) (public))
   (define (find-named wanted)
     ;; The uniquely named buffer, or #f.
     (locked
@@ -1055,7 +1055,7 @@
 
   (edoc "A buffer's text, revision and the changes since a basis revision: (values text revision changes), changes #f when the basis is gone."
         (id integer "the buffer id")
-        (basis (or integer #f) "the earlier revision"))
+        (basis (or integer #f) "the earlier revision") (public))
   (define (snapshot-since id basis)
     ;; -> (values text revision changes), from one read.  Changes are
     ;; (revision actor delta) entries, oldest first, ending at exactly
@@ -1637,7 +1637,7 @@
   (edoc "Undo in a buffer: (values status detail), the detail the new revision when applied."
         (actor actor "the actor identity")
         (id integer "the buffer id")
-        (scope (list-of any) "mine, all or (actor who), at most one"))
+        (scope (list-of any) "mine, all or (actor who), at most one") (public))
   (define (undo! actor id . scope)
     ;; Compatibility result: the new revision, or a refusal reason.
     ;; The optional scope uses the same selector as history-step!.
@@ -1648,7 +1648,7 @@
 
   (edoc "Redo the actor's latest undo in a buffer: (values status detail)."
         (actor actor "the actor identity")
-        (id integer "the buffer id"))
+        (id integer "the buffer id") (public))
   (define (redo! actor id)
     (let-values ([(status detail) (history-step! actor id 'redo 'mine)])
       (values status (if (eq? status 'applied) (car detail) detail))))
@@ -1847,7 +1847,7 @@
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable, repetitions counted once")
-        (access* (list-of any) "write access, at most one"))
+        (access* (list-of any) "write access, at most one") (public))
   (define (rewrite! actor id disabled . access*)
     (unless (<= (length access*) 1) (error 'rewrite! "expected one write access" access*))
     (let ([access (own-write-access (and (pair? access*) (car access*)))])
@@ -2976,7 +2976,7 @@
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (mark-name datum "the mark")
-        (position any "a position or span"))
+        (position any "a position or span") (public))
   (define (set-mark! actor id mark-name position)
     (let-values ([(status revision)
                   (set-marks! actor id #f (list (cons mark-name position)) '())])
@@ -2986,7 +2986,7 @@
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (mark-name datum "the mark")
-        (returns any))
+        (returns any) (public))
   (define (mark actor id mark-name)
     ;; the mark's current position, or #f
     (locked
@@ -2999,7 +2999,7 @@
   (edoc "Remove an actor's mark from a buffer."
         (actor actor "the actor identity")
         (id integer "the buffer id")
-        (mark-name datum "the mark"))
+        (mark-name datum "the mark") (public))
   (define (drop-mark! actor id mark-name)
     (let-values ([(status revision) (set-marks! actor id #f '() (list mark-name))])
       (void)))

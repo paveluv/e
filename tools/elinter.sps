@@ -2,6 +2,9 @@
 ;; elinter.sps -- the tree's source conventions, checked statically:
 ;;
 ;;   tools/elinter.sps
+;;   tools/elinter.sps --audit   ; advisory API and structural-pattern review
+;;   tools/elinter.sps --apis    ; API evidence only
+;;   tools/elinter.sps --clones  ; extraction suggestions only
 ;;
 ;; Every .sls under lib/ is read with source positions, and each library
 ;; or elibrary form in it is checked: the exports are sorted by exported
@@ -15,40 +18,14 @@
 ;; --effects. A finding prints as path:line: message; the exit status is
 ;; the number of findings, capped at 100, so the suite and the pre-commit
 ;; hook can run this.
+;; Private liveness is enforced; the optional inventories are warnings.
 (import (chezscheme))
 
 (include "tools/log-sources.ss")
 
-(define (sls-files directory)
-  ;; every .sls below directory, sorted by path
-  (let loop ([names (directory-list directory)] [acc '()])
-    (cond [(null? names) (list-sort string<? acc)]
-          [(file-directory? (string-append directory "/" (car names)))
-           (loop (cdr names) (append (sls-files (string-append directory "/" (car names))) acc))]
-          [(let ([n (string-length (car names))])
-             (and (> n 4) (string=? (substring (car names) (- n 4) n) ".sls")))
-           (loop (cdr names) (cons (string-append directory "/" (car names)) acc))]
-          [else (loop (cdr names) acc)])))
-
-(define (read-annotated path)
-  ;; the file's text and its top-level forms as annotations, positioned
-  ;; in the text
-  (let* ([text (call-with-input-file path get-string-all)]
-         [sfd (source-file-descriptor path 0)]
-         [port (open-string-input-port text)])
-    (let loop ([bfp 0] [acc '()])
-      (let-values ([(form efp) (get-datum/annotations port sfd bfp)])
-        (if (eof-object? form) (values text (reverse acc)) (loop efp (cons form acc)))))))
-
-(define (stripped x) (if (annotation? x) (annotation-stripped x) x))
-(define (parts x) (if (annotation? x) (annotation-expression x) x))
-(define (start x) (source-object-bfp (annotation-source x)))
-(define (end x) (source-object-efp (annotation-source x)))
-
-(define (line-of text pos)
-  ;; the 1-based line holding a character position
-  (let loop ([i 0] [line 1])
-    (if (>= i pos) line (loop (+ i 1) (if (char=? (string-ref text i) #\newline) (+ line 1) line)))))
+(include "tools/source.ss")
+(include "tools/code-health.ss")
+(include "tools/code-audit.ss")
 
 (define (library-form? form)
   (let ([d (stripped form)])
@@ -189,6 +166,7 @@
 
 (define findings 0)
 (define libraries 0)
+(define sources '())
 
 (define (report! path line message)
   (set! findings (+ findings 1))
@@ -204,6 +182,10 @@
             (let ([subforms (parts form)])
               (check-exports! path text (caddr subforms) report!)
               (check-imports! path text (cadddr subforms) report!)
+              (set! sources
+                (cons (list path text form
+                        (health-library form
+                          (lambda (at message) (report! path (line-of text (start at)) message)))) sources))
               (check-bindings! path text report!)
               (check-log-sources! form
                 (lambda (at expected message)
@@ -215,5 +197,37 @@
   (sls-files "lib"))
 
 (printf "elinter: ~a libraries checked, ~a finding~a\n" libraries findings (if (= findings 1) "" "s"))
+(when (or (member "--audit" (command-line-arguments)) (member "--apis" (command-line-arguments)))
+  (let* ([manual (if (file-directory? "manual")
+                     (apply append (map (lambda (name) (source-words (call-with-input-file (string-append "manual/" name) get-string-all)))
+                                     (filter (lambda (name) (equal? (path-extension name) "md")) (directory-list "manual")))) '())]
+         [config (if (file-exists? "config.template.e") (source-words (call-with-input-file "config.template.e" get-string-all)) '())]
+         [startup (apply append
+                    (map (lambda (path) (source-words (call-with-input-file path get-string-all)))
+                      (append (if (file-exists? "e") '("e") '())
+                        (map (lambda (name) (string-append "tools/" name))
+                          (filter (lambda (name) (equal? (path-extension name) "sps")) (directory-list "tools"))))))]
+         [tests (if (file-directory? "tests")
+                    (apply append
+                      (map (lambda (name) (source-words (call-with-input-file (string-append "tests/" name) get-string-all)))
+                        (filter (lambda (name) (member (path-extension name) '("ss" "sps"))) (directory-list "tests")))) '())]
+         [candidates (audit-apis (reverse sources) (list (cons 'configuration config) (cons 'manual manual)
+                                                     (cons 'startup startup) (cons 'tests tests)))])
+    (for-each
+      (lambda (c)
+        (let ([s (assoc (vector-ref c 0) sources)])
+          (printf "~a:~a: warning: API ~a has no other library reference (~a); review external use / (public)\n"
+            (car s) (line-of (cadr s) (start (vector-ref c 2))) (vector-ref c 1) (vector-ref c 3)))) candidates)
+    (printf "API review: ~a candidates; exports are never deletion errors\n" (length candidates))))
+(when (or (member "--audit" (command-line-arguments)) (member "--clones" (command-line-arguments)))
+  (let ([patterns (audit-patterns (reverse sources))])
+    (for-each
+      (lambda (p)
+        (let* ([a (vector-ref p 1)] [b (vector-ref p 2)] [s (vector-ref a 0)] [t (vector-ref b 0)])
+          (printf "~a:~a: warning: pattern in ~a and ~a:~a (~a); ~a holes, about ~a syntax nodes saved\n"
+            (car s) (line-of (cadr s) (start (vector-ref (vector-ref a 1) 2))) (vector-ref (vector-ref a 1) 0)
+            (car t) (line-of (cadr t) (start (vector-ref (vector-ref b 1) 2))) (vector-ref (vector-ref b 1) 0)
+            (length (vector-ref p 4)) (vector-ref p 0)))) patterns)
+    (printf "Pattern review: ~a nonoverlapping suggestions; verify scope, effects and ownership before extracting\n" (length patterns))))
 (define disagreements (system "scheme --script tools/edoc-coverage.sps --effects"))
 (exit (min 100 (+ findings disagreements)))

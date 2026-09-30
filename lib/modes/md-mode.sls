@@ -162,7 +162,7 @@
          (let ([scheme (mode:find "scheme")])
            (and scheme ((mode:styles scheme) line)))))
 
-  (edoc "Register the markdown mode for .md and .markdown files.")
+  (edoc "Register the markdown mode for .md and .markdown files." (public))
   (define (init!)
     (mode:register! "markdown" '(".md" ".markdown") '() md-styles
                     #f md-row-styles)))

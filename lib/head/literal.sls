@@ -41,7 +41,7 @@
     (or (head:window-numbered n) (error 'window "no window numbered" n)))
 
   (edoc "A model reference from its allocation number. Completion offers live models; constructing a reference performs no lookup, so retired or unavailable models can still be named for inspection."
-        (number model-number "positive model number") (returns model))
+        (number model-number "positive model number") (returns model) (public))
   (define (model number)
     (unless (and (integer? number) (exact? number) (> number 0)) (error 'model "expected a positive exact integer" number))
     (list 'model number))

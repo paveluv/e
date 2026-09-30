@@ -1135,7 +1135,7 @@
                 (unless (zero? delta) (act! parent 'scroll delta))))
             (loop parent (cdr rest) (list 'child child place '() '())))))))
 
-  (edoc "Install the text definition and renderer invalidation.")
+  (edoc "Install the text definition and renderer invalidation." (public))
   (define (init!)
     (keymap:bind-default! 'widget-host "TAB" (keymap:call focus-next! target))
     (keymap:bind-default! 'widget-host "S-TAB" (keymap:call focus-next! target #t))

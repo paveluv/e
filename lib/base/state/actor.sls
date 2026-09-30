@@ -92,7 +92,7 @@
 
   (edoc "An actor's directory entry, or #f."
         (actor actor "the actor identity")
-        (returns (or list #f)))
+        (returns (or list #f)) (public))
   (define (describe actor)
     (let ([entry (registration-of actor)]) (and entry (directory-entry entry))))
 
@@ -128,7 +128,7 @@
                      (reverse added)))))))
 
   (edoc "Stop watching the directory, by token."
-        (token any "the token"))
+        (token any "the token") (public))
   (define (unsubscribe! token)
     (kernel:registry-unobserve! token))
 
@@ -272,7 +272,7 @@
         (choices (list-of string) "the offered answers")
         (reply! procedure "(reply! answer)")
         (owner any "the session owning it, optional")
-        (returns any))
+        (returns any) (public))
   (define ask! (activity:wrap
                  (case-lambda
                    [(from to question choices reply!) (ask! from to question choices reply! #f)]
@@ -343,7 +343,7 @@
         (ticket any "the ticket")
         (answer any "the answer")
         (to (or actor #f) "who answers, optional")
-        (returns boolean))
+        (returns boolean) (public))
   (define answer! (activity:wrap
                     ;; Resolve an ask: the answer routes to the asker's reply
                     ;; procedure (on this thread).  -> #t, or #f for a stale ticket.

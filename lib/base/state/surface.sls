@@ -210,7 +210,7 @@
       token))
 
   (edoc "Cancel a surface subscription by token."
-        (token integer "the token"))
+        (token integer "the token") (public))
   (define (unsubscribe! token)
     (kernel:registry-remove! (state-subscriptions data)
       (lambda (entry) (eqv? (subscription-token entry) token)))

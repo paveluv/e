@@ -8,7 +8,7 @@
           (prefix (service file-query) file-query:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (sys sys) sys:))
-  (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
+
   (define (field r k) (cdr (assq k r)))
   (define (absolute? s) (and (string? s) (string:prefix? "/" s)))
   (define (recipe? v)

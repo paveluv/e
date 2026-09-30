@@ -19,17 +19,17 @@
 (elibrary (head paint)
   (export add-buffer-status-hint! add-highlighter! add-hyperlinker! add-status-hint! ansi!
           begin-frame! buffer-line-hyperlinks buffer-wrap-setting clean-wrap? column-at-cell
-          completion-styler compute-breaks compute-echo-spans cursor-in-echo detect-hyperlinks
+          compute-breaks compute-echo-spans cursor-in-echo detect-hyperlinks
           display-echo-log-row! display-editor-line! echo-append! echo-box-border echo-box-width
           echo-cap echo-cursor-now echo-highlight echo-indent-now echo-index-at echo-log-prefix
           echo-log-rows echo-log-spans echo-position echo-queue! echo-width emit-runs!
           erase-screen! fit goto! highlight-ranges hover-ranges input-delay invalidate-screen-cache!
           line-breaks line-segments mark-size-dirty! page-size paint! place-cursor!
-          point-visible? present-echo! prompt-styler ranges-on-row redraw! redraw-lock
-          region-span reset-buffer-viewports! reset-cursor-style! rows-before screen-cols
+          present-echo! prompt-styler ranges-on-row redraw! redraw-lock
+          region-span reset-cursor-style! rows-before screen-cols
           screen-live? screen-rows (rename (text-layout:scroll-margin scroll-margin)) scroll-window! set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
           show-message! show-prompt-message! terminal-size! update-echo-geometry!
-          update-terminal-title! valid-hyperlink? view-invalidate! view-overflows? visual-bell!
+          valid-hyperlink? view-overflows? visual-bell!
           window-layout window-position window-screen-position window-wrapped? (rename (text-layout:wrap-lines wrap-lines))
           wrap-width)
   (import (rnrs)
@@ -1170,33 +1170,6 @@
         (head:windows))
       b))
 
-  (edoc "Put point at a position and the top at the first row in a buffer and every window showing it."
-        (b buffer "the buffer")
-        (position position "where point goes")
-        (returns buffer))
-  (define (reset-buffer-viewports! b position)
-    (set-buffer-viewports! b position 0 '()))
-
-  (edoc "Mark an app or view buffer's display stale, so the next frame asks its renderer for every visible row."
-        (b buffer "the app or view buffer")
-        (returns buffer))
-  (define (view-invalidate! b)
-    ;; Dynamic row renderers can change their presentation while the view's
-    ;; structural placeholder lines remain equal. Mark the display stale
-    ;; explicitly so the next frame asks the renderer for every visible row.
-    (unless (head:app-buffer? b)
-      (error 'view-invalidate! "not an app or view buffer" b))
-    (invalidate-screen-cache!)
-    b)
-
-  (edoc "Whether the selected window's point is on screen."
-        (returns boolean))
-  (define (point-visible?)
-    (let* ([entry (assq (head:current-window) (window-layout))]
-           [p (window-screen-position (head:current-window) (head:window-prow (head:current-window)) (head:window-pcol (head:current-window)))])
-      (and entry (< (cadr entry) (car p))
-           (<= (car p) (+ (cadr entry) (caddr entry))))))
-
   (edoc "How many screen rows lie between a window's top and a position, counting wrapped segments."
         (w window "the window")
         (prow integer "the row")
@@ -1363,26 +1336,11 @@
                           (loop (+ i 1))))
                       styles)))))))
 
-  (edoc "A styler of a completion input by its state: italic when incomplete or unknown, plain for an exact match, the editor face when distinguished."
-        (match? procedure "whether an input is an exact match")
-        (highlight? procedure "whether an input is distinguished")
-        (returns procedure))
-  (define (completion-styler match? highlight?)
-    ;; Style one completion input by its semantic state: an incomplete or
-    ;; unknown value is italic, an exact match is plain, and a distinguished
-    ;; match (an editor symbol, for example) uses the editor face.
-    (lambda (input)
-      (make-vector (string-length input)
-                   (cond [(highlight? input) 'editor]
-                         [(match? input) 'plain]
-                         [else 'italic]))))
-
-  (edoc "Where the cursor sits in the echo content: the prompt's cursor, the end of a running evaluation's text, or #f."
+  (edoc "The end of a running evaluation's echo text, or #f. Prompt widgets own their carets."
         (returns (or integer #f)))
   (define (echo-cursor-now)
-    (or (echo:cursor)
-        (and (cursor-in-echo)
-             (+ (string-length (echo:text)) (string-length (echo:ghost))))))
+    (and (cursor-in-echo)
+      (+ (string-length (echo:text)) (string-length (echo:ghost)))))
 
                               ; applied while the text still matches
 
@@ -1682,10 +1640,6 @@
                (if (or (< n 32) (= n 127)) #\space c)))
            (string->list s))))
 
-  (edoc "Set the terminal's title to the current buffer's name when it changed.")
-  (define (update-terminal-title!)
-    (draw-partial-frame! paint-terminal-title!))
-
   (define (paint-terminal-title!)
     ;; OSC 2 is understood by GNOME Terminal, xterm, and nested e terminals.
     (let ([title (string-append "e: " (head:buffer-name (head:window-buffer (head:current-window))))])
@@ -1719,7 +1673,6 @@
     ;; when an interaction is about to wait for a key, so its cursor
     ;; rules take effect without a repaint.
     (let* ([cursor (echo-cursor-now)]
-           [a (head:app-of (head:window-buffer (head:current-window)))]
            [root (head:window-widget (head:current-window))]
            [placement (and root (find (lambda (p) (equal? root (widget:frame-id (car p)))) (shadow-widgets (current-shadow))))]
            [widget-caret (and placement (widget:caret (car placement)))]
@@ -1737,9 +1690,6 @@
       (let* ([app-style (head:app-cursor-style (head:window-buffer (head:current-window)))]
              [style (cond
                       [(cursor-in-echo) "\x1b;[3 q"]
-                      ;; a prompt: the cursor is in the echo area's input,
-                      ;; which is editable whatever the buffer behind it
-                      [(echo:cursor) "\x1b;[0 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(text) "\x1b;[0 q"]

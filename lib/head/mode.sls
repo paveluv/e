@@ -287,7 +287,7 @@
       (set-mode-of! (the-buffer b) (and name (find-mode name)) #f)))
 
   (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
-        (b (list-of buffer) "the buffer, at most one"))
+        (b (list-of buffer) "the buffer, at most one") (public))
   (define (assign-current-mode! . b)
     (assign-mode! (the-buffer b)))
 
@@ -304,7 +304,7 @@
 
   (edoc "Register a keymap context a buffer has while a predicate holds of it, before its mode's contexts: (mode:add-context! 'conflicted conflicted?) say, by the app that binds keys in the context."
         (name symbol "the context")
-        (holds? procedure "(holds? buffer) giving whether the buffer has the context now"))
+        (holds? procedure "(holds? buffer) giving whether the buffer has the context now") (public))
   (define (add-context! name holds?)
     (unless (and (symbol? name) (procedure? holds?))
       (error 'add-context! "expected a context name and a predicate" name holds?))
@@ -383,7 +383,7 @@
 
   (edoc "Set whether TAB indents in a mode, overriding the flag its indenter registered with."
         (name mode "the mode")
-        (flag boolean "whether TAB indents"))
+        (flag boolean "whether TAB indents") (public))
   (define (indent-on-tab! name flag)
     (let ([entry (indenter-entry name)])
       (unless entry (error 'indent-on-tab! "no indenter for mode" name))

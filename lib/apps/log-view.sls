@@ -116,13 +116,13 @@
           b
           (make-log-view name components))))
 
-  (edoc "Pop up the log view.")
+  (edoc "Pop up the log view." (public))
   (define (show-log!)
     ;; Pop up the *log* view.
     (window:pop-up-or-reuse! (log-view!))
     (void))
 
-  (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload.")
+  (edoc "Install the log view: its describe entry, its mode and the saved filters of views that survived a reload." (public))
   (define (init!)
     (doc:register!
       '(((log-view!:show!) (("procedure" . "(log-view!:show!)")) "void"

@@ -31,7 +31,7 @@
                       make-tagged tagged? tagged-count swap! make-stale stale? stale-revision plain
                       (rename (twice again)) shared hidden paint)
               (import (rnrs) (only (chezscheme) make-parameter format))
-              (edoc "Add two numbers. Slowly, for the test." (x integer "the first addend") (y integer) (returns integer))
+              (edoc "Add two numbers. Slowly, for the test." (x integer "the first addend") (y integer) (returns integer) (public))
               (define (add x y) (+ x y))
               (edoc "Join strings." (sep string) (parts (list-of string)))
               (define (join sep . parts) (fold-left (lambda (out p) (string-append out sep p)) (car parts) (cdr parts)))
@@ -96,8 +96,8 @@
        (check 'a-signature-reads-back
          (list (length (signatures 'add)) (signature-formals sig) (signature-summary sig)
                (map (lambda (a) (list (argument-name a) (argument-type a) (argument-notes a))) (signature-arguments sig))
-               (argument-type (signature-returns sig)) (signature-library sig))
-         '(1 (x y) "Add two numbers. Slowly, for the test." ((x integer ("the first addend")) (y integer ())) integer "(probe)")))
+               (argument-type (signature-returns sig)) (signature-library sig) (signature-flags sig))
+         '(1 (x y) "Add two numbers. Slowly, for the test." ((x integer ("the first addend")) (y integer ())) integer "(probe)" ((public)))))
      (check 'rest-parameters-and-clauses-read-back
        (let ([sig (car (signatures 'join))])
          (list (signature-formals sig) (map argument-type (signature-arguments sig)) (signature-returns sig)

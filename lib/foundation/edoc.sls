@@ -391,7 +391,7 @@
         (lambda (clause)
           ;; a flag, (prompts), (edits) or (effects kind), names no type
           (when (and (pair? clause) (symbol? (car clause)) (pair? (cdr clause))
-                     (not (or (memq (car clause) '(prompts effects edits inspect))
+                     (not (or (memq (car clause) '(prompts effects edits inspect public))
                               (and (eq? (car clause) 'receiver) (pair? (cddr clause)) (pair? (caddr clause)))))
                      (not (known? (cadr clause))))
             (error 'edoc (format "unknown edoc type ~s in the edoc of ~a" (cadr clause) name))))
@@ -463,7 +463,7 @@
     (attach-name! 'edoc
       '(edoc "The documentation form: a summary, then typed clauses. Inside an elibrary it annotates the definition that follows it, or names the definition it documents."
          (summary string "the description, its first sentence the short one")
-         (clause list "(name type note ...) for a formal or field, (returns type note ...), (prompts) for a command that waits for input, (edits) for a buffer edit refused when read-only, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's, (inspect) for a bounded local query safe to evaluate during binding inspection")
+         (clause list "(name type note ...) for a formal or field, (returns type note ...), (prompts) for a command that waits for input, (edits) for a buffer edit refused when read-only, (effects internal) for a query that fills a cache, (effects remote) for a transport whose effect is the message's, (public) for an intentional user or extension API even without repository callers, (inspect) for a bounded local query safe to evaluate during binding inspection")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (define expression-documentation
@@ -512,7 +512,7 @@
     ;; (prompts), (effects internal) or (effects remote): what a procedure
     ;; does beyond its bang, named for the effects check; none names a formal
     (syntax-case clause ()
-      [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits inspect)))]
+      [(head) (and (identifier? #'head) (memq (syntax->datum #'head) '(prompts edits inspect public)))]
       [(head kind) (and (identifier? #'head) (identifier? #'kind)
                         (eq? (syntax->datum #'head) 'effects) (memq (syntax->datum #'kind) '(internal remote)) #t)]
       [(head formal (category kind ...))
@@ -1149,7 +1149,7 @@
           (arguments (list-of (record argument)) "the typed arguments")
           (returns (or (record argument) #f) "the return, as an argument named returns")
           (library (or string #f) "the defining library, (edit) say")
-          (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote), (inspect)"))
+          (flags (list-of list) "the declarations beyond the bang: (prompts), (edits), (effects internal), (effects remote), (inspect), (public)"))
     (fields kind formals summary arguments returns library flags))
   (edefine (signature-receiver sig)
     (edoc "The explicit contextual receiver declaration (formal (view-or-model kind)), or false. It describes discovery, without changing Scheme invocation."
@@ -1187,7 +1187,7 @@
                          lambda-lists)
                     (list (make-signature kind formals summary arguments returns library flags))))]
              [(and (pair? (car clauses))
-                   (or (memq (caar clauses) '(prompts effects edits inspect))
+                   (or (memq (caar clauses) '(prompts effects edits inspect public))
                        (and (eq? (caar clauses) 'receiver) (pair? (cdar clauses))
                          (pair? (cddar clauses)) (pair? (caddar clauses)))))
               (loop (cdr clauses) arguments returns library kind lambda-lists (cons (car clauses) flags))]

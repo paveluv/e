@@ -28,13 +28,13 @@
     app-manages-window-viewport? app-of app-refresh!
     app-refresh-error app-refresh-error-set! app?
     before-frame! buffer buffer-append! buffer-base
-    buffer-base-set! buffer-conflicted buffer-fact
+    buffer-conflicted buffer-fact
     buffer-fact-set! buffer-facts-set! buffer-file
     buffer-file-set! buffer-flags buffer-line buffer-line-count
     buffer-lines buffer-lines-set!
     buffer-mark-col buffer-mark-col-set! buffer-mark-row
     buffer-mark-row-set! buffer-marked buffer-marked-set!
-    buffer-mode-auto buffer-mode-auto-set! buffer-modified
+    buffer-mode-auto buffer-modified
     buffer-modified-at buffer-modified-set! buffer-name
     buffer-name-set! buffer-named buffer-narrowest-width
     buffer-of-store-id buffer-placements buffer-point
@@ -42,7 +42,7 @@
     buffer-revision buffer-revision-set! buffer-selectable?
     buffer-spot-col buffer-spot-col-set! buffer-spot-row
     buffer-spot-row-set! buffer-spot-top buffer-spot-top-set!
-    buffer-stamp buffer-stamp-set! buffer-state buffer-status
+    buffer-state buffer-status
     buffer-sticky-lines buffer-store-id buffer-store-rev
     buffer-trailing buffer-trailing-set!
     buffer-window-size buffer-wrap-set! buffer? buffers
@@ -81,10 +81,10 @@
     set-app-presentation! set-app-selectable!
     set-app-status-position! set-buffer-status! set-buffers!
     set-copy-text! set-current! set-current-keys! set-departure!
-    set-directory-opener! set-dividers! set-drag!
+    set-directory-opener! set-drag!
     set-editor-state-reader! set-file-opener! set-frame-hook!
     set-last-command! set-layout-root! set-mouse-handler!
-    set-mouse-position! set-pending-paste! set-point-mover! set-quit-command!
+    set-mouse-position! set-point-mover! set-quit-command!
     set-repaint-hook! set-review-viewer! set-root!
     set-window-buffer! set-window-mounter! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
@@ -693,11 +693,6 @@
   (define (read-paste)
     pending-paste)
 
-  (edoc "Stash the text of a bracketed paste for the PASTE key's command."
-        (text string "the pasted text"))
-  (define (set-pending-paste! text)
-    (set! pending-paste text))
-
   (edoc "The selected window."
         (returns window))
   (define (current)
@@ -766,11 +761,6 @@
         (returns list))
   (define (dividers)
     the-dividers)
-
-  (edoc "Replace the divider rectangles."
-        (ds list "the dividers"))
-  (define (set-dividers! ds)
-    (set! the-dividers ds))
 
   (edoc "The smallest text height a split may leave a window."
         (value integer))
@@ -1643,7 +1633,7 @@
 
   (edoc "Set how a buffer's long lines wrap, a fact every head shares: default, #t, #f, clean for wrapping at full width without continuation marks, or (clean . columns) capping the width."
         (b buffer "the buffer to set")
-        (setting (or (one-of default #t #f clean) pair) "the wrap setting"))
+        (setting (or (one-of default #t #f clean) pair) "the wrap setting") (public))
   (define (buffer-wrap-set! b setting)
     ;; clean wraps like #t but draws no continuation marks and lets the
     ;; text use the full width -- for formatted read-only presentations;
@@ -1759,12 +1749,6 @@
   (define (buffer-mode-auto b)
     (buffer-fact b 'mode-auto #t))
 
-  (edoc "Set a buffer's mode-auto fact."
-        (b buffer "the buffer")
-        (v boolean "the new value"))
-  (define (buffer-mode-auto-set! b v)
-    (buffer-fact-set! b 'mode-auto v))
-
   (edoc "A buffer's read-only fact: #t, #f, or a procedure deciding per edit."
         (b buffer "the buffer")
         (returns (or boolean procedure)))
@@ -1777,29 +1761,11 @@
   (define (buffer-read-only-set! b v)
     (buffer-fact-set! b 'read-only v))
 
-  (edoc "A buffer's stamp fact: the disk stamp of its file when read, or #f."
-        (b buffer "the buffer")
-        (returns any))
-  (define (buffer-stamp b)
-    (buffer-fact b 'stamp #f))
-
-  (edoc "Set a buffer's stamp fact."
-        (b buffer "the buffer")
-        (v any "the new value"))
-  (define (buffer-stamp-set! b v)
-    (buffer-fact-set! b 'stamp v))
-
   (edoc "A buffer's base fact: the text its file held when loaded or last saved, or #f."
         (b buffer "the buffer")
         (returns (or string #f)))
   (define (buffer-base b)
     (buffer-fact b 'base #f))
-
-  (edoc "Set a buffer's base fact."
-        (b buffer "the buffer")
-        (v (or string #f) "the new value"))
-  (define (buffer-base-set! b v)
-    (buffer-fact-set! b 'base v))
 
   (edoc "Whether a buffer has reload conflicts pending, the red !! of its status line: its conflicts fact, the store's count, above zero."
         (b buffer "the buffer")

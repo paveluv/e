@@ -24,7 +24,7 @@
 
   ;;; Fetching --------------------------------------------------------------------
 
-  (edoc "Ask the base to download the reference corpus, TSPL and CSUG, and rebuild the describe database: the command announces the fetch and returns at once, each page's progress replaces the announcement in the echo area as it comes, and the completion or a failure is announced there; one fetch at a time.")
+  (edoc "Ask the base to download the reference corpus, TSPL and CSUG, and rebuild the describe database: the command announces the fetch and returns at once, each page's progress replaces the announcement in the echo area as it comes, and the completion or a failure is announced there; one fetch at a time." (public))
   (define (fetch-data!)
     ;; the base downloads in a worker on this head's behalf: its records are
     ;; this head's, presented as progress while the editor stays free. The
@@ -81,23 +81,7 @@
     (syntax-rules ()
       [(_ name) (describe! 'name)]))
 
-  (define (complete-described-name part)
-    ;; Complete against the names that actually have a describe page.
-    (let ([seen (make-eq-hashtable)])
-      (sort string<?
-            (fold-left
-              (lambda (names entry)
-                (fold-left
-                  (lambda (names name)
-                    (let ([text (symbol->string name)])
-                      (if (or (eq-hashtable-ref seen name #f)
-                              (not (string:prefix? part text)))
-                          names
-                          (begin
-                            (eq-hashtable-set! seen name #t)
-                            (cons text names)))))
-                  names (doc:names entry)))
-              '() (reference:entries)))))
+
 
 
   ;;; The symbol at point ---------------------------------------------------------
@@ -246,7 +230,7 @@
       (unless (window:pop-up-or-reuse! b)
         (edit:set-message! "The <help> buffer could not be displayed"))))
 
-  (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f and C-h k bindings.")
+  (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f and C-h k bindings." (public))
   (define (init!)
     ;; Rebind a head callback; selection itself belongs to the store page.
     (head:add-pre-redraw-hook! refresh-describe!)

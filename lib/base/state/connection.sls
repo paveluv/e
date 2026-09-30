@@ -267,12 +267,12 @@
                 (loop (+ attempt 1)))))))))
 
   (edoc "Observe dependency invalidations through the existing model and text deliveries. Subscribe before reading."
-        (ids list "endpoint IDs") (procedure procedure "zero-argument invalidation") (returns list))
+        (ids list "endpoint IDs") (procedure procedure "zero-argument invalidation") (returns list) (public))
   (define (subscribe! ids procedure)
     (list (model:subscribe! #f (lambda (event) (procedure)))
       (store:subscribe! #f (lambda (event) (procedure))) (port:observe! procedure)))
 
-  (edoc "Release a connection observation." (token list "subscription"))
+  (edoc "Release a connection observation." (token list "subscription") (public))
   (define (unsubscribe! token)
     (model:unsubscribe! (car token)) (store:unsubscribe! (cadr token)) (port:unobserve! (caddr token)))
 

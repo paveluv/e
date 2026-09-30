@@ -90,10 +90,8 @@
   ;; Buffer facts and the store client -- the bridge between this
   ;; seat's records and the (store) -- live in (head) now; the
   ;; mode registry in (mode).
-  (define layout-split-first-weight-set!
-    head:layout-split-first-weight-set!)
-  (define layout-split-second-weight-set!
-    head:layout-split-second-weight-set!)
+
+
   (define-syntax windows
     (identifier-syntax [id (head:windows)]
       [(set! id v) (head:set-windows! v)]))
@@ -156,17 +154,9 @@
 
   ;;; Small utilities -------------------------------------------------------
 
-  (define (insert-before lst x y)
-    ;; A copy of lst with y inserted right before x (or at the end).
-    (cond [(null? lst) (list y)]
-          [(eq? (car lst) x) (cons y lst)]
-          [else (cons (car lst) (insert-before (cdr lst) x y))]))
 
-  (define (insert-after lst x y)
-    ;; A copy of lst with y inserted right after x (or at the end).
-    (cond [(null? lst) (list y)]
-          [(eq? (car lst) x) (cons x (cons y (cdr lst)))]
-          [else (cons (car lst) (insert-after (cdr lst) x y))]))
+
+
 
   ;;; Buffer access and undo ------------------------------------------------
 
@@ -193,7 +183,7 @@
                           (make-message-condition "buffer is read-only"))))))
 
   (edoc "The batch label of the edits in the current one-edit group, the (actor token) pair they share in the delta log, unique across head reattachments, or #f outside a group."
-        (returns (or list #f)))
+        (returns (or list #f)) (public))
   (define (current-batch) (text-source:current-batch head:ui-actor))
 
   (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
@@ -236,7 +226,7 @@
   (edoc "Undo an actor's latest live action in an explicit editor view, returning journal status and detail. Omitting the view uses the current window and echo report."
         (who actor "the actor's identity")
         (id model "editor view; omission addresses the current window")
-        (edits))
+        (edits) (public))
   (define undo-actor!
     (case-lambda
       [(who) (history-shift! 'undo "Undo" (list 'actor who))]
@@ -439,7 +429,7 @@
            (set! point-row (+ point-row 1)) (set! point-col 0)]))))
 
   (edoc "Move point a number of characters, negative to the left, crossing line ends as single steps do."
-        (delta integer "how far, negative for left"))
+        (delta integer "how far, negative for left") (public))
   (define (move-horizontal! delta)
     ;; Move point delta characters, negative to the left, crossing line
     ;; ends the way repeated single steps do.
@@ -651,7 +641,7 @@
         (start position "where the replaced text starts")
         (end position "where it ends")
         (text string "the replacement")
-        (edits))
+        (edits) (public))
   (define replace-region-text!
     (case-lambda
       [(start end text)
@@ -796,7 +786,7 @@
         (edits))
   (define (reread!) (check-editable!) (reload-document! #t))
 
-  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it.")
+  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it." (public))
   (define (reload!) (reload-document! #f))
 
   (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
@@ -809,7 +799,7 @@
 
   (edoc "Whether a buffer can be discarded without losing work: unmodified, or marked disposable; #f when its state cannot be read."
         (b buffer "the buffer to judge")
-        (returns boolean))
+        (returns boolean) (public))
   (define (buffer-clean? b)
     ;; Discard decisions use one current snapshot, not an empty/stale
     ;; head cache.  Read-only protects editing, not the lifetime of work.
@@ -908,7 +898,7 @@
 
   (edoc "Create an empty shared buffer with a name, suffixed when the name is taken, and show it here."
         (name string "the buffer's name")
-        (returns buffer))
+        (returns buffer) (public))
   (define (new-buffer! name)
     (let ([b (head:new-buffer! name)])
       (head:show-buffer! b)
@@ -966,7 +956,7 @@
     (map (lambda (entry) (list-head (cdr entry) 3)) (trash-entries)))
 
   (edoc "The backups, the versions saves wrote over, newest first, as (name path observed stamp checksum actor): the file's path, when it was read in UTC seconds, its modification time then as (seconds . nanoseconds) or #f, the checksum of its text and who saved; each expires store:trash-retention days after it was read, and a file keeps store:backups-kept of them."
-        (returns (list-of list)))
+        (returns (list-of list)) (public))
   (define (backups)
     (map (lambda (entry)
            (let ([backup (list-ref entry 4)])
@@ -989,7 +979,7 @@
 
   (edoc "Bring a buffer back from the trash, a backup included, the newest of that name, with its text and history, and show it in the current window; it takes a unique name when another buffer holds its own."
         (name trashed "the buffer's name in the trash")
-        (returns buffer))
+        (returns buffer) (public))
   (define (restore! name)
     (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
       (unless entry (error 'restore! "no such buffer in the trash" name))
@@ -1002,7 +992,7 @@
           b))))
 
   (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
-        (name trashed "the buffer's name in Trash or Backups"))
+        (name trashed "the buffer's name in Trash or Backups") (public))
   (define (delete-trashed! name)
     (let ([entry (find (lambda (entry) (string=? (cadr entry) name)) (trashed-entries))])
       (unless entry (error 'delete-trashed! "no such buffer in the trash" name))
@@ -1010,7 +1000,7 @@
       (log:add! 'edit:delete-trashed! (format "Permanently deleted ~a" name))))
 
   (edoc "Delete every trashed buffer for good, the backups kept; how many went."
-        (returns integer))
+        (returns integer) (public))
   (define (empty-trash!)
     (let ([count 0])
       (for-each (lambda (entry)
@@ -1276,7 +1266,7 @@
   ;; Everything the layer registers -- owned by edit, so a reload
   ;; retracts and remakes it; what the loop and the seams ask of the
   ;; commands is installed here too.
-  (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet.")
+  (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet." (public))
   (define (init!)
     (editor:register! (list (cons 'undo undo!) (cons 'redo redo!) (cons 'page page!) (cons 'paste paste-into-buffer!)
                         (cons 'kill-line kill-line!) (cons 'kill-region kill-region!) (cons 'copy-region copy-region!) (cons 'yank yank!)

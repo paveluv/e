@@ -30,7 +30,7 @@
       (colored (bold (foreground 135)))))
 
   (edoc "How the matched bracket pair is marked: bold, underline, box or colored."
-        (value (one-of bold underline box colored)))
+        (value (one-of bold underline box colored)) (public))
   (define matching-paren-style (make-parameter 'bold
                                  (lambda (name)
                                    (let ([hit (assq name matching-paren-style-table)])
@@ -91,7 +91,7 @@
                   (list (list (car match) (cdr match) (car match) (+ (cdr match) 1)) 'matching-paren))
             '()))))
 
-  (edoc "Install the matching-bracket highlighter and its describe entry.")
+  (edoc "Install the matching-bracket highlighter and its describe entry." (public))
   (define (init!)
     (mode:add-highlighter! paren-highlights)
     (doc:register!

@@ -196,7 +196,7 @@
 
   (edoc "The name of a repository's current branch, or #f when detached."
         (repository (record git-repository-record) "the repository")
-        (returns (or string #f)))
+        (returns (or string #f)) (public))
   (define (git-current-branch repository)
     (let ([name (trim-newlines
                   (run-git (repository-path repository)
@@ -219,7 +219,7 @@
 
   (edoc "A repository's status entries, untracked files included."
         (repository (record git-repository-record) "the repository")
-        (returns (list-of (record git-status-entry))))
+        (returns (list-of (record git-status-entry))) (public))
   (define (git-status repository)
     (let loop ([tokens (split-at
                          (run-git (repository-path repository)
@@ -253,7 +253,7 @@
 
   (edoc "A repository's branches with their upstreams and ahead and behind counts."
         (repository (record git-repository-record) "the repository")
-        (returns (list-of (record git-branch))))
+        (returns (list-of (record git-branch))) (public))
   (define (git-branches repository)
     (map (lambda (line)
            (let ([fields (split-at line #\nul)])
@@ -320,7 +320,7 @@
   (edoc "The changed files of the worktree, or of the index when staged."
         (repository (record git-repository-record) "the repository")
         (staged (list-of boolean) "whether to diff the index, at most one")
-        (returns (list-of (record git-diff-entry))))
+        (returns (list-of (record git-diff-entry))) (public))
   (define (git-diff repository . staged)
     (parse-name-status
       (run-git (repository-path repository)
@@ -368,7 +368,7 @@
                               id "--" path))
                #\newline)))))
 
-  (edoc "Register the describe entries of the git service.")
+  (edoc "Register the describe entries of the git service." (public))
   (define (init!)
     (doc:register!
       '(((git:open) (("procedure" . "(git:open [path])")) "git-repository"

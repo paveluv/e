@@ -159,7 +159,7 @@
 
   ;;; Asking ------------------------------------------------------------------
 
-  (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer.")
+  (edoc "Say who recently wrote the text at point, from the store log of the current shared buffer." (public))
   (define (blame-at-point!)
     ;; who recently wrote the text at point, from the store's log
     (let* ([b (head:current-buffer)]
@@ -181,7 +181,7 @@
 
   ;;; Wiring ------------------------------------------------------------------
 
-  (edoc "Install blame: the tint refresh hook and highlighter, the per-actor styles and its describe entry.")
+  (edoc "Install blame: the tint refresh hook and highlighter, the per-actor styles and its describe entry." (public))
   (define (init!)
     (head:add-pre-redraw-hook! refresh!)
     (paint:add-highlighter! blame-highlights)

@@ -804,7 +804,7 @@
         (method string "GET, POST and so on")
         (url string "the URL")
         (options (list-of any) "headers, then a body")
-        (returns (record https-response)))
+        (returns (record https-response)) (public))
   (define (https-request method url . options)
     (apply call-with-request method url #f options))
 
@@ -872,7 +872,7 @@
 
   (edoc "A response's whole body as text, closing it."
         (response (record https-response) "the response")
-        (returns string))
+        (returns string) (public))
   (define (https-response-text response)
     (call-with-body response body-text))
 
@@ -896,7 +896,7 @@
 
   (edoc "The body of a URL as text."
         (url string "the URL")
-        (returns string))
+        (returns string) (public))
   (define (https-get url)
     (call-with-get url body-text))
 

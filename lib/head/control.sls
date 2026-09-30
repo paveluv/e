@@ -78,7 +78,7 @@
       (view:arrange! actor (list (list root 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1)) (list 'status status 'fit)) '((spacing . normal)))) '())
       root))
 
-  (edoc "Install filter, label and action-text presentations and their public keyboard actions.")
+  (edoc "Install filter, label and action-text presentations and their public keyboard actions." (public))
   (define (init!)
     (widget:register! 'filter 1 (layout:container 'x))
     (widget:register! 'label 1 (list (cons 'prepare data) (cons 'render render) (cons 'measure measure) (cons 'decorate decorate)))

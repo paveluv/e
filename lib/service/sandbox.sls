@@ -82,7 +82,7 @@
                name)))
 
   (edoc "Every buffer's name, as the store knows them."
-        (returns (list-of string)))
+        (returns (list-of string)) (public))
   (define (buffer-names)
     ;; every buffer's name, as the store knows them
     (uninterruptible
@@ -91,7 +91,7 @@
 
   (edoc "How many lines the named buffer has."
         (name string "the buffer name")
-        (returns integer))
+        (returns integer) (public))
   (define (buffer-lines-count name)
     (let ([id (named 'buffer-lines-count name)])
       (uninterruptible (lambda () (store:line-count id)))))
@@ -99,14 +99,14 @@
   (edoc "One line of the named buffer, zero-based."
         (name string "the buffer name")
         (n integer "the row")
-        (returns string))
+        (returns string) (public))
   (define (buffer-text-line name n)
     (let ([id (named 'buffer-text-line name)])
       (uninterruptible (lambda () (store:line id n)))))
 
   (edoc "The named buffer's revision."
         (name string "the buffer name")
-        (returns integer))
+        (returns integer) (public))
   (define (buffer-revision name)
     (let ([id (named 'buffer-revision name)])
       (uninterruptible (lambda () (store:revision id)))))
@@ -120,7 +120,7 @@
   (edoc "Numbered lines of the named buffer, from a start line and for a count, at most 400 lines, as one text."
         (name string "the buffer name")
         (range (list-of integer) "a start line, then a count")
-        (returns string))
+        (returns string) (public))
   (define (read-buffer name . range)
     ;; Numbered lines of the named buffer: (read-buffer name), or with
     ;; a start line, or with a start and a count.  At most 400 lines.
@@ -150,7 +150,7 @@
                 (get-output-string out))))))))
 
   (edoc "Every buffer's name, line count and revision, as one text."
-        (returns string))
+        (returns string) (public))
   (define (list-buffers)
     ;; Every buffer: name, line count, revision.
     (uninterruptible
@@ -166,7 +166,7 @@
 
   (edoc "The newest log entries as one text: 20 by default, at most 200."
         (count integer "how many")
-        (returns string))
+        (returns string) (public))
   (define log-tail
     (case-lambda
       [()
@@ -187,7 +187,7 @@
 
   (edoc "The documentation for a name, flattened from the corpus and every command and parameter, as one text."
         (name (or symbol string) "the name")
-        (returns string))
+        (returns string) (public))
   (define (describe-text name)
     ;; The documentation corpus, flattened: R6RS, Chez Scheme, and
     ;; every e command and parameter.  The authoritative reference.

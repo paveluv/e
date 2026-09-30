@@ -148,7 +148,7 @@
           (list (if (positive? left) (string-append (age left) " left") "expiring")))
         (if (eq? (car cell) 'ready) (list (file:abbreviate (cadr cell))) '("")))))
 
-  (edoc "Install Buffet's composition, column presentation, domain actions and global switching shortcuts. Entry, table and scroll widgets own editing, sorting, selection and pointer behavior.")
+  (edoc "Install Buffet's composition, column presentation, domain actions and global switching shortcuts. Entry, table and scroll widgets own editing, sorting, selection and pointer behavior." (public))
   (define (init!)
     (widget:register! 'buffet 1
       (append (layout:container 'y)

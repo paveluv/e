@@ -249,7 +249,7 @@
               (when (exists (lambda (id) (member id ids)) dependencies) (schedule! id)))) jobs)
         (prune-envelopes!))))
 
-  (edoc "Recover query ownership and rebuild indexes with active demand; saved recipes alone never start providers.")
+  (edoc "Recover query ownership and rebuild indexes with active demand; saved recipes alone never start providers." (public))
   (define (init!) (rescan!))
   (define notices
     (list (model:subscribe! #f (lambda (notice) (invalidate! (cadr notice))))

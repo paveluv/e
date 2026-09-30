@@ -77,7 +77,7 @@
   (edoc "Create an embedded Scheme prompt using an environment's actual symbol catalogue. The prompt borrows an authored draft; accepted/cancelled commands belong to its explicit host. Acceptance carries the captured environment and generation in its origin; submit with environment:evaluate!. No current window or head API namespace is used."
     (environment model "base environment") (generation integer "expected namespace generation")
     (draft buffer "borrowed authored Scheme text") (commands list "accepted/cancelled widget command targets")
-    (returns model "unmounted prompt view"))
+    (returns model "unmounted prompt view") (public))
   (define (create-model-prompt! environment generation draft commands)
     (let* ([origin (list (cons 'environment environment) (cons 'generation generation))]
            [request (prompt-request:create! head:ui-actor #f draft "" origin (list 'environment 1 environment))])
@@ -98,7 +98,7 @@
       (map (lambda (line) (glyph:fit line width)) (list-head (list-tail lines start) (min (cdr range) (- (length lines) start))))))
 
   (edoc "Compose a job's shared output editor and bounded result/diagnostic summary. Views borrow the job; splitting, unmounting and resizing never execute code, allocate workers or retain another result handle. Release the job explicitly through environment:release!."
-    (actor actor "view creator") (job model "base evaluation job") (returns model "unmounted result composition"))
+    (actor actor "view creator") (job model "base evaluation job") (returns model "unmounted result composition") (public))
   (define (create-result-view! actor job)
     (model:snapshots (list job))
     (let ([v (model-value job 'evaluation-job)])
@@ -1369,7 +1369,7 @@
             (list result-record)
             (if copied? " [copied]" ""))))))
 
-  (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area.")
+  (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area." (public))
   (define (eval!)
     (report! (call-with-evaluation! "(eval!)"
                (lambda () (evaluate-text (edit:region-text (edit:current-region))))) "(eval!)")
@@ -1451,7 +1451,7 @@
   (define (input-position text offset)
     (let ([lines (string:lines (substring text 0 offset))]) (cons (- (length lines) 1) (string-length (car (reverse lines))))))
 
-  (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e, C-M-x and M-x bindings.")
+  (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e, C-M-x and M-x bindings." (public))
   (define (init!)
     (completion:register! 'environment 1 (lambda (id origin) (model-completer id)))
     (prompt:register-profile! 'model-scheme 1
