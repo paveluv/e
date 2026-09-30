@@ -378,19 +378,20 @@
      (wait-for! 'completed-expression-keeps-its-arguments
        (lambda () (find-cell "=> (\"ab\")")) 5000)
 
-     ;; -- a private source and its rendered local companion ------------------
+     ;; -- a private source and its asynchronous widget presentation -----------
      (send! "\x8;fmarkdown:view!\r") ; C-h f, then the documented name
-     (wait-for! 'describe-opens-a-rendered-page (lambda () (find-cell "<describe>")) 5000)
+     (wait-for! 'describe-opens-a-rendered-page (lambda () (find-cell "procedure: (markdown:view!")) 5000)
      ;; The page opens beside the requesting window, whose short viewport may
-     ;; scroll the header away: read the rendered companion itself.
+     ;; scroll the header away: inspect the prepared host projection itself.
      (check 'describe-source-is-shared-and-private-to-the-requester
        (evaluate
-         '(let* ([page (reference:page head:ui-actor)] [id (car page)]
-                 [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
+         '(let* ([source (find (lambda (b) (and (head:buffer-store-id b)
+                                             (eq? (head:buffer-fact b 'reference-query #f) 'markdown:view!))) (head:buffers))]
+                 [id (head:buffer-store-id source)] [view (head:find-tool-buffer (format "*describe:~a*" id))])
             (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
               (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
               (head:buffer-read-only source) (not (head:buffer-store-id view))
-              (eq? source (head:buffer-fact view 'markdown-input #f))
+              (widget:descendant (head:buffer-fact view 'widget-id #f) 'app 'body 'text)
               (exists (lambda (line) (string:prefix? "procedure: (markdown:view!" line))
                 (vector->list (head:buffer-lines view)))))))
      ;; A definition documented in its own body reaches the page through the
@@ -400,8 +401,7 @@
      (send! "\x8;fwindow:split-left!\r")
      (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
        (lambda () (and (find-cell "libraries: (head window)")
-                       (find-cell "source: edoc, Documented definitions")
-                       (find-cell "side-by-side pair")))
+                       (find-cell "source: edoc, Documented definitions")))
        5000)
 
      (send! "\x18;\x3;")                ; C-x C-c

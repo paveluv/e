@@ -233,85 +233,35 @@
      ;; One live describe page exercises the source/companion boundary and
      ;; head-app reloads and core refusal. Fresh commands resolve the exports;
      ;; retaining an old procedure inside this driver would test old code.
-     (check 'describe-page-retains-selection-and-refreshes-through-reload
+     (check 'describe-widget-refreshes-visible-page-and-keeps-receiver
        (read-editor
-         '(let ([request-window (head:current-window)] [request-buffer (head:current-buffer)])
-            (define (show! name) ((top-level-value 'describe:show!) name))
-            (define (page) ((top-level-value 'reference:page) head:ui-actor))
-            (define (document! body)
-              (kernel:call-with-registration-update
-                (lambda ()
+         '(let* ([request-window (head:current-window)] [request-buffer (head:current-buffer)]
+                 [receiver (describe:show! 'markdown:view!)]
+                 [host (head:find-tool-buffer (format "*describe:~a*" receiver))]
+                 [root (head:buffer-fact host 'widget-id #f)]
+                 [body (widget:descendant root 'app 'body 'text)])
+            (define (refresh!) (head:before-frame!) (head:refresh-visible-views!) (widget:pump!))
+            (define (document!)
+              (kernel:retract-module! 'wired-reference-fixture)
+              (parameterize ([kernel:registering-module 'wired-reference-fixture])
+                (doc:register! '(((markdown:view!) (("procedure" . "(markdown:view! fixture)"))
+                                  #f ("(fixture)") fixture "Live reference" #f "Updated reference")))
+                (keymap:bind-default! "C-c F12" (top-level-value 'markdown:view!))))
+            (refresh!) (document!)
+            (refresh!)
+            (let ([updated (and (member "Updated reference" (vector->list (head:buffer-lines (head:buffer-of-store-id receiver)))) #t)]
+                  [revision (store:revision receiver)])
+              (refresh!) (refresh!)
+              (let ([stable? (= revision (store:revision receiver))])
+                (kernel:reload-module! "markdown") (kernel:reload-module! "describe")
+                (document!) (refresh!)
+                (let ([result (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer))
+                                updated stable? (equal? body (widget:descendant root 'app 'body 'text))
+                                (caddr (reference:page head:ui-actor receiver))
+                                (store:line receiver 0))])
                   (kernel:retract-module! 'wired-reference-fixture)
-                  (parameterize ([kernel:registering-module 'wired-reference-fixture])
-                    (doc:register!
-                      `(((markdown:view!) (("procedure" . "(markdown:view! fixture)"))
-                         #f ("(fixture)") fixture "Live reference" #f ,body)))
-                    (keymap:bind-default! "C-c F11" (top-level-value 'markdown:view!))
-                    (keymap:bind! "C-c F10" void)
-                    (keymap:bind-default! "C-c F10" (top-level-value 'markdown:view!))
-                    (keymap:bind! 'markdown "F12" (top-level-value 'markdown:view!))
-                    (keymap:bind-default! "C-c F11" (top-level-value 'markdown:view!))
-                    (keymap:bind! "C-c F12" (top-level-value 'markdown:view!))))))
-            (window:delete-others!)
-            (show! 'describe:show!)
-            (let* ([id (car (page))] [source (head:buffer-of-store-id id)]
-                   [view (markdown:companion source)]
-                   [initial
-                    (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer))
-                          (not (head:buffer-store-id view)) (head:buffer-name view)
-                          (mode:name-of source) (head:buffer-read-only source))])
-              (head:buffer-name-set! source "reference source")
-              (head:buffer-name-set! view "reference view")
-              (show! 'markdown:view!)
-              (let* ([reloads
-                      (fold-left
-                        (lambda (out module)
-                          (append out (list (let* ([callback (head:app-refresh! (head:app-of view))]
-                                                   [outcome
-                                                    (guard (ex [(and (string=? module "reference")
-                                                                     (message-condition? ex)
-                                                                     (string:search (condition-message ex) "pins reference"
-                                                                       0 (string-length (condition-message ex))))
-                                                                'refused])
-                                                      (kernel:reload-module! module) 'reloaded)])
-                                              (document! (string-append "Refreshed " module))
-                                              (head:before-frame!)
-                                              (head:refresh-visible-views!)
-                                              (let ([revision (store:revision id)])
-                                                (head:before-frame!)
-                                                (head:before-frame!)
-                                                (list outcome (= id (car (page))) (caddr (page))
-                                                  (eq? view (markdown:companion source))
-                                                  (not (eq? callback (head:app-refresh! (head:app-of view))))
-                                                  (and (member (string-append "Refreshed " module)
-                                                         (vector->list (head:buffer-lines view))) #t)
-                                                  (store:line id 0) (keymap:command-key 'markdown:view!)
-                                                  (= revision (store:revision id))))))))
-                        '() '("describe" "markdown" "reference"))]
-                     [labels (list (head:buffer-name source) (head:buffer-name view))]
-                     [unbound
-                      (begin
-                        (kernel:retract-module! 'wired-reference-fixture)
-                        (head:before-frame!)
-                        (list (keymap:command-keys 'markdown:view!) (store:line id 0)))])
-                (edit:kill-buffer! view)
-                (window:delete-others!)
-                (show! 'markdown:view!)
-                (let* ([replacement (markdown:companion source)]
-                       [keeps-source (and (= id (car (page))) (not (eq? view replacement)))])
-                  (edit:kill-buffer! source)
-                  (head:before-frame!)
-                  (let ([retired (list (page) (store:exists? id)
-                                       (and (memq replacement (head:buffers)) #t))])
-                    (kernel:retract-module! 'wired-reference-fixture)
-                    (window:delete-others!)
-                    (list initial reloads labels unbound keeps-source retired)))))))
-       '((#t #t #t "<describe>" "markdown" #t)
-         ((reloaded #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
-          (reloaded #t markdown:view! #t #t #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t)
-          (refused #t markdown:view! #t #f #t "**keys**: C-c F12, C-c F11  " "C-c F12" #t))
-         ("[reference source]" "<reference view>")
-         (() "**procedure**: `(markdown:view! [buffer])`  ") #t (#f #f #f)))
+                  (window:delete-others!) result)))))
+       '(#t #t #t #t #t markdown:view! "**keys**: C-c F12  "))
 
      ;; Local work still requires review. The base remains writable while
      ;; a quitting head runs its hooks and publishes its final checkpoint.

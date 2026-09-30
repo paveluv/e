@@ -19,6 +19,7 @@
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
           (prefix (service log) log:)
+          (prefix (service markup-source) markup-source:)
           (prefix (service policy) policy:)
           (prefix (service prompt-request) prompt-request:)
           (prefix (service reference) reference:)
@@ -40,7 +41,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "prompt-request" "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
+      "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -387,12 +388,17 @@
                           [else (error 'wire "unknown terminal option")])])
             (if (null? (cdr args)) (option) (begin (option (cadr args)) #t)))])]
       [(reference-fetch) (control!) (arity 0) (reference:begin-fetch! actor) #t]
+      [(markup-source) (control!) (arity 1) (markup-source:create! actor (car args))]
       [(reference-signatures) (arity 0) (reference:signatures)]
-      [(reference-page) (arity 0) (reference:page actor)]
-      [(reference-page!)
-       (control!) (arity 4)
-       (doc:call-with-entries (cadddr args)
-         (lambda () (apply reference:page! actor (car args) (cadr args) (caddr args))))]
+      [(reference-page) (arity 1) (reference:page actor (car args))]
+      [(reference-create)
+       (control!) (arity 3)
+       (doc:call-with-entries (caddr args)
+         (lambda () (reference:create! actor (car args) (cadr args))))]
+      [(reference-select)
+       (control!) (arity 5)
+       (doc:call-with-entries (list-ref args 4)
+         (lambda () (apply reference:select! actor (list-head args 4))))]
       [(reference-lookup)
        (arity 2)
        (doc:call-with-entries (cadr args) (lambda () (map doc:to-datum (reference:lookup (car args)))))]

@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head window)
-  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) open-document! pop-up-or-reuse! register-link-tag! resize! return! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! tool! unlink!)
+  (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) open-document! pop-up-or-reuse! register-link-tag! register-presentation! resize! return! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! tool! unlink!)
   (import (rnrs)
           (only (chezscheme) format void quotient)
           (prefix (core kernel) kernel:)
@@ -33,6 +33,13 @@
     (and (not (head:buffer-store-id b)) (head:buffer-fact b 'widget-id #f)))
 
   (define mounted '()) ; window-hosted roots only; embedded hosts manage themselves
+  (define presentations (kernel:make-registry car))
+
+  (edoc "Register a default-window document presentation. The factory receives document ID, explicit host commands and a source position, and returns an unmounted composition."
+        (name symbol "presentation name") (factory procedure "document, commands, position -> view"))
+  (define (register-presentation! name factory)
+    (unless (and (symbol? name) (procedure? factory)) (error 'register-presentation! "expected name and factory"))
+    (kernel:registry-add! presentations (cons name factory)))
   (define (mount-buffer! b)
     (let ([id (buffer-widget b)])
       (when id
@@ -113,15 +120,33 @@
         (error 'window "tool has no visible window" id))))
 
   (edoc "Open a semantic document reference through an explicit window-tool host. Inactive panel clicks use the previously focused window and preserve its focus; keyboard actions use the tool's own window."
-        (id model "window-tool view") (ref datum "catalogue document reference"))
-  (define (open-document! id ref)
+        (id model "window-tool view") (ref datum "catalogue document reference")
+        (preferences (list-of list) "optional options: point (row . character), presentation name"))
+  (define (open-document! id ref . preferences)
+    (unless (and (<= (length preferences) 1)
+              (or (null? preferences)
+                (and (list? (car preferences))
+                  (for-all (lambda (p) (and (pair? p) (case (car p)
+                                                        [(point) (and (pair? (cdr p)) (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) (list (cadr p) (cddr p))))]
+                                                        [(presentation) (symbol? (cdr p))] [else #f]))) (car preferences)))))
+      (error 'open-document! "expected at most one preference list"))
     (let* ([own (tool-window id)] [event-target (head:app-event-focus)]
            [target (if (and event-target (memq event-target (head:windows))) event-target own)]
-           [b (catalogue-host:resolve! ref)])
+           [b (catalogue-host:resolve! ref)] [options (if (pair? preferences) (car preferences) '())]
+           [point (assq 'point options)] [presentation (assq 'presentation options)]
+           [factory (and presentation (kernel:registry-find presentations (lambda (p) (eq? (car p) (cdr presentation)))))])
       (unless b (error 'open-document! "document is unavailable" ref))
+      (when (and presentation (not factory)) (error 'open-document! "presentation is unavailable" (cdr presentation)))
       (widget:keep-host-focus!)
       (let ([targets (linked 'target target)])
-        (for-each (lambda (w) (head:with-window w (head:show-buffer! b)))
+        (for-each (lambda (w)
+                    (if factory
+                      (show-widget! w
+                        (tool! (format "~a ~a" (car factory) (head:buffer-name b))
+                          (lambda (commands) ((cdr factory) (or (head:buffer-store-id b) (error 'open-document! "presentation needs a source document"))
+                                              commands (if point (cdr point) '(0 . 0))))
+                          (format "~a:~s" (car factory) ref)))
+                      (head:with-window w (head:show-buffer! b) (when point (head:goto! (cdr point))))))
           (if (null? targets) (list target) targets)))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
@@ -133,9 +158,11 @@
       (when b (head:with-window w (head:show-buffer! b)))))
 
   (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view is mounted for the caller's action and can be shown or forked. Hidden mounts are released at the next frame."
-        (name string "tool name without brackets") (build procedure "commands -> app view") (returns list))
-  (define (tool! name build)
-    (let* ([key (string-append "*" name "*")] [old (head:find-tool-buffer key)])
+        (name string "tool name without brackets") (build procedure "commands -> app view")
+        (identity (list-of string) "optional stable identity distinct from its label") (returns list))
+  (define (tool! name build . identity)
+    (unless (and (<= (length identity) 1) (for-all string? identity)) (error 'tool! "expected at most one stable identity"))
+    (let* ([key (string-append "*" (if (pair? identity) (car identity) name) "*")] [old (head:find-tool-buffer key)])
       (if old (buffer-widget (mount-buffer! old))
         (let* ([options (list (cons 'name (string-append "<" name ">")) (cons 'tool-key key) '(recency . behind))]
                [host (view:create! head:ui-actor #f 'window-tool 1 options '())]

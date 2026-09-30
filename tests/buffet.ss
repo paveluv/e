@@ -42,7 +42,16 @@
                     (store:line (cadr (view:source (interaction:snapshot (entry)))) 0))
                   (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
-       (table:select! (table) (catalogue-host:reference b)) (settle!))
+       (let ([ref (catalogue-host:reference b)])
+         (table:select! (table) ref)
+         ;; A ready prior generation may still precede a queued rename.
+         ;; Wait for the selected row to include the fact this action uses.
+         (test:await 'buffet-selected-current-name
+           (lambda ()
+             (settle!)
+             (let* ([s (selection)] [r (collection:lookup (query) (cadr s) ref '(name))])
+               (and (equal? (caddr s) ref) (eq? (car r) 'ready) (pair? (list-ref r 4))
+                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (head:buffer-name b)))))))))
      (define (press! . keys) (for-each dispatch:key! keys))
      (define a (head:new-buffer! "buffet-a"))
      (define b (head:new-buffer! "buffet-b"))

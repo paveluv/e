@@ -7,8 +7,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (service reference)
-  (export begin-fetch! (rename (doc-browser-url browser-url)) (rename (doc-entries entries)) fetch!
-          (rename (doc-lookup lookup)) page page! signatures)
+  (export begin-fetch! (rename (doc-browser-url browser-url)) create! (rename (doc-entries entries)) fetch!
+          (rename (doc-lookup lookup)) page select! signatures)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
@@ -38,52 +38,59 @@
     (unless (and (actor:identity? head) (eq? (car head) 'head))
       (error 'reference "expected a requesting head" head)))
 
-  (edoc "A head's describe page receipt, (id revision selected-name), or #f when absent or hidden."
-        (head head "the head's identity")
-        (returns (or list #f)))
-  (define (page head)
-    ;; -> (id revision selected-name), or #f if absent/hidden. This receipt
-    ;; can be the basis of a refresh, so it cannot replace a newer query or
-    ;; recreate a page deleted while its source was being computed.
+  (define (page-state head id)
     (check-head head)
-    (let ([id (store:publication producer head)])
-      (and id
-           (guard (ex [else #f])
-             (let-values ([(lines revision facts) (store:snapshot-state id)])
-               (let ([audience (assq 'audience facts)])
-                 (and (actor:in-audience? head (if audience (cdr audience) 'all))
-                      (list id revision (cdr (assq 'reference-query facts))))))))))
+    (and (store:visible? head id)
+      (guard (ex [else #f])
+        (let-values ([(lines revision facts) (store:snapshot-state id)])
+          (let ([publication (assq 'publication facts)] [query (assq 'reference-query facts)])
+            (and publication query (equal? (cadr publication) producer)
+              (list revision facts (caddr publication))))))))
 
-  (edoc "Publish or refresh a head's describe page for a name, annotated with its keys; a basis (id . revision) refreshes an existing page."
-        (head head "the head's identity")
-        (name (or symbol string) "the documented name")
-        (keys (list-of string) "the key spellings bound to it")
-        (basis (list-of pair) "(id . revision) to refresh, at most one"))
-  (define (page! head name keys . basis)
-    ;; Keys are plain annotations supplied by the requesting head. Omit
-    ;; basis for an explicit selection; pass (id . revision) to refresh it.
+  (edoc "Read an explicit reference page as (id revision selected-name), or false when unavailable."
+        (head head "requesting head") (id integer "source document")
+        (returns (or list #f)))
+  (define (page head id)
+    (let ([state (page-state head id)])
+      (and state (list id (car state) (cdr (assq 'reference-query (cadr state)))))))
+
+  (define (check-query head name keys)
     (check-head head)
     (unless (and (or (symbol? name) (string? name))
-                 (list? keys) (for-all string? keys)
-                 (<= (length basis) 1)
-                 (or (null? basis)
-                     (let ([b (car basis)])
-                       (and (pair? b) (integer? (car b)) (exact? (car b)) (> (car b) 0)
-                            (integer? (cdr b)) (exact? (cdr b)) (>= (cdr b) 0)))))
-      (error 'page! "expected a name, key strings and optional (id . revision)" name keys basis))
-    (let* ([name (if (string? name) (string->symbol name) name)]
-           [entries (doc-lookup name)])
-      (and (or (pair? entries) (pair? basis))
-           (let ([lines (if (pair? entries) (page-lines entries keys)
-                            (list (format "No documentation for ~a" name)))])
-             (apply store:publish! producer head "*describe*" lines
-               `((audience . (,head)) (reference-query . ,name)
-                 (mode . "markdown") (mode-auto . #f) (read-only . #t)
-                 (disposable . #t) (trailing . #t) (wrap . default)
-                 (base . ,(text:to-string (list->vector lines) #t)))
-               (if (null? basis) '()
-                   (list (list (caar basis) (cdar basis)
-                               (cons 'audience (list head)) (cons 'reference-query name)))))))))
+              (list? keys) (for-all string? keys))
+      (error 'reference "expected a name and contextual key strings" name keys)))
+  (define (page-facts head name lines)
+    `((audience . (,head)) (reference-query . ,name)
+      (mode . "markdown") (mode-auto . #f) (read-only . #t)
+      (disposable . #t) (trailing . #t) (wrap . default)
+      (base . ,(text:to-string (list->vector lines) #t))))
+
+  (edoc "Create an independent private reference page. Return its source document, or false for an undocumented name. Keys are annotations from the requesting head."
+        (head head "requesting head") (name (or symbol string) "documented name")
+        (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
+  (define (create! head name keys)
+    (check-query head name keys)
+    (let* ([name (if (string? name) (string->symbol name) name)] [entries (doc-lookup name)])
+      (and (pair? entries)
+        (let ([lines (page-lines entries keys)])
+          (store:publish! producer (list head (gensym->unique-string (gensym "reference")))
+            "*describe*" lines (page-facts head name lines) #f)))))
+
+  (edoc "Select or refresh an explicit reference page against its revision. Missing documentation becomes an informative page; a changed selection, audience or deleted source refuses without recreation."
+        (head head "requesting head") (id integer "source document")
+        (revision integer "reviewed revision") (name (or symbol string) "documented name")
+        (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
+  (define (select! head id revision name keys)
+    (check-query head name keys)
+    (unless (and (integer? revision) (exact? revision) (>= revision 0))
+      (error 'select! "expected a content revision" revision))
+    (let ([state (page-state head id)] [name (if (string? name) (string->symbol name) name)])
+      (and state (= revision (car state))
+        (equal? (assq 'audience (cadr state)) (cons 'audience (list head)))
+        (let* ([entries (doc-lookup name)]
+               [lines (if (pair? entries) (page-lines entries keys) (list (format "No documentation for ~a" name)))])
+          (store:publish! producer (caddr state) "*describe*" lines (page-facts head name lines)
+            (list id revision (cons 'audience (list head)) (assq 'reference-query (cadr state))))))))
 
   (define (entry-lines entry)
     (append

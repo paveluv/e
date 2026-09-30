@@ -7,7 +7,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation string)
-  (export common-prefix delete elide fold-case hash insert join lines prefix? search searcher suffix? tail)
+  (export common-prefix delete elide fold-case hash insert join lines prefix? search searcher suffix? tail trim-spaces)
   (import (rnrs))
 
   (edoc "Fold character case without expanding characters or changing their positions, as char-ci=? compares them."
@@ -162,4 +162,26 @@
                   [(> matched 0)
                    (scan i (vector-ref failure (- matched 1)))]
                   [else (scan (+ i 1) 0)])))))))
+
+  (edoc
+    "Remove trailing ASCII spaces and, when leading? is true, leading spaces too. Other whitespace is retained."
+    (text string "input")
+    (leading? boolean "trim both ends")
+    (returns string))
+  (define (trim-spaces text leading?)
+    (let* ([n (string-length text)]
+           [from (if leading?
+                   (let loop ([i 0])
+                     (if (and (< i n) (char=? (string-ref text i) #\space))
+                         (loop (+ i 1))
+                         i))
+                   0)]
+           [to (let loop ([i n])
+                 (if (and (> i from)
+                       (char=? (string-ref text (- i 1)) #\space))
+                   (loop (- i 1))
+                   i))])
+      (if (and (= from 0) (= to n))
+        text
+        (substring text from to))))
 )

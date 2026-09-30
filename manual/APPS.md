@@ -8,12 +8,13 @@ Apps look like buffers, participate in the buffer list, may appear in any
 window, and carry `[]` in their status line. Local apps refresh while visible;
 shared apps publish text, facts, and rendition through the store and surface.
 
-Head apps are local buffers: their generated text, modes, and presentation
+The legacy head-app adapter uses local buffers: generated text, modes, and presentation
 facts stay in this head.  They have no store id and do not appear in the
-store's buffer list or publish cursor marks.  This includes completions,
-buffer, file and git views, log renderings, and describe's rendered companion.
-Describe's private Markdown source and terminal buffers belong to the base:
-their text is readable through `store:`.
+store's buffer list or publish cursor marks. Git and log listings still use
+this adapter. Buffet, Finder, prompts, Markdown and Describe use
+[widget compositions](WIDGETS.md); their outer window slots are local, while
+models and logical interaction belong to the base. Describe's private
+Markdown source and terminal documents are readable through `store:`.
 
 ## Registering an app
 
@@ -27,7 +28,7 @@ as `<example 2>`. An ordinary buffer with the same name is preserved. Renaming
 the app changes its label; registering the same key again reuses the
 same local buffer and replaces its refresh and input handler.
 You can also pass an existing local buffer to attach the app directly
-to that identity, as a source's companion view does. Shared buffers
+to that identity. Shared buffers
 are refused by this head-app API.
 `refresh!` takes no arguments and updates the registered buffer with
 `head:view-replace!` or `head:view-append!`. `handle-event!` receives one canonical
@@ -127,7 +128,7 @@ arbitrary callbacks, lock the head, or roll back changes on an exception.
 visible surfaced buffers automatically, keeping their ordinary mode.
 Shared apps can also declare input capture and cursor following as described
 below. The terminal uses this surface API. Describe publishes ordinary
-Markdown source and uses a local companion for its presentation.
+Markdown source and uses independently fitted widget presentations.
 The terminal emulator provides an owned
 [`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
 surface rows for publishers that need terminal output.

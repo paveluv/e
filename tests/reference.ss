@@ -177,7 +177,7 @@
                                    (map (lambda (head) (store:visible? head id)) page-heads)))))))])
              (set! page-ids
                (fold-left (lambda (ids head)
-                            (append ids (list (reference:page! head "s9-reference" '("C-x")))))
+                            (append ids (list (reference:create! head "s9-reference" '("C-x")))))
                           '() page-heads))
              (store:unsubscribe! token)
              (test:check 'private-markdown-facts-publish-with-content
@@ -191,41 +191,48 @@
              '("**keys**: C-x  " "" "**procedure**: `(s9-reference)`  "
                "libraries: (fixture)  " "source: fixture, Module entry  " "" "local documentation"))
            (let* ([head (car page-heads)] [id (car page-ids)]
+                  [other (reference:create! head 's9-reference '("C-y"))]
                   [events (test:recorder)] [token (store:subscribe! id events)])
-             (test:check 'same-or-missing-selection-leaves-the-page-alone
-               (list (reference:page! head 's9-reference '("C-x"))
-                     (reference:page! head 'missing '()) (reference:page head) (events))
-               (list id #f (list id 0 's9-reference) '()))
+             (set! page-ids (append page-ids (list other)))
+             (test:check 'independent-pages-and-idempotent-refresh
+               (list (reference:select! head id 0 's9-reference '("C-x"))
+                     (reference:create! head 'missing '()) (reference:page head id)
+                     (store:line other 0) (events))
+               (list id #f (list id 0 's9-reference) "**keys**: C-y  " '()))
              (store:unsubscribe! token)
              (registered! "updated page")
-             (test:check 'refresh-publishes-live-documents-for-one-requester
-               (list (reference:page! head 's9-reference '("C-x") (cons id 0))
-                     (store:line id 6) (reference:page head)
-                     (store:line (cadr page-ids) 6) (store:revision (cadr page-ids)))
+             (test:check 'refresh-updates-only-its-receiver
+               (list (reference:select! head id 0 's9-reference '("C-x"))
+                     (store:line id 6) (reference:page head id)
+                     (store:line other 6) (store:revision other))
                (list id "updated page" (list id 1 's9-reference) "local documentation" 0))
+             (test:check 'stale-selection-cannot-replace-a-newer-question
+               (list (reference:select! head id 1 'missing '())
+                     (reference:select! head id 1 's9-reference '("C-x"))
+                     (reference:page head id) (store:line id 0))
+               (list id #f (list id 2 'missing) "No documentation for missing"))
              (for-each
                (lambda (action)
-                 (let* ([id (reference:page! head 's9-reference '("C-x"))]
-                        [basis (cons id (store:revision id))])
-                   (if (eq? action 'hide) (store:set-property! head id 'audience '())
-                       (store:delete! head id))
+                 (let* ([victim (reference:create! head 's9-reference '())]
+                        [revision (store:revision victim)])
+                   (if (eq? action 'hide) (store:set-property! head victim 'audience '())
+                       (store:delete! head victim))
                    (test:check (list 'page-refresh-respects action)
-                     (list (reference:page! head 's9-reference '("C-x") basis)
-                           (reference:page head) (store:visible? head id))
-                     '(#f #f #f))))
-               '(hide delete)))
-           (let ([head (cadr page-heads)] [id (cadr page-ids)])
-             (store:drop-property! head id 'audience)
-             (test:check 'page-read-honors-default-audience-but-refresh-does-not-restore-it
-               (list (caddr (reference:page head))
-                     (reference:page! head 's9-reference '("C-x") (cons id (store:revision id)))
-                     (store:property id 'audience))
-               '(s9-reference #f #f))
-             (reference:page! head 's9-reference '("C-x"))
+                     (list (reference:select! head victim revision 's9-reference '())
+                           (reference:page head victim) (store:visible? head victim))
+                     '(#f #f #f))
+                   (when (store:exists? victim) (store:delete! head victim))))
+               '(hide delete))
+             (store:drop-property! head other 'audience)
+             (test:check 'changed-audience-is-not-restored-by-refresh
+               (list (reference:page head other)
+                     (reference:select! head other 0 's9-reference '())
+                     (store:property other 'audience))
+               (list (list other 0 's9-reference) #f #f))
              (registered! #f)
-             (reference:page! head 's9-reference '("C-x") (cons id (store:revision id)))
+             (reference:select! head id 2 's9-reference '())
              (test:check 'retracted-document-keeps-a-refreshable-selection
-               (list (store:line id 0) (caddr (reference:page head)))
+               (list (store:line id 0) (caddr (reference:page head id)))
                '("No documentation for s9-reference" s9-reference))
              (registered! "local documentation"))
 
@@ -330,11 +337,11 @@
                  (if description (list description) '())))
              '("updated documentation" #f))
            (let ([before (list (map fields (reference:entries))
-                               (map reference:page page-heads))])
+                               (map reference:page (append page-heads (list (car page-heads))) page-ids))])
              (load source)
              (test:check 'fresh-base-instance-recovers-corpus-and-selected-page
                (let ([next (eval `(begin (import (prefix (service reference) reference:))
-                                         (list (reference:entries) (map reference:page ',page-heads))))])
+                                         (list (reference:entries) (map reference:page ',(append page-heads (list (car page-heads))) ',page-ids))))])
                  (list (map fields (car next)) (cadr next)))
                before))))
        (lambda ()

@@ -309,14 +309,6 @@
       (let ([ps (points source d)])
         (publish! id source d (list caret anchor (if ps (caddr ps) caret)) (not (equal? caret anchor)) #t)
         (mount-goal-set! (mounted id) #f))))
-  (define (adjacent lines p direction)
-    (let* ([r (car p)] [c (cdr p)] [line (vector-ref lines r)]
-           [edges (fold-left (lambda (out cluster) (cons (+ (car out) (car cluster)) out)) '(0) (glyph:clusters line))])
-      (if (eq? direction 'left)
-        (cond [(> c 0) (cons r (or (find (lambda (n) (< n c)) edges) 0))]
-          [(> r 0) (cons (- r 1) (string-length (vector-ref lines (- r 1))))] [else p])
-        (cond [(< c (string-length line)) (cons r (find (lambda (n) (> n c)) (reverse edges)))]
-          [(< (+ r 1) (vector-length lines)) (cons (+ r 1) 0)] [else p]))))
 
   (edoc "Move an explicit editor caret by grapheme, displayed row, endpoint or to a logical position. Up/down require an allocated view and retain a head-local display column. Extend preserves the selection anchor."
         (id model "editor view") (direction (or position (one-of left right up down home end start finish)) "motion or absolute position")
@@ -331,7 +323,7 @@
         (let* ([p (car ps)] [span (text-source:span ps)]
                [next (if (position? direction) direction (case direction
                                                            [(left right) (if (and (not mark?) (cadddr (editor-state:state d)) (not (equal? (car ps) (cadr ps))))
-                                                                           (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (adjacent lines p direction))]
+                                                                           (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (text-layout:adjacent lines p direction))]
                                                            [(home) (cons (car p) 0)] [(end) (cons (car p) (string-length (vector-ref lines (car p))))]
                                                            [(start) '(0 . 0)] [(finish) (let ([r (- (vector-length lines) 1)]) (cons r (string-length (vector-ref lines r))))]
                                                            [else (let* ([g (geometry id source d #f)] [data (car g)] [frame (caddr data)] [width (list-ref g 4)]
@@ -559,7 +551,7 @@
       (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)]
              [selection (case operation
                           [(line) (list p (let ([end (string-length (vector-ref old (car p)))])
-                                            (if (< (cdr p) end) (cons (car p) end) (adjacent old p 'right))))]
+                                            (if (< (cdr p) end) (cons (car p) end) (text-layout:adjacent old p 'right))))]
                           [(forward backward)
                            (let-values ([(start end) ((if (eq? operation 'forward) expression:forward expression:backward) old p)])
                              (unless start (refuse "No expression in that direction"))
@@ -638,7 +630,7 @@
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)])
         (replace! id source d (if (and (cadddr s) (not (equal? p (cadr s)))) s
-                                (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction 'end))))
+                                (list p (text-layout:adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction 'end))))
 
   (edoc "Move an editor's source journal and rebase its view without changing any other selection."
         (id model "editor view") (direction symbol "undo or redo") (scope any "undo actor scope"))

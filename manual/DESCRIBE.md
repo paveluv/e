@@ -9,17 +9,19 @@ meanings.
 
 Describe opens a read-only `<describe>` view in a new tile below the current
 window, or reuses a window already showing it. Focus remains in the requesting
-window. The base keeps one read-only Markdown source, `*describe*`, visible
-to the requesting head; `<describe>` is its local rendered companion.
+window. Each page has an independent read-only Markdown source, visible
+to the requesting head, and a widget presentation. New page names are
+suffixed when needed, so several subjects can remain open together.
 The selected name survives module reload, and pages update dynamically.
 If the described value is a command, the page lists its current global keys;
 rebinding or unbinding the command updates an already
 visible page on redraw. `C-h k` uses the same behavior for `<help>`.
 
 `C-c v` in the view shows its Markdown source, which remains read-only.
-Killing the view keeps the source; describing another name reuses it.
-Killing the source also closes its view. Renaming either buffer preserves
-their relationship. A name with no documentation leaves the previous page
+Killing the view keeps the source; pass its document ID to `describe:show!`
+to reopen or change that page.
+Killing the source leaves its presentation unavailable. Source names do not
+determine page identity. A name with no documentation leaves the previous page
 alone; if a displayed entry is later removed, the page reports its absence
 and resumes displaying it when the documentation returns.
 
@@ -72,12 +74,16 @@ Its `lookup`, `entries`, and `browser-url` operations own corpus queries;
 `describe:fetch-data!` command. These queries include both the downloaded corpus
 and current `doc:` registrations.
 
-For a head integration, `reference:page!` takes a head actor, a name and a list
-of key annotations, returning the private source's store id or `#f` when the
-name has no documentation. `reference:page` returns `(id revision name)` for
-that head's current page, or `#f`. Passing `(id . revision)` as the fourth
-argument to `page!` refreshes an existing selection only if it is still
-current and retains its original private audience.
+`reference:create!` takes a head actor, a name and a list of contextual key
+annotations, returning an independent private source document or `#f` when
+the name has no documentation. `reference:page` takes the head and that
+document, returning `(id revision name)` or `#f`. `reference:select!` takes
+head, document, reviewed revision, name and key annotations. It changes or
+refreshes only that page; a newer selection, changed audience or deleted
+document refuses. Multiple pages can show different subjects in one head.
+
+`describe:show!` returns the page's document. Pass it as an optional second
+argument to change an existing page; omit it to open an independent page.
 
 ## Publishing module documentation
 

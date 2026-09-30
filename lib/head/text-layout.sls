@@ -1,8 +1,20 @@
 ;; TUI text geometry over an explicit source. No windows, views or device I/O.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-layout)
-  (export anchor breaks column distance hit locate move overflows? page scroll scroll-margin segment wrap-lines)
-  (import (chezscheme) (prefix (head render) render:))
+  (export adjacent anchor breaks column distance hit locate move overflows? page scroll scroll-margin segment wrap-lines)
+  (import (chezscheme) (prefix (head render) render:) (prefix (sys glyph) glyph:))
+
+  (edoc "Move to the preceding or following grapheme, crossing a line boundary when needed."
+        (lines vector "text lines") (p position "logical caret") (direction (one-of left right) "motion") (returns position))
+  (define (adjacent lines p direction)
+    (let* ([r (car p)] [c (cdr p)] [line (vector-ref lines r)]
+           [edges (fold-left (lambda (out cluster) (cons (+ (car out) (car cluster)) out)) '(0) (glyph:clusters line))])
+      (if (eq? direction 'left)
+        (cond [(> c 0) (cons r (or (find (lambda (n) (< n c)) edges) 0))]
+          [(> r 0) (cons (- r 1) (string-length (vector-ref lines (- r 1))))] [else p])
+        (cond [(< c (string-length line)) (cons r (find (lambda (n) (> n c)) (reverse edges)))]
+          [(< (+ r 1) (vector-length lines)) (cons (+ r 1) 0)] [else p]))))
+
 
   (define wrap-cache (make-weak-eq-hashtable))
 

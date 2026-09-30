@@ -134,7 +134,8 @@ Normal detach waits for the final checkpoint. `M-x (main:shutdown!)` also
 waits for the requesting head's checkpoint before stopping the base.
 Shared edits made while absent move the saved positions;
 after a reset or expired history, positions clamp to the current text. Markdown
-and describe companions rebuild from their shared sources at the new width.
+and Describe widgets rebuild from their shared sources at the new width;
+unavailable Markdown anchors are reported until explicit navigation.
 The finder rebuilds its directory/filter/sort state and selected paths
 from a small descriptor, then rescans at the new window widths.
 Existing registered tools reopen by identity. Plain local buffers retain their
@@ -236,7 +237,7 @@ not interpret historical hello/error strings or negotiate an older protocol.
 | Terminal processes and their screens | Prompts, `<completions>`, `<bindings>`, `<buffet>` |
 | `*copy*`, one per head through its audience, shown as `[copy]` like every buffer that is one head's alone | |
 | The log's records | `<log>` renderings and the echo area |
-| Describe's `*describe*` source | Its rendered `<describe>` companion and Markdown views |
+| Describe's `*describe*` sources and widget view state | Markdown fitting, styles and hit maps |
 | Questions waiting for a named head | Plain local buffers with their text, checkpointed under the head's name |
 | `base-config.e`, permissions and sessions | `config.e`, key bindings, styles |
 
