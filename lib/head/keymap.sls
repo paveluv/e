@@ -18,8 +18,8 @@
     (rename (key-binding binding)) binding-action
     binding-context binding-kind binding-prefix?
     binding-sequence binding-spec call call-action-arguments
-    call-action-procedure call-action? choose-binding
-    command-hint command-key command-keys
+    call-action-procedure call-action? call-with-command! choose-binding
+    command-hint command-key command-keys command-state
     (rename (effective-bindings context-bindings))
     context-capture (rename (key-event-binding event-binding))
     generation prefill prefill-action-arguments
@@ -30,10 +30,25 @@
   (import (rnrs)
           (only (chezscheme)
                 cons* format iota top-level-bound? top-level-value environment-symbols interaction-environment
-                procedure-arity-mask logbit?)
+                procedure-arity-mask logbit? make-parameter parameterize)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:))
+
+  (define command-turn 0)
+  (define in-command? (make-parameter #f))
+
+  (edoc "Read this head's input-command generation and whether it is currently executing, as a pair. Controls can end local typing continuity without inspecting bindings or adding view traffic."
+        (returns pair))
+  (define (command-state) (cons command-turn (in-command?)))
+
+  (edoc "Execute one input command boundary. Nested routing shares the boundary; an unbound or no-op input still separates editing runs."
+        (thunk thunk "input dispatch") (returns any))
+  (define (call-with-command! thunk)
+    (if (in-command?) (thunk)
+      (begin
+        (set! command-turn (+ command-turn 1))
+        (parameterize ([in-command? #t]) (thunk)))))
 
   ;;; Key syntax --------------------------------------------------------------
 

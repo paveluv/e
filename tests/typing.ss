@@ -19,6 +19,7 @@
              (prefix (head dispatch) dispatch:)
              (prefix (head head) head:)
              (prefix (head window) window:)
+             (prefix (head keymap) keymap:)
              (prefix (state store) store:))
 
      (define check test:check)
@@ -78,4 +79,9 @@
      (check 'deleting-across-a-line-break-continues-the-run
        (list (text) (same-batch? 0 1 2) (same-batch? 2 3) (label))
        (list (list (string-append "one" (make-string 25 #\a))) #t #f "delete \"\\n\""))
+     (define (unchanged) #t)
+     (keymap:bind! "F12" unchanged)
+     (type! "x") (press! "F12") (type! "y") (press! "C-_")
+     (check 'a-command-with-no-text-or-selection-change-ends-typing
+       (text) (list (string-append "one" (make-string 25 #\a) "x")))
      (test:finish! 'typing)))
