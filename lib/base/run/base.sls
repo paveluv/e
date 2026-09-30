@@ -126,6 +126,7 @@
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
     (case operation
       [(prompt-create) (control!) (head!) (arity 5) (apply prompt-request:create! actor args)]
+      [(prompt-bind) (control!) (head!) (arity 3) (apply prompt-request:bind! actor args)]
       [(prompt-accept) (control!) (head!) (arity 3) (apply prompt-request:accept! actor args)]
       [(prompt-cancel) (control!) (head!) (arity 1) (prompt-request:cancel! actor (car args))]
       [(prompt-close) (control!) (head!) (arity 1) (prompt-request:close! actor (car args)) #t]

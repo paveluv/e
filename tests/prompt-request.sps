@@ -70,6 +70,19 @@
   (check 'prompt-close-forgets-identity-and-owned-text
     (list (model:snapshot request) (store:exists? source)
       (prompt-request:accept! owner request 0 0)) '(#f #f unavailable))
+  (let* ([request (new owner #f "controller")]
+         [controller (view:create! owner request 'prompt 1 '() '() request)]
+         [wrong (view:create! owner request 'prompt 1 '() '())])
+    (check 'prompt-controller-binding-is-owned-scoped-reviewed-and-once-only
+      (list (prompt-request:bind! other request 0 controller)
+        (prompt-request:bind! owner request 0 wrong)
+        (prompt-request:bind! owner request 1 controller)
+        (prompt-request:bind! owner request 0 controller)
+        (prompt-request:bind! owner request 1 controller)
+        (get (value request) 'controller))
+      (list 'unavailable 'unavailable 'stale 'applied 'bound controller))
+    (prompt-request:close! owner request)
+    (view:retire! owner wrong 0))
   (let* ([parent (new owner #f "outer")] [child (new owner parent "inner")]
          [grandchild (new owner child "last")] [sources (map draft (list parent child grandchild))])
     (check 'prompt-nesting-requires-live-same-owner-parent

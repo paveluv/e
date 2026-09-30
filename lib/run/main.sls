@@ -267,7 +267,7 @@
         (reverse
           (kernel:load-modules!
             '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
-              "glyph" "head" "keymap" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
+              "glyph" "head" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
               "paint" "paren" "pretty-scheme" "prompt" "range" "render" "scheme-format"
               "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "widget" "window"))))
       (load-config!)

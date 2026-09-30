@@ -1,6 +1,6 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service prompt-request)
-  (export accept! cancel! close! create!)
+  (export accept! bind! cancel! close! create!)
   (import (chezscheme) (prefix (core client) client:))
 
   (edoc "Create a transient input request with captured origin and provider recipe. False draft creates owned disposable text; an explicit buffer borrows existing text. Read the resulting model for its draft and terminal outcome."
@@ -9,6 +9,11 @@
         (origin datum "captured context") (provider datum "completion recipe") (returns (or model #f)))
   (define (create! actor parent draft text origin provider)
     (client:request 'prompt-create parent draft text origin provider))
+
+  (edoc "Bind an editing request's sole controlling prompt view once. Its identity owns named outcome delivery and host lifetime; a view fork shares the interaction without duplicating delivery."
+        (actor actor "connection attribution") (id model "request") (revision integer "request revision")
+        (controller model "prompt view scoped to this request") (returns symbol))
+  (define (bind! actor id revision controller) (client:request 'prompt-bind id revision controller))
 
   (edoc "Accept the exact reviewed request and draft once. Return applied, stale, closed or unavailable; the request model contains the immutable accepted text and origin."
         (actor actor "connection attribution") (id model "request") (revision integer "request revision")

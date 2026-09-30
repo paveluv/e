@@ -1,7 +1,7 @@
 ;; Portable prompt lifetimes. Continuations and placements belong to heads.
 (import (only (foundation edoc) elibrary))
 (elibrary (service prompt-request)
-  (export accept! cancel! close! close-owner! create!)
+  (export accept! bind! cancel! close! close-owner! create!)
   (import (chezscheme) (prefix (core descriptor) descriptor:)
           (prefix (core kernel) kernel:) (prefix (foundation datum) datum:)
           (prefix (foundation text) text:) (prefix (state model) model:)
@@ -13,9 +13,10 @@
     (and (list? x) (= (length x) 2) (eq? (car x) tag) (natural? (cadr x)) (> (cadr x) 0)))
   (define (valid? v)
     (and (list? v) (for-all pair? v)
-      (equal? (map car v) '(owner parent draft owned? origin provider status outcome))
+      (equal? (map car v) '(owner parent controller draft owned? origin provider status outcome))
       (descriptor:head? (get v 'owner))
       (or (not (get v 'parent)) (reference? (get v 'parent) 'model))
+      (or (not (get v 'controller)) (reference? (get v 'controller) 'model))
       (reference? (get v 'draft) 'buffer) (boolean? (get v 'owned?))
       (memq (get v 'status) '(editing accepted cancelled))
       (case (get v 'status)
@@ -94,13 +95,33 @@
                                (lambda (ids)
                                  (list (list 'prompt-request 1 actor 'transient
                                          (cons source (if parent (list parent) '()))
-                                         (map cons '(owner parent draft owned? origin provider status outcome)
-                                           (list actor parent source (not draft) origin provider 'editing #f)))))
+                                         (map cons '(owner parent controller draft owned? origin provider status outcome)
+                                           (list actor parent #f source (not draft) origin provider 'editing #f)))))
                                (lambda (ids) (map witness parents)))])
                         (set! committed? (and ids #t)) (and ids (car ids))))
                     (lambda ()
                       (when (and (not committed?) (not draft) (store:exists? (cadr source)))
                         (store:delete! actor (cadr source)))))))))))))
+
+  (edoc "Bind the request's sole outcome controller once, while editing. The controller must be a prompt view scoped to and showing this request. Forked views may show the same interaction, but only this identity owns its named outcomes and host lifetime. Return applied, stale, bound, closed or unavailable."
+        (actor actor "request owner") (id model "request") (revision integer "expected request revision")
+        (controller model "owning prompt view") (returns symbol))
+  (define (bind! actor id revision controller)
+    (let ([r (record id)] [view (model:snapshot controller)])
+      (cond [(not (owned r actor)) 'unavailable] [(not (editing? r)) 'closed]
+        [(get (get r 'value) 'controller) 'bound]
+        [(not (and view (eq? (get view 'kind) 'widget-view) (equal? (get view 'scope) id)
+                (descriptor:valid? (get view 'value))
+                (eq? (descriptor:kind (get view 'value)) 'prompt)
+                (or (not (descriptor:owner (get view 'value))) (equal? actor (descriptor:owner (get view 'value))))
+                (equal? (descriptor:source (get view 'value)) id))) 'unavailable]
+        [else
+         (let ([v (get r 'value)])
+           (let-values ([(status rows)
+                         (model:commit! actor
+                           (list (list id revision (cons controller (get r 'references))
+                                   (map (lambda (p) (if (eq? (car p) 'controller) (cons 'controller controller) p)) v))
+                             (witness view)))]) status))])))
 
   (edoc "Accept a request once against its request and draft revisions. Capture the reviewed text and origin as (draft-revision lines origin); later edits cannot change that outcome. Every parent must remain editing. Return applied, stale, closed or unavailable."
         (actor actor "request owner") (id model "request") (revision integer "request revision")

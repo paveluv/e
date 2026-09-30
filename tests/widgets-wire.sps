@@ -1,3 +1,30 @@
+;; A prompt composition runs through real head input and the ordinary pump.
+(let ([saved (head-read a '(head:buffer-name (head:current-buffer)))])
+  (head-read a '(begin (kernel:load-module! "prompt-request") (kernel:load-module! "prompt-control") #t))
+  (head-read a
+    '(begin
+       (define wire-prompt-answer #f)
+       (define (wire-prompt-accepted! id value) (set! wire-prompt-answer value))
+       (widget:register! 'wire-prompt-host 1
+         (append (layout:container 'y) (list (cons 'actions (list (cons 'accepted wire-prompt-accepted!))))))
+       (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '()))
+       (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) #f))
+       (define wire-prompt-view
+         (prompt-control:create! wire-prompt-request '((label . "Wire prompt:"))
+           (list (list 'accepted wire-prompt-host 'accepted '()))))
+       (view:arrange! head:ui-actor (list (list wire-prompt-host 0 (list (list 'prompt wire-prompt-view '(grow 1))) '())) '())
+       (window:show-widget! (head:current-window) wire-prompt-host)
+       #t))
+  (head-wait 'prompt-control-is-shown a (lambda () (head-sees? a "Wire prompt:")))
+  (head-send! a "value\r")
+  (head-wait 'prompt-outcome-delivered-by-pump a (lambda () (head-read a '(and wire-prompt-answer #t))))
+  (test:check 'prompt-real-head-input-and-base-outcome
+    (head-read a '(cdr wire-prompt-answer)) '(#("value") (captured-wire-origin)))
+  (head-read a `(begin (head:forget-buffer! (head:current-buffer))
+                       (head:show-buffer! (head:buffer-named ,saved)) #t))
+  (head-wait 'prompt-request-released-on-host-removal a
+    (lambda () (head-read a '(not (caddr (caadr (model:snapshots (list wire-prompt-request)))))))))
+
 ;; Editor views use the same journal across real clients. Warm navigation
 ;; and preparation read only mirrored text, even through mode callbacks.
 (let* ([source (head-read a '(store:create! head:ui-actor "editor wire" '("first" "second" "third") '((internal . #t))))]
