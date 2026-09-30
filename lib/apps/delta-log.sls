@@ -34,6 +34,7 @@
           (prefix (head render) render:)
           (prefix (head table) table:)
           (prefix (head window) window:)
+          (prefix (service conflict-review) conflict-review:)
           (prefix (service log) log:)
           (prefix (service rewrite) rewrite:)
           (prefix (state model) model:)
@@ -242,18 +243,36 @@
   ;; the trunk was, with every mine pick's lines over its region. The picks
   ;; settle together when asked. Two mine picks whose regions share text
   ;; cannot both be written, so the later pick sends the other back to disk.
-  (define picks (make-weak-eq-hashtable)) ; trunk -> the exact alternatives picked Mine
-  (define reviews (make-weak-eq-hashtable)) ; trunk -> the complete displayed conflict snapshot
+  ;; Only the default host adapter lives here; witnesses and choices are base data.
+  (define review-id #f)
+  (define review-snapshot #f)
+  (define review-token #f)
+  (define review-stamp #f)
   (define-record-type preview (fields trunk buffer (mutable regions) (mutable key)))
-  (define previews (make-weak-eq-hashtable)) ; trunk -> its preview while one shows
-
-  (define (mine-picks trunk) (map car (hashtable-ref picks trunk '())))
-
-  (define (record-picks! trunk revisions conflicts)
-    (hashtable-set! picks trunk (filter (lambda (c) (memv (car c) revisions)) conflicts)))
-
+  (define previews (make-weak-eq-hashtable))
+  (define (adopt-review! r)
+    (when (and r (or (not review-snapshot) (>= (field r 'revision) (field review-snapshot 'revision))))
+      (set! review-snapshot r)))
+  (define (review-records) (if review-snapshot (field (field review-snapshot 'value) 'records) '()))
+  (define (review-entry trunk)
+    (find (lambda (e) (equal? (trunk-id trunk) (field e 'document))) (review-records)))
+  (define (review-revision) (field review-snapshot 'revision))
+  (define (review-trunks)
+    (filter (lambda (b) (and (trunk-id b) (review-entry b))) (head:buffers)))
+  (define (refresh-review! trunks)
+    (let ([scope (map trunk-id trunks)])
+      (cond [(not review-id)
+             (set! review-id (conflict-review:create! head:ui-actor scope))
+             (set! review-token (kernel:call-with-runtime-registrations
+                                  (lambda () (model:subscribe! (list review-id)
+                                               (lambda (notice) (adopt-review! (model:snapshot review-id)) (head:wake-main!))))))
+             (adopt-review! (model:snapshot review-id))]
+            [else (adopt-review! (conflict-review:refresh! head:ui-actor review-id (review-revision) scope))])))
+  (define (ensure-review! trunk)
+    (unless (review-entry trunk) (refresh-review! (cons trunk (review-trunks)))))
+  (define (mine-picks trunk) (cond [(review-entry trunk) => (lambda (e) (field e 'mine))] [else '()]))
   (define (reviewed-conflicts trunk)
-    (or (hashtable-ref reviews trunk #f) (store:conflicts (trunk-id trunk))))
+    (cond [(review-entry trunk) => (lambda (e) (field e 'alternatives))] [else (store:conflicts (trunk-id trunk))]))
 
   (define (conflict-at trunk revision)
     (or (find (lambda (c) (= (car c) revision)) (store:conflicts (trunk-id trunk)))
@@ -273,14 +292,6 @@
 
   (define (region-of c) (text:datum->span (cadddr c)))
 
-  (define (overlapping? a b)
-    ;; Alternatives covering the same text or insertion point cannot both
-    ;; be written; empty regions arise when disk deleted the disputed text.
-    (let ([sa (region-of a)] [sb (region-of b)])
-      (or (same-span? sa sb)
-          (and (text:position<? (text:span-start sa) (text:span-end sb))
-               (text:position<? (text:span-start sb) (text:span-end sa))))))
-
   (define (sorted-conflicts trunk)
     ;; the trunk's pending conflicts in the order of their regions in the text
     (sort-conflicts (guard (ex [else '()]) (store:conflicts (trunk-id trunk)))))
@@ -289,58 +300,19 @@
     (list-sort (lambda (a b) (text:position<? (text:span-start (region-of a)) (text:span-start (region-of b))))
       conflicts))
 
-  (define (side-of trunk c) (if (member c (hashtable-ref picks trunk '())) 'mine 'disk))
-
-  (define (require-disjoint! conflicts who)
-    (let loop ([left conflicts])
-      (when (pair? left)
-        (when (exists (lambda (other) (overlapping? (car left) other)) (cdr left))
-          (error who "Mine sides overlap; pick their sides individually"))
-        (loop (cdr left)))))
+  (define (side-of trunk c)
+    (if (and (memv (car c) (mine-picks trunk)) (member c (reviewed-conflicts trunk))) 'mine 'disk))
 
   (define (pick-conflict! trunk c side)
-    ;; the side a conflict shows, the preview following; picking mine sends
-    ;; an overlapping mine pick back to disk, and says so. Row activation
-    ;; names the displayed alternative, never a newer record reusing its ID.
-    (let* ([revision (car c)] [conflicts (sorted-conflicts trunk)]
-           [valid? (member c conflicts)]
-           [was (map car (filter (lambda (p) (member p conflicts)) (hashtable-ref picks trunk '())))]
-           [displaced (if (eq? side 'mine)
-                          (filter (lambda (o) (and (not (= (car o) revision)) (memv (car o) was) (overlapping? o c))) conflicts)
-                          '())]
-           [kept (filter (lambda (r) (not (memv r (map car displaced)))) (remv revision was))])
-      (when valid? (record-picks! trunk (if (eq? side 'mine) (cons revision kept) kept) conflicts))
-      ;; Refresh the table with the preview, including when this read races
-      ;; another writer. Exact picks that changed meanwhile are discarded.
+    (ensure-review! trunk)
+    (let ([accepted? (guard (ex [else #f])
+                       (adopt-review! (conflict-review:choose! head:ui-actor review-id (review-revision)
+                                        (list (list (trunk-id trunk) c)) side)) #t)])
       (follow!)
-      (let ([accepted? (and valid? (member c (reviewed-conflicts trunk)))])
-        (log:add! 'delta-log:pick-conflict!
-          (cond
-            [(not accepted?) "Conflict alternatives changed; review the refreshed choices"]
-            [(null? displaced) (format "Conflict ~a shows ~a" revision side)]
-            [else (format "Conflict ~a shows mine; ~a back to disk, overlapping it"
-                    revision (string:join (map (lambda (o) (number->string (car o))) displaced) ", "))]))
-        (and accepted? side))))
-
-  (define (preview-text text conflicts mine)
-    ;; the trunk's text with every mine pick's lines over its region, and the
-    ;; regions as (revision side span) in that text, top to bottom; a mine
-    ;; pick over text an earlier one already replaced shows disk
-    (let loop ([cs (sort-conflicts conflicts)] [text text] [deltas '()] [applied '()] [regions '()])
-      (if (null? cs) (values text (reverse regions))
-          (let* ([c (car cs)]
-                 [span (fold-left (lambda (s d)
-                                    (or (text:rebase-span s d)
-                                        (let ([a (text:rebase-position (text:span-start s) d)]
-                                              [e (text:rebase-position (text:span-end s) d 'stay)])
-                                          (text:make-span (car a) (cdr a) (car e) (cdr e)))))
-                                  (region-of c) (reverse deltas))])
-            (if (and (memv (car c) mine) (not (exists (lambda (o) (overlapping? o c)) applied)))
-                (let-values ([(next delta) (text:apply-edit text span (list-ref c 4))])
-                  (let ([a (text:span-start (text:delta-span delta))] [e (text:delta-new-end delta)])
-                    (loop (cdr cs) next (cons delta deltas) (cons c applied)
-                          (cons (list (car c) 'mine (text:make-span (car a) (cdr a) (car e) (cdr e))) regions))))
-                (loop (cdr cs) text deltas applied (cons (list (car c) 'disk span) regions)))))))
+      (log:add! 'delta-log:pick-conflict!
+        (if accepted? (format "Conflict ~a shows ~a" (car c) side)
+          "Conflict alternatives changed; review the refreshed choices"))
+      (and accepted? side)))
 
   (define (preview-of trunk) (hashtable-ref previews trunk #f))
 
@@ -384,61 +356,60 @@
       (hashtable-delete! previews trunk)))
 
   (define (render-previews!)
-    ;; every trunk with a mine pick shows its preview, built again when its
-    ;; text or its picks changed; one without any goes back to itself, and
-    ;; picks of conflicts settled meanwhile are forgotten
+    ;; Temporary local presentation of a base draft; the widget composition
+    ;; replaces this adapter and its outer-window placement policy together.
     (let ([trunks (let dedupe ([ts (append (if (browser-live? conflicts-browser) (tracked-buffers) '())
-                                           (vector->list (hashtable-keys picks)) (vector->list (hashtable-keys previews)))] [acc '()])
-                    (cond [(null? ts) acc] [(memq (car ts) acc) (dedupe (cdr ts) acc)] [else (dedupe (cdr ts) (cons (car ts) acc))]))])
+                                     (review-trunks) (map preview-trunk (vector->list (hashtable-values previews))))] [out '()])
+                    (cond [(null? ts) (reverse out)]
+                      [(or (memq (car ts) out) (not (memq (car ts) (head:buffers))) (not (trunk-id (car ts)))) (dedupe (cdr ts) out)]
+                      [else (dedupe (cdr ts) (cons (car ts) out))]))])
+      (let ([stamp (map (lambda (b) (list (trunk-id b) (head:buffer-store-rev b) (head:buffer-fact b 'conflicts 0))) trunks)])
+        (when (and (or review-id (pair? trunks)) (not (equal? stamp review-stamp)))
+          (refresh-review! trunks)
+          (set! review-stamp stamp)))
       (for-each
         (lambda (trunk)
-          (let*-values ([(live?) (and (memq trunk (head:buffers)) (head:buffer-store-id trunk))]
-                        [(text revision conflicts)
-                         (if live?
-                           (guard (ex [else (values '#("") #f '())]) (store:conflict-state (trunk-id trunk)))
-                           (values '#("") #f '()))]
-                        [(pending) (map car conflicts)]
-                        [(kept) (filter (lambda (c) (member c conflicts)) (hashtable-ref picks trunk '()))]
-                        [(mine) (map car kept)]
-                        [(pv) (preview-of trunk)])
-            (hashtable-set! reviews trunk conflicts)
-            (when (exists (lambda (c) (and (assv (car c) conflicts) (not (member c kept)))) (hashtable-ref picks trunk '()))
-              (edit:set-message! "Conflict alternatives changed; review the refreshed choices"))
-            (cond
-              [(null? mine)
-               (hashtable-delete! picks trunk)
-               (when pv (drop-preview! pv))]
+          (let* ([e (review-entry trunk)] [mine (field e 'mine)] [pv (preview-of trunk)])
+            (when (pair? (field e 'invalidated)) (edit:set-message! "Conflict alternatives changed; review the refreshed choices"))
+            (cond [(null? mine) (when pv (drop-preview! pv))]
               [else
-               (hashtable-set! picks trunk kept)
-               (let ([key (list revision pending mine)])
+               (let ([key (list (field e 'basis) (field e 'alternatives) mine)])
                  (unless (and pv (equal? (preview-key pv) key))
-                   (let-values ([(text regions) (preview-text text conflicts mine)])
-                     (let ([pv (or pv (start-preview! trunk))])
-                       (preview-key-set! pv key)
-                       (preview-regions-set! pv regions)
-                       (head:buffer-read-only-set! (preview-buffer pv) #f)
-                       (head:buffer-lines-set! (preview-buffer pv) text)
-                       (head:buffer-read-only-set! (preview-buffer pv) #t)
-                       (for-each (lambda (w) (when (eq? (head:window-buffer w) trunk) (head:set-window-buffer! w (preview-buffer pv))))
-                                 (head:windows))))))])))
-        trunks)))
+                   (let* ([data (conflict-review:preview review-id (trunk-id trunk))]
+                          [pv (or pv (start-preview! trunk))])
+                     (preview-key-set! pv key)
+                     (preview-regions-set! pv (map (lambda (r) (list (car r) (cadr r) (text:datum->span (caddr r)))) (list-ref data 4)))
+                     (head:buffer-read-only-set! (preview-buffer pv) #f)
+                     (head:buffer-lines-set! (preview-buffer pv) (list-ref data 3))
+                     (head:buffer-read-only-set! (preview-buffer pv) #t)
+                     (for-each (lambda (w) (when (eq? (head:window-buffer w) trunk) (head:set-window-buffer! w (preview-buffer pv))))
+                       (head:windows)))))]))) trunks)))
 
   (define (clear-picks!)
-    ;; every pick abandoned, the previews ending
-    (hashtable-clear! picks)
+    (when review-id
+      (refresh-review! (review-trunks))
+      (adopt-review! (conflict-review:choose! head:ui-actor review-id (review-revision)
+                       (map (lambda (trunk) (cons (trunk-id trunk) (reviewed-conflicts trunk))) (review-trunks)) 'disk)))
     (render-previews!))
 
   (define (preview-conflict! revision)
-    ;; the entry's side shown in place while a prompt has the conflict; the
-    ;; thunk returned puts the picks back as they were
+    ;; Legacy M-x preview restores only its own untouched draft revision.
     (let ([trunk (guard (ex [else #f]) (current-trunk 'conflict))])
       (and trunk (integer? revision)
-           (let ([c (find (lambda (c) (= (car c) revision)) (sorted-conflicts trunk))])
-             (and c
-                  (let ([was (hashtable-ref picks trunk '())])
-                    (hashtable-set! picks trunk (cons c (remp (lambda (p) (= (car p) revision)) was)))
-                    (render-previews!)
-                    (lambda () (hashtable-set! picks trunk was) (render-previews!))))))))
+        (let ([c (find (lambda (c) (= (car c) revision)) (sorted-conflicts trunk))])
+          (and c
+            (begin
+              (ensure-review! trunk)
+              (let ([was (mine-picks trunk)])
+                (and (pick-conflict! trunk c 'mine)
+                  (let ([basis (review-revision)])
+                    (lambda ()
+                      (when (= basis (review-revision))
+                        (let* ([cs (reviewed-conflicts trunk)] [document (trunk-id trunk)])
+                          (adopt-review! (conflict-review:choose! head:ui-actor review-id basis (list (cons document cs)) 'disk))
+                          (adopt-review! (conflict-review:choose! head:ui-actor review-id (review-revision)
+                                           (list (cons document (filter (lambda (c) (memv (car c) was)) cs))) 'mine)))
+                        (render-previews!))))))))))))
 
   (edoc-type conflict "a pending conflict of the current buffer's last reload, by the revision of the entry the disk contradicted"
     (predicate (lambda (v) (and (integer? v) (exact? v) (>= v 1))))
@@ -459,9 +430,8 @@
         (returns symbol "applied, refused or nothing") (public))
   (define (delta-log-resolve! conflict choice)
     (let* ([trunk (current-trunk 'delta-log:resolve!)] [revision (edoc:type-value 'conflict conflict)])
-      (let-values ([(status detail) (head:store-resolve! trunk revision choice)])
-        (when (eq? status 'applied)
-          (hashtable-set! picks trunk (remp (lambda (c) (= (car c) revision)) (hashtable-ref picks trunk '()))))
+      (let-values ([(status detail) (store:resolve! head:ui-actor (trunk-id trunk) revision choice 'any)])
+        (head:before-frame!)
         (log:add! 'delta-log:resolve!
           (case status
             [(applied)
@@ -474,33 +444,23 @@
         status)))
 
   (define (resolve-conflicts! trunks one-way who)
-    ;; Each buffer commits exactly the snapshot reviewed, under one writer
-    ;; transaction. A frame refresh cannot close the race by itself.
-    (let* ([groups (map (lambda (trunk) (cons trunk (if one-way (store:conflicts (trunk-id trunk)) (reviewed-conflicts trunk)))) trunks)]
-           [mine 0] [disk 0] [changed? #f])
-      (for-each (lambda (group)
-                  (require-disjoint! (filter (lambda (c) (eq? (or one-way (side-of (car group) c)) 'mine)) (cdr group)) who)) groups)
-      (for-each
-        (lambda (group)
-          (let* ([trunk (car group)] [conflicts (cdr group)]
-                 [chosen (map car (filter (lambda (c) (eq? (or one-way (side-of trunk c)) 'mine)) conflicts))])
-            (let-values ([(status detail) (head:store-resolve-picks! trunk conflicts chosen)])
-              (cond
-                [(eq? status 'applied)
-                 (hashtable-delete! picks trunk)
-                 (hashtable-delete! reviews trunk)
-                 (set! mine (+ mine (length chosen)))
-                 (set! disk (+ disk (- (length conflicts) (length chosen))))]
-                [(eq? detail 'conflict-changed) (set! changed? #t)])))) groups)
+    (for-each ensure-review! trunks)
+    (when one-way
+      (refresh-review! (review-trunks))
+      (adopt-review! (conflict-review:choose! head:ui-actor review-id (review-revision)
+                       (map (lambda (trunk) (cons (trunk-id trunk) (reviewed-conflicts trunk))) trunks) one-way)))
+    (let* ([groups (map (lambda (trunk) (review-entry trunk)) trunks)]
+           [results (if review-id (conflict-review:settle! head:ui-actor review-id (review-revision) (map trunk-id trunks)) '())]
+           [settled (filter (lambda (e) (eq? (cadr (assv (field e 'document) results)) 'applied)) groups)]
+           [mine (apply + (map (lambda (e) (length (field e 'mine))) settled))]
+           [total (apply + (map (lambda (e) (length (field e 'alternatives))) settled))])
+      (when review-id (model:snapshots (list review-id)) (adopt-review! (model:snapshot review-id)))
+      (head:before-frame!)
       (follow!)
       (log:add! 'delta-log:resolve-conflicts!
-        (let ([n (+ mine disk)])
-          (cond
-            [changed? (format "~a conflicts settled; changed alternatives were left pending. Review the refreshed choices" n)]
-            [one-way
-             (format "~a conflict~a settled, the ~a side kept" n (if (= n 1) "" "s") one-way)]
-            [else (format "~a conflict~a settled: ~a mine, ~a disk" n (if (= n 1) "" "s") mine disk)])))
-      (+ mine disk)))
+        (format "~a conflicts settled: ~a mine, ~a disk~a" total mine (- total mine)
+          (if (exists (lambda (r) (eq? (cadr r) 'refused)) results) "; refused documents remain pending" "")))
+      total))
 
   (edoc "Settle every pending reload conflict of the current buffer, or the browser's current row's buffer: as picked by default, or all mine or disk when given. The target buffer is the same with or without a choice."
         (choice (list-of (one-of disk mine)) "disk or mine for them all, at most one")
@@ -510,7 +470,7 @@
       (error 'delta-log:resolve-all! "expected at most one choice, mine or disk" choice))
     (resolve-conflicts! (list (current-trunk 'delta-log:resolve-all!)) (and (pair? choice) (car choice)) 'resolve-all!))
 
-  (edoc "Commit the conflict review: settle every pending conflict of the buffers the browsers track as picked, mine or disk each. This is the conflicts browser's Settle action; unpicked conflicts keep disk."
+  (edoc "Commit the conflict conflict-review: settle every pending conflict of the buffers the browsers track as picked, mine or disk each. This is the conflicts browser's Settle action; unpicked conflicts keep disk."
         (returns integer "how many were settled"))
   (define (delta-log-commit-picks!)
     (resolve-conflicts! (filter head:buffer-conflicted (tracked-buffers)) #f 'commit-picks!))
@@ -532,15 +492,14 @@
     (unless (memq side '(mine disk)) (error 'delta-log:pick-all! "expected mine or disk" side))
     (unless (or (null? scope) (and (null? (cdr scope)) (memq (car scope) '(current visible))))
       (error 'delta-log:pick-all! "expected at most one scope, current or visible" scope))
-    (let* ([trunks (if (equal? scope '(visible)) (tracked-buffers) (list (current-trunk 'delta-log:pick-all!)))]
-           [groups (map (lambda (trunk) (cons trunk (sorted-conflicts trunk))) trunks)]
-           [n (apply + (map (lambda (group) (length (cdr group))) groups))])
-      (when (eq? side 'mine)
-        (for-each (lambda (group) (require-disjoint! (cdr group) 'delta-log:pick-all!)) groups))
-      (for-each (lambda (group) (hashtable-set! picks (car group) (if (eq? side 'mine) (cdr group) '()))) groups)
-      (follow!)
-      (log:add! 'delta-log:pick-all! (format "~a conflict~a show ~a; nothing settled" n (if (= n 1) "" "s") side))
-      n))
+    (let* ([trunks (if (equal? scope '(visible)) (tracked-buffers) (list (current-trunk 'delta-log:pick-all!)))])
+      (for-each ensure-review! trunks)
+      (refresh-review! (review-trunks))
+      (let* ([groups (map (lambda (trunk) (cons (trunk-id trunk) (reviewed-conflicts trunk))) trunks)]
+             [n (apply + (map (lambda (g) (length (cdr g))) groups))])
+        (adopt-review! (conflict-review:choose! head:ui-actor review-id (review-revision) groups side))
+        (follow!)
+        (log:add! 'delta-log:pick-all! (format "~a conflicts show ~a; nothing settled" n side)) n)))
 
   (edoc "Flip the side a reload conflict shows, mine for disk and back, as delta-log:pick! does."
         (conflict conflict "the conflict")

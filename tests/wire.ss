@@ -1911,6 +1911,12 @@
                    (head-read a `(let* ([draft (rewrite:create! head:ui-actor ,id)] [p (rewrite:preview draft)])
                                    (rewrite:close! head:ui-actor draft 0)
                                    (list (list-ref p 3) (list-ref p 6)))) '(#("shared text") 0))
+                 (test:check 'conflict-review-lifecycle-crosses-the-client-seam
+                   (head-read a `(let* ([draft (conflict-review:create! head:ui-actor (list ,id))]
+                                        [p (conflict-review:preview draft ,id)]
+                                        [results (conflict-review:settle! head:ui-actor draft 0 (list ,id))])
+                                   (conflict-review:close! head:ui-actor draft 0)
+                                   (list (list-ref p 3) (map cadr results)))) '(#("shared text") (applied)))
                  (for-each (lambda (ui)
                              (head-read ui `(begin (log-view:show!) (window:delete-others!)
                                                    (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))

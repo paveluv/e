@@ -1040,6 +1040,21 @@ the head's cached buffer. Each conflict is
 text that choosing Disk keeps, including changes since the first reload.
 Settled conflict records remain only while their resolution can be undone.
 
+For independent review drafts, use `(conflict-review:create! actor documents)`.
+The persistent model records an explicit scope, exact reviewed alternatives
+and Mine choices. `choose!` takes the draft ID, expected model revision,
+groups of `(document alternative ...)`, and `mine` or `disk`. It only changes
+choices. `refresh!` takes the draft and expected revision plus its new scope;
+it retains choices through unrelated edits when the retained history proves
+their identity and records invalidated choices otherwise.
+`settle!` takes the draft, expected revision and scoped document IDs, returning
+`(document status detail)` per document. It validates the complete reviewed
+set without silently refreshing before writing. Each document settles
+atomically and undoably; refused documents keep their choices. `preview`
+returns `(draft-revision document source-revision text regions)` for an
+explicit document. `close!` retires the draft and scoped views while keeping
+the borrowed documents. Mutating operations take the actor first.
+
 In the base, `(store:state id basis)` returns `#f` for an absent buffer, or
 `(name text revision facts [changes])` from one read. Pass `#f` for no chain,
 or a revision to include it. Names and facts are owned copies; text remains
