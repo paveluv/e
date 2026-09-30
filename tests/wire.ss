@@ -1905,6 +1905,8 @@
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
+                 (test:check 'rewrite-preview-crosses-the-client-seam
+                   (head-read a `(call-with-values (lambda () (store:rewrite-preview ,id '())) list)) '(#("shared text") () ()))
                  (for-each (lambda (ui)
                              (head-read ui `(begin (log-view:show!) (window:delete-others!)
                                                    (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))

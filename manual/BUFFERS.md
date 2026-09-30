@@ -421,18 +421,18 @@ M-x the `delta-log:` commands work on the current buffer's log:
   one.
 - `(delta-log:show! (revision 12))` describes one entry in the echo area:
   its actor, where it wrote, what it removed and inserted.
-- `(delta-log:toggle! (revision 12) ...)` disables entries in a **view**: the
+- `(delta-log:toggle! (revision 12) ...)` disables entries in a **rewrite preview**: the
   buffer as it would read with those entries taken back and the later ones
-  rebased over their absence. The view shows at once in the window as a
-  read-only local buffer, `<view: notes.md>`, point carried across; toggling
-  a disabled entry enables it again, and further toggles re-render the view.
+  rebased over their absence. The preview shows at once in the window as a
+  read-only local buffer, `<rewrite: notes.md>`, point carried across; toggling
+  a disabled entry enables it again, and further toggles re-render the preview.
   A later entry that overlaps a disabled one is a conflict, named in the echo
-  area as `5 over 1`; the view then shows the text as it stands there.
-- `(delta-log:commit!)` makes the view the trunk: the store rewrites the
+  area as `5 over 1`; the preview then shows the text as it stands there.
+- `(delta-log:commit!)` settles the rewrite: the store rewrites the
   buffer for everyone, the inverses being this head's own undoable action,
-  and the window returns to the trunk. A view with conflicts is blocked
-  until they are toggled back. `(delta-log:revert!)` abandons the view.
-- `(delta-log:view)` and `(delta-log:disabled)` report the live view.
+  and the window returns to the trunk. A preview with conflicts is blocked
+  until they are toggled back. `(delta-log:revert!)` abandons the preview.
+- `(delta-log:rewrite-preview)` and `(delta-log:disabled)` report the active preview.
 
 `C-x l` opens the **delta log browser**, `<delta-log>`, in the pop-up,
 window 0, and `(delta-log:open! (window n))` in any window, the current one
@@ -1091,7 +1091,7 @@ every head edit carries one, per action or per grouped command.
 `(store:log id [selector])` lists the retained entries newest first as
 `(revision actor labels delta origin state)`, narrowed by a selector alist
 among `count`, `actor`, `batch`, `since`, `until` and `state`; an entry is
-`disabled` while a live undo or rewrite reverts it. `(store:view id
+`disabled` while a live undo or rewrite reverts it. `(store:rewrite-preview id
 revisions)` gives `(values text mapping conflicts)`, the text with those
 entries disabled and the rest rebased over their absence, the deltas
 taking the current text there, and `(revision . cause)` pairs for the

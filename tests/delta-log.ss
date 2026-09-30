@@ -66,8 +66,8 @@
      (check 'toggling-shows-the-view-in-a-local-buffer
        (begin (delta-log:toggle! 2)
               (list (head:buffer-name (head:current-buffer)) (vector->list (head:buffer-lines (head:current-buffer)))
-                    (head:buffer-read-only (head:current-buffer)) (delta-log:view) (head:buffer-store-id (head:current-buffer))))
-       (list "<view: log-me>" '("ac") #t '("log-me" (2) ()) #f))
+                    (head:buffer-read-only (head:current-buffer)) (delta-log:rewrite-preview) (head:buffer-store-id (head:current-buffer))))
+       (list "<rewrite: log-me>" '("ac") #t '("log-me" (2) ()) #f))
      (check 'toggling-again-changes-the-view-live
        (begin (delta-log:toggle! 3)
               (list (vector->list (head:buffer-lines (head:current-buffer))) (delta-log:disabled)))
@@ -78,7 +78,7 @@
 
      ;; a commit rewrites the trunk for everyone and ends the view
      (check 'committing-rewrites-the-trunk-and-ends-the-view
-       (list (delta-log:commit!) (head:buffer-name (head:current-buffer)) (vector->list (head:buffer-lines b)) (delta-log:view)
+       (list (delta-log:commit!) (head:buffer-name (head:current-buffer)) (vector->list (head:buffer-lines b)) (delta-log:rewrite-preview)
              (map (lambda (row) (list (car row) (list-ref row 5))) (store:log id))
              (list-ref (car (store:log id)) 4))
        (list 'applied "log-me" '("ac") #f '((4 enabled) (3 enabled) (2 disabled) (1 enabled)) (list 'rewrite head:ui-actor 4 2)))
@@ -92,14 +92,14 @@
      (check 'the-foreign-edit-arrived (vector->list (head:buffer-lines b)) '("Q"))
      (check 'a-conflicting-toggle-names-the-later-entry
        (begin (delta-log:toggle! 1)
-              (list (delta-log:view) (vector->list (head:buffer-lines (head:current-buffer)))))
+              (list (delta-log:rewrite-preview) (vector->list (head:buffer-lines (head:current-buffer)))))
        (list '("log-me" (1) ((1 . 5))) '("Q")))
      (check 'a-conflicted-commit-is-blocked (delta-log:commit!) 'blocked)
-     (check 'the-view-stays-until-abandoned (and (delta-log:view) #t) #t)
+     (check 'the-view-stays-until-abandoned (and (delta-log:rewrite-preview) #t) #t)
      (delta-log:revert!)
-     (check 'abandoning-returns-to-the-trunk (list (head:buffer-name (head:current-buffer)) (delta-log:view)) '("log-me" #f))
+     (check 'abandoning-returns-to-the-trunk (list (head:buffer-name (head:current-buffer)) (delta-log:rewrite-preview)) '("log-me" #f))
      (check 'toggling-every-disabled-entry-back-ends-the-view
-       (begin (delta-log:toggle! 5) (delta-log:toggle! 5) (list (delta-log:view) (head:buffer-name (head:current-buffer))))
+       (begin (delta-log:toggle! 5) (delta-log:toggle! 5) (list (delta-log:rewrite-preview) (head:buffer-name (head:current-buffer))))
        '(#f "log-me"))
 
      ;; previewing a revision brings its span under point and highlights it;
@@ -156,14 +156,14 @@
      (dispatch:key! "M-t")
      (head:before-frame!)
      (check 'm-t-toggles-the-rows-entry-into-a-view-shown-where-the-buffer-was
-       (list (head:buffer-name (head:current-buffer)) (delta-log:view)
-             (let ([w (window-showing "<view: browse-me>")]) (and w (vector->list (head:buffer-lines (head:window-buffer w)))))
+       (list (head:buffer-name (head:current-buffer)) (delta-log:rewrite-preview)
+             (let ([w (window-showing "<rewrite: browse-me>")]) (and w (vector->list (head:buffer-lines (head:window-buffer w)))))
              (contains? (cadr (rows)) "- "))
        (list "<delta-log>" '("browse-me" (2) ()) '("xz") #t))
      (dispatch:key! "M-RET")
      (head:before-frame!)
      (check 'm-ret-commits-the-view-and-the-buffer-returns
-       (list (delta-log:view) (vector->list (head:buffer-lines c)) (and (window-showing "browse-me") #t) (length (rows)))
+       (list (delta-log:rewrite-preview) (vector->list (head:buffer-lines c)) (and (window-showing "browse-me") #t) (length (rows)))
        (list #f '("xz") #t 4))
      (check 'ret-describes-the-row-and-stays (begin (dispatch:key! "RET") (head:point)) '(3 . 0))
      (delta-log:filter! '((count . 2)))

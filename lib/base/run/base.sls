@@ -273,9 +273,9 @@
       [(log)
        (unless (<= 1 (length args) 2) (error 'wire "expected buffer and optional selector"))
        (apply store:log args)]
-      [(view)
+      [(rewrite-preview)
        (arity 2)
-       (call-with-values (lambda () (store:view (car args) (cadr args))) list)]
+       (call-with-values (lambda () (store:rewrite-preview (car args) (cadr args))) list)]
       [(rewrite)
        (arity 2)
        (call-with-values (lambda () (policy:session-rewrite! session (car args) (cadr args))) list)]

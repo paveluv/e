@@ -7,10 +7,10 @@
 (elibrary (state store)
   (export archive! blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite!
+          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite! rewrite-preview
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
-          view visible? visit! watch!)
+          visible? visit! watch!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core identity) identity:)
@@ -435,12 +435,12 @@
   (define (log-entries id . selector)
     (apply client:request 'log id selector))
 
-  (edoc "A view of a buffer with entries disabled, from the base: (values text mapping conflicts)."
+  (edoc "A rewrite preview with entries disabled, from the base: (values text mapping conflicts)."
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable")
         (returns any "(values text mapping conflicts)"))
-  (define (view id disabled)
-    (apply values (client:request 'view id disabled)))
+  (define (rewrite-preview id disabled)
+    (apply values (client:request 'rewrite-preview id disabled)))
 
   (edoc "Disable entries of a buffer for everyone through the base: (values status detail)."
         (actor actor "the actor identity")

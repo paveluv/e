@@ -791,13 +791,13 @@
      (store:edit! alice viewed 0 (span 0 0 0 0) '("X"))
      (store:edit! bot viewed 1 (span 1 3 1 3) '("Y"))
      (store:edit! alice viewed 2 (span 0 4 0 4) '("Z"))
-     (let-values ([(text mapping conflicts) (store:view viewed '(1 1))])
+     (let-values ([(text mapping conflicts) (store:rewrite-preview viewed '(1 1))])
        (check 'a-view-disables-an-entry-and-rebases-the-rest
               (list (vector->list text) (length mapping) conflicts)
               '(("abcZ" "defY") 1 ())))
      (check 'the-buffer-is-untouched-by-a-view (store:line viewed 0) "XabcZ")
      (store:edit! alice viewed 3 (span 0 0 0 1) '("W"))
-     (let-values ([(text mapping conflicts) (store:view viewed '(1))])
+     (let-values ([(text mapping conflicts) (store:rewrite-preview viewed '(1))])
        (check 'a-view-names-the-entry-that-overlaps-a-disabled-one
               (list (vector->list text) mapping conflicts)
               '(("WabcZ" "defY") () ((1 . 4)))))
@@ -816,8 +816,8 @@
             (list (store:line viewed 1) (map car (store:log viewed '((state . disabled)))))
             '("defY" (5)))
      (check 'a-view-refuses-an-unknown-or-disabled-entry
-            (list (guard (ex [else 'refused]) (store:view viewed '(99)))
-                  (guard (ex [else 'refused]) (store:view viewed '(5))))
+            (list (guard (ex [else 'refused]) (store:rewrite-preview viewed '(99)))
+                  (guard (ex [else 'refused]) (store:rewrite-preview viewed '(5))))
             '(refused refused))
      (define grouped2 (store:create! alice "grouped2" '("aaaa")))
      (store:edit! alice grouped2 0 (span 0 0 0 0) '("1") '(g "two"))

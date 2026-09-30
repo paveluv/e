@@ -17,9 +17,9 @@
           (rename (delta-log-pick-disk! pick-disk!)) (rename (delta-log-pick-mine! pick-mine!))
           (rename (delta-log-picks picks)) (rename (delta-log-previous! previous!)) (rename (delta-log-resolve! resolve!))
           (rename (delta-log-resolve-all! resolve-all!)) (rename (delta-log-revert! revert!))
+          (rename (delta-log-rewrite-preview rewrite-preview))
           (rename (delta-log-save-row! save-row!)) (rename (delta-log-show! show!))
-          (rename (delta-log-show-row! show-row!)) (rename (delta-log-toggle! toggle!)) (rename (delta-log-toggle-row! toggle-row!))
-          (rename (delta-log-view view)))
+          (rename (delta-log-show-row! show-row!)) (rename (delta-log-toggle! toggle!)) (rename (delta-log-toggle-row! toggle-row!)))
   (import (rnrs)
           (only (chezscheme) hashtable-values parameterize format make-weak-eq-hashtable void)
           (prefix (foundation edoc) edoc:)
@@ -39,17 +39,17 @@
 
   ;;; The log -------------------------------------------------------------------
 
-  ;; One live view per head: the trunk buffer, the local buffer showing the
+  ;; One default rewrite preview per head: the trunk buffer, the local buffer showing the
   ;; view's text, the revisions disabled, and the conflicts the last rendering
   ;; found, (disabled . later) pairs naming a later entry that overlaps a
   ;; disabled one.
-  (define-record-type view (fields trunk buffer (mutable disabled) (mutable conflicts) (mutable key)))
-  (define the-view #f)
+  (define-record-type rewrite-preview (fields trunk buffer (mutable disabled) (mutable conflicts) (mutable key)))
+  (define the-rewrite #f)
 
   (define (trunk-of b)
     ;; the shared buffer whose log b shows: b itself, or the trunk behind
     ;; the view, the browser or a flip
-    (cond [(and the-view (eq? b (view-buffer the-view))) (view-trunk the-view)]
+    (cond [(and the-rewrite (eq? b (rewrite-preview-buffer the-rewrite))) (rewrite-preview-trunk the-rewrite)]
           [(browser-of b) => (lambda (br)
                                ;; a browser stands for its current row's buffer, else the first it tracks
                                (let ([row (current-row br)] [tracked (tracked-buffers)])
@@ -550,22 +550,22 @@
 
   ;;; The view --------------------------------------------------------------------
 
-  (define (start-view! trunk)
+  (define (start-rewrite! trunk)
     ;; a fresh view of the trunk in a local tool buffer sharing its mode; a
     ;; view of another buffer ends first, this head having one at a time
-    (when the-view (drop-view! the-view))
-    (let ([vb (head:fresh-buffer! (string-append "<view: " (head:buffer-name trunk) ">"))])
+    (when the-rewrite (drop-rewrite! the-rewrite))
+    (let ([vb (head:fresh-buffer! (string-append "<rewrite: " (head:buffer-name trunk) ">"))])
       (head:buffer-fact-set! vb 'mode (head:buffer-fact trunk 'mode #f))
-      (set! the-view (make-view trunk vb '() '() #f))
-      the-view))
+      (set! the-rewrite (make-rewrite-preview trunk vb '() '() #f))
+      the-rewrite))
 
-  (define (render-view! v)
+  (define (render-rewrite! v)
     ;; the view's text in its buffer, shown where the trunk was, point
     ;; carried from the trunk through the view's mapping
-    (let ([trunk (view-trunk v)] [vb (view-buffer v)])
-      (let-values ([(text mapping conflicts) (store:view (trunk-id trunk) (view-disabled v))])
-        (view-key-set! v (list (head:buffer-store-rev trunk) (view-disabled v)))
-        (view-conflicts-set! v conflicts)
+    (let ([trunk (rewrite-preview-trunk v)] [vb (rewrite-preview-buffer v)])
+      (let-values ([(text mapping conflicts) (store:rewrite-preview (trunk-id trunk) (rewrite-preview-disabled v))])
+        (rewrite-preview-key-set! v (list (head:buffer-store-rev trunk) (rewrite-preview-disabled v)))
+        (rewrite-preview-conflicts-set! v conflicts)
         (let ([point (fold-left (lambda (p d) (text:rebase-position p (text:datum->delta d)))
                                 (head:buffer-point trunk) mapping)]
               [w (or (find (lambda (w) (memq (head:window-buffer w) (list vb trunk))) (head:windows))
@@ -577,22 +577,22 @@
           (unless (eq? (head:window-buffer w) vb) (head:set-window-buffer! w vb))
           (head:with-buffer vb (head:goto! point))))))
 
-  (define (drop-view! v)
+  (define (drop-rewrite! v)
     ;; the windows showing the view return to the trunk; the view buffer is retired
-    (let ([trunk (view-trunk v)] [vb (view-buffer v)])
+    (let ([trunk (rewrite-preview-trunk v)] [vb (rewrite-preview-buffer v)])
       (when (memq trunk (head:buffers))
         (for-each (lambda (w) (when (eq? (head:window-buffer w) vb) (head:set-window-buffer! w trunk))) (head:windows)))
       (head:forget-buffer! vb)
-      (set! the-view #f)))
+      (set! the-rewrite #f)))
 
   (define (report! v)
-    (let ([n (length (view-disabled v))] [k (length (view-conflicts v))])
+    (let ([n (length (rewrite-preview-disabled v))] [k (length (rewrite-preview-conflicts v))])
       (edit:set-message!
         (string-append
-          (format "View of ~a: ~a entr~a disabled" (head:buffer-name (view-trunk v)) n (if (= n 1) "y" "ies"))
+          (format "View of ~a: ~a entr~a disabled" (head:buffer-name (rewrite-preview-trunk v)) n (if (= n 1) "y" "ies"))
           (if (= k 0) ""
               (format "; ~a conflict~a, a later entry over a disabled one: ~a" k (if (= k 1) "" "s")
-                      (string:join (map (lambda (c) (format "~a over ~a" (cdr c) (car c))) (view-conflicts v)) ", ")))))))
+                      (string:join (map (lambda (c) (format "~a over ~a" (cdr c) (car c))) (rewrite-preview-conflicts v)) ", ")))))))
 
   ;;; Commands --------------------------------------------------------------------
 
@@ -607,25 +607,25 @@
         (returns list "the revisions disabled"))
   (define (delta-log-toggle! . revisions)
     (let* ([trunk (current-trunk 'delta-log:toggle!)]
-           [v (if (and the-view (eq? (view-trunk the-view) trunk)) the-view (start-view! trunk))])
+           [v (if (and the-rewrite (eq? (rewrite-preview-trunk the-rewrite) trunk)) the-rewrite (start-rewrite! trunk))])
       (for-each
         (lambda (r)
           (let ([r (edoc:type-value 'revision r)])
-            (view-disabled-set! v (if (memv r (view-disabled v)) (remv r (view-disabled v)) (cons r (view-disabled v))))))
+            (rewrite-preview-disabled-set! v (if (memv r (rewrite-preview-disabled v)) (remv r (rewrite-preview-disabled v)) (cons r (rewrite-preview-disabled v))))))
         revisions)
       (cond
-        [(null? (view-disabled v)) (drop-view! v) (edit:set-message! "View ended: nothing disabled") (follow!) '()]
-        [else (render-view! v) (report! v) (follow!) (view-disabled v)])))
+        [(null? (rewrite-preview-disabled v)) (drop-rewrite! v) (edit:set-message! "View ended: nothing disabled") (follow!) '()]
+        [else (render-rewrite! v) (report! v) (follow!) (rewrite-preview-disabled v)])))
 
   (edoc "Commit the view: the trunk rewritten for everyone with the view's entries disabled, their inverses this head's own undoable action, and the window back on the trunk; blocked when a later entry overlaps a disabled one, the conflicts named."
         (returns symbol "applied, blocked, refused or nothing"))
   (define (delta-log-commit!)
-    (let ([v (or the-view (error 'delta-log:commit! "no view to commit"))])
-      (let-values ([(status detail) (head:store-rewrite! (view-trunk v) (view-disabled v))])
+    (let ([v (or the-rewrite (error 'delta-log:commit! "no view to commit"))])
+      (let-values ([(status detail) (head:store-rewrite! (rewrite-preview-trunk v) (rewrite-preview-disabled v))])
         (case status
           [(applied)
-           (let ([n (length (view-disabled v))] [name (head:buffer-name (view-trunk v))])
-             (drop-view! v)
+           (let ([n (length (rewrite-preview-disabled v))] [name (head:buffer-name (rewrite-preview-trunk v))])
+             (drop-rewrite! v)
              (edit:set-message! (format "Rewrote ~a: ~a entr~a disabled, now revision ~a" name n (if (= n 1) "y" "ies") detail))
              (follow!))]
           [(blocked) (edit:set-message! (format "Rewrite blocked, a later entry over a disabled one: ~s" detail))]
@@ -634,21 +634,21 @@
 
   (edoc "Abandon the view: the window shows the trunk again, nothing rewritten." (public))
   (define (delta-log-revert!)
-    (when the-view
-      (let ([name (head:buffer-name (view-trunk the-view))])
-        (drop-view! the-view)
+    (when the-rewrite
+      (let ([name (head:buffer-name (rewrite-preview-trunk the-rewrite))])
+        (drop-rewrite! the-rewrite)
         (edit:set-message! (format "View of ~a abandoned" name))
         (follow!))))
 
-  (edoc "The live view as data, (trunk-name disabled conflicts), or #f without one."
+  (edoc "The active rewrite preview as data, (trunk-name disabled conflicts), or #f without one."
         (returns (or list #f)) (public))
-  (define (delta-log-view)
-    (and the-view (list (head:buffer-name (view-trunk the-view)) (view-disabled the-view) (view-conflicts the-view))))
+  (define (delta-log-rewrite-preview)
+    (and the-rewrite (list (head:buffer-name (rewrite-preview-trunk the-rewrite)) (rewrite-preview-disabled the-rewrite) (rewrite-preview-conflicts the-rewrite))))
 
   (edoc "The revisions the live view disables, newest first; () without a view."
         (returns (list-of integer)) (public))
   (define (delta-log-disabled)
-    (if the-view (list-sort > (view-disabled the-view)) '()))
+    (if the-rewrite (list-sort > (rewrite-preview-disabled the-rewrite)) '()))
 
   (edoc "Describe an entry of the current buffer's log in the echo area: its actor, where it wrote, what it removed and inserted."
         (revision revision "the entry") (public))
@@ -680,7 +680,7 @@
                       (case column
                         [(0) (head:buffer-name b)]
                         [(1) (number->string (car entry))]
-                        [else (string-append (if (and the-view (eq? (view-trunk the-view) b) (memv (car entry) (view-disabled the-view))) "- " "  ")
+                        [else (string-append (if (and the-rewrite (eq? (rewrite-preview-trunk the-rewrite) b) (memv (car entry) (rewrite-preview-disabled the-rewrite))) "- " "  ")
                                              (entry-hint entry (disablers-of b)))])))
                   #f '() '() (make-weak-eq-hashtable)))
 
@@ -893,16 +893,16 @@
     ;; before every frame: the previews follow the store and the picks, and
     ;; the rows the windows and the store
     (render-previews!)
-    (when the-view
-      (let* ([v the-view] [trunk (view-trunk v)]
-             [key (list (head:buffer-store-rev trunk) (view-disabled v))])
+    (when the-rewrite
+      (let* ([v the-rewrite] [trunk (rewrite-preview-trunk v)]
+             [key (list (head:buffer-store-rev trunk) (rewrite-preview-disabled v))])
         (cond
-          [(not (memq trunk (head:buffers))) (drop-view! v)]
-          [(not (equal? key (view-key v)))
+          [(not (memq trunk (head:buffers))) (drop-rewrite! v)]
+          [(not (equal? key (rewrite-preview-key v)))
            ;; A reload can retire the revisions selected in this view.
            ;; End that view visibly instead of leaving stale text to commit.
-           (guard (ex [else (drop-view! v) (edit:set-message! "View ended: its entries are no longer available")])
-             (render-view! v))])))
+           (guard (ex [else (drop-rewrite! v) (edit:set-message! "View ended: its entries are no longer available")])
+             (render-rewrite! v))])))
     (for-each refresh-browser! browsers))
 
   (define (move-row! delta)
