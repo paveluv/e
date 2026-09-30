@@ -12,6 +12,36 @@
         (kernel:retract-module! 'prompt-control-fixture)
         (parameterize ([kernel:registering-module 'prompt-control-fixture]) (prompt-control:init!)))))
   (install!)
+  (let ([hints 0])
+    (parameterize ([kernel:registering-module 'prompt-profile-fixture])
+      (prompt-control:register-profile! 'fixture 1
+        (lambda (configuration origin)
+          (list '(history "first" "second") (cons 'normalize string-upcase)
+            (cons 'validate (lambda (text) (and (not (string=? text "GOOD")) "Use GOOD")))
+            (cons 'ghost (lambda (text position) (set! hints (+ hints 1)) "help"))))))
+    (let* ([request (new "draft" '(profile-origin))]
+           [root (prompt-control:create! request '((profile fixture 1 ())) '())]
+           [entry #f])
+      (define (text) (vector-ref (text-source:lines (text-source:lookup (cadr (field (field (model:snapshot request) 'value) 'draft)))) 0))
+      (widget:mount! root 'profile-fixture) (widget:pump!)
+      (set! entry (widget:descendant root 'input 'entry))
+      (let ([before hints])
+        (widget:prepare! root 30 4) (widget:prepare! root 50 3)
+        (check 'prompt-hints-are-prepared-without-paint-callbacks hints before))
+      (check 'prompt-history-restores-unfinished-input
+        (map (lambda (direction) (prompt-control:history! root direction) (text)) '(previous previous next next))
+        '("first" "second" "first" "draft"))
+      (entry:set-text! entry "bad")
+      (let ([status (prompt-control:accept! root)])
+        (check 'prompt-validates-normalized-authored-input-before-accepting
+          (list status (text) (field (field (model:snapshot request) 'value) 'status)
+            (and (find (lambda (line) (string:search line "[Use GOOD]" 0 (string-length line)))
+                   (widget:frame-lines (widget:prepare! root 30 4))) #t)) '(invalid "BAD" editing #t)))
+      (entry:set-text! entry "good") (prompt-control:accept! root)
+      (check 'prompt-acceptance-captures-normalized-text
+        (cadr (field (field (model:snapshot request) 'value) 'outcome)) '#("GOOD"))
+      (widget:unmount! root) (prompt-control:drain!))
+    (kernel:retract-module! 'prompt-profile-fixture))
   (widget:register! 'prompt-fixture 1
     (append (layout:container 'y)
       (list (cons 'actions (list (cons 'accepted accepted!) (cons 'cancelled cancelled!))))))

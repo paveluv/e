@@ -118,7 +118,7 @@
                 (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
                            (append ps (list (cadddr (editor-state:state d))))))))
             (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
-                   [name (store:property document 'mode #f)] [mode (and name (mode:find name))]
+                   [name (option d 'mode (store:property document 'mode #f))] [mode (and name (mode:find name))]
                    [facts (cons (cons 'wrap (store:property document 'wrap 'default))
                             (map (lambda (key) (cons key (store:property document key #f))) (remq 'wrap (mode:required-facts mode))))]
                    [signature (list mode (and mode (mode:render mode)) (and mode (mode:row-styles mode)) (and mode (mode:styles mode))
@@ -526,7 +526,7 @@
     (text-control:call-with-intent! id (lambda ()
                                          (let-values ([(source d) (text-control:context id 'editor)])
                                            (let* ([old (text-control:basis-text source d)] [ps (list-head (editor-state:state d) 3)]
-                                                  [document (text-source:id (text-control:mirror source))] [name (store:property document 'mode #f)]
+                                                  [document (text-source:id (text-control:mirror source))] [name (option d 'mode (store:property document 'mode #f))]
                                                   [mode (and name (mode:find name))]
                                                   [input (mode:source old (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode)))]
                                                   [span (text-source:span ps)] [last (- (vector-length old) 1)])

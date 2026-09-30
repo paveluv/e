@@ -1,7 +1,7 @@
 ;; Prompt controls own no keyboard reader or window. The host places the tree.
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt-control)
-  (export accept! cancel! choose! complete! create! drain! init! read! register-host!)
+  (export accept! cancel! choose! complete! create! drain! edge! history! init! inspect! newline! read! register-host! register-profile!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:)
           (prefix (head completion) completion:) (prefix (head completion-layout) completion-layout:)
@@ -17,6 +17,7 @@
   (define live (make-hashtable equal-hash equal?))
   (define hovered (make-hashtable equal-hash equal?))
   (define hosts (kernel:make-registry))
+  (define profiles (kernel:make-registry car))
   (define tickets (make-hashtable equal-hash equal?))
   (define host-changes
     (kernel:registry-observe! hosts
@@ -25,8 +26,34 @@
           (vector-for-each
             (lambda (entry) (when (memq (car entry) removed) (suspension:cancel! (cdr entry)))) entries)))))
   (define pending '())
-  (define-record-type runtime (fields request (mutable generation) factory source completion
-                                (mutable signature) (mutable delivered?) (mutable closed?)))
+  (define-record-type runtime (fields request (mutable generation) factory source completion profile-factory profile
+                                (mutable signature) (mutable delivered?) (mutable closed?)
+                                (mutable message) (mutable history-index) (mutable stash) (mutable edge)))
+  (define (option options key fallback) (cond [(assq key options) => cdr] [else fallback]))
+  (define (profile-factory d)
+    (let ([recipe (option (view:options d) 'profile #f)])
+      (and recipe (kernel:registry-find profiles (lambda (p) (equal? (car p) (list-head recipe 2)))))))
+
+  (edoc "Register a prompt interaction profile factory, called once per mounted request with configuration and captured origin. It returns optional history strings, alternate completion and pure normalize/validate/ghost/transform/edge callbacks, plus an inspect command. Callbacks run in input/service work, never painting."
+        (name symbol "profile namespace") (schema integer "positive version") (factory procedure "(configuration origin) -> profile alist"))
+  (define (register-profile! name schema factory)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? factory))
+      (error 'register-profile! "invalid profile registration"))
+    (kernel:registry-add! profiles (cons (list name schema) factory)))
+  (define (make-profile d origin)
+    (let* ([recipe (option (view:options d) 'profile #f)] [factory (profile-factory d)]
+           [profile (if factory ((cdr factory) (caddr recipe) origin) '())])
+      (when (and recipe (not factory)) (error 'prompt "interaction profile is unavailable" recipe))
+      (unless (and (list? profile) (for-all (lambda (p)
+                                              (and (pair? p)
+                                                (case (car p)
+                                                  [(history) (and (list? (cdr p)) (for-all string? (cdr p)))]
+                                                  [(alternate) (or (completion:source? (cdr p)) (procedure? (cdr p)))]
+                                                  [(normalize validate ghost transform edge inspect) (procedure? (cdr p))]
+                                                  [else #f]))) profile)
+                (let unique ([xs profile]) (or (null? xs) (and (not (assq (caar xs) (cdr xs))) (unique (cdr xs))))))
+        (error 'prompt "invalid interaction profile" profile))
+      (values factory profile)))
   (define (queue! thunk)
     (when (null? pending) (head:run-on-main! drain!))
     (set! pending (cons thunk pending)))
@@ -74,10 +101,12 @@
                [status (get value 'status)]
                [r (and (equal? id (get value 'controller))
                     (or (hashtable-ref live id #f)
-                      (let* ([recipe (get value 'provider)] [factory (and recipe (completion:provider recipe))]
-                             [source (and factory (factory (caddr recipe) (get value 'origin)))]
-                             [r (make-runtime request generation factory source
-                                  (and source (completion-state:create source #f)) #f (not (eq? status 'editing)) #f)])
+                      (let*-values ([(profile-factory profile) (make-profile d (get value 'origin))]
+                                    [(recipe) (get value 'provider)] [(factory) (and recipe (completion:provider recipe))]
+                                    [(source) (and factory (factory (caddr recipe) (get value 'origin)))]
+                                    [(r) (make-runtime request generation factory source
+                                           (and source (completion-state:create source (option profile 'transform #f)))
+                                           profile-factory profile #f (not (eq? status 'editing)) #f '(ghost . "") -1 "" #f)])
                         (when (and recipe (not factory)) (error 'prompt "completion provider is unavailable" recipe))
                         (hashtable-set! live id r) r)))])
           (when r
@@ -85,9 +114,10 @@
             ;; editing controller follows that lease; queued outcomes retain
             ;; the generation captured when they became terminal.
             (when (eq? status 'editing) (runtime-generation-set! r generation))
-            (unless (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
+            (unless (and (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
+                      (eq? (runtime-profile-factory r) (profile-factory d)))
               (release! id))
-            (when (and (runtime-completion r) (eq? status 'editing) (not (runtime-closed? r)))
+            (when (and (eq? status 'editing) (not (runtime-closed? r)))
               (refresh-completion! id r)))
           ;; The base identifies the controller, independent of mount order.
           ;; Mounting a terminal outcome never replays it, including reload.
@@ -105,14 +135,20 @@
                             (assq status (widget:commands id)))
                       (widget:invoke! id status outcome)))))))))))
 
-  (edoc "Create an unmounted prompt composition for an existing request. Options are label, multiline? and help; commands bind accepted and cancelled to explicit host targets. The request owns all control views, while a borrowed draft retains its own lifetime."
+  (edoc "Create an unmounted prompt composition for an existing request. Options are label, multiline?, help, an interaction profile recipe and input editing-policy/mode; commands bind accepted and cancelled to explicit host targets. The request owns its views; a borrowed draft retains its lifetime."
         (request model "base prompt request") (options list "portable presentation options")
         (commands list "explicit named outcome targets") (returns model "prompt view"))
   (define (create! request options commands)
     (unless (and (list? options)
               (for-all (lambda (p) (and (pair? p)
                                      (case (car p) [(label help) (string? (cdr p))]
-                                       [(multiline?) (boolean? (cdr p))] [else #f]))) options)
+                                       [(multiline?) (boolean? (cdr p))]
+                                       [(mode) (string? (cdr p))]
+                                       [(profile) (and (list? (cdr p)) (= (length (cdr p)) 3) (symbol? (cadr p))
+                                                    (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))]
+                                       [(editing-policy) (and (list? (cdr p)) (= (length (cdr p)) 2) (symbol? (cadr p))
+                                                           (integer? (caddr p)) (exact? (caddr p)) (> (caddr p) 0))]
+                                       [else #f]))) options)
               (let unique ([xs options]) (or (null? xs) (and (not (assq (caar xs) (cdr xs))) (unique (cdr xs))))))
       (error 'create! "invalid prompt options" options))
     (let* ([packet (model:snapshots (list request))] [r (caddr (caadr packet))]
@@ -132,11 +168,14 @@
                     (raise ex)])
           (let* ([who head:ui-actor] [source (get value 'draft)]
                  [multiline? (cond [(assq 'multiline? options) => cdr] [else #f])]
-                 [root (create-view! who request 'prompt 1 (list (cons 'commands commands)) '() request)]
+                 [root-options (cons (cons 'commands commands) (filter (lambda (p) (eq? (car p) 'profile)) options))]
+                 [root (create-view! who request 'prompt 1 root-options '() request)]
                  [input (create-view! who #f 'row 1 '((spacing . normal)) '() request)]
                  [label (create-view! who #f 'label 1
                           (list (cons 'text (cond [(assq 'label options) => cdr] [else "Input:"]))) '() request)]
-                 [entry (create-view! who source (if multiline? 'editor 'entry) 1 '()
+                 [entry (create-view! who source (if multiline? 'editor 'entry) 1
+                          (filter values (list (assq 'mode options)
+                                           (let ([p (assq 'editing-policy options)]) (and p (cons 'policy (cdr p))))))
                           (if multiline? '((0 . 0) (0 . 0) (0 . 0) #f) '((0 . 0) (0 . 0))) request)]
                  [choices (create-view! who request 'prompt-choices 1 '() '() request)]
                  [help (create-view! who request 'prompt-help 1
@@ -144,7 +183,7 @@
             (let-values ([(status rows)
                           (view:arrange! who
                             (list (list input 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1))) '((spacing . normal)))
-                              (list root 0 (list (list 'choices choices 'fit) (list 'help help 'fit) (list 'input input '(grow 1))) (list (cons 'commands commands)))) '())])
+                              (list root 0 (list (list 'choices choices 'fit) (list 'help help 'fit) (list 'input input '(grow 1))) root-options)) '())])
               (unless (eq? status 'applied) (error 'create! "cannot compose prompt" status)))
             (let ([status (prompt-request:bind! who request (get r 'revision) root)])
               (unless (eq? status 'applied) (error 'create! "request controller changed" status))) root)))))
@@ -163,7 +202,13 @@
     (let-values ([(entry source d text position) (draft-context id)])
       (let ([signature (list (text-control:revision source) position)])
         (unless (or (text-control:pending? entry) (equal? signature (runtime-signature r)))
-          (completion-state:refresh! (runtime-completion r) text position)
+          (when (and (>= (runtime-history-index r) 0)
+                  (not (string=? text (list-ref (option (runtime-profile r) 'history '()) (runtime-history-index r)))))
+            (runtime-history-index-set! r -1))
+          (let ([hint (cond [(option (runtime-profile r) 'ghost #f) => (lambda (ghost) (or (ghost text position) ""))] [else ""])])
+            (unless (string? hint) (error 'prompt "hint provider must return text or false"))
+            (runtime-message-set! r (cons 'ghost hint)))
+          (when (runtime-completion r) (completion-state:refresh! (runtime-completion r) text position))
           (runtime-signature-set! r signature)
           (repaint-completion! id)))))
   (define (repaint-completion! id)
@@ -173,37 +218,41 @@
       (if (= at offset) (cons row column)
         (if (char=? (string-ref text at) #\newline) (loop (+ at 1) (+ row 1) 0) (loop (+ at 1) row (+ column 1))))))
   (define (apply-completion! id r entry source d)
+    (let ([snapshot (completion-state:snapshot (runtime-completion r))])
+      (apply-text! id r entry source d (cadr snapshot) (caddr snapshot))))
+  (define (apply-text! id r entry source d text caret)
     (guard (ex [else
                 (runtime-signature-set! r #f)
                 (guard (ignored [else (void)]) (refresh-completion! id r))
                 (raise ex)])
-      (let* ([snapshot (completion-state:snapshot (runtime-completion r))] [text (cadr snapshot)]
-             [position (input-position text (caddr snapshot))] [old (text-control:lines source)]
+      (let* ([position (input-position text caret)] [old (text-control:lines source)]
              [lines (list->vector (string:lines text))])
         (if (not (equal? old lines))
           (let-values ([(span replacement) (text:difference old lines)])
             (text-control:submit! entry source d old (text-control:revision source) span replacement
-              (list #f "Complete input" (cons 'revision (text-control:revision source))) (list position)
+              (list #f "Prompt input" (cons 'revision (text-control:revision source))) (list position)
               (lambda (ps) (if (eq? (view:kind d) 'entry) (list (car ps) (car ps)) (list (car ps) (car ps) (car ps) #f)))))
           (if (eq? (view:kind d) 'entry) (entry:select! entry (cdr position) (cdr position)) (editor:select! entry position position)))
-        (repaint-completion! id))))
+        (refresh-completion! id r) (repaint-completion! id))))
 
   (define (editing-runtime id)
     (let-values ([(source d value) (context id)])
       (let ([r (hashtable-ref live id #f)])
-        (and r (eq? (get value 'status) 'editing) (runtime-completion r)
+        (and r (eq? (get value 'status) 'editing)
           (not (runtime-delivered? r)) (not (runtime-closed? r))
-          (if (eq? (runtime-factory r) (completion:provider (get value 'provider))) r
+          (if (and (eq? (runtime-factory r) (and (get value 'provider) (completion:provider (get value 'provider))))
+                (eq? (runtime-profile-factory r) (profile-factory d))) r
             (begin (release! id) #f))))))
 
   (edoc "Normalize this prompt's current token, then cycle equivalent spellings or completion pages. Work runs outside painting against a captured draft revision."
         (id model "prompt controller") (backwards? boolean "visit the preceding live-search hit"))
   (define (complete! id backwards?)
     (let ([r (editing-runtime id)])
-      (when r
+      (when (and r (runtime-completion r))
         (refresh-completion! id r)
         (let-values ([(entry source d text position) (draft-context id)])
-          (completion-state:normalize! (runtime-completion r) (runtime-source r) backwards?)
+          (completion-state:normalize! (runtime-completion r)
+            (if backwards? (option (runtime-profile r) 'alternate (runtime-source r)) (runtime-source r)) backwards?)
           (apply-completion! id r entry source d)))))
 
   (edoc "Choose a completion from the displayed generation, refusing after another draft edit or provider result."
@@ -211,19 +260,68 @@
         (value string "insertion text") (returns boolean))
   (define (choose! id generation value)
     (let ([r (editing-runtime id)])
-      (and r
+      (and r (runtime-completion r)
         (begin
           (refresh-completion! id r)
           (let-values ([(entry source d text position) (draft-context id)])
             (and (completion-state:choose! (runtime-completion r) generation value)
               (begin (apply-completion! id r entry source d) #t)))))))
 
+  (edoc "Browse this request's captured history at an input edge; within multiline input, move the editor caret vertically. Returning past the newest item restores the unfinished draft."
+        (id model "prompt controller") (direction (one-of previous next) "history direction"))
+  (define (history! id direction)
+    (unless (memq direction '(previous next)) (error 'history! "invalid direction"))
+    (let ([r (editing-runtime id)])
+      (when r
+        (refresh-completion! id r)
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([row (car (input-position text caret))] [single? (eq? (view:kind d) 'entry)]
+                 [history (option (runtime-profile r) 'history '())] [index (runtime-history-index r)]
+                 [next (+ index (if (eq? direction 'previous) 1 -1))])
+            (if (and (not single?) (= index -1)
+                  (if (eq? direction 'previous) (> row 0) (< row (- (vector-length (text-control:lines source)) 1))))
+              (editor:move! entry (if (eq? direction 'previous) 'up 'down))
+              (when (and (<= -1 next) (< next (length history)) (not (and (= index -1) (eq? direction 'next))))
+                (when (= index -1) (runtime-stash-set! r text))
+                (let ([text (if (= next -1) (runtime-stash r) (list-ref history next))])
+                  (apply-text! id r entry source d text (string-length text))
+                  (runtime-history-index-set! r next)))))))))
+
+  (edoc "Move to a prompt's line edge. A registered profile may define repeated-edge behavior, such as Scheme input's indentation and whole-expression endpoints."
+        (id model "prompt controller") (direction (one-of beginning end) "edge"))
+  (define (edge! id direction)
+    (unless (memq direction '(beginning end)) (error 'edge! "invalid edge"))
+    (let ([r (editing-runtime id)])
+      (when r
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([move (option (runtime-profile r) 'edge #f)] [turn (car (keymap:command-state))]
+                 [last (runtime-edge r)])
+            (if move
+              (apply-text! id r entry source d text (move direction text caret (and last (eq? direction (cdr last)) (= turn (+ 1 (car last))))))
+              ((if (eq? (view:kind d) 'entry) entry:move! editor:move!) entry (if (eq? direction 'beginning) 'home 'end)))
+            (runtime-edge-set! r (cons turn direction)))))))
+
+  (edoc "Inspect the name at this prompt's current caret through its explicit interaction profile."
+        (id model "prompt controller"))
+  (define (inspect! id)
+    (let* ([r (editing-runtime id)] [inspect (and r (option (runtime-profile r) 'inspect #f))])
+      (when inspect
+        (let-values ([(entry source d text caret) (draft-context id)]) (inspect text caret)))))
+
+  (edoc "Insert a newline through this prompt's multiline editor and its normal editing policy. Single-line prompts leave their input unchanged."
+        (id model "prompt controller"))
+  (define (newline! id)
+    (when (editing-runtime id)
+      (let ([entry (widget:descendant id 'input 'entry)])
+        (when (eq? (view:kind (interaction:snapshot entry)) 'editor) (editor:insert! entry "\n")))))
+
   ;; The head owns its API corpus and prepared labels. Only authored input and
   ;; the portable provider recipe belong in the base; painting never ships rows.
-  (define-record-type projection (fields id controller snapshot (mutable width) (mutable rows)))
+  (define-record-type projection (fields id controller snapshot message (mutable width) (mutable rows)))
   (define (completion-data id source inputs)
     (let* ([controller (get (get source 'value) 'controller)] [r (hashtable-ref live controller #f)])
-      (make-projection id controller (and r (runtime-completion r) (completion-state:snapshot (runtime-completion r))) #f '#())))
+      (make-projection id controller (and r (runtime-completion r) (completion-state:snapshot (runtime-completion r)))
+        (if r (runtime-message r) '(ghost . "")) #f '#())))
   (define (rows! data width)
     (unless (equal? width (projection-width data))
       (projection-width-set! data width)
@@ -275,8 +373,12 @@
         (and hit (eq? (cadr event) 'press) (eq? (caddr event) 'primary)
           (begin (keymap:run! (cadar (choice-bindings frame x y))) #t)))))
   (define (help-text data d)
-    (let ([note (and (projection-snapshot data) (list-ref (projection-snapshot data) 4))])
-      (if (and note (not (string=? note ""))) note (get (view:options d) 'text))))
+    (let ([note (and (projection-snapshot data) (list-ref (projection-snapshot data) 4))]
+          [message (projection-message data)])
+      (cond [(eq? (car message) 'validation) (cdr message)]
+        [(and note (not (string=? note ""))) note]
+        [(not (string=? (cdr message) "")) (cdr message)]
+        [else (get (view:options d) 'text)])))
 
   (edoc "Register an outer host for linear prompt callers. Preparing captures (values parent-request origin attach); attach receives a request and root view and returns its cleanup thunk. The host owns placement and focus, never the prompt's input loop."
         (prepare procedure "capture origin and an attachment capability"))
@@ -332,6 +434,21 @@
   (edoc "Accept this prompt's exact authored draft revision once. A changed or closed request refuses; its named accepted target runs later on the ordinary pump with (revision lines origin)."
         (id model "prompt view") (returns symbol))
   (define (accept! id)
+    (service! id #f)
+    (let ([r (editing-runtime id)])
+      (when r
+        (let-values ([(entry source d text caret) (draft-context id)])
+          (let* ([normalize (option (runtime-profile r) 'normalize values)] [value (normalize text)]
+                 [validate (option (runtime-profile r) 'validate #f)])
+            (unless (string? value) (error 'accept! "normalizer must return text"))
+            (unless (string=? value text) (apply-text! id r entry source d value (string-length value)))
+            (let ([problem (and validate (validate value))])
+              (if problem
+                (begin
+                  (unless (string? problem) (error 'accept! "validator must return false or text"))
+                  (runtime-message-set! r (cons 'validation (string-append "[" problem "]"))) (repaint-completion! id) 'invalid)
+                (accept-draft! id))))))))
+  (define (accept-draft! id)
     (let-values ([(source d value) (context id)])
       (let ([draft (text-source:lookup (cadr (get value 'draft)))])
         (unless draft (error 'accept! "draft is unavailable"))
@@ -369,4 +486,13 @@
     (keymap:bind-default! 'widget-prompt "RET" (keymap:call accept! widget:target))
     (keymap:bind-default! 'widget-prompt "TAB" (keymap:call complete! widget:target #f))
     (keymap:bind-default! 'widget-prompt "S-TAB" (keymap:call complete! widget:target #t))
-    (keymap:bind-default! 'widget-prompt "C-g" (keymap:call cancel! widget:target))))
+    (keymap:bind-default! 'widget-prompt "C-g" (keymap:call cancel! widget:target))
+    (keymap:bind-default! 'widget-prompt "ESC" (keymap:call cancel! widget:target))
+    (keymap:bind-default! 'widget-prompt "UP" (keymap:call history! widget:target 'previous))
+    (keymap:bind-default! 'widget-prompt "DOWN" (keymap:call history! widget:target 'next))
+    (keymap:bind-default! 'widget-prompt "C-a" (keymap:call edge! widget:target 'beginning))
+    (keymap:bind-default! 'widget-prompt "HOME" (keymap:call edge! widget:target 'beginning))
+    (keymap:bind-default! 'widget-prompt "C-e" (keymap:call edge! widget:target 'end))
+    (keymap:bind-default! 'widget-prompt "END" (keymap:call edge! widget:target 'end))
+    (keymap:bind-default! 'widget-prompt "M-." (keymap:call inspect! widget:target))
+    (keymap:bind-default! 'widget-prompt "M-RET" (keymap:call newline! widget:target))))
