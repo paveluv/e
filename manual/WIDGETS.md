@@ -60,6 +60,18 @@ selection and result basis as Enter. Other cells use `activate` when bound.
 scripts. Stale rows or changed column geometry cannot activate a different
 cell; an explicit missing command refuses before changing selection.
 
+`review-preview:create!` takes an actor and a conflict or rewrite draft,
+returning `(request document)`. The document is disposable, read-only output;
+the original text remains editable. Connect a table's `selection` output to
+the request's `selection` input to follow rows without an extra head command.
+The request's `annotations` output connects to an editor's `annotations`
+input. Both text and highlights carry their publication revision. A preview
+retains its upstream selection dependencies only while demanded.
+Highlight batches contain at most 512 other conflict regions plus the
+selected region; `truncated?` in the request reports omitted highlights.
+`review-preview:close!` takes the actor and request, retiring its scoped views
+and owned output while preserving the draft and source documents.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown

@@ -1,6 +1,7 @@
 (let ()
   (import (prefix (service conflict-review) review:) (prefix (service conflict-source) conflict-source:)
-          (prefix (state collection) collection:) (prefix (state model) model:))
+          (prefix (service review-preview) review-preview:) (prefix (state view) view:)
+          (prefix (state connection) connection:) (prefix (state collection) collection:) (prefix (state model) model:))
   (define (get r k) (cdr (assq k r)))
   (define actor head:ui-actor)
   (define (source name)
@@ -84,6 +85,30 @@
           (store:edit! bot y (store:revision y) (text:make-span 1 4 1 4) '("!"))
           (check 'hidden-conflict-query-keeps-no-derived-work
             (get (get (collection:summary query) 'value) 'generation) generation))))
+    (let* ([preview (review-preview:create! actor a)] [request (car preview)] [document (cadr preview)]
+           [table (view:create! actor query 'table 1 '((columns mine disk)) '((selection . #f) (basis)))])
+      (define (ready?) (eq? (get (get (model:snapshot request) 'value) 'status) 'ready))
+      (connection:bind! actor request (list (list request 'selection #f (list table 'selection))))
+      (let ([hold (model:subscribe! (list request) (lambda (notice) (void)))])
+        (test:await 'preview-start ready?)
+        (check 'preview-is-read-only-and-retains-connected-query-demand
+          (list (store:property document 'read-only) (store:line document 0) (model:demanded? query)) '(#t "changed" #t))
+        (let* ([p (page)] [selection (list query (cadr p) (cadar (list-ref p 4)))])
+          (view:set-state! actor table #f (list (cons 'selection selection) (cons 'basis (caddr p))))
+          (conflict-source:choose! actor selection (caddr p) 'mine)
+          (let* ([p (page)] [selection (list query (cadr p) (cadar (list-ref p 4)))])
+            (view:set-state! actor table #f (list (cons 'selection selection) (cons 'basis (caddr p)))))
+          (test:await 'preview-choice (lambda () (and (ready?) (equal? (store:line document 0) "mine"))))
+          (check 'connected-preview-publishes-revisioned-semantic-highlight
+            (let ([annotations (get (get (model:snapshot request) 'value) 'annotations)])
+              (list (car annotations) (cadr annotations) (caddr annotations)))
+            (list document (store:revision document) '(((0 0 0 4) conflict-mine-current)))))
+        (model:unsubscribe! hold)
+        (check 'hidden-preview-releases-its-connected-query (model:demanded? query) #f))
+      (review-preview:close! actor request)
+      (check 'closing-preview-deletes-only-owned-output
+        (list (store:exists? document) (and (model:snapshot a) #t) (store:exists? y)) '(#f #t #t))
+      (view:retire! actor table (model:revision table)))
     (model:retire! actor query (model:revision query)))
   (for-each (lambda (id) (review:close! actor id (revision id))) (list a b))
   (check 'closing-review-preserves-borrowed-sources

@@ -27,6 +27,7 @@
           (prefix (service policy) policy:)
           (prefix (service prompt-request) prompt-request:)
           (prefix (service reference) reference:)
+          (prefix (service review-preview) review-preview:)
           (prefix (service rewrite) rewrite:)
           (prefix (service sandbox) sandbox:)
           (prefix (service search-request) search-request:)
@@ -47,7 +48,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "rewrite" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -285,9 +286,11 @@
       [(conflict-review-preview) (control!) (arity 2) (apply conflict-review:preview args)]
       [(conflict-review-settle) (control!) (arity 3) (apply conflict-review:settle! actor args)]
       [(conflict-review-close) (control!) (arity 2) (apply conflict-review:close! actor args)]
-      [(conflict-source-choose) (control!) (arity 3) (apply conflict-source:choose! actor args)]
-      [(conflict-source-choose-all) (control!) (arity 4) (apply conflict-source:choose-all! actor args)]
+      [(conflict-source-choose) (control!) (arity 3) (apply conflict-source:choose! actor args) #t]
+      [(conflict-source-choose-all) (control!) (arity 4) (apply conflict-source:choose-all! actor args) #t]
       [(conflict-source-settle) (control!) (arity 3) (apply conflict-source:settle! actor args)]
+      [(review-preview-create) (control!) (arity 1) (apply review-preview:create! actor args)]
+      [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
       [(rewrite-create) (control!) (arity 1) (rewrite:create! actor (car args))]
       [(rewrite-toggle) (control!) (arity 3) (apply rewrite:toggle! actor args)]
       [(rewrite-preview-draft) (control!) (arity 1) (rewrite:preview (car args))]
@@ -411,10 +414,10 @@
       [(markup-source) (control!) (arity 1) (markup-source:create! actor (car args))]
       [(journal-source) (control!) (arity 1) (journal-source:create! actor (car args))]
       [(git-source) (control!) (arity 1) (git-source:create! actor (car args))]
-      [(git-expand) (control!) (arity 2) (apply git-source:expand! actor args)]
+      [(git-expand) (control!) (arity 2) (apply git-source:expand! actor args) #t]
       [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
-      [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args)]
-      [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args))]
+      [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args) #t]
+      [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args)) #t]
       [(search-create) (control!) (head!) (arity 1) (search-request:create! actor (car args))]
       [(search-configure) (control!) (head!) (arity 3) (apply search-request:configure! actor args)]
       [(search-close) (control!) (head!) (arity 1) (search-request:close! actor (car args)) #t]

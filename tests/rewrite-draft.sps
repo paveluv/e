@@ -1,5 +1,5 @@
 (let ()
-  (import (prefix (service rewrite) rewrite:) (prefix (state model) model:))
+  (import (prefix (service rewrite) rewrite:) (prefix (service review-preview) review-preview:) (prefix (state model) model:))
   (define (get r k) (cdr (assq k r)))
   (define actor head:ui-actor)
   (define document (store:create! actor "independent rewrites" '("base")))
@@ -13,6 +13,15 @@
     (check 'rewrite-drafts-keep-independent-choices-and-coherent-bases
       (map (lambda (id) (let ([p (rewrite:preview id)]) (list (caddr p) (vector->list (list-ref p 3)) (list-ref p 6)))) (list a b))
       '(((1) ("baseB") 2) ((2) ("Abase") 2)))
+    (let* ([preview (review-preview:create! actor a)] [request (car preview)] [output (cadr preview)]
+           [token (model:subscribe! (list request) (lambda (notice) (void)))])
+      (test:await 'rewrite-publication (lambda () (equal? (store:line output 0) "baseB")))
+      (store:set-property! actor document 'mode "scheme")
+      (test:await 'rewrite-mode (lambda () (equal? (store:property output 'mode #f) "scheme")))
+      (check 'rewrite-preview-publishes-read-only-text-and-follows-source-mode
+        (list (store:property output 'read-only) (store:line output 0) (lines)) '(#t "baseB" ("AbaseB")))
+      (model:unsubscribe! token)
+      (review-preview:close! actor request))
     (check 'rewrite-invalid-or-stale-toggles-are-atomic
       (list (test:raises? (lambda () (rewrite:toggle! actor a 0 '(2))))
         (test:raises? (lambda () (rewrite:toggle! actor a 1 '(2 999)))) (disabled a)) '(#t #t (1)))

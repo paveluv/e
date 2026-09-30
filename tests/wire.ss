@@ -1909,6 +1909,9 @@
                    (head-read a `(call-with-values (lambda () (store:rewrite-preview ,id '())) list)) '(#("shared text") () () 0))
                  (test:check 'rewrite-draft-lifecycle-crosses-the-client-seam
                    (head-read a `(let* ([draft (rewrite:create! head:ui-actor ,id)] [p (rewrite:preview draft)])
+                                   (let ([preview (review-preview:create! head:ui-actor draft)])
+                                     (review-preview:close! head:ui-actor (car preview))
+                                     (when (store:exists? (cadr preview)) (error 'preview "output survived retirement")))
                                    (rewrite:close! head:ui-actor draft 0)
                                    (list (list-ref p 3) (list-ref p 6)))) '(#("shared text") 0))
                  (test:check 'conflict-review-lifecycle-crosses-the-client-seam
@@ -1917,6 +1920,20 @@
                                         [results (conflict-review:settle! head:ui-actor draft 0 (list ,id))])
                                    (conflict-review:close! head:ui-actor draft 0)
                                    (list (list-ref p 3) (map cadr results)))) '(#("shared text") (applied)))
+                 (let* ([draft (rpc head 'conflict-review-create (list id))]
+                        [query (rpc head 'collection-create draft "" '() 'persistent)]
+                        [git (rpc head 'git-source ".")] [metadata #f])
+                   (rpc head 'model-watch (list query))
+                   (test:await 'empty-review-rows
+                     (lambda ()
+                       (set! metadata (cdr (assq 'value (rpc head 'collection-summary query))))
+                       (eq? (cdr (assq 'status metadata)) 'ready)))
+                   (test:check 'no-result-controls-return-portable-acknowledgements
+                     (list (rpc head 'conflict-source-choose-all query (cdr (assq 'generation metadata))
+                             (cdr (assq 'basis metadata)) 'disk) (rpc head 'git-refresh git)) '(#t #t))
+                   (rpc head 'model-retire query (cdr (assq 'revision (rpc head 'collection-summary query))))
+                   (rpc head 'model-retire git 0)
+                   (rpc head 'conflict-review-close draft 0))
                  (for-each (lambda (ui)
                              (head-read ui `(begin (log-view:show!) (window:delete-others!)
                                                    (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))
