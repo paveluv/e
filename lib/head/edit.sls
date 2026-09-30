@@ -1,5 +1,5 @@
-;; edit.sls -- the canonical editing API. Explicit editor-view commands
-;; coexist with the current-window adapter while ordinary windows migrate.
+;; edit.sls -- the canonical editing API. Current-window mutation commands
+;; delegate to the same editor views that nested hosts use.
 ;;
 ;; Everything a user does to text and to the seat that shows it: the
 ;; buffer commands (the window commands are (window)'s), visiting,
@@ -112,7 +112,6 @@
   ;; (head:before-frame!).  A refusal or failure stops the command;
   ;; the head never overwrites shared text to force an edit through.
 
-
   (define-syntax define-state
     (syntax-rules ()
       [(_ name place get put)
@@ -123,8 +122,6 @@
 
   (define-state file-name (head:window-buffer current-window)
     head:buffer-file head:buffer-file-set!)
-  (define-state trailing-newline? (head:window-buffer current-window)
-    head:buffer-trailing head:buffer-trailing-set!)
   (define-state mark-row (head:window-buffer current-window)
     head:buffer-mark-row head:buffer-mark-row-set!)
   (define-state mark-col (head:window-buffer current-window)
@@ -137,7 +134,6 @@
   (define-state left-col current-window head:window-left head:window-left-set!)
 
   ;;; Editor state ------------------------------------------------------------
-
 
   ;; The echo area's model lives in (echo) and its painting in (paint);
   ;; message and echo-pending are identifier-syntax facades for the
@@ -152,15 +148,6 @@
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
     (identifier-syntax [id (echo:pending)] [(set! id v) (echo:set-pending! v)]))
-  ;; whether an edit joins the buffer's latest recorded one, its undo group
-  ;; and batch, as the keys of a typing run do
-  (define continuing-edit (make-parameter #f))
-  ;; Desired anchors in the command's proposed result.  The head projects
-  ;; them into the accepted revision before adopting any later changes.
-  (define edit-point (make-parameter 'end))
-  (define edit-mark (make-parameter #f))
-  (define edit-source (make-parameter #f))
-  (define (edit-basis-for b) (or (edit-source) (head:edit-basis b)))
 
   (edoc "Borrow immutable text with its document identity and revision for a later bulk rewrite."
         (id model "explicit editor view; omission uses the legacy current buffer") (returns list "(lines document-id revision)"))
@@ -185,76 +172,9 @@
 
   (define (vlen) (head:buffer-line-count (head:current-buffer)))
   (define (line-at n) (head:buffer-line (head:current-buffer) n))
-  (define (current-line) (line-at point-row))
   ;; Navigation addresses the window presentation; editing addresses source.
   (define (current-display-line) (render:line-ref (head:window-text current-window) point-row))
 
-  (define (submit-edit! b span replacement . properties)
-    ;; The pending action supplies the store's grouping key, the label and
-    ;; the batch; the store owns the undo history. The entry is staged: it
-    ;; becomes the buffer's latest only when a mutation actually succeeds.
-    (let* ([action (pending-edit)]
-           [entry (and action (cadr action))]
-           [key (and entry (cadr entry))])
-      (unless (and action (eq? (car action) b))
-        (error 'submit-edit! "edit has no pending action"))
-      (head:store-edit! b span replacement
-                        (append (list key (caddr action)) properties
-                                (list (cons 'labels (list (cons 'batch (list-ref action 4))))))
-                        (cons (cons current-window (edit-point))
-                              (if (edit-mark) (list (cons 'mark (edit-mark))) '()))
-                        (edit-basis-for b))
-      ((cadddr action))))
-
-  (define (replace-buffer-lines! b target . properties)
-    ;; Formatting, indentation, and merging are ordinary attributed
-    ;; edits.  Only loading/rereading a baseline may reset the store.
-    (let-values ([(span replacement) (text:difference (car (edit-basis-for b)) target)])
-      (apply submit-edit! b span replacement properties)))
-
-  ;; Undo entries are labeled with the user-level action that made them
-  ;; -- "insert \"hello\"", "(search:replace! \"xx\" \"yy\")" -- and undo
-  ;; and redo report the label.  An entry is (label key batch): the key
-  ;; the store groups the buffer's edits under, one undo step, and the
-  ;; batch their delta log entries carry; the store owns the history
-  ;; itself. Explicit command groups are owned by text-source.
-  (define pending-edit (make-parameter #f))
-
-  ;; The batch label every edit carries: one per outermost group, so a
-  ;; command's edits across buffers share it; one per fresh entry
-  ;; otherwise, chained typing sharing its entry's.
-  (define (mint-batch!)
-    (list head:ui-actor (gensym->unique-string (gensym "batch"))))
-
-  ;; The entry a buffer's latest recorded edit joined, for the next key of
-  ;; a typing run to continue; an undo, a redo or a reread forgets it, so a
-  ;; run never joins an entry the store has moved
-  (define latest-edits (make-weak-eq-hashtable))
-
-  (define (forget-latest! b) (hashtable-delete! latest-edits b))
-
-  (define reload-due '()) ; files noticed while a command is editing
-
-  (define (check-disk-before-edit!)
-    ;; One check per new edit group, before its edit; merge afterwards so
-    ;; a changed disk cannot silently retarget the user's displayed intent.
-    ;; Filesystem reads and observation guards belong to the base.
-    (let* ([b (head:window-buffer current-window)] [id (head:buffer-store-id b)])
-      (when (and id file-name (head:buffer-base b) (document:check! head:ui-actor id))
-        (unless (memq b reload-due) (set! reload-due (cons b reload-due))))))
-
-  (define (reload-if-due!)
-    (let ([pending reload-due])
-      (set! reload-due '())
-      (for-each
-        (lambda (b)
-          (when (and (memq b (head:buffers)) (head:buffer-store-id b))
-            (guard (ex [else (log:add! 'edit:reload-if-due! (kernel:condition-text ex))])
-              (let-values ([(status detail) (document:reload! head:ui-actor (head:buffer-store-id b))])
-                (head:sync-foreign-edits! (head:buffer-store-id b))
-                (unless (eq? status 'applied)
-                  (log:add! 'edit:reload-if-due!
-                    (format "~a could not be reloaded: ~a" (head:buffer-name b) (merge-failure detail)))))))) pending)))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and undo: #t forbids all edits,
@@ -272,38 +192,6 @@
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "buffer is read-only"))))))
 
-  (define (call-with-recorded-edit! label thunk)
-    (check-editable!)
-    (let ([b (head:window-buffer current-window)]
-          [pending (pending-edit)])
-      (if (and pending (eq? (car pending) b))
-          (thunk)
-          (begin
-            (unless (continuing-edit) (check-disk-before-edit!))
-            (let* ([group (current-batch)]
-                   [previous (and (not group) (continuing-edit) (hashtable-ref latest-edits b #f))]
-                   [entry (or previous
-                              (list label (list 'head-edit head:ui-actor (head:buffer-store-rev b))
-                                    (or (current-batch) (mint-batch!))))]
-                   [committed? #f]
-                   [commit!
-                    (lambda ()
-                      (unless committed?
-                        (set-car! entry label)
-                        (hashtable-set! latest-edits b entry)
-                        (set! committed? #t)))])
-              (let ([result (parameterize ([pending-edit (list b entry label commit! (caddr entry))])
-                              (thunk))])
-                ;; the file the edit found changed on disk reloads now, the
-                ;; edit among the entries the merge carries or conflicts
-                (unless group (reload-if-due!))
-                result))))))
-
-  (define-syntax with-recorded-edit
-    (syntax-rules ()
-      [(_ label body ...)
-       (call-with-recorded-edit! label (lambda () body ...))]))
-
   (edoc "The batch label of the edits in the current one-edit group, the (actor token) pair they share in the delta log, unique across head reattachments, or #f outside a group."
         (returns (or list #f)))
   (define (current-batch) (text-source:current-batch head:ui-actor))
@@ -312,14 +200,7 @@
         (label (or string #f) "the undo label")
         (thunk thunk "the edits to group")
         (returns any "what the thunk returns"))
-  (define (call-as-one-edit! label thunk)
-    ;; Bundle every edit thunk makes into one labeled undo step per
-    ;; buffer it touches -- and none for buffers it does not edit.
-    ;; Nested groups defer to the outermost.
-    (if (current-batch) (thunk)
-      (dynamic-wind void
-        (lambda () (text-source:call-grouped! head:ui-actor label thunk))
-        reload-if-due!)))
+  (define (call-as-one-edit! label thunk) (text-source:call-grouped! head:ui-actor label thunk))
 
   (define (check-undo-scope scope)
     (unless (memq scope '(mine all))
@@ -334,32 +215,18 @@
     (format "No further ~a information" (string-downcase verb)))
 
   (define (history-shift! direction verb scope)
-    ;; undo or redo through the store, which owns the history; the report
-    ;; names the actor and the label of the action moved
-    (check-editable!)
-    (let ([b (head:window-buffer current-window)])
-      (let-values ([(status detail) (head:store-history! b direction scope)])
-        (set! message
-          (case status
-            [(nothing) (no-history verb)]
-            [(applied)
-             (forget-latest! b)
-             (set! mark-active? #f)
-             (head:window-goal-set! current-window #f)
-             (head:clamp-buffer-positions! b)
-             (paint:invalidate-screen-cache!)
-             (string:elide (format "~a ~s: ~a" verb (caddr detail) (or (list-ref detail 4) "edit")) cols)]
-            [else
-             (format "~a blocked: ~a" verb
-                     (case detail
-                       [(read-only) "the buffer is read-only"]
-                       [(basis-too-old) "history is incomplete"]
-                       [(overlap) "another edit overlaps this action"]
-                       [(property-changed) "a text property changed after this action"]
-                       [else "the store is unavailable"]))]))
-        message)))
+    (let-values ([(status detail) (editor:history! (require-editor) direction scope)])
+      (set! message
+        (case status
+          [(nothing) (no-history verb)]
+          [(applied) (string:elide (format "~a ~s: ~a" verb (caddr detail) (or (list-ref detail 4) "edit")) cols)]
+          [else (format "~a blocked: ~a" verb
+                  (case detail
+                    [(read-only) "the buffer is read-only"] [(basis-too-old) "history is incomplete"]
+                    [(overlap) "another edit overlaps this action"] [(property-changed) "a text property changed after this action"]
+                    [else "the store is unavailable"]))])) message))
 
-  (edoc "Undo one action within undo-scope. An explicit editor view returns journal status and detail; omitting it uses the legacy current window and echo report."
+  (edoc "Undo one action within undo-scope. An explicit editor view returns journal status and detail; omitting it uses the current window and echo report."
         (id model "editor view; omission addresses the current window")
         (edits))
   (define undo!
@@ -367,7 +234,7 @@
       [() (history-shift! 'undo "Undo" (undo-scope))]
       [(id) (editor:history! id 'undo (undo-scope))]))
 
-  (edoc "Reverse this head's latest undo in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
+  (edoc "Reverse this head's latest undo in an explicit editor view, returning journal status and detail. Omitting the view uses the current window and echo report."
         (id model "editor view; omission addresses the current window")
         (edits))
   (define redo!
@@ -375,7 +242,7 @@
       [() (history-shift! 'redo "Redo" 'mine)]
       [(id) (editor:history! id 'redo 'mine)]))
 
-  (edoc "Undo an actor's latest live action in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
+  (edoc "Undo an actor's latest live action in an explicit editor view, returning journal status and detail. Omitting the view uses the current window and echo report."
         (who actor "the actor's identity")
         (id model "editor view; omission addresses the current window")
         (edits))
@@ -385,10 +252,6 @@
       [(who id) (editor:history! id 'undo (list 'actor who))]))
 
   ;;; Point, mark, and editing ----------------------------------------------
-
-  (define (changed!)
-    (set! message "") (set! mark-active? #f)
-    (head:window-goal-set! current-window #f))
 
   (define (ordered-region) ; -> start-row start-col end-row end-col
     (if (or (< point-row mark-row)
@@ -425,24 +288,12 @@
   (define (position-before? a b)
     (or (< (car a) (car b)) (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
 
-  (define (kill-between! from to prepend?)
-    ;; from precedes to; the killed text joins the copy buffer as C-k's
-    ;; does, ahead of the previous kill when killing backward
-    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-           [text (text-between (car from) (cdr from) (car to) (cdr to))])
-      (with-recorded-edit (format "kill ~s" text)
-        (parameterize ([edit-source source]) (delete-region! (car from) (cdr from) (car to) (cdr to)))
-        (kill! text prepend?)
-        (changed!))))
-
   (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs."
         (edits)
         (id model "editor view; omission addresses the current window"))
   (define kill-expression!
     (case-lambda
-      [()
-       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if end (kill-between! (head:point) end #f) (set-message! "No expression after point")))]
+      [() (kill-expression! (require-editor))]
       [(id) (editor:transfer! id 'forward publish-view-kill!)]))
 
   (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs."
@@ -450,10 +301,13 @@
         (id model "editor view; omission addresses the current window"))
   (define backward-kill-expression!
     (case-lambda
-      [()
-       (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if start (kill-between! start (head:point) #t) (set-message! "No expression before point")))]
-      [(id) (editor:transfer! id 'backward (lambda (text accumulate?) (publish-view-kill! text accumulate? #t)))]))
+      [() (backward-kill-expression! (require-editor))]
+      [(id)
+       (editor:transfer!
+         id
+         'backward
+         (lambda (text accumulate?)
+           (publish-view-kill! text accumulate? #t)))]))
 
   (edoc "Set the mark at the end of the next expression and activate it, point staying; with the mark active beyond point, extend it by one more expression; the C-M-SPC of Emacs."
         (id model "editor view; omission addresses the current window"))
@@ -557,16 +411,7 @@
         (id model "editor view; omission addresses the current window"))
   (define transpose-expressions!
     (case-lambda
-      [()
-       (let ([b (head:current-buffer)] [point (head:point)])
-         (let-values ([(as ae) (expression:backward (head:buffer-lines b) point)] [(bs be) (expression:forward (head:buffer-lines b) point)])
-           (if (or (not as) (not bs) (equal? as bs))
-             (set-message! "No two expressions around point")
-             (let ([before (text-between (car as) (cdr as) (car ae) (cdr ae))]
-                   [between (text-between (car ae) (cdr ae) (car bs) (cdr bs))]
-                   [after (text-between (car bs) (cdr bs) (car be) (cdr be))])
-               (replace-region-text! as be (string-append after between before))
-               (head:goto! be)))))]
+      [() (transpose-expressions! (require-editor))]
       [(id) (editor:expression! id 'transpose)]))
 
   (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs."
@@ -574,14 +419,12 @@
         (id model "editor view; omission addresses the current window"))
   (define indent-expression!
     (case-lambda
-      [()
-       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
-         (cond [(not end) (set-message! "No expression after point")]
-           [(< (car start) (car end))
-            (when (indent-rows! (+ (car start) 1) (car end))
-              (set! message (format "Indented ~a line~a" (- (car end) (car start)) (if (= (- (car end) (car start)) 1) "" "s"))))]
-           [else (set! message "Nothing to indent below the first line")]))]
+      [() (indent-expression! (require-editor))]
       [(id) (editor:format! id 'indent-expression)]))
+
+  (define (require-editor)
+    (check-editable!)
+    (or (current-editor) (refuse! "The current window has no mounted editor")))
 
   (define (current-editor)
     (and (head:window-widget current-window) (head:window-editor current-window)))
@@ -651,16 +494,6 @@
           (set! point-row (car point)) (set! point-col (cdr point))
           (head:window-goal-set! w (cons goal-col (goal-position wrapped?)))))))
 
-  (define (split-inserted-lines s)
-    ;; Unlike split-lines, retain an empty final part: inserting "a\n"
-    ;; creates a new empty row and leaves point on it.
-    (let ([n (string-length s)])
-      (let loop ([i 0] [start 0] [acc '()])
-        (cond [(= i n) (reverse (cons (substring s start i) acc))]
-              [(char=? (string-ref s i) #\newline)
-               (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))]
-              [else (loop (+ i 1) start acc)]))))
-
   (edoc "Insert text at point as one undo entry; its newlines become line breaks."
         (s string "the text to insert")
         (edits))
@@ -668,102 +501,21 @@
     (insert-text-as! s (format "insert ~s" s)))
 
   (define (insert-text-as! s label)
-    ;; Buffer rows never contain newline characters.  Programmatic inserts
-    ;; get the same structural treatment as a paste or repeated newline!.
     (unless (string=? s "")
-      (let* ([b (head:window-buffer current-window)]
-             [source (edit-basis-for b)]
-             [row point-row] [col point-col]
-             [parts (split-inserted-lines s)])
-        (with-recorded-edit label
-          (parameterize ([edit-source source])
-            (submit-edit! b (text:make-span row col row col) parts))
-          (changed!)))))
+      (call-as-one-edit! label (lambda () (editor:insert-at! (require-editor) s #f)))))
 
   (edoc "Insert a line break at point."
         (edits))
   (define (newline!)
     (insert-text-as! "\n" "newline"))
 
-  ;;; The typing run ------------------------------------------------------------
-  ;;
-  ;; Typed characters, backspaces and forward deletes coalesce into one undo
-  ;; entry and one batch of the delta log (up to twenty keys, as in Emacs),
-  ;; so undo removes the run, a typo and its correction together, not one
-  ;; key.  The chain is (buffer row col count left before after): where
-  ;; point must stand for the next of these commands to continue the run,
-  ;; how many keys it has, the run's own text standing before point, and
-  ;; the older text it deleted before and after that.  Any other command
-  ;; breaks the run: it only continues when the last command was one of the
-  ;; three, type! itself or its call from the SELF-INSERT key, and point is
-  ;; where that command left it.
-  (define typing-chain #f)
-
-  (define no-run '(#f 0 0 0 "" "" ""))
-
-  (define (typing-run b)
-    ;; the run the next key continues, or #f
-    (and typing-chain
-         (let ([last (head:last-command)]) (or (typing? last) (memq last (list backspace! delete-forward!))))
-         (eq? (car typing-chain) b)
-         (= (cadr typing-chain) point-row)
-         (= (caddr typing-chain) point-col)
-         (< (cadddr typing-chain) 20)
-         typing-chain))
-
-  (define (typing-label left before after)
-    ;; the run's net effect as its undo label
-    (let ([removed (string-append before after)])
-      (cond [(string=? removed "") (format "insert ~s" left)]
-            [(string=? left "") (format "delete ~s" removed)]
-            [else (format "replace ~s with ~s" removed left)])))
-
-  (define (typing-edit! b run left before after thunk)
-    ;; one key of a run: the edit joins the run's undo entry and batch when
-    ;; the run continues, and the chain remembers where point now stands
-    (parameterize ([continuing-edit (and run #t)])
-      (with-recorded-edit (typing-label left before after)
-        (thunk)
-        (changed!)))
-    (set! typing-chain (list b point-row point-col (+ (cadddr (or run no-run)) 1) left before after)))
-
   (edoc "Delete the character after point, or join the next line at a line end; a run of typing, backspaces and deletes is one undo step."
         (edits))
-  (define (delete-forward!)
-    (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-           [row point-row] [col point-col] [line (current-line)]
-           [span (cond [(< col (string-length line)) (text:make-span row col row (+ col 1))]
-                       [(< row (- (vector-length (car source)) 1)) (text:make-span row col (+ row 1) 0)]
-                       [else #f])])
-      (when span
-        (let* ([deleted (if (< col (string-length line)) (string (string-ref line col)) "\n")]
-               [run (typing-run b)] [chain (or run no-run)])
-          ;; the text after point is never the run's own: it goes with the older text deleted after
-          (typing-edit! b run (list-ref chain 4) (list-ref chain 5) (string-append (list-ref chain 6) deleted)
-            (lambda ()
-              (parameterize ([edit-source source])
-                (submit-edit! b span '("")))))))))
+  (define (delete-forward!) (editor:delete! (require-editor) 'forward))
 
   (edoc "Delete the character before point, or join with the previous line at a line start; a run of typing, backspaces and deletes is one undo step."
         (edits))
-  (define (backspace!)
-    (when (or (> point-col 0) (> point-row 0))
-      (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-             [end-row point-row] [end-col point-col]
-             [row (if (> end-col 0) end-row (- end-row 1))]
-             [col (if (> end-col 0) (- end-col 1) (string-length (line-at row)))]
-             [deleted (if (> end-col 0) (string (string-ref (line-at row) col)) "\n")]
-             [run (typing-run b)] [chain (or run no-run)]
-             [left (list-ref chain 4)] [n (string-length left)])
-        ;; a typo corrected takes the run's own last character back; past
-        ;; the run's text, the character goes with the older text deleted before it
-        (typing-edit! b run
-          (if (> n 0) (substring left 0 (- n 1)) left)
-          (if (> n 0) (list-ref chain 5) (string-append deleted (list-ref chain 5)))
-          (list-ref chain 6)
-          (lambda ()
-            (parameterize ([edit-source source])
-              (submit-edit! b (text:make-span row col end-row end-col) '(""))))))))
+  (define (backspace!) (editor:delete! (require-editor) 'backward))
 
   ;;; Kill and yank ---------------------------------------------------------
 
@@ -840,17 +592,15 @@
                    (publish-system-clipboard! (head:copy-text)))])))))
 
   (define (replace-copy-text! text label)
-    ;; *copy* takes the text as one entry of its log -- C-_ there
-    ;; brings the previous copy back -- with point at its end in every
-    ;; window showing it; then the clipboard follows at once.
-    (let ([b (head:copy-buffer)])
+    (let* ([b (head:copy-buffer)] [basis (head:edit-basis b)]
+           [key (list head:ui-actor (gensym->unique-string (gensym "copy")))])
       (let-values ([(lines trailing?) (text:from-string text)])
-        (head:with-buffer b
-          (parameterize ([edit-source #f])
-            (with-recorded-edit (format "~a ~s" label (string:elide text 40))
-              (replace-buffer-lines! b lines (cons 'undo (list (cons 'trailing trailing?))))))))
-      (note-copy-published! b)
-      (publish-system-clipboard! text)))
+        (let-values ([(span replacement) (text:difference (car basis) lines)])
+          (head:store-edit! b span replacement
+            (list key (format "~a ~s" label (string:elide text 40))
+              (list 'undo (cons 'trailing trailing?)) (list 'labels (cons 'batch key)))
+            (map (lambda (w) (cons w 'end)) (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))) basis)))
+      (note-copy-published! b) (publish-system-clipboard! text)))
 
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
@@ -861,12 +611,6 @@
   (define (publish-view-kill! text accumulate? . prepend?)
     (replace-copy-text! (if (and accumulate? (killing?))
                           (if (and (pair? prepend?) (car prepend?)) (string-append text (copy-text)) (string-append (copy-text) text)) text) "kill"))
-
-  (define (kill! text . before?)
-    ;; consecutive kills accumulate into the copy buffer, a backward kill
-    ;; ahead of what is there
-    (let ([old (head:copy-text)] [prepend? (and (pair? before?) (car before?))])
-      (replace-copy-text! (if (killing?) (if prepend? (string-append text old) (string-append old text)) text) "kill")))
 
   (edoc "Copy text into the copy buffer without changing a buffer or point; C-y pastes it."
         (text string "the text to copy"))
@@ -881,19 +625,7 @@
         (edits))
   (define kill-line!
     (case-lambda
-      [()
-       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-              [row point-row] [col point-col] [s (current-line)] [n (string-length s)])
-         (cond [(< col n)
-                (let ([text (substring s col n)])
-                  (with-recorded-edit (format "kill ~s" text)
-                    (parameterize ([edit-source source])
-                      (submit-edit! b (text:make-span row col row n) '("")))
-                    (kill! text)
-                    (changed!)))]
-           [(< point-row (- (vlen) 1))
-            (delete-forward!)
-            (kill! "\n")]))]
+      [() (kill-line! (require-editor))]
       [(id) (editor:transfer! id 'line publish-view-kill!)]))
 
   (edoc "The copy buffer's text."
@@ -906,13 +638,10 @@
         (edits))
   (define yank!
     (case-lambda
-      [()
-       ;; The copy buffer can span lines after consecutive C-k commands.  Insert
-       ;; newlines as buffer structure rather than embedding them in a line string.
-       (let ([text (head:copy-text)])
-         (unless (string=? text "")
-           (insert-text-as! text (format "yank ~s" text))))]
-      [(id) (let ([text (copy-text)]) (unless (string=? text "") (editor:paste! id text)))]))
+      [() (yank! (require-editor))]
+      [(id)
+       (let ([text (copy-text)])
+         (unless (string=? text "") (editor:paste! id text)))]))
 
   (define (text-between sr sc er ec)
     (if (= sr er)
@@ -926,10 +655,6 @@
                               (line-at row))
                           (cons "\n" acc)))))))
 
-  (define (delete-region! sr sc er ec)
-    (submit-edit! (head:window-buffer current-window)
-                  (text:make-span sr sc er ec) '("")))
-
   (edoc "Replace the text between two ordered points with new text, in one structural edit."
         (id model "editor view; omission addresses the current window")
         (start position "where the replaced text starts")
@@ -939,30 +664,11 @@
   (define replace-region-text!
     (case-lambda
       [(start end text)
-       ;; Replace one ordered buffer range in a single structural operation.
-       ;; Bulk editors use this instead of rebuilding a line once per match.
-       (let* ([b (head:window-buffer current-window)] [source (edit-basis-for b)]
-              [parts (split-inserted-lines text)])
-         (with-recorded-edit "replace region"
-           (parameterize ([edit-source source])
-             (submit-edit! b (text:make-span (car start) (cdr start) (car end) (cdr end)) parts))
-           (changed!)))]
-      [(id start end text) (editor:replace-region! id start end text)]))
+       (replace-region-text! (require-editor) start end text)]
+      [(id start end text)
+       (editor:replace-region! id start end text)]))
 
-  (edoc "Replace the text between two ordered points with text computed against a basis, in one structural edit that leaves point where it was: the basis, head:edit-basis taken before the computation, lets the store project point and mark into the revision it accepts."
-        (basis list "the edit basis the text was computed against")
-        (start position "where the replaced text starts")
-        (end position "where it ends")
-        (text string "the replacement")
-        (edits))
-  (define (rewrite-region! basis start end text)
-    ;; the editing operation behind the bulk replacers: an explicit basis
-    ;; and a kept point, with the undo grouping and mark handling of every
-    ;; recorded edit
-    (parameterize ([edit-source basis] [edit-point (head:point)])
-      (replace-region-text! start end text)))
-
-  (edoc "Rewrite ordered disjoint ranges computed against edit:basis. An explicit editor preserves its selection and groups accepted replacements into one undo action, applying them from the end so earlier coordinates stay stable. Ranges changed concurrently are skipped; lost history or ownership refuses the remaining work. The two-argument form is the legacy current-window adapter."
+  (edoc "Rewrite ordered disjoint ranges computed against edit:basis. An explicit editor preserves its selection and groups accepted replacements into one undo action, applying them from the end so earlier coordinates stay stable. Ranges changed concurrently are skipped; lost history or ownership refuses the remaining work. Omitting the view addresses the current window."
         (id model "explicit editor view; omission addresses the current window")
         (basis list "the edit basis the ranges were computed against")
         (regions (list-of list) "(start end text) each, in the text's order")
@@ -970,27 +676,10 @@
         (edits))
   (define rewrite-regions!
     (case-lambda
-      [(id basis regions) (editor:rewrite-regions! id basis regions)]
+      [(id basis regions)
+       (editor:rewrite-regions! id basis regions)]
       [(basis regions)
-       (define (span-of region)
-         (text:make-span (car (car region)) (cdr (car region)) (car (cadr region)) (cdr (cadr region))))
-       (define (carry regions changes)
-         ;; the ranges still to replace, mapped through the changes since the
-         ;; last basis, those a change touched dropped
-         (filter values
-           (map (lambda (region)
-                  (let ([span (fold-left (lambda (span change) (and span (text:rebase-span span (caddr change))))
-                                         (car region) changes)])
-                    (and span (cons span (cdr region)))))
-             regions)))
-       (let ([b (head:window-buffer current-window)])
-         (let loop ([regions (map (lambda (region) (cons (span-of region) (caddr region))) regions)] [basis basis] [n 0])
-           (if (null? regions) n
-             (let ([span (car (car regions))] [text (cdr (car regions))])
-               (rewrite-region! basis (text:span-start span) (text:span-end span) text)
-               (let-values ([(lines revision changes) (head:snapshot-since b (caddr basis))])
-                 (unless changes (error 'rewrite-regions! "the changes since the basis are no longer available"))
-                 (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1)))))))]))
+       (rewrite-regions! (require-editor) basis regions)]))
 
   (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates. An explicit view refuses if the selected text changed."
         (id model "editor view; omission addresses the current window"))
@@ -1015,18 +704,7 @@
         (edits))
   (define kill-region!
     (case-lambda
-      [()
-       (if (not mark-active?)
-         (set! message "The mark is not set now")
-         (let-values ([(sr sc er ec) (ordered-region)])
-           (if (and (= sr er) (= sc ec))
-             (set! message "Empty region")
-             (let ([text (text-between sr sc er ec)]
-                   [source (edit-basis-for (head:window-buffer current-window))])
-               (with-recorded-edit (format "kill ~s" text)
-                 (parameterize ([edit-source source]) (delete-region! sr sc er ec))
-                 (kill! text)
-                 (changed!))))))]
+      [() (kill-region! (require-editor))]
       [(id) (editor:transfer! id 'cut publish-view-kill!)]))
 
   ;;; Files -----------------------------------------------------------------
@@ -1059,7 +737,6 @@
   (define (refuse! message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (refuse-file! message) (refuse! message))
-
 
   (edoc "Save the current buffer through the base's document service. External changes merge undoably before saving; conflicts refuse, and an unavailable merge rereads undoably instead. Overwritten bytes become a shared backup. Active apps refuse; detached local output uses an explicit export adapter. Pre/post hooks run in this head, with mode, file and name adopted atomically."
         (target file "destination to write and visit") (returns boolean "whether saving completed"))
@@ -1196,7 +873,6 @@
   ;; window geometry helpers live in (head); the commands over them are
   ;; here.
 
-
   ;;; The log -----------------------------------------------------------------
 
   ;; The editor's syslog lives in (log) -- the structured records and
@@ -1236,7 +912,6 @@
           (paint:echo-queue! (log:component e) text styler #f ghost)
           (loop (cdr left)))))
     (when (pair? entries) (paint:present-echo!)))
-
 
   ;;; Buffers: creation and the trash ---------------------------------------------
 
@@ -1367,34 +1042,14 @@
   ;; replacement lines, or #f when the rows cannot be formatted.  TAB
   ;; indents the current line when the mode registered its indenter
   ;; with the tab flag on (the default).
-  (define (mode-tool registered)
-    ;; the current buffer's mode's registered indenter, formatter or flag, or #f
-    (let ([m (mode:name-of (head:window-buffer current-window))])
-      (and m (registered m))))
 
-  (define (mode-source b lines)
-    (mode:source lines (map (lambda (key) (cons key (head:buffer-fact b key #f))) (mode:required-facts (mode:of b)))))
 
-  (define (indent-rows! from to . cycle?)
-    (let* ([b (head:current-buffer)] [source (head:edit-basis b)]
-           [point (head:point)] [mark (head:mark)] [name (mode:name-of b)])
-      (let-values ([(lines positions) (mode:indent name (mode-source b (car source)) from to
-                                        (and (pair? cycle?) (car cycle?)) (if mark (list point mark) (list point)))])
-        (if (not lines) (begin (set! message "No indenter for this mode") #f)
-          (begin
-            (unless (eq? lines (car source))
-              (parameterize ([edit-source source] [edit-point (car positions)] [edit-mark (and mark (cadr positions))])
-                (with-recorded-edit "indent" (replace-buffer-lines! b lines) (changed!))))
-            (when (and (eq? lines (car source)) (eq? lines (head:buffer-lines b))) (head:goto! (car positions)))
-            #t)))))
 
   (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation." (edits)
         (id model "editor view; omission addresses the current window"))
   (define indent-line!
     (case-lambda
-      [()
-       (indent-rows! point-row point-row #t)
-       (void)]
+      [() (indent-line! (require-editor))]
       [(id) (editor:format! id 'indent-line)]))
 
   (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing."
@@ -1402,10 +1057,7 @@
         (id model "editor view; omission addresses the current window"))
   (define indent-tab!
     (case-lambda
-      [()
-       ;; TAB: the mode indents when it asked to; otherwise nothing.
-       (when (mode-tool mode:indent-on-tab?)
-         (indent-line!))]
+      [() (indent-tab! (require-editor))]
       [(id) (editor:format! id 'tab)]))
 
   (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop."
@@ -1413,15 +1065,7 @@
         (id model "editor view; omission addresses the current window"))
   (define indent-region!
     (case-lambda
-      [()
-       (if (not mark-active?)
-         (set! message "The mark is not set now")
-         (let ([from (min mark-row point-row)]
-               [to (max mark-row point-row)])
-           (when (indent-rows! from to)
-             (set! message (format "Indented ~a line~a" (+ (- to from) 1)
-                                   (if (= from to) "" "s"))))))
-       (void)]
+      [() (indent-region! (require-editor))]
       [(id) (editor:format! id 'indent-region)]))
 
   (edoc "Indent every line of the current buffer by the mode's indenter."
@@ -1429,78 +1073,17 @@
         (id model "editor view; omission addresses the current window"))
   (define indent-buffer!
     (case-lambda
-      [()
-       (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
-         (when (indent-rows! 0 (- n 1))
-           (set! message (format "Indented ~a lines" n))))
-       (void)]
+      [() (indent-buffer! (require-editor))]
       [(id) (editor:format! id 'indent-buffer)]))
 
-  (define (replace-rows! from to lines . properties)
-    ;; Replace rows [from, to] of the current buffer with lines (a
-    ;; list), one undo entry; point keeps its row when it can.
-    (define b (head:window-buffer current-window))
-    (define v (car (edit-basis-for b)))
-    (define n (vector-length v))
-    (let ([nv (list->vector
-                (let loop ([r 0] [acc '()])
-                  (cond [(= r from)
-                         (append (reverse acc) lines
-                                 (let tail ([r (+ to 1)] [acc '()])
-                                   (if (>= r n)
-                                       (reverse acc)
-                                       (tail (+ r 1)
-                                             (cons (vector-ref v r) acc)))))]
-                        [else (loop (+ r 1)
-                                    (cons (vector-ref v r) acc))])))])
-      (with-recorded-edit "format"
-        (apply replace-buffer-lines! b (if (zero? (vector-length nv)) (vector "") nv) properties)
-        (changed!))))
 
-  (define (format-rows! from to)
-    ;; Format rows [from, to] by the mode's formatter; -> whether the
-    ;; buffer changed.
-    (let ([format-lines (mode-tool mode:formatter)])
-      (cond
-        [(not format-lines) (set! message "No formatter for this mode") #f]
-        [else
-         (let* ([b (head:window-buffer current-window)]
-                [source (head:edit-basis b)]
-                [v (car source)]
-                [wanted (head:point)]
-                [last (min to (- (vector-length v) 1))]
-                [lines (format-lines (mode-source b v) from last)])
-           (cond
-             [(not lines) (set! message "Cannot format these lines") #f]
-             [(and (or (< last (- (vector-length v) 1)) trailing-newline?)
-                   (let same ([r from] [ls lines])
-                     (if (null? ls)
-                         (> r last)
-                         (and (<= r last)
-                              (string=? (car ls) (vector-ref v r))
-                              (same (+ r 1) (cdr ls))))))
-              (set! message "Already formatted") #f]
-             [else
-              ;; Text and its final-newline fact form one undoable
-              ;; transaction, including a change only to that fact.
-              (parameterize ([edit-source source] [edit-point wanted])
-                (replace-rows! from last lines
-                               (cons 'undo (if (= last (- (vector-length v) 1)) '((trailing . #t)) '()))))
-              #t]))])))
 
   (edoc "Rewrite the lines between mark and point with the mode's formatter."
         (edits)
         (id model "editor view; omission addresses the current window"))
   (define format-region!
     (case-lambda
-      [()
-       (if (not mark-active?)
-         (set! message "The mark is not set now")
-         (let ([from (min mark-row point-row)]
-               [to (max mark-row point-row)])
-           (when (format-rows! from to)
-             (set! message "Formatted region"))))
-       (void)]
+      [() (format-region! (require-editor))]
       [(id) (editor:format! id 'format-region)]))
 
   (edoc "Rewrite the whole current buffer with the mode's formatter."
@@ -1508,11 +1091,7 @@
         (id model "editor view; omission addresses the current window"))
   (define format-buffer!
     (case-lambda
-      [()
-       (let ([n (vector-length (head:buffer-lines (head:window-buffer current-window)))])
-         (when (format-rows! 0 (- n 1))
-           (set! message (format "Formatted ~a lines" n))))
-       (void)]
+      [() (format-buffer! (require-editor))]
       [(id) (editor:format! id 'format-buffer)]))
 
   ;;; Viewport commands -------------------------------------------------------
@@ -1549,7 +1128,6 @@
       (head:window-pcol-set! current-window
                              (max 0 (min (cdr position)
                                       (string-length (render:line-ref v row)))))))
-
 
   ;; The head's side of the interaction protocol: another actor's
   ;; question waits in the echo area as an unlogged indicator until
@@ -1615,24 +1193,10 @@
                (insert-text! (string:join (tty:paste-lines text) "\n"))))))]
       [(id text) (editor:paste! id text)]))
 
-  (define (typing? action)
-    ;; whether a key's action typed: type! itself, or its call from SELF-INSERT
-    (or (eq? action type!)
-        (and (keymap:call-action? action) (eq? (keymap:call-action-procedure action) type!))))
-
   (edoc "Type text: inserted at point as typing does, continuing the run of typing, backspaces and deletes before it, so a run undoes as one step and shares one batch; SELF-INSERT, any character without a binding of its own, runs it with the character typed."
         (text string "the text to type")
         (edits))
-  (define (type! text)
-    ;; one key of the typing run, above
-    (unless (string=? text "")
-      (let* ([b (head:window-buffer current-window)]
-             [run (typing-run b)] [chain (or run no-run)]
-             [source (edit-basis-for b)] [row point-row] [col point-col])
-        (typing-edit! b run (string-append (list-ref chain 4) text) (list-ref chain 5) (list-ref chain 6)
-          (lambda ()
-            (parameterize ([edit-source source])
-              (submit-edit! b (text:make-span row col row col) (split-inserted-lines text))))))))
+  (define (type! text) (editor:insert! (require-editor) text))
 
   ;;; Small commands and key description -------------------------------------
 
@@ -1666,8 +1230,7 @@
 
   (edoc "Insert a line break after point, leaving point where it is."
         (edits))
-  (define (open-line!)
-    (parameterize ([edit-point 'start]) (newline!)))
+  (define (open-line!) (editor:insert-at! (require-editor) "\n" #t))
 
   (edoc "Scroll the selected window up by a page and put point in the middle; at the top, move point to the first line.")
   (define (page-up!)
@@ -1699,7 +1262,6 @@
         (begin
           (set! point-row (- (vlen) 1))
           (set! point-col (string-length (current-display-line)))))))
-
 
   ;;; Regions and the generic helpers ------------------------------------------
 
@@ -1823,7 +1385,6 @@
       (head:set-quit-command! quit!)
       (head:set-review-viewer! view-quit-buffers!)
       (head:add-pre-redraw-hook! publish-copy-changes!)
-      (head:add-pre-redraw-hook! reload-if-due!)
       (head:set-after-key! clamp-point!))
 
   )

@@ -16,9 +16,11 @@
              (prefix (core kernel) kernel:)
              (prefix (head head) head:)
              (prefix (apps search) search:)
-             (prefix (head window) window:))
+             (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))

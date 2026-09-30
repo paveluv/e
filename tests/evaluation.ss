@@ -6,10 +6,11 @@
 (eval
   '(begin
      (import (prefix (apps eval) eval:) (prefix (head edit) edit:)
-             (prefix (head head) head:) (prefix (head echo) echo:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head echo) echo:)
              (prefix (service log) log:) (prefix (test) test:)
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
+     (widget:init!) (edit:init!) (window:init!)
      (define (run thunk) (eval:call-with-evaluation! "test evaluation" thunk))
      (define (output channel)
        (map cdr (filter (lambda (d) (eq? (car d) channel))

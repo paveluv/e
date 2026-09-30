@@ -993,9 +993,13 @@
         (head:call-with-display-update
           (lambda ()
             (refresh-render! b)
-            (let ([row (source-row-at (rendering-of b) (car (head:buffer-point b)))])
+            (let* ([r (rendering-of b)] [row (source-row-at r (car (head:buffer-point b)))])
               (head:show-buffer! source)
-              (head:goto! (cons row 0))))))
+              ;; Mounting the source can acquire newer text. Carry the
+              ;; rendered row through that adoption before placing point.
+              (let-values ([(lines revision changes) (head:snapshot-since source (vector-ref r 8))])
+                (head:goto! (fold-left (lambda (p change) (text:rebase-position p (caddr change)))
+                              (cons row 0) (or changes '()))))))))
       (void)))
 
   (define (forget-render! b)

@@ -12,10 +12,12 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define path (format "/tmp/e-trash-~a-~a.txt" (get-process-id) (random 1000000)))
      (call-with-output-file path (lambda (p) (display "on disk\n" p)))
      (define (text b) (vector->list (head:buffer-lines b)))

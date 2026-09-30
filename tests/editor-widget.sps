@@ -10,7 +10,6 @@
   (define (face f x y) (vector-ref (widget:frame-styles f y (list-ref (widget:frame-lines f) y)) x))
   (define (text) (let-values ([(lines revision) (store:snapshot source)]) lines))
   (define (key token) (dispatch:input! root (list 'key token)))
-  (edit:init!)
   (mode:register! "editor-test" '() '() #f #f
     (lambda (source row line) (set! calls (+ calls 1)) (make-vector (string-length line) 'keyword)))
   (view:arrange! actor (list (list root 0 (list (list 'narrow a '(grow 1)) (list 'wide b '(grow 2))) '())) '())

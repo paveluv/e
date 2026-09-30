@@ -820,6 +820,9 @@ checkpoint retains view identities, so resume reuses their saved state.
 Ordinary windows route keyboard input, mouse selection and body painting
 through these same editor widgets, while keeping the actual document as
 their buffer. Gutters, scrollbars and status bars belong to the outer host.
+Current-window editing, formatting and undo commands use that window's editor
+view. `edit:call-as-one-edit!` groups commands across ordinary and nested views:
+one undo step per document, with a common batch and the outermost scope's label.
 Mode metadata is acquired outside painting; warm navigation and
 resizing use the shared mirror without requesting text or publishing geometry.
 
@@ -853,7 +856,7 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   is a positive divisor of the allocated height. A page lands the caret in
   the middle; paging outward at an already reached edge selects that edge.
   This replaces `page-window!` and `page-window-fraction!`. The temporary
-  two-argument form operates on the legacy current window.
+  two-argument form operates on the current window.
 - Expression motion, marking, killing and transposition take the same explicit
   view: for example, `(edit:forward-expression! id)`, `(edit:mark-form! id)` and
   `(edit:transpose-expressions! id)`. Their ordinary Control-Meta bindings work
@@ -865,8 +868,9 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   opt-in and cycles indentation stops. Transformations preserve the logical
   selection; formatting the last line records the final-newline flag in the
   same undo action. Providers compute against a captured `mode:source`.
-- `edit:replace-region-text! id start end text` replaces an explicit range at
-  the view's declared text basis, with the caret following the accepted edit.
+- `edit:replace-region-text! id start end text` replaces an explicit range of
+  the current mirrored text, with the caret following the accepted edit.
+  Use a captured basis for ranges computed before other commands.
 - `edit:basis id` captures `(immutable-lines document-id revision)` for
   computing a bulk change. `edit:rewrite-regions! id basis ranges` accepts
   ordered, disjoint `(start end replacement-string)` entries in that basis.

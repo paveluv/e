@@ -91,7 +91,10 @@
         (let scan ([at (source-revision source)] [rest (source-links source)] [out '()])
           (cond [(= at basis) (map (lambda (row) (list (car row) (cadr row) (caddr row))) out)]
             [(or (< at basis) (null? rest)) #f]
-            [(= (cadar rest) at) (scan (caar rest) (cdr rest) (append (cddar rest) out))]
+            ;; A link can span revisions with no text delta (a no-op
+            ;; reset, for example). Every recorded delta is at its upper
+            ;; endpoint, so a basis inside that known interval is valid.
+            [(= (cadar rest) at) (scan (max basis (caar rest)) (cdr rest) (append (cddar rest) out))]
             [else #f])))))
 
   (edoc "Adopt a coherent snapshot and its provenance. Older snapshots cannot roll back a mirror; an equal snapshot can restore missing history. Notify projections only after text is coherent."

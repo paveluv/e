@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row history! insert! insert-at! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -81,7 +81,7 @@
           ;; Idle views advance their logical anchors while the mirror still
           ;; has the delta chain. Admission itself owns settlement; adoption
           ;; callbacks must not manufacture a newer user interaction.
-          (when (and (view:basis d) (not (= (view:basis d) (text-control:revision source))))
+          (when (and (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
             (let ([ps (points source d)])
               (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
                          (append ps (list (cadddr (editor-state:state d))))))))
@@ -369,60 +369,62 @@
               (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document))
               count))))))
   (define (rewrite! id source d old proposed positions properties label)
-    (let-values ([(span replacement) (text:difference old proposed)])
-      (let* ([document (text-source:id (text-control:mirror source))] [m (mounted id)]
-             [basis (or (view:basis d) (text-control:revision source))]
-             [properties (filter (lambda (p) (not (equal? (store:property document (car p) #f) (cdr p)))) properties)])
-        (mount-group-set! m #f) (mount-goal-set! m #f)
-        (if (and (equal? old proposed) (null? properties))
-          (let ([ps (text-source:rebase positions (text-source:changes (text-control:mirror source) basis (text-control:revision source)))])
-            (unless ps (refuse "Editor selection history is unavailable"))
-            (unless (= (view:sequence d) (view:sequence (interaction:snapshot id))) (refuse "The editor selection changed"))
-            (publish! id source d ps (cadddr (editor-state:state d)) #t))
-          (let ([reload? (document:check! head:ui-actor document)])
-            (text-control:submit! id source d old basis span replacement
-              (list (list 'editor head:ui-actor id (gensym->unique-string (gensym))) label (cons 'undo properties)) positions
-              (lambda (ps) (next-state id (current-source source) d ps (cadddr (editor-state:state d)) #t)))
-            (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))))
-  (define (replace! id source d selection replacement typing? . accepted)
-    (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
-      (let* ([m (mounted id)] [old (text-control:basis-text source d)] [basis (or (view:basis d) (text-control:revision source))]
-             [old-group (mount-group m)]
-             [join? (and typing? (continues? m source d 'typing) (< (list-ref old-group 3) 20))]
-             [key (if join? (caddr old-group) (list 'editor head:ui-actor id (gensym->unique-string (gensym))))]
-             [removed (string:join (text:extract old (text-source:span selection)) "\n")]
-             [inserted (string:join replacement "\n")]
-             [count (if join? (+ 1 (list-ref old-group 3)) 1)]
-             [left (if join? (list-ref old-group 4) "")]
-             [before (if join? (list-ref old-group 5) "")]
-             [after (if join? (list-ref old-group 6) "")]
-             [erased (if (eq? typing? 'backward) (min (string-length left) (string-length removed)) 0)]
-             [left (string-append (substring left 0 (- (string-length left) erased)) inserted)]
-             [before (if (eq? typing? 'backward)
-                       (string-append (substring removed 0 (- (string-length removed) erased)) before) before)]
-             [after (if (eq? typing? 'backward) after (string-append after removed))]
-             [deleted (string-append before after)]
-             [label (cond [(string=? deleted "") (format "insert ~s" left)]
-                      [(string=? left "") (format "delete ~s" deleted)]
-                      [else (format "replace ~s with ~s" deleted left)])]
-             [document (text-source:id (text-control:mirror source))]
-             [reload? (and (not join?) (document:check! head:ui-actor document))])
-        (mount-group-set! m #f)
-        (let ([settled? (text-control:submit! id source d old basis (text-source:span selection) replacement (list key label (list 'labels (cons 'batch key)))
-                          (list 'end)
-                          (lambda (ps)
-                            (let* ([mirror (text-control:mirror source)]
-                                   [top (text-source:rebase (list (caddr (editor-state:state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
-                              (next-state id (current-source source) d
-                                (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))))])
-          (mount-goal-set! m #f)
-          (when (and settled? typing? (text-control:current? id source d))
-            (let ([now (interaction:snapshot id)])
-              (mount-group-set! m (list 'typing (typing-basis now) key count left before after))))
-          ;; Clipboard publication follows admission even when a callback has
-          ;; closed the view or established a newer selection.
-          (for-each (lambda (callback) (callback settled?)) accepted))
-        (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))
+    (text-control:call-with-intent! id (lambda ()
+                                         (let-values ([(span replacement) (text:difference old proposed)])
+                                           (let* ([document (text-source:id (text-control:mirror source))] [m (mounted id)]
+                                                  [basis (or (view:basis d) (text-control:revision source))]
+                                                  [properties (filter (lambda (p) (not (equal? (store:property document (car p) #f) (cdr p)))) properties)])
+                                             (mount-group-set! m #f) (mount-goal-set! m #f)
+                                             (if (and (equal? old proposed) (null? properties))
+                                               (let ([ps (text-source:rebase positions (text-source:changes (text-control:mirror source) basis (text-control:revision source)))])
+                                                 (unless ps (refuse "Editor selection history is unavailable"))
+                                                 (unless (= (view:sequence d) (view:sequence (interaction:snapshot id))) (refuse "The editor selection changed"))
+                                                 (publish! id source d ps (cadddr (editor-state:state d)) #t))
+                                               (let ([reload? (document:check! head:ui-actor document)])
+                                                 (text-control:submit! id source d old basis span replacement
+                                                   (list (list 'editor head:ui-actor id (gensym->unique-string (gensym))) label (cons 'undo properties)) positions
+                                                   (lambda (ps) (next-state id (current-source source) d ps (cadddr (editor-state:state d)) #t)))
+                                                 (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))))) )
+  (define (replace! id source d selection replacement typing? placement . accepted)
+    (text-control:call-with-intent! id (lambda ()
+                                         (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
+                                           (let* ([m (mounted id)] [old (text-control:basis-text source d)] [basis (or (view:basis d) (text-control:revision source))]
+                                                  [old-group (mount-group m)]
+                                                  [join? (and typing? (continues? m source d 'typing) (< (list-ref old-group 3) 20))]
+                                                  [key (if join? (caddr old-group) (list 'editor head:ui-actor id (gensym->unique-string (gensym))))]
+                                                  [removed (string:join (text:extract old (text-source:span selection)) "\n")]
+                                                  [inserted (string:join replacement "\n")]
+                                                  [count (if join? (+ 1 (list-ref old-group 3)) 1)]
+                                                  [left (if join? (list-ref old-group 4) "")]
+                                                  [before (if join? (list-ref old-group 5) "")]
+                                                  [after (if join? (list-ref old-group 6) "")]
+                                                  [erased (if (eq? typing? 'backward) (min (string-length left) (string-length removed)) 0)]
+                                                  [left (string-append (substring left 0 (- (string-length left) erased)) inserted)]
+                                                  [before (if (eq? typing? 'backward)
+                                                            (string-append (substring removed 0 (- (string-length removed) erased)) before) before)]
+                                                  [after (if (eq? typing? 'backward) after (string-append after removed))]
+                                                  [deleted (string-append before after)]
+                                                  [label (cond [(string=? deleted "") (format "insert ~s" left)]
+                                                           [(string=? left "") (format "delete ~s" deleted)]
+                                                           [else (format "replace ~s with ~s" deleted left)])]
+                                                  [document (text-source:id (text-control:mirror source))]
+                                                  [reload? (and (not join?) (document:check! head:ui-actor document))])
+                                             (mount-group-set! m #f)
+                                             (let ([settled? (text-control:submit! id source d old basis (text-source:span selection) replacement (list key label (list 'labels (cons 'batch key)))
+                                                               (list placement)
+                                                               (lambda (ps)
+                                                                 (let* ([mirror (text-control:mirror source)]
+                                                                        [top (text-source:rebase (list (caddr (editor-state:state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
+                                                                   (next-state id (current-source source) d
+                                                                     (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))))])
+                                               (mount-goal-set! m #f)
+                                               (when (and settled? typing? (text-control:current? id source d))
+                                                 (let ([now (interaction:snapshot id)])
+                                                   (mount-group-set! m (list 'typing (typing-basis now) key count left before after))))
+                                               ;; Clipboard publication follows admission even when a callback has
+                                               ;; closed the view or established a newer selection.
+                                               (for-each (lambda (callback) (callback settled?)) accepted))
+                                             (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))) )
 
   (edoc "Insert multiline text into an explicit editor, replacing its active selection. Consecutive insertions at the unchanged resulting caret share an undo group. Stale or read-only edits refuse through the shared journal."
         (id model "editor view") (text string "inserted text"))
@@ -433,6 +435,14 @@
         (id model "editor view") (text string "inserted text"))
   (define (paste! id text)
     (insert-text! id text #f))
+
+  (edoc "Insert at the declared caret without replacing a selection. Keep the caret before the insertion when stay? is true; settlement never overwrites a newer interaction."
+        (id model "editor view") (text string "inserted text") (stay? boolean "keep point before the inserted text"))
+  (define (insert-at! id text stay?)
+    (unless (and (string? text) (boolean? stay?)) (error 'insert-at! "expected text and a boolean placement"))
+    (let-values ([(source d) (text-control:context id 'editor)] [(lines trailing?) (text:from-string text)])
+      (let ([p (car (editor-state:state d))])
+        (replace! id source d (list p p) (append (vector->list lines) (if trailing? '("") '())) #f (if stay? 'start 'end)))))
   (define (insert-text! id text typing?)
     (unless (string? text) (error 'insert! "expected text"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -441,44 +451,50 @@
           (let loop ([start 0] [end 0] [out '()])
             (cond [(= end (string-length text)) (reverse (cons (substring text start end) out))]
               [(char=? (string-ref text end) #\newline) (loop (+ end 1) (+ end 1) (cons (substring text start end) out))]
-              [else (loop start (+ end 1) out)])) (and typing? 'insert)))))
+              [else (loop start (+ end 1) out)])) (and typing? 'insert) 'end))))
 
-  (edoc "Replace an explicit range at an editor's declared text basis as one undo action, placing the caret after the replacement."
+  (edoc "Replace an explicit range of the editor's current mirrored text as one undo action, placing the caret after the replacement. Use basis and rewrite-regions! for ranges computed before other commands."
         (id model "editor view") (start position "first endpoint") (end position "last endpoint") (text string "replacement"))
   (define (replace-region! id start end text)
     (unless (and (position? start) (position? end) (string? text)) (error 'replace-region! "invalid replacement"))
     (let-values ([(source d) (text-control:context id 'editor)] [(lines trailing?) (text:from-string text)])
-      (replace! id source d (list start end) (append (vector->list lines) (if trailing? '("") '())) #f)))
+      (let ([ps (points source d)])
+        (unless ps (refuse "Editor selection history is unavailable"))
+        (replace! id source (descriptor:with d
+                              (list (cons 'basis (text-control:revision source))
+                                (cons 'state (append ps (list (cadddr (editor-state:state d)))))))
+          (list start end) (append (vector->list lines) (if trailing? '("") '())) #f 'end))))
 
   (edoc "Compute indentation or formatting through the document's mode and admit it against the original source revision. Preserve logical selections through the accepted result; callbacks cannot retarget a newer view."
         (id model "editor view") (operation (one-of indent-line indent-region indent-buffer indent-expression tab format-region format-buffer) "transformation"))
   (define (format! id operation)
-    (let-values ([(source d) (text-control:context id 'editor)])
-      (let* ([old (text-control:basis-text source d)] [ps (list-head (editor-state:state d) 3)]
-             [document (text-source:id (text-control:mirror source))] [name (store:property document 'mode #f)]
-             [mode (and name (mode:find name))]
-             [input (mode:source old (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode)))]
-             [span (text-source:span ps)] [last (- (vector-length old) 1)])
-        (when (and (memq operation '(indent-region format-region)) (not (cadddr (editor-state:state d)))) (refuse "The mark is not set"))
-        (let-values ([(from to)
-                      (case operation
-                        [(tab indent-line) (values (caar ps) (caar ps))]
-                        [(indent-buffer format-buffer) (values 0 last)]
-                        [(indent-region format-region) (values (car (text:span-start span)) (car (text:span-end span)))]
-                        [(indent-expression) (let-values ([(a b) (expression:forward old (car ps))])
-                                               (unless a (refuse "No expression after the caret")) (values (+ (car a) 1) (car b)))]
-                        [else (error 'format! "invalid transformation" operation)])])
-          (when (and (<= from to) (or (not (eq? operation 'tab)) (and name (mode:indent-on-tab? name))))
-            (if (memq operation '(format-region format-buffer))
-              (let* ([formatter (and name (mode:formatter name))]
-                     [lines (and formatter (formatter input from to))])
-                (unless lines (refuse "No formatter result for these lines"))
-                (unless (and (list? lines) (for-all text:line? lines)) (error 'format! "invalid formatter lines" lines))
-                (let* ([out (text:splice old from (+ to 1) lines)] [next (if (zero? (vector-length out)) '#("") out)])
-                  (rewrite! id source d old next ps (if (= to last) '((trailing . #t)) '()) "Format text")))
-              (let-values ([(next points) (mode:indent name input from to (and (memq operation '(tab indent-line)) #t) ps)])
-                (unless next (refuse "No indenter for this mode"))
-                (rewrite! id source d old next points '() "Indent text"))))))))
+    (text-control:call-with-intent! id (lambda ()
+                                         (let-values ([(source d) (text-control:context id 'editor)])
+                                           (let* ([old (text-control:basis-text source d)] [ps (list-head (editor-state:state d) 3)]
+                                                  [document (text-source:id (text-control:mirror source))] [name (store:property document 'mode #f)]
+                                                  [mode (and name (mode:find name))]
+                                                  [input (mode:source old (map (lambda (key) (cons key (store:property document key #f))) (mode:required-facts mode)))]
+                                                  [span (text-source:span ps)] [last (- (vector-length old) 1)])
+                                             (when (and (memq operation '(indent-region format-region)) (not (cadddr (editor-state:state d)))) (refuse "The mark is not set"))
+                                             (let-values ([(from to)
+                                                           (case operation
+                                                             [(tab indent-line) (values (caar ps) (caar ps))]
+                                                             [(indent-buffer format-buffer) (values 0 last)]
+                                                             [(indent-region format-region) (values (car (text:span-start span)) (car (text:span-end span)))]
+                                                             [(indent-expression) (let-values ([(a b) (expression:forward old (car ps))])
+                                                                                    (unless a (refuse "No expression after the caret")) (values (+ (car a) 1) (car b)))]
+                                                             [else (error 'format! "invalid transformation" operation)])])
+                                               (when (and (<= from to) (or (not (eq? operation 'tab)) (and name (mode:indent-on-tab? name))))
+                                                 (if (memq operation '(format-region format-buffer))
+                                                   (let* ([formatter (and name (mode:formatter name))]
+                                                          [lines (and formatter (formatter input from to))])
+                                                     (unless lines (refuse "No formatter result for these lines"))
+                                                     (unless (and (list? lines) (for-all text:line? lines)) (error 'format! "invalid formatter lines" lines))
+                                                     (let* ([out (text:splice old from (+ to 1) lines)] [next (if (zero? (vector-length out)) '#("") out)])
+                                                       (rewrite! id source d old next ps (if (= to last) '((trailing . #t)) '()) "Format text")))
+                                                   (let-values ([(next points) (mode:indent name input from to (and (memq operation '(tab indent-line)) #t) ps)])
+                                                     (unless next (refuse "No indenter for this mode"))
+                                                     (rewrite! id source d old next points '() "Indent text"))))))))) )
 
   (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish."
         (id model "editor view") (operation (one-of copy cut line forward backward) "transfer") (publish procedure "(text accumulate?)"))
@@ -505,7 +521,7 @@
                 (unless (and kept ps) (refuse "The selected text changed; select it again"))
                 (publish! id source d (list (car ps) (car ps) (caddr ps)) #f #f)
                 (publish text #f))
-              (replace! id source d selection '("") #f
+              (replace! id source d selection '("") #f 'end
                 (lambda (settled?)
                   (let ([after (and settled? (typing-basis (interaction:snapshot id)))])
                     (publish text join?)
@@ -523,7 +539,7 @@
             (unless (and as bs (not (equal? as bs))) (refuse "No two expressions around the caret"))
             (let-values ([(lines trailing?) (text:from-string (string-append (expression:text old bs be)
                                                                 (expression:text old ae bs) (expression:text old as ae)))])
-              (replace! id source d (list as be) (append (vector->list lines) (if trailing? '("") '())) #f))))
+              (replace! id source d (list as be) (append (vector->list lines) (if trailing? '("") '())) #f 'end))))
         (let* ([ps (points source d)] [lines (text-control:lines source)] [marked? (cadddr (editor-state:state d))])
           (unless ps (refuse "Editor selection history is unavailable"))
           (let* ([p (car ps)] [anchor (cadr ps)]
@@ -567,7 +583,7 @@
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)])
         (replace! id source d (if (and (cadddr s) (not (equal? p (cadr s)))) s
-                                (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction))))
+                                (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction 'end))))
 
   (edoc "Move an editor's source journal and rebase its view without changing any other selection."
         (id model "editor view") (direction symbol "undo or redo") (scope any "undo actor scope"))

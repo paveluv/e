@@ -24,10 +24,12 @@
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
              (prefix (head paint) paint:)
-             (prefix (head window) window:)
+             (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (delta-log:init!)
@@ -186,8 +188,8 @@
        (list 4 '("one new two new" "three" "new four new five") '(0 . 9)))
      (define added (list-head (delta-log:log) 4))
      (define batch-id (cdr (assq 'batch (caddr (car added)))))
-     (check 'one-entry-per-occurrence-in-the-texts-order-under-one-batch
-       (list (- (length (delta-log:log)) before) (map (lambda (r) (cadddr r)) (reverse added))
+     (check 'reverse-order-rewrite-logs-each-range-under-one-batch
+       (list (- (length (delta-log:log)) before) (map (lambda (r) (cadddr r)) added)
              (for-all (lambda (r) (equal? (cdr (assq 'batch (caddr r))) batch-id)) added))
        (list 4 '(((0 4 0 7) ("old") ("new")) ((0 12 0 15) ("old") ("new")) ((2 0 2 3) ("old") ("new")) ((2 9 2 12) ("old") ("new"))) #t))
      (check 'the-log-takes-the-batch-alone-as-its-selector (length (delta-log:log batch-id)) 4)
@@ -198,7 +200,7 @@
      (delta-log:open! 0)
      (delta-log:filter! batch-id)
      (check 'the-browser-narrowed-to-the-batch-lists-its-entries
-       (list (length (rows)) (contains? (list-ref (rows) 3) "0:4") (contains? (list-ref (rows) 3) "-\"old\"  +\"new\"")
+       (list (length (rows)) (contains? (car (rows)) "0:4") (contains? (car (rows)) "-\"old\"  +\"new\"")
              (for-all (lambda (l) (contains? l "replace-me")) (rows)))
        '(4 #t #t #t))
      (delta-log:filter! #f)
@@ -252,7 +254,7 @@
        (list (head:buffer-name (head:current-buffer)) (head:popup? (head:current-window)) (length (rows))
              (for-all (lambda (l) (and (contains? l "review-me") (contains? l "-\"old\"  +\"new\""))) (rows))
              (eq? (head:window-buffer fw) f) (head:buffer-point f))
-       '("<delta-log>" #t 2 #t #t (0 . 4)))
+       '("<delta-log>" #t 2 #t #t (0 . 0)))
      (dispatch:key! "C-g")
      (check 'c-g-closes-the-browser-and-puts-point-back
        (list (head:buffer-named "<delta-log>") (head:popup-rows) (head:buffer-point f) (eq? (head:current-window) fw)) '(#f 0 (0 . 7) #t))
@@ -266,7 +268,7 @@
        '(#t #t))
      (dispatch:key! "ESC")
      (check 'esc-returns-the-window-to-its-buffer-and-leaves-point-on-the-rows-text
-       (list (head:buffer-named "<delta-log>") (eq? (head:window-buffer fw) f) (head:buffer-point f)) '(#f #t (0 . 4)))
+       (list (head:buffer-named "<delta-log>") (eq? (head:window-buffer fw) f) (head:buffer-point f)) '(#f #t (0 . 0)))
 
      ;; Resolving a buffer is independent of the other visible buffers;
      ;; committing picks is the explicit operation across the whole review.

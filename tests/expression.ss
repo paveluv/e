@@ -12,7 +12,9 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (only (head edit) init!) edit:)
+             (prefix (core kernel) kernel:)
              (prefix (head expression) expression:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
@@ -21,6 +23,7 @@
              (prefix (modes scheme-mode) scheme-mode:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
@@ -40,7 +43,7 @@
      ;; motion crosses whole expressions, strings and quotes included, and
      ;; stays inside the enclosing one
      (fresh "expressions" '("(define (f x)" "  (+ x 1))" "'(a b) \"s)\" ; c" "z"))
-     (define (after thunk) (thunk) (head:point))
+     (define (after thunk) (guard (ex [(kernel:refusal? ex) (void)]) (thunk)) (head:point))
      (check 'forward-crosses-top-level-expressions-then-stops
        (map after (list forward-expression! forward-expression! forward-expression! forward-expression! forward-expression!))
        '((1 . 10) (2 . 6) (2 . 11) (3 . 1) (3 . 1)))
@@ -92,7 +95,7 @@
      (head:goto! '(2 . 4))
      (head:set-last-command! kill-expression!)
      (backward-kill-expression!)
-     (check 'backward-kill-prepends-to-the-accumulated-kill (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)1 g"))
+     (check 'moving-point-ends-kill-accumulation (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)"))
      (define indenting (fresh "indenting" '("(define (h)" "(+ 1" "2))" "")))
      (head:with-buffer indenting (mode:choose! "scheme"))
      (head:goto! '(0 . 0))

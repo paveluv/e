@@ -41,6 +41,7 @@
              (prefix (apps log-view) log-view:))
 
      (define check test:check)
+     (widget:init!) (edit:init!) (window:init!)
      (define refused? test:raises?)
      (define (store-ids) (list-sort < (store:buffer-list)))
 
@@ -573,7 +574,7 @@
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
-     (widget:init!) (window:init!) (entry:init!)
+     (entry:init!)
      ;; Widget host hooks must leave shared buffers alone after their store
      ;; records disappear, whether hidden or still shown in a window.
      (let* ([was (head:current-buffer)]
