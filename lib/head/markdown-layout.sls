@@ -25,7 +25,7 @@
       (list text faces (caddr inline))))
 
   (edoc
-    "Fit interpreted Markdown blocks to a terminal width. Returns parallel text, character style, link and source-row lists; parsing and domain state stay outside layout."
+    "Fit interpreted Markdown blocks to a terminal width. Return text, character styles, links, source rows and character anchor vectors. Anchors are (source-row field character): field zero for text, positive for table cells."
     (blocks list "markup:parse blocks")
     (target-width integer "available columns"))
   (define (render blocks target-width)
@@ -33,11 +33,15 @@
     (define out-styles '())
     (define out-links '())
     (define out-rows '())
-    (define (emit! line styles links row)
+    (define out-anchors '())
+    (define (emit! line styles links row . anchors)
       (set! out-lines (cons line out-lines))
       (set! out-styles (cons styles out-styles))
       (set! out-links (cons links out-links))
-      (set! out-rows (cons row out-rows)))
+      (set! out-rows (cons row out-rows))
+      (set! out-anchors
+        (cons (if (pair? anchors) (car anchors)
+                (list->vector (map (lambda (i) (list row 0 i)) (iota (+ 1 (string-length line)))))) out-anchors)))
     (define (longest-word-width text)
       (let loop ([i 0] [word 0] [best 0])
         (cond
@@ -153,10 +157,10 @@
             (map (lambda (l)
                    (let ([s (max (car l) from)] [e (min (cadr l) end)])
                      (and (< s e) (list (- s from) (- e from) (caddr l)))))
-                 links))))
+                 links)) from))
       (let build ([from 0] [acc '()])
         (if (>= from n)
-            (if (null? acc) (list (list "" '#() '())) (reverse acc))
+            (if (null? acc) (list (list "" '#() '() 0)) (reverse acc))
             (let-values ([(end next) (cut-point from)])
               (build
                 (let skip ([j next])
@@ -214,7 +218,7 @@
                        (allocate-widths
                          naturals
                          minimums
-                         (- target-width (* 2 (max 0 (- columns 1)))))
+                         (max 1 (- target-width (* 2 (max 0 (- columns 1))))))
                        minimums
                        naturals
                        rendered)])
@@ -236,7 +240,7 @@
                                             (append
                                               (car cells)
                                               (list (list-ref widths i))))
-                                          (list (list "" '#() '())))
+                                          (list (list "" '#() '() 0)))
                                       acc))))]
                    [height (fold-left
                              (lambda (m lines) (max m (length lines)))
@@ -247,7 +251,7 @@
                 (let* ([segments (map (lambda (lines)
                                         (if (< v (length lines))
                                             (list-ref lines v)
-                                            (list "" '#() '())))
+                                            (list "" '#() '() 0)))
                                       wrapped)]
                        [parts (map (lambda (seg w) (pad-to (car seg) w))
                                    segments
@@ -256,12 +260,18 @@
                                  (string:join parts "  ")
                                  #f)]
                        [vec (make-vector (string-length joined) 'plain)]
+                       [anchors-map (make-vector (+ 1 (string-length joined)) (list (car anchors) 0 0))]
                        [row-links '()])
-                  (let paint ([at 0] [segs segments] [parts parts])
+                  (let paint ([at 0] [segs segments] [parts parts] [field 1])
                     (when (pair? segs)
                       (let* ([seg (car segs)]
                              [text (car seg)]
                              [styles (cadr seg)])
+                        (do ([p 0 (+ p 1)])
+                            ((or (> p (+ 2 (string-length (car parts))))
+                               (>= (+ at p) (vector-length anchors-map))))
+                          (vector-set! anchors-map (+ at p)
+                            (list (car anchors) field (+ (cadddr seg) (min p (string-length text))))))
                         (do ([p 0 (+ p 1)])
                             ((or (= p (string-length text))
                                  (>= (+ at p) (vector-length vec))))
@@ -287,8 +297,8 @@
                         (paint
                           (+ at (string-length (car parts)) 2)
                           (cdr segs)
-                          (cdr parts)))))
-                  (emit! joined vec (reverse row-links) (car anchors))))
+                          (cdr parts) (+ field 1)))))
+                  (emit! joined vec (reverse row-links) (car anchors) anchors-map)))
               (when (and first header?)
                 (emit!
                   (string:join
@@ -353,4 +363,5 @@
       (reverse out-lines)
       (reverse out-styles)
       (reverse out-links)
-      (reverse out-rows))))
+      (reverse out-rows)
+      (reverse out-anchors))))

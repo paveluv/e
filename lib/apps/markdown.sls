@@ -19,7 +19,9 @@
 (elibrary (apps markdown)
   (export (rename (markdown-browser browser))
           (rename (source-companion companion) (source-view! companion!))
-          (rename (markdown-edit! edit!)) init! (rename (markdown-render render))
+          (rename (control:copy! copy!) (control:create-view! create-view!))
+          (rename (markdown-edit! edit!)) init! (rename (control:move! move!) (markdown-render render)
+                                                  (control:scroll! scroll!) (control:select! select!) (control:set-mark! set-mark!))
           (rename (markdown-view! view!)) (rename (markdown-view-install! view-install!))
           (rename (markdown-view-max-width view-max-width)))
   (import (chezscheme)
@@ -31,6 +33,7 @@
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
+          (prefix (head markdown-control) control:)
           (prefix (head markdown-layout) markdown-layout:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
@@ -77,9 +80,9 @@
       (list-of integer)
       "at most one width, 79 by default"))
   (define (markdown-render source-lines . width*)
-    (markdown-layout:render
-      (markup:parse source-lines)
-      (if (pair? width*) (car width*) 79)))
+    (let-values ([(text styles links rows anchors)
+                  (markdown-layout:render (markup:parse source-lines) (if (pair? width*) (car width*) 79))])
+      (values text styles links rows)))
   ;;; The mode and the toggle --------------------------------------------
 
   ;; Inputs and derived rendering are local buffer facts.  The cache
@@ -401,6 +404,7 @@
 
   (edoc "Install Markdown viewing: its faces, mode, links, highlighter, hooks and session resume, and its describe entries and bindings." (public))
   (define (init!)
+    (control:register! edit:copy-text!)
     (register-md-faces!)
     (mode:register! "markdown-view" '() '() (lambda (line) #f)
                     #f view-row-styles '(markdown-rendering))

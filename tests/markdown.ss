@@ -13,6 +13,12 @@
      (import (prefix (test) test:)
              (prefix (foundation markup) markup:)
              (prefix (head markdown-layout) markdown-layout:)
+             (prefix (head markdown-control) control:)
+             (prefix (head head) head:) (prefix (head interaction) interaction:)
+             (prefix (head widget) widget:) (prefix (head range) range:)
+             (prefix (state store) store:) (prefix (state collection) collection:)
+             (prefix (state view) view:) (prefix (state model) model:)
+             (prefix (foundation string) string:) (prefix (foundation text) text:)
              (prefix (apps markdown) markdown:) (prefix (modes scheme-mode) scheme-mode:))
 
      (scheme-mode:init!)
@@ -134,8 +140,8 @@
             [before (format "~s" blocks)])
        (check 'semantic-table-source-anchors
          (map car (cadddr (car blocks))) '(0 2 4))
-       (let-values ([(wide faces links rows) (markdown-layout:render blocks 60)]
-                    [(narrow narrow-faces narrow-links narrow-rows) (markdown-layout:render blocks 12)])
+       (let-values ([(wide faces links rows anchors) (markdown-layout:render blocks 60)]
+                    [(narrow narrow-faces narrow-links narrow-rows narrow-anchors) (markdown-layout:render blocks 12)])
          (check 'independent-table-fitting
            (list (> (length narrow) (length wide)) (car links)
              (filter (lambda (row) (> row 0)) rows) (equal? before (format "~s" blocks)))
@@ -144,5 +150,50 @@
      (let-values ([(text faces links rows) (markdown:render '("```界" "body" "```"))])
        (check 'code-faces-address-characters
          (map vector-length faces) (map string-length text)))
+
+     ;; A nested pair shares one base query, but neither geometry nor selection.
+     (let ()
+       (define copied #f)
+       (define actor head:ui-actor)
+       (define source (store:create! actor "Markdown widget" '("# Hello" "" "|one|two|" "|---|---|" "|words here|many more words here|")))
+       (define a (markdown:create-view! actor source))
+       (define b (view:fork! actor a))
+       (define query (view:source (view:snapshot a)))
+       (define root (view:create! actor #f 'row 1 '() '()))
+       (define (state id) (view:state (interaction:snapshot id)))
+       (define (show!)
+         (let ([f (widget:prepare! root 60 8)]) (widget:present! (list (list f 0 0))) f))
+       (define (pump!) (range:pump!) (widget:pump!) (show!))
+       (define (body id) (find (lambda (f) (equal? (widget:frame-id f) id)) (widget:frame-children (widget:prepared root))))
+       (define (contains? text) (and (exists (lambda (line) (string:search line text 0 (string-length line))) (widget:frame-lines (body a))) #t))
+       (collection:init!) (widget:init!) (control:register! (lambda (s) (set! copied s)))
+       (view:arrange! actor (list (list root 0 (list (list 'narrow a '(grow 1)) (list 'wide b '(grow 2))) '())) '())
+       (widget:mount! root 'markdown-fixture)
+       (test:await 'markdown-ranges (lambda () (pump!) (contains? "Hello")))
+       (check 'markdown-shares-query-with-independent-fitting
+         (list (equal? query (view:source (view:snapshot b)))
+           (caddr (widget:frame-rect (body a))) (caddr (widget:frame-rect (body b)))
+           (contains? "many more") (not (equal? (widget:frame-lines (body a)) (widget:frame-lines (body b)))))
+         '(#t 21 39 #t #t))
+       (markdown:select! a '(2 4 2 20) '(2 4 2 10))
+       (markdown:copy! a)
+       (check 'markdown-copies-displayed-text-and-keeps-independent-selection
+         (list copied (car (state a)) (car (state b))) '("words here" (2 4 2 20) (0 0 0 0)))
+       (let ([saved (state a)])
+         (widget:prepare! root 100 8)
+         (check 'markdown-resize-keeps-semantic-cell-anchors (state a) saved))
+       (show!)
+       (store:edit! actor source 0 (text:make-span 0 0 0 0) '("Intro" "" "") #f)
+       (test:await 'markdown-source-rebase
+         (lambda () (pump!) (equal? 1 (view:basis (interaction:snapshot a)))))
+       (check 'markdown-rebases-source-rows-without-losing-cell-selection
+         (list (car (state a)) (cadr (state a))) '((4 6 2 20) (4 6 2 10)))
+       (let ([before (model:revision query)])
+         (pump!) (pump!) (pump!)
+         (check 'markdown-unchanged-frames-do-not-republish-query (model:revision query) before))
+       (widget:prepare! root 0 0)
+       (widget:unmount! root)
+       (check 'markdown-hidden-view-releases-range-demand (model:demanded? query) #f)
+       (store:delete! actor source))
 
      (test:finish! 'markdown)))

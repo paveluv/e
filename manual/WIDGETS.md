@@ -1,5 +1,11 @@
 # Widgets and views
 
+`markdown:create-view!` creates an unmounted Markdown presentation over a
+borrowed source document. Forked views share the base interpretation while
+keeping their selection and scrolling independent. Fitted text and hit maps
+belong to each head. Selection anchors identify a source block, source row,
+table field and character, rather than a wrapped display row.
+
 `control:create-filter!` composes a label, an `entry` over an existing text
 buffer, and an italic status label. Its root exposes the `text` output port;
 the entry retains the normal editing, undo and stale-edit protection.

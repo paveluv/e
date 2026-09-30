@@ -384,7 +384,7 @@
 
   (define (subscribe! mount tree)
     (let ([tokens (list #f #f #f)] [demand #f] [endpoints (map car tree)]
-          [live? #t] [acquire? #f])
+          [live? #t] [acquire? #f] [acquiring? #f] [acquire-again? #f])
       (define (refresh)
         (let ([work (with-mutex notification-lock
                       (and live? (let ([work (if acquire? 'acquire 'change)])
@@ -412,6 +412,20 @@
         (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
         (head:wake-main!))
       (define (acquire)
+        ;; Acquiring source demand can synchronously publish a collection's
+        ;; initial summary. Its connection callback must not start another
+        ;; subscription before this one's token has been installed.
+        (set! acquire-again? #t)
+        (unless acquiring?
+          (dynamic-wind
+            (lambda () (set! acquiring? #t))
+            (lambda ()
+              (let loop ()
+                (set! acquire-again? #f)
+                (when live? (acquire-once))
+                (when (and live? acquire-again?) (loop))))
+            (lambda () (set! acquiring? #f)))))
+      (define (acquire-once)
         (let ([texts '()] [ids '()])
           (for-each
             (lambda (row)
@@ -424,7 +438,9 @@
                   [(not (member source ids)) (set! ids (cons source ids))]))) tree)
           (unless (equal? demand ids)
             (let ([fresh (model:subscribe! ids (lambda (notice) (schedule! #f)))] [old (car tokens)])
-              (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
+              (if live?
+                (begin (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old)))
+                (model:unsubscribe! fresh))))
           (for-each (lambda (p)
                       (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
           (mount-bundle-set! mount (connection:snapshot endpoints))
