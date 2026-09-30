@@ -23,15 +23,15 @@
       (text-source:changes mirror (or (view:basis d) revision) revision)))
 
   (edoc "Create an unmounted editor view over a shared document. Options include wrap (#t, #f or default), read-only (a view preference) and annotations (revision-bound logical ranges); no window is created."
-        (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (returns model))
-  (define (create! actor document options)
+        (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (owner (list-of model) "optional lifetime owner") (returns model))
+  (define (create! actor document options . owner)
     (unless (and (integer? document) (exact? document) (> document 0)
               (list? options) (for-all (lambda (p) (and (pair? p) (case (car p)
                                                                     [(wrap) (memq (cdr p) '(default #t #f))] [(read-only) (boolean? (cdr p))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
               (let unique ([rest options]) (or (null? rest) (and (not (assq (caar rest) (cdr rest))) (unique (cdr rest))))))
       (error 'create! "invalid document or editor options"))
-    (view:create! actor (list 'buffer document) 'editor 1
-      (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f)))
+    (apply view:create! actor (list 'buffer document) 'editor 1
+      (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f) owner))
 
   (edoc "The word at or immediately before a character column, as (first . end), or false on punctuation or whitespace."
         (line string "source line") (column integer "character column") (returns any))

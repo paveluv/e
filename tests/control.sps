@@ -64,6 +64,10 @@
     (check 'control-fork-remaps-internal-command-target
       (cadar (descriptor:commands (view:snapshot new-button))) new-entry))
   (widget:mount! root 'control-fixture) (show!)
+  (let ([all (widget:inspect root 256)] [bounded (widget:inspect root 1)])
+    (check 'composition-inspection-is-portable-bounded-and-does-not-invoke
+      (list (length (car all)) (cadr all) (caddr all) (map car (car bounded)) (caddr bounded) (line))
+      (list 6 (list (list root button 'enabled (list enabled 'enabled))) #f (list root) #t "original")))
   (let ([focus (widget:focused root)])
     (check 'command-discovery-includes-descendants-and-fixed-arguments-without-invocation
       (list (widget:command-bindings root) (widget:focused root) (line))

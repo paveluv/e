@@ -168,38 +168,27 @@
                       (lambda (text caret)
                         (values 0 (string-length text)
                           (lambda () (set! expansions (+ expansions 1)) '("abc" "bca" "cba"))
-                          (if (string=? text "z") '() '("abc" "bca" "cba")))))]
+                          (if (string=? text "z") '()
+                            (map (lambda (name) (completion:make-candidate name name #f #f
+                                                  (list '(type . choice) (cons 'value name)))) '("abc" "bca" "cba"))))))]
             [s (completion-state:create source #f)])
        (completion-state:refresh! s "a" 1)
-       (completion-state:normalize! s source #f)
-       (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source)
+       (completion-state:normalize! s source)
        (let ([page (completion-state:snapshot s)])
          (check 'completion-normalizes-and-cycles-without-recomputing-extensions
-           (list (cadr page) (list-ref page 3) expansions) '("bca" ("abc" "bca" "cba") 1))
+           (list (cadr page) (map completion:candidate-value (list-ref page 3)) expansions) '("bca" ("abc" "bca" "cba") 1))
          (completion-state:refresh! s "z" 1)
          (check 'completion-refuses-stale-page-without-expansion-or-text-change
            (list (completion-state:choose! s (car page) "abc")
-             (cadr (completion-state:snapshot s)) expansions) '(#f "z" 1)))
+             (cadr (completion-state:snapshot s)) expansions (list-ref (completion-state:snapshot s) 7)) '(#f "z" 1 #f)))
        (completion-state:refresh! s "a" 1)
-       (completion-state:normalize! s source #f) (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source) (completion-state:normalize! s source)
        (check 'completion-selects-current-value-and-hides-its-page
          (list (completion-state:choose! s (car (completion-state:snapshot s)) "cba")
-           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)) '(#t "cba" #f)))
-     (let* ([events '()] [track-count 0]
-            [maker (lambda () (completion:make-searcher
-                                (lambda (needle) (set! track-count (+ track-count 1)) '(1 . 2))
-                                (lambda () '(2 . 2)) (lambda () '(1 . 2))
-                                (lambda (accepted?) (set! events (cons accepted? events)))))]
-            [source (completion:make-source (lambda (text caret) (values #f #f '() '())) #f #f
-                      (lambda (text caret) (cons maker text)))]
-            [s (completion-state:create source #f)])
-       (completion-state:refresh! s "needle" 6)
-       (completion-state:normalize! s source #f)
-       (completion-state:refresh! s "needle" 6)
-       (check 'completion-search-navigation-survives-unchanged-refresh
-         (list (list-ref (completion-state:snapshot s) 4) track-count) '(" [2 of 2]" 1))
-       (completion-state:finish! s #t) (completion-state:finish! s #f)
-       (check 'completion-search-finishes-once events '(#t)))
+           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)
+           (completion:candidate-context (list-ref (completion-state:snapshot s) 7)))
+         '(#t "cba" #f ((type . choice) (value . "cba")))))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
          (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
@@ -371,56 +360,6 @@
      ;; when the documentation changes, a fetch or a registration later
      (doc:register! '(((mx-bare-proc) (("procedure" . "(mx-bare-proc gamma)")) "void" ("(mx)") mx "Fixture" #f "Documented later.")))
      (check 'a-cached-hint-follows-newly-arrived-documentation (eval:completion-hint 'mx-bare-proc) "(gamma)")
-
-     ;; A needle argument searches instead of completing: its type makes a
-     ;; searcher that highlights the matches from point on, visits them in
-     ;; turn without inserting, and restores the command's original point
-     (define needles (head:new-buffer! "needles"))
-     (head:buffer-lines-set! needles (list->vector '("alpha beta" "gamma alpha" "alpha")))
-     (head:show-buffer! needles)
-     (head:goto! '(0 . 3))
-     (define make (edoc:type-searcher 'needle))
-     (define s (make))
-     (check 'a-needle-searches-from-point
-       (list (procedure? make) (edoc:type-searcher 'string)
-             ((completion:searcher-find s) "alpha") (head:point)
-             ((completion:searcher-next s)) (head:point)
-             ((completion:searcher-previous s))
-             ((completion:searcher-find s) "zeta") (head:point))
-       '(#t #f (2 . 3) (1 . 6) (3 . 3) (2 . 0) (2 . 3) (#f . 0) (1 . 6)))
-     ((completion:searcher-done s) #f)
-     (check 'ending-a-search-unaccepted-restores-point (head:point) '(0 . 3))
-     (let ([s (make)])
-       ((completion:searcher-find s) "gamma")
-       ((completion:searcher-done s) #t))
-     (check 'ending-an-accepted-preview-restores-point (head:point) '(0 . 3))
-     (search:init!)
-     (head:buffer-lines-set! needles '#("old OLD old"))
-     (head:goto! '(0 . 0))
-     (set-mark-command!)
-     (head:goto! '(0 . 11))
-     (let ([s (make)])
-       ((completion:searcher-find s) "old")
-       (check 'needle-highlights-use-the-commands-exact-matching
-         (map (lambda (r) (list (cadr r) (caddr r)))
-           (filter (lambda (r) (eq? (cadddr r) 'match)) (paint:highlight-ranges))) '((0 3) (8 11)))
-       ((completion:searcher-done s) #t)
-       (check 'accepting-a-needle-preserves-the-selected-command-region (search:count "old") 2))
-     (head:buffer-marked-set! needles #f)
-     (head:goto! '(0 . 0))
-     (let ([s (make)])
-       ((completion:searcher-find s) "old")
-       (store:edit! '(head "other") (head:buffer-store-id needles) (head:buffer-store-rev needles)
-         (text:make-span 0 0 0 0) '("prefix "))
-       (head:before-frame!)
-       (check 'needle-navigation-follows-foreign-edits
-         (list ((completion:searcher-next s)) (head:point)) '((2 . 2) (0 . 15)))
-       ((completion:searcher-done s) #f)
-       (check 'cancelling-a-preview-restores-the-rebased-origin (head:point) '(0 . 7)))
-     ;; a searching string is never settled shut
-     (check 'a-needle-string-is-not-settled
-       (settled "(search:replace! \"alpha")
-       (let ([out "(search:replace! \"alpha"]) (cons out (string-length out))))
 
      ;; Context is finite declared structure. A sibling only participates
      ;; when its parent exposes it; ambiguity never chooses by numeric ID.

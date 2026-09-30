@@ -10,6 +10,7 @@
           (prefix (foundation datum) datum:)
           (prefix (foundation text) text:)
           (prefix (foundation wire) wire:)
+          (prefix (service change-preview) change-preview:)
           (prefix (service conflict-review) conflict-review:)
           (prefix (service conflict-source) conflict-source:)
           (prefix (service doc) doc:)
@@ -21,6 +22,7 @@
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
           (prefix (service git-source) git-source:)
+          (prefix (service inspection) inspection:)
           (prefix (service journal-source) journal-source:)
           (prefix (service log) log:)
           (prefix (service markup-source) markup-source:)
@@ -49,7 +51,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -132,7 +134,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+      (when (memq kind '(change-preview widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -199,7 +201,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+             [(change-preview connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
@@ -282,6 +284,8 @@
        (arity 2)
        (call-with-values (lambda () (store:rewrite-preview (car args) (cadr args))) list)]
       [(revision-span) (arity 2) (apply store:revision-span args)]
+      [(conflict-span) (arity 2) (apply store:conflict-span args)]
+      [(change-preview-create) (control!) (head!) (arity 2) (apply change-preview:create! actor args)]
       [(conflict-review-create) (control!) (arity 1) (apply conflict-review:create! actor args)]
       [(conflict-review-refresh) (control!) (arity 3) (apply conflict-review:refresh! actor args)]
       [(conflict-review-choose) (control!) (arity 4) (apply conflict-review:choose! actor args)]
@@ -295,6 +299,9 @@
        (unless (<= 1 (length args) 2) (error 'wire "expected draft and optional owning view"))
        (apply review-preview:create! actor args)]
       [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
+      [(inspection-create) (control!) (arity 2) (apply inspection:create! actor args)]
+      [(inspection-publish) (control!) (arity 6) (apply inspection:publish! actor args)]
+      [(inspection-close) (control!) (arity 1) (apply inspection:close! actor args) #t]
       [(rewrite-source-toggle) (control!) (arity 2) (apply rewrite-source:toggle! actor args) #t]
       [(rewrite-source-settle) (control!) (arity 3) (apply rewrite-source:settle! actor args)]
       [(rewrite-create) (control!) (arity 1) (rewrite:create! actor (car args))]
@@ -424,7 +431,7 @@
       [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
       [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args) #t]
       [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args)) #t]
-      [(search-create) (control!) (head!) (arity 1) (search-request:create! actor (car args))]
+      [(search-create) (control!) (head!) (arity 2) (apply search-request:create! actor args)]
       [(search-configure) (control!) (head!) (arity 3) (apply search-request:configure! actor args)]
       [(search-close) (control!) (head!) (arity 1) (search-request:close! actor (car args)) #t]
       [(reference-signatures) (arity 0) (reference:signatures)]

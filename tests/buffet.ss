@@ -6,7 +6,7 @@
 (eval
   '(begin
      (import (prefix (apps buffet) buffet:) (prefix (head head) head:)
-             (prefix (apps bindings) bindings:)
+             (prefix (apps bindings) bindings:) (prefix (head binding-list) listing:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
@@ -21,6 +21,12 @@
      (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
+     (define (help-record)
+       (widget:pump!)
+       (model:snapshot (view:source (interaction:snapshot (widget:descendant (head:window-widget (head:popup)) 'app)))))
+     (define (help-rows) (apply append (map (lambda (p) (get (model:snapshot (cdr p)) 'value)) (get (get (help-record) 'value) 'parts))))
+     (define (help-text)
+       (string:join (map (lambda (r) (string-append (or (cadr r) "") " " (string:join (caddr r) " ") " " (cadddr r) " " (list-ref r 4))) (help-rows)) "\n"))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
      (define (root) (head:buffer-fact (head:current-buffer) 'widget-id #f))
      (define (app) (child (root) 'app))
@@ -78,7 +84,7 @@
        (exists (lambda (b) (equal? filter-id (head:buffer-store-id b))) (head:buffers)) #f)
      (let ([focus (widget:focused (root))])
        (press! "C-x" "TAB")
-       (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+       (let ([text (help-text)])
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
            (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
                    '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "Widget commands" "app/table (table): (model "
@@ -103,32 +109,20 @@
            (format "(widget:invoke! (model ~a) 'trash selection basis)" (cadr (table)))
            (format "(widget:act! (model ~a) 'kill selection basis)" (cadr (app)))
            (format "(buffet:kill! (model ~a) selection basis)" (cadr (app)))))
-       (let ([width (paint:screen-cols)])
+       (let ()
          (define (italic-text width)
-           (paint:set-screen-cols! width) (paint:window-layout) (head:before-frame!)
-           (let* ([b (head:window-buffer (head:popup))] [m (mode:of b)] [styler (mode:row-styles m)]
-                  [source (mode:source (head:buffer-lines b)
-                            (map (lambda (k) (cons k (head:buffer-fact b k #f))) (mode:required-facts m)))])
-             (apply string-append
-               (map (lambda (line row)
-                      (let ([styles (styler source row line)])
-                        (if (not styles) ""
-                          (list->string
-                            (filter (lambda (c) (not (char-whitespace? c)))
-                              (map (lambda (i) (string-ref line i))
-                                (filter (lambda (i) (eq? (vector-ref styles i) 'italic)) (iota (string-length line)))))))))
-                 (vector->list (head:buffer-lines b)) (iota (vector-length (head:buffer-lines b)))))))
-         (let* ([wide (italic-text 240)] [narrow (italic-text 50)])
-           (paint:set-screen-cols! width) (paint:window-layout) (head:before-frame!)
+           (apply string-append
+             (map (lambda (r) (apply string-append (map (lambda (span) (substring (cadr r) (car span) (cdr span))) (caddr r))))
+               (vector->list (listing:fit (help-rows) width)))))
+         (let ([wide (italic-text 240)] [narrow (italic-text 50)])
            (test:check 'unresolved-arguments-stay-italic-through-wrapping-with-commands-and-literals-plain
              (list (string=? wide narrow)
                (for-all (lambda (s) (and (string:search wide s 0 (string-length wide)) #t)) '("selection" "basis" "computed"))
-               (for-all (lambda (s) (not (string:search wide s 0 (string-length wide)))) '("table:invoke!" "widget:invoke!" "'activate")))
-             '(#t #t #t))))
+               (for-all (lambda (s) (not (string:search wide s 0 (string-length wide)))) '("table:invoke!" "widget:invoke!" "'activate"))) '(#t #t #t))))
        (select! a) (head:before-frame!)
-       (let* ([help (head:window-buffer (head:popup))] [lines (head:buffer-lines help)])
+       (let* ([id (cdr (assq 'listing (get (get (help-record) 'value) 'parts)))] [revision (model:revision id)])
          (select! b) (head:before-frame!)
-         (test:check 'selection-does-not-rebuild-static-key-help (eq? lines (head:buffer-lines help)) #t))
+         (test:check 'selection-does-not-rebuild-static-key-help (= revision (model:revision id)) #t))
        (table:move! (table) 'first) (settle!)
        (let* ([before (selection)]
               [action (keymap:binding-action (cdr (keymap:resolved-binding 'buffet '("DOWN"))))]
@@ -139,7 +133,7 @@
            (list (string:prefix? "(table:move! (widget:descendant (model " text) (not (equal? (caddr before) (caddr (selection))))) '(#t #t)))
        (widget:focus! (root) (child (child (table) 'body) 'rows))
        (head:before-frame!)
-       (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+       (let ([text (help-text)])
          (test:check 'keys-follows-widget-focus
            (and (string:search text "buffet keys" 0 (string-length text))
              (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
@@ -159,34 +153,34 @@
        (bindings:show!)
        (replace! 'unregistered-action)
        (test:check 'keys-shows-rewired-unavailable-command-template
-         (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+         (let ([text (help-text)])
            (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
              '("Unavailable target." "widget:act!" "unregistered-action"))) #t)
        (replace! (caddr activate))
        (test:check 'keys-updates-restored-command
-         (let ([text (string:join (vector->list (head:buffer-lines (head:window-buffer (head:popup)))) "\n")])
+         (let ([text (help-text)])
            (not (string:search text "unregistered-action" 0 (string-length text)))) #t)
        (bindings:hide!) (settle!))
      (let ([focus (widget:focused (root))] [selected (selection)] [sort (get (get (collection:summary (query)) 'value) 'sort)])
        (head:set-mouse-position! '(2 . 2)) (bindings:show!) (settle!) (head:before-frame!)
-       (let* ([b (head:window-buffer (head:popup))] [lines (head:buffer-lines b)]
+       (let* ([lines (help-rows)]
               [header (cadr (assoc '(click primary ()) (mouse:bindings)))])
          (head:before-frame!)
          (test:check 'mouse-help-first-inspects-heading-without-changing-state
-           (list (vector-ref lines 0) (eq? lines (head:buffer-lines b))
+           (list (cadar lines) (equal? lines (help-rows))
              (keymap:call-action-procedure header) (cadr (keymap:call-action-arguments header))
              (caddr (selection)) (get (get (collection:summary (query)) 'value) 'sort) (widget:focused (root)))
            (list "Mouse bindings" #t table:toggle-sort! 'modified (caddr selected) sort focus))
          (head:set-mouse-position! '(2 . 3)) (head:before-frame!)
          (let* ([bindings (mouse:bindings)] [row (cadr (assoc '(click primary ()) bindings))])
            (test:check 'hover-changes-mouse-section-and-includes-wheel
-             (list (not (eq? lines (head:buffer-lines b))) (keymap:call-action-procedure row)
+             (list (not (equal? lines (help-rows))) (keymap:call-action-procedure row)
                (and (assoc '(wheel up ()) bindings) (assoc '(wheel down ()) bindings) #t)
                (widget:focused (root)))
              (list #t table:choose! #t focus)))
          (head:set-mouse-position! '(1000 . 1000)) (head:before-frame!)
          (test:check 'leaving-shown-target-clears-mouse-section
-           (string:prefix? "Mouse" (head:buffer-line b 0)) #f))
+           (exists (lambda (r) (and (pair? (car r)) (eq? (caar r) 'mouse))) (help-rows)) #f))
        (head:set-mouse-position! #f) (bindings:hide!) (settle!))
      (let ([heading (cadr (widget:frame-lines (draw! (root) 120 15)))])
        (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)

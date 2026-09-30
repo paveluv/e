@@ -70,7 +70,7 @@
               (let* ([part (substring text (car range) (cdr range))]
                      [matches (fuzzy:rank part (cadr packet))] [names (map fuzzy:name matches)])
                 (values (car range) (cdr range) (lambda () (fuzzy:expansions part names)) names)))))
-        #f "environment symbol" #f
+        #f "environment symbol"
         (lambda () (let ([p (namespace:snapshot reader)]) (list (car p) (caddr p))))
         (lambda () (namespace:release! reader)))))
 
@@ -543,15 +543,6 @@
       (let ([inserts (bare-inserts)])
         (if (eq? in-string? #t) (map string-escaped inserts) inserts))))
 
-  (define (candidate-preview type option window)
-    ;; the thunk showing a value candidate in the editor while it is the
-    ;; inserted one, from its type's preview clause; #f for the rest
-    (let ([p (and (option-value option) (edoc:type-preview type))])
-      (and p window
-        (lambda ()
-          (let ([undo (head:with-window window (p (option-value option)))])
-            (and undo (lambda () (when (memq window (head:windows)) (head:with-window window (undo))))))))))
-
   (define (typed-candidate type entry window)
     ;; a prompt candidate from (option . fragments): the label with its
     ;; matched characters underlined, the hint in grey, the insertion apart
@@ -565,7 +556,11 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (completion:make-candidate (option-insert option) text styles (candidate-preview type option window))))
+      (completion:make-candidate (option-insert option) text styles (vector label hint)
+        (and (option-value option)
+          (list (cons 'type type) (cons 'value (option-value option)) '(literal? . #t)
+            (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))
+            (cons 'editor (and window (head:window-editor window))))))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -712,7 +707,6 @@
       (and (keep? sym)
         (let ([declared (map edoc:signature-receiver (receiver-signatures sym))])
           (or (null? declared) (exists (lambda (d) (pair? (receiver-matches d receivers))) declared)))))
-    (define makers (make-eq-hashtable))
     (completion-at-window (completion:make-source
                             (lambda (s pos)
                               (define (symbols)
@@ -747,16 +741,14 @@
                             ;; what the list holds, for its status line: the argument's type at a
                             ;; typed position, else the symbols offered
                             (lambda (s pos) kind)
-                            ;; a live search in place of a list, where the argument's type asks
-                            ;; for one: a needle's matches highlight in the buffer as it is typed
+                            (lambda () #f) (lambda () (values))
                             (lambda (s pos)
                               (let ([context (and typed? (argument-context s pos))])
-                                (and context (car (cddddr context))
-                                  (let ([make (edoc:type-searcher (car context))])
-                                    (and make window
-                                      (cons (or (hashtable-ref makers make #f)
-                                              (let ([scoped (lambda () (head:with-window window (make)))])
-                                                (hashtable-set! makers make scoped) scoped)) (cadddr context)))))))) window))
+                                (if (not context) '()
+                                  (list (cons 'type (car context)) (cons 'token (cadddr context))
+                                    (cons 'literal? (car (cddddr context)))
+                                    (cons 'editor (and window (head:window-editor window)))
+                                    (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))))))) window))
 
   (define (completion-at-window source window)
     (if (not window) source
@@ -769,7 +761,8 @@
               (head:with-window window (apply proc arguments)))))
         (completion:make-source (scope (completion:source-lookup source))
           (scope (completion:source-settle source)) (scope (completion:source-kind source))
-          (scope (completion:source-track source))))))
+          (completion:source-basis source) (completion:source-release source)
+          (scope (completion:source-context source))))))
 
   (define (type-text type)
     ;; a type as the status line names it: a name as itself, a record type
@@ -1050,7 +1043,7 @@
       [(not (blank? pos)) (cons text pos)]
       [(open-string-start text pos)
        (let ([context (argument-context text pos)])
-         (if (and context (car (cddddr context)) (not (edoc:type-searcher (car context)))
+         (if (and context (car (cddddr context))
                   (dead-end? (car context) (cadddr context)))
              (settled (string-append (substring text 0 pos) "\"") (substring text pos (string-length text)) (+ pos 1))
              (cons text pos)))]

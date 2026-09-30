@@ -5,7 +5,7 @@
   (import (except (chezscheme) display) (prefix (head dispatch) dispatch:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head layout) layout:)
           (prefix (head search-control) search-control:) (prefix (head widget) widget:)
-          (prefix (head window) window:) (prefix (service search-request) search-request:) (prefix (state view) view:))
+          (prefix (head window) window:) (prefix (service search-request) search-request:) (prefix (state model) model:) (prefix (state view) view:))
   (define-record-type display (fields root search buffer prior rows origin (mutable target-window)))
   (define current #f)
   (define remembered "")
@@ -55,7 +55,8 @@
       (let* ([w (head:current-window)] [target (head:window-editor w)])
         (unless target (error 'open! "Incremental search requires a text editor"))
         (let* ([search (search-control:create! target policy remembered '())]
-               [d (view:snapshot search)] [query (view:source d)]
+               [record (caddar (cadr (model:snapshots (list search))))]
+               [d (cdr (assq 'value record))] [query (view:source d)]
                [root (view:create! head:ui-actor #f 'search-host 1 '((name . "search")) '() query)]
                [prior (head:window-buffer (head:popup))] [rows (head:popup-rows)])
           (guard (ex [else
@@ -64,7 +65,7 @@
                       (raise ex)])
             (view:arrange! head:ui-actor
               (list (list root 0 (list (list 'search search '(grow 1))) '((name . "search")))
-                (list search 1 (view:children d)
+                (list search (cdr (assq 'revision record)) (view:children d)
                   (cons (list 'commands (list 'finished root 'finished '())) (remp (lambda (p) (eq? (car p) 'commands)) (view:options d))))) '())
             (let* ([buffer (window:show-widget! (head:popup) root)] [s (make-display root search buffer prior rows w w)])
               (set! current s)
@@ -79,5 +80,8 @@
     (search-control:init!)
     (widget:register! 'search-host 1
       (append (layout:container 'y) (list (cons 'actions (list (cons 'finished finish!))))))
-    (dispatch:register-input-root! route)
+    (dispatch:register-input-root! route
+      (lambda (ordinary)
+        (and (visible? current) (or (eq? (head:current-window) (head:popup)) (head:window-editor (head:current-window)))
+          (display-root current))))
     (head:add-pre-redraw-hook! refresh!)))

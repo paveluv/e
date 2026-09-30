@@ -213,6 +213,43 @@ provided an activation command; an obsolete result refuses.
 
 ## Forwarding and inspection
 
+`widget:inspect` takes a mounted root and a traversal limit (at most 256).
+It returns portable containment, source, command and port declarations plus
+acquired connections, with an explicit truncation flag. It reads local
+metadata without executing actions or fetching source payloads.
+
+`inspection:create! actor subject section-names` creates a base-owned,
+attachment-specific listing and returns its ID and named section sources.
+`inspection:publish!` accepts changed sections against the header revision
+only while demanded, with limits of 2048 rows and 256 KiB across all sections.
+Omitted or equal sections produce no notification. Inspect the subject,
+definition basis and section references through `model:snapshot`. A departing
+producer leaves the snapshot unavailable; reattaching cannot silently adopt it.
+
+`bindings:create! commands root` creates an unmounted inspector with explicit
+host commands and an inspected mounted root (or false for global keys).
+`bindings:inspect!` changes that subject. The composition lists mouse and
+keyboard bindings, full forwarding chains, widget commands, containment,
+sources, ports and connections. Its ordinary scroll viewport retains logical
+row anchors through reflow. `bindings:page!` pages up or down; pointer selection
+and `bindings:copy!` use stable row/field/character anchors at the shown basis.
+Selection belongs to each listing view. `bindings:show!` and `bindings:open!`
+provide the default window placement and active-window following.
+
+`bindings:capture-key! inspector` inserts a temporary modal child to collect
+a chord through the normal event pump. Its prefix is ordinary view state;
+completion removes and retires the child, then publishes the key's resolution,
+forwarding chain, origin and shadowed/contextual meanings. Escape and C-g
+cancel. `bindings:press! reader key` is the same explicit operation used by
+input dispatch; it never executes the inspected command. `bindings:key!`
+provides default placement for C-h k. The former `describe:key!` is removed.
+
+Live facts are acquired only while an inspector is mounted. Mouse changes
+publish only the mouse section, reusing cached keyboard traces. Hovering over
+the inspector itself freezes that section, so reading and scrolling do not
+replace the inspected subject. Layout reads acquired snapshots and performs
+no inspection RPC. Listings explicitly report unavailable or truncated data.
+
 `widget:invoke!` and `widget:act!` are exported syntax, with private runtime
 dispatchers. An `elibrary` registers their call sites while compiling its
 procedure definitions. Ordinary app and control commands remain procedures:
@@ -539,7 +576,8 @@ copied tree. An allocation or fork refuses if its resource owner disappears.
 
 After unmounting, `view:retire!` takes actor, view and expected model revision.
 It atomically removes the view from its parent, clears affected host focus and
-releases its child subtrees as unowned roots. Sources and command targets are
+releases borrowed child subtrees as unowned roots. Views scoped to the retired
+view's lifetime are retired too, including their scoped descendants. Sources and command targets are
 borrowed and survive. Use this operation for views; `model:retire!` handles
 ordinary model state. A resource-owning service may retire its scoped views
 when its request or session ends.
@@ -1184,3 +1222,60 @@ idempotent `release` procedure as the fifth/sixth arguments to
 `completion:make-source`. A changed basis refreshes visible choices and fences
 old selections even when the draft has not changed. Cleanup releases shared
 catalogue demand; painting reads only prepared completion data.
+
+## Prompt completion presentations
+
+`prompt:register-presentation! type factory` maps an exact edoc argument type
+to a module-owned head factory. Compound type data is matched exactly too;
+there is no inheritance or ranking between factories. Conflicting owners
+refuse registration. Unregistered types use the generic presentation, and
+reload/removal replaces the affected child through the normal widget lifetime.
+
+The factory receives `(request context commands)` and returns an unmounted
+view or composition. `context` contains the captured origin, prepared argument
+context and completion snapshot. The `select` target accepts the displayed
+generation and insertion text; `cancel` cancels the prompt. For example:
+
+```scheme
+(prompt:register-presentation! '(one-of red green blue)
+  (lambda (request context commands)
+    (prompt:create-choices! request commands 'table request)))
+```
+
+`prompt:create-choices!` supports `columns` and `table` using the same provider
+candidates. Its final argument is its lifetime owner: use the request for a
+standalone choice view or a containing view for a composed child. File,
+buffer and terminal-capture arguments have table presentations. Empty hint
+columns are omitted. Selecting a file inserts its literal; it does not open it.
+
+`prompt:completion-context request` reads prepared head data without querying
+the provider. A completion source may provide a sixth `context` callback to
+`completion:make-source`; it receives text and caret and returns an alist with
+an exact `type` and any explicit argument context its presentation needs.
+Factories do not perform matching. Normalization, generation fencing and
+literal insertion remain with the existing completion session. Typing within
+one type reuses its composition; painting makes no completion requests.
+
+A presentation may register a `complete` action taking `backwards?`. Returning
+true handles Tab; false allows ordinary normalization. The needle presentation
+uses this to navigate a private read-only editor through `search-control:`.
+Its query has no redundant input draft; the typed needle input carries text.
+First-hit annotations arrive before the optional cancellable count. Closing
+the prompt releases its views and search demand without restoring or modifying
+the original editor.
+
+Revision and conflict arguments use the same choice control beside a read-only
+editor. `change-preview:create!` creates a base query owned by the containing
+view; that view declares it in `owned`. Its `selection` input is false,
+`(revision number)` or `(conflict number)`, and its `annotations` output is a
+revision-bound batch containing at most one span. It borrows the document
+instead of copying text or creating a review draft. Selection and document
+version fence worker publication, including settlement that changes conflict
+state without changing text. Retiring the owner removes its query and views.
+
+Completion candidates may carry typed value context as their fifth argument.
+The session retains a selected literal after automatic closing parentheses,
+until input, caret or provider basis changes. A different current argument
+type takes precedence. This is data for presentation; it never evaluates a
+variable, nested call or candidate callback. Legacy edoc `search`/`preview`
+clauses and completion preview thunks are removed.

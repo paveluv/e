@@ -7,10 +7,10 @@
   (define other (store:create! actor "Other source" '("other")))
   (define other-editor (view:create! actor (list 'buffer other) 'editor 1 '() '((0 . 0) (0 . 0) (0 . 0) #f)))
   (define (request target document revision sequence start needle fold? visible)
-    (map cons '(target document basis sequence start needle fold? visible)
-      (list target document revision sequence start needle fold? visible)))
+    (map cons '(target document basis sequence start needle fold? visible direction summary? overlap?)
+      (list target document revision sequence start needle fold? visible 'next #f #t)))
   (define initial (request editor document 0 7 '(0 . 3) "aba" #f '(0 0 2 4)))
-  (define id (search-request:create! actor initial))
+  (define id (search-request:create! actor initial #t))
   (define demand (model:subscribe! (list id) void))
   (define (ready generation)
     (test:await 'search-result
@@ -43,6 +43,24 @@
     (check 'search-annotations-are-bounded-without-counting-all-matches
       (list (get r 'hit) (length (caddr (get r 'annotations))) (get r 'truncated?)) '((0 . 0) 513 #t)))
   (store:delete! actor other)
+  (let* ([preview (search-request:create! actor
+                    (map (lambda (p) (case (car p) [(direction) '(direction . previous)] [(summary?) '(summary? . #t)] [else p])) initial) #f)]
+         [token (model:subscribe! (list preview) void)])
+    (test:await 'search-summary
+      (lambda () (let ([r (get (get (model:snapshot preview) 'value) 'result)]) (and r (get r 'count)))))
+    (let* ([v (get (model:snapshot preview) 'value)] [r (get v 'result)])
+      (check 'backward-search-and-summary-share-overlap-and-rebase-rules-without-an-extra-draft
+        (list (get v 'draft) (get r 'hit) (get r 'ordinal) (get r 'count)) '(#f (1 . 2) 2 2)))
+    (search-request:configure! actor preview 0
+      (map (lambda (p) (if (eq? (car p) 'overlap?) '(overlap? . #f) p))
+        (get (get (model:snapshot preview) 'value) 'request)))
+    (test:await 'nonoverlapping-preview
+      (lambda () (let* ([v (get (model:snapshot preview) 'value)] [r (get v 'result)])
+                   (and (= (get v 'generation) 1) r (get r 'count)))))
+    (let ([r (get (get (model:snapshot preview) 'value) 'result)])
+      (check 'replacement-preview-count-and-navigation-use-nonoverlapping-occurrences
+        (list (get r 'hit) (get r 'ordinal) (get r 'count)) '((1 . 0) 1 1)))
+    (search-request:close! actor preview) (model:unsubscribe! token))
   (test:await 'search-unavailable (lambda () (eq? (get (ready 5) 'status) 'unavailable)))
   (search-request:close! actor id)
   (model:unsubscribe! demand)

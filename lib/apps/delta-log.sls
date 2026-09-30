@@ -4,13 +4,13 @@
   (export choose! choose-all! conflicts conflicts! create! filter! init! log open! resolve! settle! show!)
   (import (except (chezscheme) log) (prefix (foundation edoc) edoc:) (prefix (foundation string) string:) (prefix (foundation text) text:)
           (prefix (head edit) edit:) (prefix (head editor) editor:) (prefix (head head) head:) (prefix (head interaction) interaction:)
-          (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head paint) paint:)
+          (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head paint) paint:) (prefix (head prompt) prompt:)
           (prefix (head table) table:) (prefix (head widget) widget:) (prefix (head window) window:)
-          (prefix (service conflict-review) conflict-review:) (prefix (service conflict-source) conflict-source:)
+          (prefix (service change-preview) change-preview:) (prefix (service conflict-review) conflict-review:) (prefix (service conflict-source) conflict-source:)
           (prefix (service log) log:) (prefix (service review-preview) review-preview:)
           (prefix (service rewrite) rewrite:) (prefix (service rewrite-source) rewrite-source:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
-          (prefix (state store) store:) (prefix (state view) view:) (prefix (sys glyph) glyph:))
+          (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:) (prefix (sys glyph) glyph:))
   (define (get r k fallback) (cond [(and r (assq k r)) => cdr] [else fallback]))
   (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
   (define (query id) (view:source (interaction:snapshot id)))
@@ -24,30 +24,42 @@
     (let ([d (list-ref e 3)])
       (format "~s  ~a:~a  -~s  +~s" (cadr e) (caar d) (cadar d)
         (string:elide (string:join (cadr d) "\n") 24) (string:elide (string:join (caddr d) "\n") 24))))
-  ;; The remaining type-preview consumer moves with prompt presentations.
-  (define revision-mark #f)
-  (define (preview-revision! revision)
-    (let* ([b (head:current-buffer)] [id (head:buffer-store-id b)]
-           [entry (and id (store:revision-span id revision))])
-      (and entry (cadr entry)
-        (let ([point (head:point)] [mark (cons b (text:datum->span (cadr entry)))])
-          (set! revision-mark mark) (head:goto! (text:span-start (cdr mark)))
-          (lambda ()
-            (when (eq? revision-mark mark)
-              (set! revision-mark #f)
-              (when (memq b (head:buffers)) (head:with-buffer b (head:goto! point)))))))))
-  (define (revision-highlights)
-    (if (not revision-mark) '()
-      (let* ([b (car revision-mark)] [span (cdr revision-mark)] [start (text:span-start span)] [end (text:span-end span)])
-        (let loop ([row (car start)] [out '()])
-          (if (> row (car end)) (reverse out)
-            (loop (+ row 1) (cons (list b row (if (= row (car start)) (cdr start) 0)
-                                    (if (= row (car end)) (cdr end) (string-length (head:buffer-line b row))) 'match) out)))))))
+  (define (make-change-preview request context commands)
+    (let* ([argument (get context 'argument '())] [document (get argument 'document #f)])
+      (if (not document) (prompt:create-choices! request commands 'table request)
+        (let* ([root (view:create! head:ui-actor request 'change-preview 1 '() '(#f #f) request)]
+               [query (change-preview:create! head:ui-actor document root)]
+               [choices (prompt:create-choices! request commands 'table root)]
+               [editor (editor:create-view! head:ui-actor document '((read-only . #t)) root)]
+               [status (view:create! head:ui-actor query 'review-status 1 '() '() root)])
+          (view:arrange! head:ui-actor
+            (list (list root 0 (list (list 'choices choices 'fit) (list 'text editor '(grow 1)) (list 'status status 'fit))
+                    (list (cons 'query query) (cons 'type (get argument 'type #f)) (list 'owned query)))) '())
+          (connection:bind! head:ui-actor query (list (list query 'selection #f (list root 'selection))))
+          (connection:bind! head:ui-actor root (list (list editor 'annotations #f (list query 'annotations)))) root))))
+  (define (change-service! id frame)
+    (let* ([d (interaction:snapshot id)] [request (model:snapshot (view:source d))]
+           [argument (get (prompt:completion-context (view:source d)) 'argument '())]
+           [type (get (view:options d) 'type #f)]
+           [value (or (get argument 'value #f)
+                    (let ([token (get argument 'token #f)]) (and (get argument 'literal? #f) (string? token) (string->number token))))]
+           [selection (and (eq? type (get argument 'type #f)) (integer? value) (exact? value) (> value 0) (list type value))])
+      (when (and request (eq? (get (get request 'value '()) 'status #f) 'editing))
+        (unless (equal? selection (car (view:state d)))
+          (interaction:set-state! head:ui-actor id #f (list selection #f)))
+        (let* ([record (model:snapshot (get (view:options d) 'query #f))] [v (get record 'value '())]
+               [basis (get v 'basis #f)] [annotations (get v 'annotations '())] [editor (child id 'text)])
+          (when (and selection basis (equal? selection (cadar basis)) (eq? (get v 'status #f) 'ready)
+                  (pair? annotations) (= (cadr annotations) (caddr (editor:basis editor)))
+                  (not (equal? basis (cadr (view:state (interaction:snapshot id))))))
+            (let ([span (caaddr annotations)])
+              (when span (editor:move! editor (cons (caar span) (cadar span)))))
+            (interaction:set-state! head:ui-actor id #f (list selection basis)))))))
 
   (edoc-type revision "a retained revision of the current document"
     (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
     (complete (lambda (partial) (guard (ex [else '()]) (map (lambda (e) (cons (car e) (hint e))) (store:log (current-document))))))
-    (write number->string) (preview preview-revision!))
+    (write number->string))
   (edoc-type batch "the batch label of edits made together in the current document"
     (predicate pair?)
     (complete (lambda (partial)
@@ -237,5 +249,9 @@
     (keymap:bind-default! 'delta-review "ESC" (keymap:call widget:invoke! widget:target 'return))
     (keymap:bind-default! "C-x l" (keymap:call open! 0))
     (keymap:bind-default! "C-x !" (keymap:call conflicts! 0))
-    (paint:add-highlighter! revision-highlights)
+    (for-each (lambda (type) (prompt:register-presentation! type make-change-preview)) '(revision conflict))
+    (widget:register! 'change-preview 1
+      (append (remp (lambda (p) (eq? (car p) 'measure)) (layout:container 'y))
+        (list (cons 'service change-service!)
+          (cons 'measure (lambda (data d axis cross child) (if (eq? axis 'y) '(0 7) '(0 1)))))))
     (paint:set-conflicts-action! (lambda () (conflicts! 0)))))

@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head dispatch)
-  (export cancel! global-key! input! (rename (handle-key! key!)) pending? register-input-root! resolve! set-prompt-opener!)
+  (export cancel! global-key! input! input-root (rename (handle-key! key!)) pending? register-input-root! resolve! set-prompt-opener!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head echo) echo:)
@@ -28,13 +28,20 @@
   (define input-roots (kernel:make-registry))
 
   (edoc "Register an outer host's temporary keyboard receiver. Called at input boundaries with the ordinary root and normalized event; return a mounted replacement root or false. The receiver uses ordinary widget routing, and unclaimed keys retain global host bindings."
-        (resolve procedure "(ordinary-root event) -> root or false"))
-  (define (register-input-root! resolve)
-    (unless (procedure? resolve) (error 'register-input-root! "expected a receiver resolver"))
-    (kernel:registry-add! input-roots resolve))
+        (resolve procedure "(ordinary-root event) -> root or false")
+        (inspect procedure "pure ordinary-root -> root or false, for binding inspection"))
+  (define (register-input-root! resolve inspect)
+    (unless (and (procedure? resolve) (procedure? inspect)) (error 'register-input-root! "expected routing and inspection procedures"))
+    (kernel:registry-add! input-roots (cons resolve inspect)))
   (define (input-root! event)
     (let ([ordinary (head:window-widget (head:current-window))])
-      (or (exists (lambda (resolve) (resolve ordinary event)) (kernel:registry-items input-roots)) ordinary)))
+      (or (exists (lambda (entry) ((car entry) ordinary event)) (kernel:registry-items input-roots)) ordinary)))
+
+  (edoc "Inspect the active temporary keyboard root without dispatching an event, accepting an interaction or retargeting it."
+        (returns (or model #f)) (effects internal))
+  (define (input-root)
+    (let ([ordinary (head:window-widget (head:current-window))])
+      (or (exists (lambda (entry) ((cdr entry) ordinary)) (kernel:registry-items input-roots)) ordinary)))
 
   (edoc "Install the procedure that opens M-x with a call begun: (open name arguments), the command's top-level name and the arguments already given; a key bound with keymap:prefill calls it."
         (open procedure "(open name arguments)"))

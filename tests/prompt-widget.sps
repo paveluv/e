@@ -136,6 +136,48 @@
       (kernel:retract-module! 'prompt-completion-fixture) (widget:pump!) (prompt:drain!)
       (check 'completion-provider-removal-cancels-owned-request (model:snapshot request) #f)
       (widget:unmount! root)))
+  (let ([builds 0] [type '(one-of alpha beta)])
+    (define (factory request context commands)
+      (set! builds (+ builds 1))
+      (let* ([root (view:create! who #f 'column 1 '() '() request)]
+             [body (prompt:create-choices! request commands 'table root)])
+        (view:arrange! who (list (list root 0 (list (list 'body body 'fit)) '())) '()) root))
+    (parameterize ([kernel:registering-module 'completion-type-fixture])
+      (prompt:register-presentation! type factory)
+      (completion:register! 'typed-fixture 1
+        (lambda (config origin)
+          (completion:make-source
+            (lambda (text caret) (values 0 (string-length text) '("alpha") '("alpha" "beta")))
+            #f "choice" (lambda () #f) void
+            (lambda (text caret) (list (cons 'type (if (string=? text "other") '(one-of alpha gamma) type))))))))
+    (check 'exact-completion-type-claims-conflict-across-module-owners
+      (test:raises? (lambda () (parameterize ([kernel:registering-module 'completion-type-conflict]) (prompt:register-presentation! type factory)))) #t)
+    (let* ([request (prompt-request:create! who #f #f "a" '(typed-origin) '(typed-fixture 1 ()))]
+           [root (prompt:create! request '() '())])
+      (define (show!) (widget:pump!) (widget:present! (list (list (widget:prepare! root 36 6) 0 0))))
+      (define (choice) (widget:descendant root 'choices 'presentation))
+      (widget:mount! root 'typed-completion) (show!)
+      (let ([entry (widget:descendant root 'input 'entry)] [first (choice)] [body (widget:descendant (choice) 'body)])
+        (prompt:complete! root #f) (prompt:complete! root #f) (show!)
+        (check 'exact-compound-type-chooses-a-table-over-the-same-provider
+          (list builds (field (view:options (interaction:snapshot body)) 'layout)
+            (list-ref (field (prompt:completion-context request) 'snapshot) 3)) '(1 table ("alpha" "beta")))
+        (entry:set-text! entry "a2") (show!)
+        (check 'typing-within-one-type-keeps-its-composition (list builds (equal? first (choice))) '(1 #t))
+        (entry:set-text! entry "other")
+        (test:await 'completion-type-replacement (lambda () (show!) (not (equal? first (choice)))))
+        (check 'unregistered-compound-type-falls-back-and-retires-old-views
+          (list (field (view:options (interaction:snapshot (choice))) 'layout) (map model:snapshot (list first body))) '(columns (#f #f)))
+        (entry:set-text! entry "a")
+        (test:await 'completion-type-restored (lambda () (show!) (eq? (view:kind (interaction:snapshot (choice))) 'column)))
+        (entry:set-text! entry "other") (prompt:accept! root)
+        (let ([generation (view:generation (interaction:snapshot root))] [shown (choice)])
+          (show!)
+          (check 'accepted-prompt-cannot-renew-the-queued-outcomes-lease
+            (list (= generation (view:generation (interaction:snapshot root))) (equal? shown (choice))) '(#t #t)))
+        (kernel:retract-module! 'completion-type-fixture) (show!) (prompt:drain!)
+        (check 'completion-type-provider-removal-releases-the-request (model:snapshot request) #f))
+      (widget:unmount! root)))
   (for-each
     (lambda (reason)
       (let* ([request (new "late" '(late-origin))] [before outcomes]

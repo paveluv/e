@@ -1,303 +1,113 @@
 #!/usr/bin/env scheme-script
-
-;; The bindings inspector: C-x TAB shows the active window's keys in the pop-up as
-;; the read-only buffer <bindings>, the app's declared keys first, then its mode
-;; contexts' bindings, then the global ones, keys running one command
-;; sharing a row, descriptions wrapped, titles bold; again pages down and
-;; wraps to the top; the listing follows the active window; the pop-up is
-;; selectable and read-only while shown and gives focus back when hidden.
-;; Headless, the editor's key table installed.
-
+;; Binding facts, per-view fitting and demand share one compact fixture.
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-
 (eval
   '(begin
-     (import (prefix (test) test:)
-             (rename (head edit) (init! edit-init!))
-             (head literal)
-             (prefix (apps bindings) bindings:)
-             (prefix (foundation string) string:)
-             (prefix (head head) head:)
-             (prefix (head keymap) keymap:)
-             (prefix (head mode) mode:)
-             (prefix (head mouse) mouse:)
-             (prefix (head paint) paint:)
-             (prefix (head prompt) prompt:)
-             (prefix (head window) window:)
+     (import (prefix (test) test:) (prefix (apps bindings) bindings:)
+             (prefix (head binding-list) listing:)
+             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head keymap) keymap:)
+             (prefix (head widget) widget:) (prefix (head window) window:) (prefix (head interaction) interaction:)
+             (prefix (head mouse) mouse:) (prefix (head paint) paint:) (prefix (head dispatch) dispatch:)
+             (prefix (foundation string) string:) (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state actor) actor:))
-
      (define check test:check)
-     (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
-     (edit-init!)
-     (prompt:init!)
-     (bindings:init!)
-     ;; a listing an older checkpoint brought back as a plain local buffer
-     (define stale (head:new-local-buffer! "bindings"))
-     (head:add-buffer! stale)
-     (define popup (head:popup))
-     (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
-     (define (view) (head:buffer-named "<bindings>"))
-     (define (lines) (vector->list (head:buffer-lines (view))))
-     (define (index-of part) (let loop ([ls (lines)] [i 0]) (cond [(null? ls) #f] [(contains? (car ls) part) i] [else (loop (cdr ls) (+ i 1))])))
-     (define (line-at i) (list-ref (lines) i))
-     (define (heading-or-key? line) (or (not (char=? (string-ref line 0) #\space)) (not (char=? (string-ref line 2) #\space))))
-     (define w1 (head:current-window))
-     (define b (head:new-buffer! "keyed"))
-     (head:show-buffer! b)
-     (mode:register! "keys-test" '() '() (lambda (line) #f))
-     (head:with-buffer b (mode:choose! "keys-test"))
-     (keymap:bind-default! 'keys-test "M-q" kill-line!)
-     (keymap:bind-default! 'keys-test "M-w" kill-line!)
-     (keymap:bind-default! 'keys-test "M-z" (lambda () #f))
-     (keymap:bind-default! 'keys-test "RET" beginning-of-line!)
-     (keymap:bind-default! 'keys-test "C-k" end-of-line!)
-
-     (check 'c-x-tab-and-c-x-s-tab-are-bound-to-the-helper
-       (list (eq? (keymap:binding "C-x TAB") bindings:show!) (eq? (keymap:binding "C-x S-TAB") bindings:page-up!)) '(#t #t))
-     (check 'prompt-keys-name-the-composition-commands
-       (map (lambda (key) (keymap:call-action-procedure (bound-to 'widget-prompt key))) '("RET" "C-g" "TAB"))
-       (list prompt:accept! prompt:cancel! prompt:complete!))
-     (bindings:show!)
-     (paint:window-layout) ; tiled, the pop-up has its geometry for the painter's clamp below
-     (head:before-frame!)
-     (check 'a-stale-listing-is-dropped-and-the-fresh-one-is-named-plainly-and-kept-out-of-checkpoints
-       (list (memq stale (head:buffers)) (head:buffer-name (view)) (head:buffer-fact (view) 'resume-kind #f)
-             (head:window-scrollbar? (head:popup)) (string:prefix? "page 1 of " (head:buffer-status (view) popup))
-             ;; the bar names no key: the listing is the reference
-             (not (string:search (head:buffer-status (view) popup) "C-x" 0 (string-length (head:buffer-status (view) popup))))
-             (begin (head:checkpoint!)
-                    (exists (lambda (entry) (let ([r (car entry)]) (and (pair? r) (eq? (car r) 'local) (equal? (cadr r) "<bindings>"))))
-                            (list-ref (actor:checkpoint head:ui-actor) 4))))
-       '(#f "<bindings>" bindings right #t #t #f))
-     (check 'the-listing-is-a-read-only-bindings-buffer-in-the-pop-up-with-the-mode-section-first
-       (let ([at (index-of "M-q")])
-         (list (head:buffer-name (view)) (head:buffer-read-only (view)) (mode:name-of (view)) (> (head:popup-rows) 0)
-               (index-of "keys-test keys") (< 0 at (index-of "Global keys"))
-               (contains? (line-at at) "kill-line!") (contains? (line-at at) "Kill from point")))
-       (list "<bindings>" #t "bindings" #t 0 #t #t #t))
-     (check 'a-long-description-wraps-in-its-column-and-keys-running-one-command-share-the-row
-       (let ([at (index-of "M-q")])
-         ;; the wrapped description runs on below the first line, however narrow the column
-         (list (contains? (line-at (+ at 1)) "M-w") (not (contains? (line-at (+ at 1)) "kill-line!"))
-               (exists (lambda (i) (contains? (line-at i) "accumulate")) (map (lambda (k) (+ at k)) (iota 8)))
-               (char=? (string-ref (line-at (+ at 1)) 0) #\space)))
-       '(#t #t #t #t))
-     (check 'the-keys-of-a-group-are-joined-by-a-line-in-the-margin
-       (let* ([at (index-of "M-q")] [styles (mode:line-styles (mode:of (view)))])
-         (list (substring (line-at at) 0 2) (substring (line-at (+ at 1)) 0 2) (vector-ref (styles (line-at at)) 1)
-               (substring (line-at (index-of "RET")) 0 2)))
-       '(" ╷" " ╵" chrome "  "))
-     (check 'a-global-key-the-mode-takes-is-left-out-of-the-global-section
-       (let ([global (index-of "Global keys")])
-         (list (and (index-of "C-k") (< (index-of "C-k") global))
-               (exists (lambda (l) (contains? l "  C-k ")) (list-tail (lines) global))
-               (exists (lambda (l) (contains? l "  C-_ ")) (list-tail (lines) global))))
-       '(#t #f #t))
-     (check 'a-row-with-a-short-description-takes-one-line
-       (let ([at (index-of "RET")]) (list (contains? (line-at at) "beginning-of-line!") (heading-or-key? (line-at (+ at 1)))))
-       '(#t #t))
-     (check 'a-key-bound-to-a-lambda-shows-as-the-anonymous-command-it-is
-       (let ([at (index-of "M-z")]) (and at (contains? (line-at at) "anonymous command"))) #t)
-     (check 'typing-lists-as-any-character-running-type-with-the-typed-text
-       (let ([at (index-of "any character")])
-         (and at (list (contains? (line-at at) "type!") (contains? (line-at at) "(head:typed-text)") (contains? (line-at at) "Type text"))))
-       '(#t #t #t))
-     (check 'a-call-with-a-constant-argument-reads-as-the-call
-       (let ([text (keymap:action-text (keymap:call beginning-of-line! 3))])
-         (list (contains? text "beginning-of-line!") (string:suffix? " 3)" text)))
-       '(#t #t))
+     (define (get r k) (cdr (assq k r)))
+     (define (contains? s needle) (and (string:search s needle 0 (string-length s)) #t))
+     (define (text rows) (string:join (map (lambda (r) (format "~s" r)) rows) "\n"))
+     (widget:init!) (edit:init!) (window:init!) (bindings:init!)
+     (keymap:bind-default! 'inspection-test "M-q" edit:kill-line!)
+     (keymap:bind-default! 'inspection-test "M-w" edit:kill-line!)
+     (keymap:bind-default! 'inspection-test "C-k" edit:end-of-line!)
+     (keymap:bind-default! 'inspection-test "M-z" (lambda () #f))
+     (let* ([capture (listing:capture (listing:basis #f '(inspection-test global) #f '()) '())]
+            [rows (car capture)] [s (text rows)]
+            [readonly (car (listing:capture (listing:basis #f '(inspection-test global) #t '()) '()))])
+       (check 'binding-facts-group-keys-and-retain-anonymous-and-named-actions
+         (list (cadar rows) (contains? s "anonymous command")
+           (exists (lambda (r) (and (member "M-q" (caddr r)) (member "M-w" (caddr r)) #t)) rows)
+           (exists (lambda (r) (and (member "C-k" (caddr r)) (contains? (cadddr r) "end-of-line!"))) rows)
+           (contains? (text readonly) "kill-line!") (cadr capture)) '("Mouse bindings" #t #t #t #f #f))
+       (check 'fitting-preserves-logical-anchors-across-widths
+         (let* ([wide (listing:fit rows 220)] [narrow (listing:fit rows 60)]
+                [anchor (listing:anchor wide 5)] [at (listing:locate narrow anchor)])
+           (list (> (vector-length narrow) (vector-length wide))
+             (equal? (car anchor) (car (listing:anchor narrow at))))) '(#t #t)))
      (let* ([calls 0] [producer (lambda () (set! calls (+ calls 1)) 2)]
             [action (keymap:call list (keymap:call + producer 3) '(a b))]
-            [text (keymap:action-text action (list (cons producer 2)))])
-       (check 'nested-calls-describe-without-running-and-evaluate-as-shown
-         (list calls (keymap:run! action) calls (eval (read (open-input-string text))))
+            [s (keymap:action-text action (list (cons producer 2)))])
+       (check 'tracing-never-runs-producers-and-spelled-calls-run-in-eval
+         (list (begin (keymap:action-trace action) calls) (keymap:run! action) calls (eval (read (open-input-string s))))
          '(0 (5 (a b)) 1 (5 (a b)))))
-     (check 'section-titles-are-bold-and-rows-plain
-       (let ([styles (mode:line-styles (mode:of (view)))])
-         (list (vector-ref (styles (line-at 0)) 0) (vector-ref (styles (line-at 1)) 0)))
-       '(bold plain))
-     (check 'the-whole-listing-is-in-the-buffer (> (length (lines)) (head:popup-rows)) #t)
-
-     ;; a narrower terminal lays the listing out again for the new width
-     ;; before the frame paints, the pane's place kept
-     (define wide (length (lines)))
-     (paint:set-screen-cols! 60)
-     (paint:window-layout)
-     (head:before-frame!)
-     (check 'a-resize-lays-the-listing-out-again-for-the-new-width
-       (list (for-all (lambda (l) (< (string-length l) (head:window-content-width popup))) (lines)) (> (length (lines)) wide))
-       '(#t #t))
-     (paint:set-screen-cols! 80)
-     (paint:window-layout)
-     (head:before-frame!)
-     (check 'and-back-again-when-it-widens (length (lines)) wide)
-
-     ;; C-x TAB pages the pop-up down from anywhere, back to the top past the end
-     (define size (head:popup-rows))
-     (define (page-of)
-       (let* ([s (head:buffer-status (view) popup)] [from (+ 5 (string:search s "page " 0 (string-length s)))])
-         (substring s from (string-length s))))
-     (define pages (string->number (list-ref (let loop ([s (page-of)] [out '()]) (cond [(string:search s " " 0 (string-length s)) => (lambda (i) (loop (substring s (+ i 1) (string-length s)) (cons (substring s 0 i) out)))] [else (reverse (cons s out))])) 2)))
-     (check 'the-bar-counts-the-pages-of-the-listing (list (> pages 1) (page-of)) (list #t (format "1 of ~a" pages)))
-     ;; the painter's clamp keeps point a margin from the edges: paging must
-     ;; leave the top where it put it once a frame has clamped
-     (define (clamp!) (paint:scroll-window! popup (head:popup-rows)))
-     (bindings:page-up!) (clamp!)
-     (check 'c-x-s-tab-at-the-top-shows-the-last-page (page-of) (format "~a of ~a" pages pages))
-     (bindings:show!) (clamp!)
-     (check 'and-c-x-tab-then-shows-the-first (page-of) (format "1 of ~a" pages))
-     (bindings:show!) (clamp!)
-     (check 'the-next-page-down-is-the-second (list (page-of) (head:window-top popup)) (list (format "2 of ~a" pages) size))
-     (bindings:show!) (clamp!)
-     (check 'and-the-one-after-is-the-third (page-of) (format "3 of ~a" pages))
-     (bindings:page-up!) (clamp!)
-     (bindings:page-up!) ; back to the top
-     (bindings:page-up!)
-     (check 'c-x-s-tab-at-the-top-goes-to-the-last-page
-       (list (> (head:window-top popup) 0) (= 0 (mod (head:window-top popup) size))) '(#t #t))
-     (bindings:show!)
-     (check 'and-c-x-tab-past-the-end-returns-to-the-top (head:window-top popup) 0)
-     (bindings:show!)
-     (check 'c-x-tab-again-pages-the-listing-down (list (head:window-top popup) (eq? (head:current-window) w1)) (list size #t))
-     (let loop ([n 0]) (when (and (> (head:window-top popup) 0) (< n (+ 2 (quotient (length (lines)) size)))) (bindings:show!) (loop (+ n 1))))
-     (check 'past-the-end-it-returns-to-the-top (head:window-top popup) 0)
-
-     ;; where the text is read-only the editing commands are left out
-     (head:buffer-read-only-set! b #t)
-     (head:show-buffer! b)
-     (head:before-frame!)
-     (check 'a-read-only-buffer-lists-no-editing-command
-       (let ([global (list-tail (lines) (index-of "Global keys"))])
-         (list (exists (lambda (l) (contains? l "  C-_ ")) global) (exists (lambda (l) (contains? l "kill-line!")) global)
-               (exists (lambda (l) (contains? l "beginning-of-buffer!")) global)))
-       '(#f #f #t))
-     (head:buffer-read-only-set! b #f)
-
-     ;; the listing follows the active window
-     (define other (head:new-buffer! "other"))
-     (mode:register! "keys-other" '() '() (lambda (line) #f))
-     (head:with-buffer other (mode:choose! "keys-other"))
-     (keymap:bind-default! 'keys-other "F9" kill-line!)
-     (head:show-buffer! other)
-     (head:before-frame!)
-     (check 'the-listing-follows-the-active-window (list (line-at 0) (contains? (line-at 1) "F9")) '("keys-other keys" #t))
-     ;; the shown pop-up is selectable, read-only, and gives focus back when hidden
-     (check 'the-shown-pop-up-can-be-selected-and-is-read-only
-       (list (window:focus! popup) (eq? (head:current-window) popup) (guard (ex [else 'refused]) (insert-text! "x"))
-             (eq? (window:focus-next!) w1) (begin (window:focus! popup) (eq? (head:current-window) popup)))
-       (list #t #t 'refused #t #t))
-     (bindings:hide!)
-     (head:before-frame!)
-     (check 'hiding-gives-focus-back-and-drops-the-view
-       (list (head:popup-rows) (head:buffer-name (head:window-buffer popup)) (head:buffer-named "<bindings>") (eq? (head:current-window) w1))
-       '(0 "<pop-up>" #f #t))
-     (check 'the-hidden-pop-up-is-not-selectable (list (window:focus! popup) (eq? (head:current-window) w1)) '(#f #t))
-     (bindings:show!)
-     (window:clear-pop-up!)
-     (head:before-frame!)
-     (check 'clearing-the-pop-up-drops-the-view-too (list (head:popup-rows) (head:buffer-named "<bindings>")) '(0 #f))
-
-     ;; the listing opens in an ordinary window too, for the buffer shown there,
-     ;; C-x TAB pages it there, and hiding takes it away
-     (window:focus! w1)
-     (head:show-buffer! b)
-     (bindings:open!)
-     (paint:window-layout) ; tiled, the window reports its width
-     (check 'the-listing-opens-in-the-current-window-for-its-buffer
-       (list (head:buffer-name (head:current-buffer)) (head:buffer-line (head:current-buffer) 0) (head:popup-rows) (head:window-top w1)
-             ;; every line fits the window that shows it
-             (for-all (lambda (l) (< (string-length l) (head:window-content-width w1))) (vector->list (head:buffer-lines (head:current-buffer)))))
-       '("<bindings>" "keys-test keys" 0 0 #t))
-     (bindings:show!)
-     (check 'c-x-tab-pages-the-listing-in-its-window (list (> (head:window-top w1) 0) (head:popup-rows)) '(#t 0))
-     (bindings:hide!)
-     (check 'hiding-takes-the-listing-out-of-the-window
-       (list (head:buffer-named "<bindings>") (head:buffer-name (head:window-buffer w1))) '(#f "keyed"))
-     ;; ESC and C-g in the listing return the window to what it showed: the
-     ;; pop-up over a buffer shows that buffer again, over nothing it hides
-     (head:set-window-buffer! (head:popup) b)
-     (head:show-popup! (head:popup-default-rows))
-     (window:focus! (head:popup))
-     (bindings:show!)
-     (check 'help-from-a-focused-pop-up-keeps-its-content-and-focus
-       (list (head:buffer-name (head:current-buffer)) (eq? (head:current-window) popup)
-         (and (find (lambda (w) (eq? (head:window-buffer w) (view))) (head:windows)) #t))
-       '("keyed" #t #t))
-     (bindings:hide!)
-     (window:clear-pop-up!)
-     (window:focus! w1)
-     (bindings:show!)
-     (check 'esc-in-the-listing-over-nothing-hides-the-pop-up
-       (begin (window:focus! (head:popup)) (bindings:return!) (list (head:popup-rows) (head:buffer-named "<bindings>"))) '(0 #f))
-     (window:focus! w1)
-
-     ;; any buffer may carry its own status text, with the window when the
-     ;; provider takes it, and taken away with #f
-     (check 'a-buffer-carries-its-own-status-text-for-the-window-painted
-       (let ([w1 (head:current-window)])
-         (list (begin (head:set-buffer-status! b (lambda (b w) (format "w~a" (head:window-index w)))) (head:buffer-status b w1))
-               (begin (head:set-buffer-status! b head:buffer-name) (head:buffer-status b w1))
-               (begin (head:set-buffer-status! b #f) (head:buffer-status b w1))))
-       (list (format "w~a" (head:window-index (head:current-window))) "keyed" #f))
-
-     ;; the long key names show short and bind under either spelling
-     (check 'long-key-names-show-short
-       (list (keymap:sequence-text (keymap:spec "M-BACKSPACE")) (keymap:sequence-text (keymap:spec "BS")) (keymap:spec "BS")
-             (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP") (keymap:sequence-text (keymap:spec "DELETE"))
-             (keymap:sequence-text (keymap:spec "C-M-SPC")) (keymap:sequence-text (keymap:spec "SPC")))
-       '("M-BS" "BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC" "SPC"))
-     ;; an app in the pop-up, the user in it: C-x TAB lists that app's keys,
-     ;; not the keys of the window selected before, and keeps listing them
-     ;; while the pop-up stays current
-     (let ([k (head:buffer-named "<bindings>")]) (when k (kill-buffer! k)))
-     (window:delete-others!)
-     (define app (head:new-local-buffer! "popped app"))
-     (head:with-buffer app (mode:choose! "keys-test"))
-     (head:set-window-buffer! popup app)
-     (head:show-popup! 8)
-     (head:set-current! popup)
-     (bindings:show!)
-     (head:before-frame!)
-     (check 'c-x-tab-in-the-pop-up-lists-the-pop-ups-apps-keys
-       (list (eq? (head:window-buffer popup) app) (index-of "keys-test keys") (< 0 (index-of "Global keys")) (eq? (head:current-window) popup))
-       '(#t 0 #t #t))
-     (head:set-current! w1)
-
-     ;; Reading help must not replace it with its own mouse bindings. Exercise
-     ;; the same behavior in the pop-up and an ordinary split, including the
-     ;; physical pointer retained after keyboard input clears hover emphasis.
-     (bindings:hide!)
-     (define (viewport w) (cons (head:window-top w) (head:window-topseg w)))
-     (for-each
-       (lambda (placement)
-         (window:focus! w1) (head:show-buffer! b)
-         (when (eq? placement 'split) (window:focus! (window:split-right!)))
-         (if (eq? placement 'split) (bindings:open!) (bindings:show!))
-         (let ([w (if (eq? placement 'split) (head:current-window) popup)])
-           (window:focus! w1) (paint:window-layout)
-           (head:set-mouse-position! '(2 . 2)) (head:before-frame!)
-           (bindings:show!) ; read past the mouse section
-           (let* ([help (head:window-buffer w)] [saved (head:buffer-lines help)]
-                  [start (cadr (assq w (head:layout)))] [x (+ 3 (head:window-xoff w))] [y (+ 2 start)]
-                  [top (viewport w)])
-             (head:set-mouse-position! (cons x y)) (head:before-frame!)
-             (let ([still? (and (eq? saved (head:buffer-lines help)) (equal? top (viewport w)))])
-               (mouse:scroll! x y 'down) (head:before-frame!)
-               (let ([scrolled (viewport w)])
-                 (head:set-mouse-position! #f) (head:before-frame!)
-                 (head:set-mouse-position! (cons x (+ start (head:window-size w) 1))) (head:before-frame!)
-                 (check (list 'help-hover-and-wheel-keep-listing placement)
-                   (list still? (or (> (car scrolled) (car top)) (and (= (car scrolled) (car top)) (> (cdr scrolled) (cdr top)))) (equal? scrolled (viewport w))
-                     (eq? saved (head:buffer-lines help)) (eq? w1 (head:current-window))) '(#t #t #t #t #t))
-                 (head:set-mouse-position! '(3 . 2)) (head:before-frame!)
-                 (check (list 'leaving-help-resumes-inspection-without-scrolling placement)
-                   (list (not (eq? saved (head:buffer-lines help))) (equal? scrolled (viewport w))) '(#t #t))
-                 (head:show-buffer! other) (head:before-frame!)
-                 (check (list 'new-keyboard-subject-starts-at-top placement) (viewport w) '(0 . 0)))))
-           (bindings:hide!)
-           (when (eq? placement 'split) (window:focus! w) (window:delete!))))
-       '(popup split))
-
+     (check 'long-key-names-share-the-canonical-spelling
+       (list (keymap:sequence-text (keymap:spec "M-BACKSPACE")) (keymap:spec "BS")
+         (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP")
+         (keymap:sequence-text (keymap:spec "DELETE")) (keymap:sequence-text (keymap:spec "C-M-SPC")))
+       '("M-BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC"))
+     (define source (head:window-widget (head:current-window)))
+     (define a (bindings:create! '() source))
+     (define query (view:source (view:snapshot a)))
+     (define root (view:create! head:ui-actor #f 'row 1 '() '()))
+     (define b (view:fork! head:ui-actor a))
+     (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 3))) '())) '())
+     (define (pump!)
+       (widget:pump!) (widget:present! (list (list (widget:prepare! root 240 12) 0 0))))
+     (widget:mount! root 'bindings-fixture)
+     (test:await 'inspection-ready
+       (lambda () (pump!) (eq? 'ready (get (get (model:snapshot query) 'value) 'status))))
+     (define (viewport id) (widget:descendant id 'viewport))
+     (define (anchor id) (view:state (interaction:snapshot (viewport id))))
+     (check 'inspection-is-a-shared-base-snapshot-with-independent-viewports
+       (let* ([ra (widget:prepared (widget:descendant a 'viewport 'content 'listing))]
+              [rb (widget:prepared (widget:descendant b 'viewport 'content 'listing))])
+         (list (equal? query (view:source (interaction:snapshot b)))
+           (< (caddr (widget:frame-rect ra)) (caddr (widget:frame-rect rb)))
+           (contains? (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)) "Composition"))) '(#t #t #t))
+     (let* ([leaf (widget:descendant a 'viewport 'content 'listing)] [d (interaction:snapshot leaf)]
+            [r (model:snapshot (view:source d))] [heading (car (get r 'value))] [label (cadr heading)]
+            [start (list (car heading) 0 0)] [end (list (car heading) 0 (string-length label))])
+       (bindings:select! leaf end start (get r 'revision))
+       (widget:prepare! root 80 12) (bindings:copy! leaf)
+       (check 'copy-and-selection-survive-reflow-without-changing-the-fork
+         (list (edit:copy-text) (view:state (interaction:snapshot (widget:descendant b 'viewport 'content 'listing)))) (list label '()))
+       (pump!))
+     (bindings:page! a 'down) (pump!)
+     (check 'paging-moves-only-the-selected-inspection-viewport (list (and (anchor a) #t) (anchor b)) '(#t #f))
+     (let ([before (model:revision query)] [at (anchor a)])
+       (head:set-mouse-position! '(10 . 3)) (pump!)
+       (widget:pointer! '(scroll 0 2 lines) 10 3) (pump!)
+       (check 'self-hover-and-wheel-preserve-subject-and-do-not-republish
+         (list (= before (model:revision query)) (not (equal? at (anchor a)))) '(#t #t)))
+     (for-each (lambda (size) (widget:prepare! root (car size) (cadr size))) '((0 0) (1 1) (5 2)))
+     (define executed 0)
+     (keymap:bind-default! 'global "C-c F11" (lambda () (set! executed (+ executed 1))))
+     (pump!) (bindings:capture-key! a) (pump!)
+     (dispatch:input! root '(key "C-c" #f)) (pump!)
+     (check 'key-inspector-keeps-a-prefix-in-ordinary-view-state
+       (view:state (interaction:snapshot (widget:descendant a 'reader))) '("C-c"))
+     (dispatch:input! root '(key "F11" #f)) (pump!)
+     (let ([rows (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)])
+       (check 'key-inspector-reports-resolution-without-executing-it
+         (list executed (not (assq 'reader (view:children (interaction:snapshot a))))
+           (contains? (text rows) "C-c F11") (contains? (text rows) "Resolved in global")) '(0 #t #t #t)))
+     (bindings:capture-key! a) (pump!) (dispatch:input! root '(key "C-g" #f)) (pump!)
+     (check 'key-capture-cancel-removes-only-the-reader
+       (list executed (not (assq 'reader (view:children (interaction:snapshot a))))) '(0 #t))
+     (widget:unmount! root)
+     (let ([before (model:revision query)])
+       (keymap:bind-default! 'inspection-test "F12" edit:kill-line!) (head:before-frame!)
+       (check 'hidden-inspectors-release-demand-and-do-not-publish
+         (list (model:demanded? query) (= before (model:revision query))) '(#f #t)))
+     ;; The default host has only placement policy; its data is the same model.
+     (head:set-mouse-position! #f)
+     (define shown (bindings:show!))
+     (paint:window-layout) (head:before-frame!)
+     (check 'default-placement-shows-a-widget-without-a-local-listing-copy
+       (list (equal? shown (head:window-widget (head:popup)))
+         (head:buffer-name (head:window-buffer (head:popup)))
+         (vector-length (head:buffer-lines (head:window-buffer (head:popup))))) '(#t "<bindings>" 1))
+     (keymap:run! (keymap:call widget:invoke! (widget:descendant shown 'app) 'return)) (head:before-frame!)
+     (check 'default-return-restores-an-empty-popup (head:popup-rows) 0)
+     (include "tests/inspection.sps")
      (test:finish! 'bindings)))

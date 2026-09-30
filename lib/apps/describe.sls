@@ -6,7 +6,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps describe)
   (export (rename (describe-at-point! at-point!)) fetch-data! init! (rename (describe-input! input!))
-          (rename (describe-key! key!)) (rename (describe! show!)) (rename (describe this)))
+          (rename (describe! show!)) (rename (describe this)))
   (import (chezscheme)
           (prefix (apps markdown) markdown:)
           (prefix (core kernel) kernel:)
@@ -17,7 +17,6 @@
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head mode) mode:)
-          (prefix (head paint) paint:)
           (prefix (head style) style:)
           (prefix (head widget) widget:)
           (prefix (head window) window:)
@@ -167,83 +166,7 @@
       (when (> end start)
         (describe! (string->symbol (substring text start end))))))
 
-  ;;; Describing a key ---------------------------------------------------------------
-
-  (define (binding-origin owned)
-    (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
-      (cond [(eq? owner 'config) "config.e (user override)"]
-            [owner (format "module ~a (~a)" owner kind)]
-            [(eq? kind 'default) "built-in default"]
-            [else "current session (user override)"])))
-
-  (define (read-described-sequence)
-    (let loop ([sequence (list (head:read-key-event #f))])
-      (if (keymap:binding-prefix? 'global sequence)
-          (begin
-            (paint:show-message! (format "Describe key: ~a-" (keymap:sequence-text sequence)) #f)
-            (paint:redraw!)
-            (loop (append sequence (list (head:read-key-event #f)))))
-          sequence)))
-
-  (edoc "Read a key sequence and show in the help buffer what it runs, who bound it and what it shadows."
-        (prompts))
-  (define (describe-key!)
-    (paint:show-message! "Describe key: " #f)
-    (paint:redraw!)
-    (let* ([sequence (read-described-sequence)]
-           [all (keymap:sequence-bindings sequence)]
-           [entries (filter
-                      (lambda (owned)
-                        (eq? (keymap:binding-context (cdr owned)) 'global))
-                      all)]
-           [resolved (keymap:choose-binding entries)]
-           [b (head:fresh-buffer! "*help*")])
-      (head:buffer-append! b
-        (keymap:sequence-text sequence)
-        ""
-        (if resolved
-            (format "Resolved to: ~a" (keymap:action-text (keymap:binding-action (cdr resolved))))
-            "Resolved to: self-insert or undefined")
-        "Keymap: global"
-        (if resolved
-            (format "Defined by: ~a" (binding-origin resolved))
-            "Defined by: fallback"))
-      (when (> (length entries) 1)
-        (head:buffer-append! b "" "Shadowed bindings:")
-        (for-each
-          (lambda (owned)
-            (unless (eq? owned resolved)
-              (head:buffer-append! b
-                (format "  ~a — ~a"
-                        (keymap:action-text (keymap:binding-action (cdr owned)))
-                        (binding-origin owned)))))
-          entries))
-      (let ([contexts
-             (fold-left
-               (lambda (acc owned)
-                 (let ([context (keymap:binding-context (cdr owned))])
-                   (if (or (eq? context 'global) (memq context acc))
-                       acc
-                       (append acc (list context)))))
-               '() all)])
-        (when (pair? contexts)
-          (head:buffer-append! b "" "Contextual bindings:")
-          (for-each
-            (lambda (context)
-              (let ([hit (keymap:resolved-binding context sequence)])
-                (when hit
-                  (head:buffer-append! b
-                    (format "  ~a: ~a — ~a"
-                            context
-                            (keymap:action-text (keymap:binding-action (cdr hit)))
-                            (binding-origin hit))))))
-            contexts)))
-      (head:buffer-read-only-set! b #t)
-      (paint:show-message! "" #f)
-      (unless (window:pop-up-or-reuse! b)
-        (edit:set-message! "The <help> buffer could not be displayed"))))
-
-  (edoc "Register Describe's visible-page service, documentation and C-h f/C-h k commands." (public))
+  (edoc "Register Describe's visible-page service, documentation and C-h f command." (public))
   (define (init!)
     ;; Rebind a head callback; selection itself belongs to the store page.
     (kernel:add-after-reload-hook! (lambda (name) (invalidate-pages!)))
@@ -253,7 +176,6 @@
     (widget:register! 'describe 1
       (append (layout:container 'y)
         (list (cons 'service refresh-page!) (cons 'release (lambda (id) (hashtable-delete! refreshed id))))))
-    (keymap:bind-default! "C-h k" describe-key!)
     (doc:register!
       '(((describe:show!) (("procedure" . "(describe:show! name [page])")) "document id or #f"
          ("(apps describe)") describe "Documentation commands" #f

@@ -4,9 +4,11 @@ Every keyboard command in e is resolved through a keymap. Built-in and
 extension-module bindings are defaults; bindings from `config.e` are user
 overrides and take priority regardless of registration or module reload order.
 
-Press `C-h k`, then a key or complete chord, to open `<help>`. The report shows
-the resolved global command, where it was defined, shadowed definitions, and
-any meanings the key has inside prompts, incremental search, or query-replace.
+Press `C-h k`, then a key or complete chord, to inspect it in `<bindings>`.
+The report follows the captured app's input route and shows its resolved
+command, forwarding trace, binding origin, shadowed definitions and other
+contextual meanings. Capture never executes the command; Escape or `C-g`
+cancels. `(bindings:key!)` opens this same capture from M-x.
 
 ## Inspecting bindings
 
@@ -15,14 +17,14 @@ It shows mouse bindings first, followed by the active window's keyboard
 bindings and its widget command connections. Each row shows the public API
 and its documentation. Keyboard bindings are grouped by app and mode context,
 then by global bindings. The listing fits its window, with a scrollbar and
-the current page in its status bar. `(bindings:show!)` opens the same inspector
+independent scrolling in each view. `(bindings:show!)` opens the same inspector
 from M-x or a script.
 
 It lists what works here: a key a nearer context takes, `RET`
 in `<finder>` say, is left out of the global section, and where the text is
 read-only, an app's buffer or one made read-only, the editing commands are
 left out, those whose edoc declares `(edits)`. Keys that run one
-command share a row, one key per line joined by a line in the margin, beside
+command share a row beside
 the command, `edit:kill-line!` say, and what it does, from its documentation,
 wrapped in its column. The
 listing follows the active window: switch to another buffer or app and it
@@ -32,11 +34,11 @@ it, so bind a named command instead, and the editor's own libraries never
 bind a lambda, the linter refusing one.
 `C-x TAB` works everywhere: inside a prompt it lists the prompt's keys, each
 a `prompt:` command such as `prompt:accept!` for Enter, the keys of the
-prompt's own view where it has one, the finder's create mode say, and the
+prompt's own view where it has one, and the
 global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` or `M-Down` select the
-pop-up to browse or copy from it like any buffer, and the `↓` on its status
+pop-up to browse it, select text with the mouse and copy with `M-w`. The `↓` on its status
 line puts it away, as `(bindings:hide!)` does. `(bindings:open!)` shows the listing
 in the current window instead, for the buffer that window shows, and
 `C-x TAB` pages it there. Apps bind keys in their contexts to public commands.

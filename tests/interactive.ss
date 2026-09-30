@@ -285,7 +285,8 @@
      (wait-for! 'a-typed-argument-lists-its-values
                 (lambda () (and (find-cell "matches of buffer")
                                 (find-cell "(buffer \"*scratch*\")")
-                                (find-cell "(buffer \"*terminal*\")  terminal")))
+                                (find-cell "(buffer \"*terminal*\")")
+                                (find-cell "Completion") (find-cell "Details") (find-cell "terminal  modified")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
@@ -297,13 +298,13 @@
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
                 (lambda () (and (find-cell "λ (edit:visit-file! (file \"manual/")
                                 (find-cell "matches of file")
-                                (find-cell "manual/EVAL.md")))
+                                (find-cell "manual/APPS.md")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; A needle argument searches as it is typed: the note counts the
-     ;; matches, Tab visits the next without inserting, and C-g restores point.
+     ;; matches in a separate editor; Tab navigates without moving the source.
      (evaluate '(let ([b (head:new-buffer! "needles")])
                   (head:show-buffer! b)
                   (edit:insert-text! "alpha beta alpha\ngamma alpha")
@@ -315,6 +316,11 @@
      (send! "\t")
      (wait-for! 'tab-visits-the-next-match
                 (lambda () (find-cell "[2 of 3]")) 5000)
+     (check 'needle-preview-leaves-original-caret-alone
+       (equal? (evaluate '(head:point)) '(0 . 0)))
+     (send! "\x1b;[Z")
+     (wait-for! 'shift-tab-visits-the-previous-match
+       (lambda () (find-cell "[1 of 3]")) 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
@@ -340,8 +346,8 @@
      (wait-for! 'return-settles-the-last-needle-before-closing
        (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(1 . 5)))) 5000)
      (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
-     ;; A revision candidate previews its entry: a sole completion highlights
-     ;; the text the entry wrote and brings point there; C-g undoes both.
+     ;; A revision candidate highlights a separate read-only editor; the
+     ;; source editor's caret and style stay unchanged throughout.
      (evaluate '(let ([b (head:new-buffer! "previews")])
                   (head:show-buffer! b)
                   (head:goto! '(0 . 0))
@@ -352,9 +358,16 @@
      (send! "\x1b;xdelta-log:show! (revision 2\t")
      (wait-for! 'a-sole-revision-settles-and-previews
                 (lambda () (find-cell "λ (delta-log:show! (revision 2))")) 5000)
-     (check 'the-previewed-entry-is-highlighted
+     (wait-for! 'the-previewed-entry-is-highlighted
+       (lambda ()
+         (exists (lambda (row)
+                   (let* ([line (list-ref (screen-lines) row)] [at (string:search line "alpha beta" 0 (string-length line))])
+                     (and at (not (eq? (style-at (cons row (+ at 6))) 'plain)))))
+           (iota (length (screen-lines))))) 5000)
+     (check 'revision-preview-does-not-move-or-restyle-original
        (let ([cell (find-cell "alpha beta")])
-         (and cell (not (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain)))))
+         (and (equal? (evaluate '(head:point)) '(0 . 0)) cell
+           (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain))))
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-preview-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-preview-restores-point-and-the-style
@@ -390,6 +403,12 @@
      (wait-for! 'the-listing-returns-to-the-buffers-keys
        (lambda () (and (find-cell "<bindings>") (not (find-cell "prompt keys")))) 5000)
      (evaluate '(begin (bindings:hide!) (window:delete-others!) #t))
+     (send! "\x8;k")
+     (wait-for! 'describe-key-uses-the-normal-pump (lambda () (find-cell "Describe key:")) 5000)
+     (send! "\x18;2")
+     (wait-for! 'describe-key-publishes-a-contextual-listing (lambda () (find-cell "Key: C-x 2")) 5000)
+     (check 'describing-split-does-not-split (= (evaluate '(length (head:windows))) 2))
+     (evaluate '(begin (bindings:hide!) #t))
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

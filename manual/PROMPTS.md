@@ -40,8 +40,9 @@ or clearing that pop-up cancels the interaction. C-x Tab opens the bindings
 reference beside a focused pop-up and shows the prompt's named commands and
 its text control's commands. There is no separate allowlist of prompt-safe keys.
 
-Completion previews retain the window captured when M-x opened. They do not
-retarget to the prompt or to a newly focused window. Resizing uses the host's
+Completion captures its original document. Needle previews use their own
+read-only editor and do not move or restyle that document's other editors.
+They do not retarget to a newly focused window. Resizing uses the host's
 current geometry without discarding input.
 
 ## Completion
@@ -60,7 +61,7 @@ data and never run the provider.
 
 Typed arguments offer the existing value constructors, names, file paths,
 procedures and variables described by edoc. Search arguments retain their
-live match count and Tab navigation; cancelling restores their preview.
+live match count and Tab navigation in a scoped editor child.
 M-. describes the Scheme name at the current input caret.
 
 ## Questions from other actors
@@ -101,11 +102,12 @@ logical-position normalization for Entry and multiline editor controls.
 It returns replacement start and end, valid extensions, and candidates.
 Extensions may be deferred until Tab requests normalization; every extension
 must preserve the candidate set. Return false as the start when no token can
-complete. Optional settle, kind and live-search callbacks preserve typed
+complete. Optional settle, kind and argument-context callbacks preserve typed
 completion behavior. Rich candidates use `completion:make-candidate` with an
-insertion string, display label, character styles and optional reversible
-preview. The provider owns matching; the prompt owns input, selection and
-lifetime.
+insertion string, display label, character styles, optional semantic cells
+and optional typed value context. This context selects a scoped presentation;
+it contains no executable preview callback. The provider owns matching; the
+prompt owns input, selection and lifetime.
 
 `prompt:register-host!` supplies placement for linear callers. Its preparation
 procedure returns parent request, portable captured origin, and an attachment
