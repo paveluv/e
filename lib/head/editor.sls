@@ -264,25 +264,27 @@
         (cond [(< c (string-length line)) (cons r (find (lambda (n) (> n c)) (reverse edges)))]
           [(< (+ r 1) (vector-length lines)) (cons (+ r 1) 0)] [else p]))))
 
-  (edoc "Move an explicit editor caret by grapheme, displayed row, line or document endpoint. Up/down require an allocated view and retain a head-local display column. Extend preserves the selection anchor."
-        (id model "editor view") (direction (one-of left right up down home end start finish) "motion")
+  (edoc "Move an explicit editor caret by grapheme, displayed row, endpoint or to a logical position. Up/down require an allocated view and retain a head-local display column. Extend preserves the selection anchor."
+        (id model "editor view") (direction (or position (one-of left right up down home end start finish)) "motion or absolute position")
         (extend (list-of boolean) "optional selection extension"))
   (define (move! id direction . extend)
-    (unless (and (memq direction '(left right up down home end start finish)) (<= (length extend) 1) (for-all boolean? extend)) (error 'move! "invalid movement"))
+    (unless (and (or (position? direction) (memq direction '(left right up down home end start finish))) (<= (length extend) 1) (for-all boolean? extend)) (error 'move! "invalid movement"))
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([ps (points source d)] [lines (text-control:lines source)] [m (mounted id)] [mark? (if (pair? extend) (car extend) (cadddr (editor-state:state d)))])
-        (unless ps (refuse "Editor selection history is unavailable; select a fresh position"))
+        (when (not ps)
+          (if (position? direction) (begin (set! ps (list direction direction direction)) (set! mark? #f))
+            (refuse "Editor selection history is unavailable; select a fresh position")))
         (let* ([p (car ps)] [span (text-source:span ps)]
-               [next (case direction
-                       [(left right) (if (and (not mark?) (cadddr (editor-state:state d)) (not (equal? (car ps) (cadr ps))))
-                                       (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (adjacent lines p direction))]
-                       [(home) (cons (car p) 0)] [(end) (cons (car p) (string-length (vector-ref lines (car p))))]
-                       [(start) '(0 . 0)] [(finish) (let ([r (- (vector-length lines) 1)]) (cons r (string-length (vector-ref lines r))))]
-                       [else (let* ([g (geometry id source d #f)] [data (car g)] [frame (caddr data)] [width (list-ref g 4)]
-                                    [wrap (layout-width data d width)]
-                                    [goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 p)))])
-                               (mount-goal-set! m goal)
-                               (text-layout:move lines frame wrap p (if (eq? direction 'up) -1 1) goal))])])
+               [next (if (position? direction) direction (case direction
+                                                           [(left right) (if (and (not mark?) (cadddr (editor-state:state d)) (not (equal? (car ps) (cadr ps))))
+                                                                           (if (eq? direction 'left) (text:span-start span) (text:span-end span)) (adjacent lines p direction))]
+                                                           [(home) (cons (car p) 0)] [(end) (cons (car p) (string-length (vector-ref lines (car p))))]
+                                                           [(start) '(0 . 0)] [(finish) (let ([r (- (vector-length lines) 1)]) (cons r (string-length (vector-ref lines r))))]
+                                                           [else (let* ([g (geometry id source d #f)] [data (car g)] [frame (caddr data)] [width (list-ref g 4)]
+                                                                        [wrap (layout-width data d width)]
+                                                                        [goal (or (mount-goal m) (car (text-layout:locate lines frame wrap (caddr g) 0 p)))])
+                                                                   (mount-goal-set! m goal)
+                                                                   (text-layout:move lines frame wrap p (if (eq? direction 'up) -1 1) goal))]))])
           (publish! id source d (list next (if mark? (cadr ps) next) (caddr ps)) mark? #t)
           (unless (memq direction '(up down)) (mount-goal-set! m #f))))))
 

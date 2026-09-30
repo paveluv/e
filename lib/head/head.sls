@@ -84,7 +84,7 @@
     set-directory-opener! set-dividers! set-drag!
     set-file-opener! set-frame-hook! set-full-capture!
     set-last-command! set-layout-root! set-mouse-handler!
-    set-mouse-position! set-pending-paste! set-quit-command!
+    set-mouse-position! set-pending-paste! set-point-mover! set-quit-command!
     set-repaint-hook! set-review-viewer! set-root!
     set-window-buffer! set-window-mounter! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
@@ -717,8 +717,15 @@
     ;; Point belongs to the selected window, for apps and text alike.
     (let ([w the-current])
       (follow-app! w #f)
-      (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
-      (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w))))))))
+      (unless (point-mover w (cons (max 0 (car p)) (max 0 (cdr p))))
+        (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
+        (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w)))))))))
+
+  (define point-mover (lambda (w p) #f))
+
+  (edoc "Install the default host's logical caret mover. Return true after moving an editor view, false to use a legacy app's point adapter."
+        (proc procedure "(window position) -> handled?"))
+  (define (set-point-mover! proc) (set! point-mover proc))
 
   (edoc "The current file's parent, an app's working directory, or the head's launch directory: absolute, abbreviated, with a trailing slash."
         (returns directory))

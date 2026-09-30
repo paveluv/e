@@ -758,6 +758,14 @@
              (test:raises? (lambda () (edit:insert! (head:window-editor (head:popup)) "denied"))))
            '(((1 . 4) (1 . 0)) #t))
          (window:clear-pop-up!)
+         (edit:end-of-buffer!) (painted paint:redraw!)
+         (let ([bottom (car (view:state (interaction:snapshot a)))]
+               [top (head:window-top w)])
+           (head:goto! '(2 . 4)) (edit:beginning-of-line!) (painted paint:redraw!)
+           (check 'current-window-api-and-search-jumps-use-editor-reveal
+             (list bottom (> top 0) (car (view:state (interaction:snapshot a)))
+               (let ([p (paint:window-screen-position w 2 0)]) (<= 1 (car p) (head:window-size w))))
+             '((30 . 4) #t (2 . 0) #t)))
          (head:checkpoint!)
          (check 'ordinary-resume-rehosts-retained-editor-roots
            (and (head:resume!)

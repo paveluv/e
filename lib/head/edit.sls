@@ -371,7 +371,7 @@
         message)))
 
   (edoc "Undo one action within undo-scope. An explicit editor view returns journal status and detail; omitting it uses the legacy current window and echo report."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define undo!
     (case-lambda
@@ -379,7 +379,7 @@
       [(id) (editor:history! id 'undo (undo-scope))]))
 
   (edoc "Reverse this head's latest undo in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define redo!
     (case-lambda
@@ -388,7 +388,7 @@
 
   (edoc "Undo an actor's latest live action in an explicit editor view, returning journal status and detail. Omitting the view uses the legacy current window and echo report."
         (who actor "the actor's identity")
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define undo-actor!
     (case-lambda
@@ -412,21 +412,25 @@
     (set! point-col (max 0 (min point-col (string-length (current-display-line))))))
 
   (edoc "Move point forward over one expression: the atom around point, else the next expression inside the enclosing one; the C-M-f of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define forward-expression!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if end (head:goto! end) (set-message! "No expression after point")))]
+       (let ([id (current-editor)])
+         (if id (forward-expression! id)
+           (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if end (head:goto! end) (set-message! "No expression after point")))))]
       [(id) (editor:expression! id 'forward)]))
 
   (edoc "Move point backward over one expression: the atom around point, else the last expression ending by it inside the enclosing one; the C-M-b of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define backward-expression!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if start (head:goto! start) (set-message! "No expression before point")))]
+       (let ([id (current-editor)])
+         (if id (backward-expression! id)
+           (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if start (head:goto! start) (set-message! "No expression before point")))))]
       [(id) (editor:expression! id 'backward)]))
 
   (define (position-before? a b)
@@ -444,7 +448,7 @@
 
   (edoc "Kill from point to the end of the next expression into the copy buffer; consecutive kills accumulate; the C-M-k of Emacs."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define kill-expression!
     (case-lambda
       [()
@@ -454,7 +458,7 @@
 
   (edoc "Kill from the start of the expression before point to point into the copy buffer, ahead of a preceding kill; the C-M-BACKSPACE of Emacs."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define backward-kill-expression!
     (case-lambda
       [()
@@ -463,89 +467,105 @@
       [(id) (editor:transfer! id 'backward (lambda (text accumulate?) (publish-view-kill! text accumulate? #t)))]))
 
   (edoc "Set the mark at the end of the next expression and activate it, point staying; with the mark active beyond point, extend it by one more expression; the C-M-SPC of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define mark-expression!
     (case-lambda
       [()
-       (let* ([point (head:point)] [mark (cons mark-row mark-col)]
-              [from (if (and mark-active? (position-before? point mark)) mark point)])
-         (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) from)])
-           (cond [(not end) (set-message! "No expression after point")]
-             [(head:buffer-selectable? (head:current-buffer))
-              (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
-              (set! message "Mark set")])))]
+       (let ([id (current-editor)])
+         (if id (mark-expression! id)
+           (let* ([point (head:point)] [mark (cons mark-row mark-col)]
+                  [from (if (and mark-active? (position-before? point mark)) mark point)])
+             (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer)) from)])
+               (cond [(not end) (set-message! "No expression after point")]
+                 [(head:buffer-selectable? (head:current-buffer))
+                  (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+                  (set! message "Mark set")])))))]
       [(id) (editor:expression! id 'mark)]))
 
   (edoc "Mark the top-level form around point: point at its start, the mark at its end; the C-M-h of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define mark-form!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer)) (head:point))])
-         (cond [(not start) (set-message! "No top-level form in the buffer")]
-           [(head:buffer-selectable? (head:current-buffer))
-            (head:goto! start)
-            (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
-            (set! message "Mark set")]))]
+       (let ([id (current-editor)])
+         (if id (mark-form! id)
+           (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer)) (head:point))])
+             (cond [(not start) (set-message! "No top-level form in the buffer")]
+               [(head:buffer-selectable? (head:current-buffer))
+                (head:goto! start)
+                (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
+                (set! message "Mark set")]))))]
       [(id) (editor:expression! id 'form)]))
 
   (edoc "Move point up out of the enclosing list or vector, to its start; the C-M-u of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define up-expression!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:container (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if start (head:goto! start) (set-message! "Not inside an expression")))]
+       (let ([id (current-editor)])
+         (if id (up-expression! id)
+           (let-values ([(start end) (expression:container (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if start (head:goto! start) (set-message! "Not inside an expression")))))]
       [(id) (editor:expression! id 'up)]))
 
   (edoc "Move point down into the next list or vector, just past its opening delimiter; the C-M-d of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define down-expression!
     (case-lambda
       [()
-       (let ([inside (expression:down (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if inside (head:goto! inside) (set-message! "No list after point")))]
+       (let ([id (current-editor)])
+         (if id (down-expression! id)
+           (let ([inside (expression:down (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if inside (head:goto! inside) (set-message! "No list after point")))))]
       [(id) (editor:expression! id 'down)]))
 
   (edoc "Move point over the next list or vector, skipping atoms; the C-M-n of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define next-list!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:next-list (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if end (head:goto! end) (set-message! "No list after point")))]
+       (let ([id (current-editor)])
+         (if id (next-list! id)
+           (let-values ([(start end) (expression:next-list (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if end (head:goto! end) (set-message! "No list after point")))))]
       [(id) (editor:expression! id 'next)]))
 
   (edoc "Move point back over the previous list or vector, skipping atoms; the C-M-p of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define previous-list!
     (case-lambda
       [()
-       (let-values ([(start end) (expression:previous-list (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if start (head:goto! start) (set-message! "No list before point")))]
+       (let ([id (current-editor)])
+         (if id (previous-list! id)
+           (let-values ([(start end) (expression:previous-list (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if start (head:goto! start) (set-message! "No list before point")))))]
       [(id) (editor:expression! id 'previous)]))
 
   (edoc "Move point to the start of the last top-level form beginning before point, the enclosing one included; the C-M-a of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define beginning-of-form!
     (case-lambda
       [()
-       (let ([start (expression:form-start (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if start (head:goto! start) (set-message! "No top-level form before point")))]
+       (let ([id (current-editor)])
+         (if id (beginning-of-form! id)
+           (let ([start (expression:form-start (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if start (head:goto! start) (set-message! "No top-level form before point")))))]
       [(id) (editor:expression! id 'start)]))
 
   (edoc "Move point to the end of the first top-level form ending after point, the enclosing one included; the C-M-e of Emacs."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define end-of-form!
     (case-lambda
       [()
-       (let ([end (expression:form-end (head:buffer-lines (head:current-buffer)) (head:point))])
-         (if end (head:goto! end) (set-message! "No top-level form after point")))]
+       (let ([id (current-editor)])
+         (if id (end-of-form! id)
+           (let ([end (expression:form-end (head:buffer-lines (head:current-buffer)) (head:point))])
+             (if end (head:goto! end) (set-message! "No top-level form after point")))))]
       [(id) (editor:expression! id 'end)]))
 
   (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define transpose-expressions!
     (case-lambda
       [()
@@ -562,7 +582,7 @@
 
   (edoc "Indent the lines of the next expression after its first by the mode's indenter; the C-M-q of Emacs."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define indent-expression!
     (case-lambda
       [()
@@ -574,25 +594,33 @@
            [else (set! message "Nothing to indent below the first line")]))]
       [(id) (editor:format! id 'indent-expression)]))
 
+  (define (current-editor)
+    (and (head:window-widget current-window) (head:window-editor current-window)))
+
   (edoc "Move point one character left, crossing to the end of the previous line.")
   (define (move-left!)
-    (cond [(> point-col 0) (set! point-col (- point-col 1))]
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'left)
+        (cond [(> point-col 0) (set! point-col (- point-col 1))]
           [(> point-row 0)
            (set! point-row (- point-row 1))
-           (set! point-col (string-length (current-display-line)))]))
+           (set! point-col (string-length (current-display-line)))]))))
 
   (edoc "Move point one character right, crossing to the start of the next line.")
   (define (move-right!)
-    (cond [(< point-col (string-length (current-display-line)))
-           (set! point-col (+ point-col 1))]
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'right)
+        (cond [(< point-col (string-length (current-display-line)))
+               (set! point-col (+ point-col 1))]
           [(< point-row (- (vlen) 1))
-           (set! point-row (+ point-row 1)) (set! point-col 0)]))
+           (set! point-row (+ point-row 1)) (set! point-col 0)]))))
 
   (edoc "Move point a number of characters, negative to the left, crossing line ends as single steps do."
         (delta integer "how far, negative for left"))
   (define (move-horizontal! delta)
     ;; Move point delta characters, negative to the left, crossing line
     ;; ends the way repeated single steps do.
+    (unless (and (integer? delta) (exact? delta)) (error 'move-horizontal! "expected an exact integer" delta))
     (if (< delta 0)
         (do ([i 0 (- i 1)]) ((= i delta)) (move-left!))
         (do ([i 0 (+ i 1)]) ((= i delta)) (move-right!))))
@@ -623,13 +651,16 @@
   (edoc "Move point a number of lines, negative for up, aiming for the goal column; visual rows in a wrapping window."
         (delta integer "how far, negative for up"))
   (define (move-vertical! delta)
-    (let* ([w current-window] [wrapped? (paint:window-wrapped? w)] [goal (head:window-goal w)]
-           [goal-col (if (and goal (equal? (cdr goal) (goal-position wrapped?))) (car goal)
-                       (visual-column w point-row point-col))]
-           [point (text-layout:move (head:window-text w) (head:window-rendition w)
-                    (and wrapped? (paint:wrap-width w)) (cons point-row point-col) delta goal-col)])
-      (set! point-row (car point)) (set! point-col (cdr point))
-      (head:window-goal-set! w (cons goal-col (goal-position wrapped?)))))
+    (unless (and (integer? delta) (exact? delta)) (error 'move-vertical! "expected an exact integer" delta))
+    (let ([id (current-editor)])
+      (if id (do ([i (abs delta) (- i 1)]) ((zero? i)) (editor:move! id (if (< delta 0) 'up 'down)))
+        (let* ([w current-window] [wrapped? (paint:window-wrapped? w)] [goal (head:window-goal w)]
+               [goal-col (if (and goal (equal? (cdr goal) (goal-position wrapped?))) (car goal)
+                             (visual-column w point-row point-col))]
+               [point (text-layout:move (head:window-text w) (head:window-rendition w)
+                        (and wrapped? (paint:wrap-width w)) (cons point-row point-col) delta goal-col)])
+          (set! point-row (car point)) (set! point-col (cdr point))
+          (head:window-goal-set! w (cons goal-col (goal-position wrapped?)))))))
 
   (define (split-inserted-lines s)
     ;; Unlike split-lines, retain an empty final part: inserting "a\n"
@@ -857,7 +888,7 @@
     (void))
 
   (edoc "Kill from point to the end of the line, or the line break when point is at the end; consecutive kills accumulate."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define kill-line!
     (case-lambda
@@ -882,7 +913,7 @@
     (head:copy-text))
 
   (edoc "Insert the copy buffer's text at point."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define yank!
     (case-lambda
@@ -911,7 +942,7 @@
                   (text:make-span sr sc er ec) '("")))
 
   (edoc "Replace the text between two ordered points with new text, in one structural edit."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (start position "where the replaced text starts")
         (end position "where it ends")
         (text string "the replacement")
@@ -943,7 +974,7 @@
       (replace-region-text! start end text)))
 
   (edoc "Rewrite ordered disjoint ranges computed against edit:basis. An explicit editor preserves its selection and groups accepted replacements into one undo action, applying them from the end so earlier coordinates stay stable. Ranges changed concurrently are skipped; lost history or ownership refuses the remaining work. The two-argument form is the legacy current-window adapter."
-        (id model "explicit editor view; omission is the legacy window adapter")
+        (id model "explicit editor view; omission addresses the current window")
         (basis list "the edit basis the ranges were computed against")
         (regions (list-of list) "(start end text) each, in the text's order")
         (returns integer "how many ranges were replaced")
@@ -973,7 +1004,7 @@
                  (loop (carry (cdr regions) changes) (head:edit-basis b) (+ n 1)))))))]))
 
   (edoc "Copy the text between mark and point to the copy buffer without deleting it; the mark deactivates. An explicit view refuses if the selected text changed."
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define copy-region!
     (case-lambda
       [()
@@ -991,7 +1022,7 @@
       [(id) (editor:transfer! id 'copy (lambda (text accumulate?) (copy-text! text)))]))
 
   (edoc "Kill the text between mark and point into the copy buffer."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (edits))
   (define kill-region!
     (case-lambda
@@ -1369,7 +1400,7 @@
             #t)))))
 
   (edoc "Indent the current line by the mode's indenter, cycling through its stops; point lands on the indentation." (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define indent-line!
     (case-lambda
       [()
@@ -1379,7 +1410,7 @@
 
   (edoc "What TAB does: indent the current line when the mode's indenter asked for it, else nothing."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define indent-tab!
     (case-lambda
       [()
@@ -1390,7 +1421,7 @@
 
   (edoc "Indent the lines between mark and point by the mode's indenter, each settling on its nearest stop."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define indent-region!
     (case-lambda
       [()
@@ -1406,7 +1437,7 @@
 
   (edoc "Indent every line of the current buffer by the mode's indenter."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define indent-buffer!
     (case-lambda
       [()
@@ -1470,7 +1501,7 @@
 
   (edoc "Rewrite the lines between mark and point with the mode's formatter."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define format-region!
     (case-lambda
       [()
@@ -1485,7 +1516,7 @@
 
   (edoc "Rewrite the whole current buffer with the mode's formatter."
         (edits)
-        (id model "editor view; omission is the legacy window adapter"))
+        (id model "editor view; omission addresses the current window"))
   (define format-buffer!
     (case-lambda
       [()
@@ -1502,20 +1533,22 @@
   ;; and the head's side of the interaction protocol.
 
   (edoc "Page an allocated editor by a fraction of its height and put the caret in the middle; at an already reached edge, move to that edge. Retains mark activity and the desired column. Without an explicit view, page the legacy current window."
-        (id model "editor view; omission is the legacy window adapter")
+        (id model "editor view; omission addresses the current window")
         (direction integer "-1 for up, 1 for down")
         (fraction integer "positive page divisor"))
   (define page!
     (case-lambda
       [(direction fraction)
-       (let* ([w current-window] [v (head:window-text w)]
-              [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- (render:line-count v) 1))])
-         (let-values ([(top point)
-                       (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
-                         sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
-                         (visual-column w point-row point-col) direction fraction)])
-           (head:goto! point)
-           (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top))))]
+       (let ([id (current-editor)])
+         (if id (page! id direction fraction)
+           (let* ([w current-window] [v (head:window-text w)]
+                  [sticky (min (head:buffer-sticky-lines (head:current-buffer)) (- (render:line-count v) 1))])
+             (let-values ([(top point)
+                           (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
+                             sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
+                             (visual-column w point-row point-col) direction fraction)])
+               (head:goto! point)
+               (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top))))))]
       [(id direction fraction) (editor:page! id direction fraction)]))
 
   (edoc "Place point at a (row . col) position, clamped into the window's text, leaving the viewport where it is."
@@ -1623,11 +1656,15 @@
 
   (edoc "Move point to the start of its line.")
   (define (beginning-of-line!)
-    (set! point-col 0))
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'home)
+        (set! point-col 0))))
 
   (edoc "Move point to the end of its line.")
   (define (end-of-line!)
-    (set! point-col (string-length (current-display-line))))
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'end)
+        (set! point-col (string-length (current-display-line))))))
 
   (edoc "Deactivate the mark and abandon what was pending.")
   (define (keyboard-quit!)
@@ -1661,12 +1698,18 @@
 
   (edoc "Move point to the start of the buffer.")
   (define (beginning-of-buffer!)
-    (set! point-row 0) (set! point-col 0))
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'start)
+        (begin
+          (set! point-row 0) (set! point-col 0)))))
 
   (edoc "Move point to the end of the buffer.")
   (define (end-of-buffer!)
-    (set! point-row (- (vlen) 1))
-    (set! point-col (string-length (current-display-line))))
+    (let ([id (current-editor)])
+      (if id (editor:move! id 'finish)
+        (begin
+          (set! point-row (- (vlen) 1))
+          (set! point-col (string-length (current-display-line)))))))
 
 
   ;;; Regions and the generic helpers ------------------------------------------

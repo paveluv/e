@@ -828,7 +828,8 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
 - `edit:select! id caret anchor` establishes a selection, or clears it when
   the endpoints agree. It also recovers from unavailable selection history.
 - `edit:move! id direction [extend]` accepts `left`, `right`, `up`, `down`,
-  `home`, `end`, `start` and `finish`. Up/Down follow displayed rows and require
+  `home`, `end`, `start`, `finish` or an absolute `(row . character)` position.
+  Absolute movement clamps and reveals the new caret. Up/Down follow displayed rows and require
   an allocation. Omitted `extend` follows mark activity.
 - `edit:set-mark! id active` starts selection at the caret or collapses it.
 - `edit:insert! id text` and `edit:delete! id direction` use the source journal;

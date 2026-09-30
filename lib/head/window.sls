@@ -16,6 +16,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (head catalogue-host) catalogue-host:)
+          (prefix (head editor) editor:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -175,6 +176,10 @@
                            b)))))
     (head:add-pre-redraw-hook! release-hidden!)
     (head:set-window-mounter! mount-window!)
+    (head:set-point-mover!
+      (lambda (w p)
+        (let ([id (and (head:window-widget w) (head:window-editor w))])
+          (and id (begin (editor:move! id p) #t)))))
     (head:add-buffer-kill-hook!
       (lambda (b) (let ([id (buffer-widget b)])
                     (when id (widget:unmount! id) (set! mounted (remp (lambda (p) (equal? id (car p))) mounted))))))
