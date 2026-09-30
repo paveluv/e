@@ -3,7 +3,7 @@
 (elibrary (head completion)
   (export candidate-label candidate-preview candidate-styles candidate-value candidate?
           make-candidate make-searcher make-source provider register! searcher-done searcher-find searcher-next searcher-previous searcher?
-          source-kind source-lookup source-settle source-track source?)
+          source-basis source-kind source-lookup source-release source-settle source-track source?)
   (import (rnrs) (only (chezscheme) list-head) (prefix (core kernel) kernel:))
 
   (define providers (kernel:make-registry car))
@@ -42,24 +42,29 @@
         (lookup procedure "text and caret -> replacement range, expansions and candidates")
         (settle (or procedure #f) "advance after a sole completion")
         (kind (or procedure string #f) "completion label")
-        (track (or procedure #f) "optional live search provider"))
-  (define-record-type (source %make-source source?) (fields lookup settle kind track))
+        (track (or procedure #f) "optional live search provider")
+        (basis procedure "local revision stamp") (release procedure "idempotent lifetime cleanup"))
+  (define-record-type (source %make-source source?) (fields lookup settle kind track basis release))
 
   (edoc "A cursor-aware source: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line; an optional track, (track text position), gives (maker . needle) where a live search stands in for the list."
         (lookup procedure "the completion source")
         (settle (or procedure #f) "the settle step")
         (kind (or procedure string #f) "what the completions are")
-        (track (or procedure #f) "where a live search stands in"))
+        (track (or procedure #f) "where a live search stands in")
+        (basis procedure "local revision stamp, optional with release")
+        (release procedure "idempotent source cleanup, optional with basis"))
   (define make-source
     (case-lambda
       [(lookup)
-       (%make-source lookup #f #f #f)]
+       (make-source lookup #f #f #f)]
       [(lookup settle)
-       (%make-source lookup settle #f #f)]
+       (make-source lookup settle #f #f)]
       [(lookup settle kind)
-       (%make-source lookup settle kind #f)]
+       (make-source lookup settle kind #f)]
       [(lookup settle kind track)
-       (%make-source lookup settle kind track)]))
+       (%make-source lookup settle kind track (lambda () #f) (lambda () (values)))]
+      [(lookup settle kind track basis release)
+       (%make-source lookup settle kind track basis release)]))
 
   ;; A searcher stands in for the list at a typed argument: it finds the
   ;; needle's matches in the current buffer and highlights them as a search

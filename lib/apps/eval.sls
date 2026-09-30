@@ -22,6 +22,7 @@
 (elibrary (apps eval)
   (export call-with-evaluation! completion-candidates completion-extensions completion-hint completion-span
           (rename (evaluation:condition condition)) (rename (eval-copy-result copy-result))
+          create-model-prompt! create-result-view!
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
           (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
@@ -43,7 +44,9 @@
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:)
           (prefix (head mode) mode:)
+          (prefix (head namespace) namespace:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
@@ -51,8 +54,59 @@
           (prefix (head widget) widget:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
+          (prefix (service prompt-request) prompt-request:)
           (prefix (only (service reference) signatures) reference:)
-          (prefix (state view) view:))
+          (prefix (state model) model:) (prefix (state view) view:) (prefix (sys glyph) glyph:))
+
+  (define (model-value id kind)
+    (let ([r (model:snapshot id)])
+      (and r (eq? (cdr (assq 'kind r)) kind) (cdr (assq 'value r)))))
+  (define (model-completer id)
+    (let ([reader (namespace:acquire! id)])
+      (completion:make-source
+        (lambda (text caret)
+          (let ([range (symbol-range text caret)] [packet (namespace:snapshot reader)])
+            (if (or (not range) (not (eq? (caddr packet) 'ready))) (values #f #f '() '())
+              (let* ([part (substring text (car range) (cdr range))]
+                     [matches (fuzzy:rank part (cadr packet))] [names (map fuzzy:name matches)])
+                (values (car range) (cdr range) (lambda () (fuzzy:expansions part names)) names)))))
+        #f "environment symbol" #f
+        (lambda () (let ([p (namespace:snapshot reader)]) (list (car p) (caddr p))))
+        (lambda () (namespace:release! reader)))))
+
+  (edoc "Create an embedded Scheme prompt using an environment's actual symbol catalogue. The prompt borrows an authored draft; accepted/cancelled commands belong to its explicit host. Acceptance carries the captured environment and generation in its origin; submit with environment:evaluate!. No current window or head API namespace is used."
+    (environment model "base environment") (generation integer "expected namespace generation")
+    (draft buffer "borrowed authored Scheme text") (commands list "accepted/cancelled widget command targets")
+    (returns model "unmounted prompt view"))
+  (define (create-model-prompt! environment generation draft commands)
+    (let* ([origin (list (cons 'environment environment) (cons 'generation generation))]
+           [request (prompt-request:create! head:ui-actor #f draft "" origin (list 'environment 1 environment))])
+      (guard (ex [else (prompt-request:close! head:ui-actor request) (raise ex)])
+        (prompt:create! request
+          '((label . "Scheme:") (multiline? . #t) (profile model-scheme 1 ())
+            (editing-policy scheme-input 1) (mode . "scheme")) commands))))
+
+  (define (result-text id source inputs)
+    (let* ([v (cdr (assq 'value source))] [status (cdr (assq 'status v))]
+           [value (cdr (assq 'result v))] [diagnostic (cdr (assq 'diagnostic v))])
+      (cond [value (string-append (if (eq? (car value) 'expired) "[Expired result] " "=> ")
+                     (car (reverse value)))]
+        [diagnostic (cdr (assq 'message diagnostic))]
+        [else (format "[~a]" status)])))
+  (define (render-result text d width height range)
+    (let* ([lines (string:lines text)] [start (min (car range) (length lines))])
+      (map (lambda (line) (glyph:fit line width)) (list-head (list-tail lines start) (min (cdr range) (- (length lines) start))))))
+
+  (edoc "Compose a job's shared output editor and bounded result/diagnostic summary. Views borrow the job; splitting, unmounting and resizing never execute code, allocate workers or retain another result handle. Release the job explicitly through environment:release!."
+    (actor actor "view creator") (job model "base evaluation job") (returns model "unmounted result composition"))
+  (define (create-result-view! actor job)
+    (model:snapshots (list job))
+    (let ([v (model-value job 'evaluation-job)])
+      (unless v (error 'create-result-view! "evaluation job is unavailable" job))
+      (let* ([root (view:create! actor job 'evaluation-result 1 '() '() job)]
+             [output (edit:create-view! actor (cadr (cdr (assq 'output v))) '((read-only . #t)))]
+             [summary (view:create! actor job 'evaluation-summary 1 '() '() job)])
+        (view:arrange! actor (list (list root 0 (list (list 'output output '(grow 1)) (list 'result summary 'fit)) '())) '()) root)))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -599,8 +653,8 @@
       (completion:make-candidate name label styles)))
 
   (define (receiver-matches declaration receivers)
-    (if (not (eq? (caadr declaration) 'view)) '()
-      (filter (lambda (r) (and (memq (cadr r) (cdadr declaration)) (widget:receiver-live? r))) receivers)))
+    (filter (lambda (r) (and (eq? (caadr declaration) (if (pair? (list-ref r 3)) 'model 'view))
+                          (memq (cadr r) (cdadr declaration)) (widget:receiver-live? r))) receivers))
 
   (define (receiver-at sym index)
     (exists
@@ -1399,6 +1453,21 @@
 
   (edoc "Install the evaluation commands: their describe entries, the log formatter and the C-x C-e, C-M-x and M-x bindings.")
   (define (init!)
+    (completion:register! 'environment 1 (lambda (id origin) (model-completer id)))
+    (prompt:register-profile! 'model-scheme 1
+      (lambda (configuration origin)
+        (let ([id (cdr (assq 'environment origin))] [generation (cdr (assq 'generation origin))])
+          (list (cons 'normalize normalize-input) (cons 'transform reindent-scheme-input) (cons 'edge mx-edge-motion)
+            (cons 'ghost (lambda (text caret) (input-diagnostic (substring text 0 caret))))
+            (cons 'validate
+              (lambda (text)
+                (let ([v (model-value id 'environment)])
+                  (and (not (and v (= generation (cdr (assq 'generation v)))))
+                    "Environment changed; open a new prompt"))))))))
+    (widget:register! 'evaluation-summary 1
+      (list (cons 'prepare result-text) (cons 'render render-result)
+        (cons 'measure (lambda (text d axis cross child) (if (eq? axis 'y) (let ([n (length (string:lines text))]) (list n n)) '(0 0))))))
+    (widget:register! 'evaluation-result 1 (append (layout:container 'y) '((source-receiver . job))))
     (mode:register! "scheme-prompt" '() '()
       (lambda (text) (let ([scheme (mode:find "scheme")]) (and scheme (editorize! text ((mode:styles scheme) text))))) #f)
     (edit:register-policy! 'scheme-input 1

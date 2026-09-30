@@ -12,7 +12,7 @@
 (elibrary (sys sys)
   (export accept-local acquire-file-lock after archive-session! call-with-connection-deadline
           call-with-private-input-file call-with-private-output-file call-with-streamed-output
-          call-with-verified-base canonical-file-path close-connection! close-directory-watch! close-local-listener!
+          call-with-verified-base canonical-file-path capture-chunk-size close-connection! close-directory-watch! close-local-listener!
           close-process! close-terminal-process! connect-local connection-alive?
           connection-input connection-output directory-changes! directory-reader duplicate-output-port duplicate-standard-input-port
           duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
@@ -1158,13 +1158,14 @@
         (pid integer "the process id")
         (buffer any "the pending output bytes")
         (capture any "the stderr capture")
+        (lifecycle-lock any "serialize process identity checks, signals and reaping")
         (code (or integer #f) "the exit status, once ended")
         (input any "the port a consumer reads the output from")
         (prefix any "output read ahead")
         (closed boolean "whether the process was closed")
         (complaint (or string #f) "the stderr text, once read"))
   (define-record-type command-process
-    (fields to from errors pid buffer capture
+    (fields to from errors pid buffer capture lifecycle-lock
             (mutable code) (mutable input process-input set-process-input!)
             (mutable prefix) (mutable closed) (mutable complaint)))
 
@@ -1221,7 +1222,7 @@
                      (let* ([to (port! (cdr to) #t)]
                             [from (port! (car from) #f)] [errors (port! (car errors) #f)])
                        (set! process (make-command-process to from errors pid (make-bytevector 4096)
-                                                           (call-with-values open-bytevector-output-port cons) #f #f #f #f #f)))
+                                                           (call-with-values open-bytevector-output-port cons) (make-mutex) #f #f #f #f #f)))
                      (set-process-input! process
                                          (make-custom-binary-input-port "command output"
                                            (lambda (bytes start count) (read-process! process bytes start count))
@@ -1273,32 +1274,41 @@
     (capture-process! process (command-process-errors process)
                       (car (command-process-capture process))))
 
-  (edoc "Send a process its input body and then EOF, reading early output meanwhile."
+  (edoc "Send a process input, reading early output meanwhile. Close input afterward by default; false eof? keeps a private request/response channel open."
         (process (record command-process) "the process")
-        (bytes bytevector "the input"))
-  (define (write-process! process bytes)
-    ;; Submit one optional input body and then EOF. Keep early stdout while
-    ;; sending a large body, so even a program writing before reading can run.
-    (when (command-process-closed process) (error 'write-process! "command is closed"))
-    (let ([to (command-process-to process)])
-      (when (port-closed? to) (error 'write-process! "command input was already sent"))
-      (let-values ([(out take) (open-bytevector-output-port)])
-        (when bytes
-          (let loop ([start 0])
-            (when (< start (bytevector-length bytes))
-              (capture-process-errors! process)
-              (capture-process! process (command-process-from process) out)
-              (let ([count (put-bytevector-some to bytes start (- (bytevector-length bytes) start))])
-                (when (zero? count) (wait-process-io! process #t))
-                (loop (+ start count))))))
-        (command-process-prefix-set! process (open-bytevector-input-port (take)))
-        (close-port to))))
+        (bytes (or bytevector #f) "the input") (eof? boolean "whether to close input"))
+  (define write-process!
+    (case-lambda
+      [(process bytes) (write-process! process bytes #t)]
+      [(process bytes eof?)
+       (unless (boolean? eof?) (error 'write-process! "expected an EOF boolean"))
+       ;; Submit one optional input body and then EOF. Keep early stdout while
+       ;; sending a large body, so even a program writing before reading can run.
+       (when (command-process-closed process) (error 'write-process! "command is closed"))
+       (let ([to (command-process-to process)])
+         (when (port-closed? to) (error 'write-process! "command input was already sent"))
+         (let-values ([(out take) (open-bytevector-output-port)])
+           (when (command-process-prefix process)
+             (let* ([old (command-process-prefix process)] [bytes (get-bytevector-all old)])
+               (unless (eof-object? bytes) (put-bytevector out bytes)) (close-port old)))
+           (when bytes
+             (let loop ([start 0])
+               (when (< start (bytevector-length bytes))
+                 (capture-process-errors! process)
+                 (capture-process! process (command-process-from process) out)
+                 (let ([count (put-bytevector-some to bytes start (- (bytevector-length bytes) start))])
+                   (when (zero? count) (wait-process-io! process #t))
+                   (loop (+ start count))))))
+           (command-process-prefix-set! process (open-bytevector-input-port (take)))
+           (when eof? (close-port to))))]))
 
   (edoc "A process's exit status when it has ended, else #f, reaping it exactly once."
         (process (record command-process) "the process")
         (returns (or integer #f))
         (effects internal))
   (define (poll-process! process)
+    (with-mutex (command-process-lifecycle-lock process) (poll-process-unlocked! process)))
+  (define (poll-process-unlocked! process)
     ;; A returned status and its adoption are indivisible: never signal a PID
     ;; after reaping it, including on engine expiry. Other owners' PIDs stay out.
     (or (command-process-code process)
@@ -1313,7 +1323,7 @@
                      (command-process-code-set! process code)
                      code)]
                   [(zero? result) #f]
-                  [(= (foreign-ref 'int (c-errno) 0) 4) (poll-process! process)]
+                  [(= (foreign-ref 'int (c-errno) 0) 4) (poll-process-unlocked! process)]
                   [else
                    (command-process-code-set! process 'unavailable)
                    (error 'process "waitpid failed" (foreign-ref 'int (c-errno) 0))])))))
@@ -1369,16 +1379,17 @@
         (command-process-closed-set! process #t)
         (dynamic-wind void
           (lambda ()
-            (unless (poll-process! process)
-              (c-kill (command-process-pid process) 15)
-              (let wait ([attempts 8])
-                (unless (poll-process! process)
-                  (if (zero? attempts) (c-kill (command-process-pid process) 9)
+            (with-mutex (command-process-lifecycle-lock process)
+              (unless (poll-process-unlocked! process)
+                (c-kill (command-process-pid process) 15)
+                (let wait ([attempts 8])
+                  (unless (poll-process-unlocked! process)
+                    (if (zero? attempts) (c-kill (command-process-pid process) 9)
                       (begin (sleep (make-time 'time-duration 25000000 0))
                              (wait (- attempts 1))))))
-              (let wait ()
-                (unless (poll-process! process)
-                  (sleep (make-time 'time-duration 1000000 0)) (wait)))))
+                (let wait ()
+                  (unless (poll-process-unlocked! process)
+                    (sleep (make-time 'time-duration 1000000 0)) (wait))))))
           (lambda ()
             (guard (ex [else (void)]) (capture-process-errors! process))
             (for-each (lambda (port) (when port (guard (ex [else (void)]) (close-port port))))
@@ -1418,9 +1429,10 @@
         (returns boolean))
   (define (signal-process! process signal)
     (with-interrupts-disabled
-      (and (not (command-process-closed process)) (not (poll-process! process))
-           (zero? (descriptor-check 'process (command-process-pid process)
-                    (c-kill (command-process-pid process) signal))))))
+      (with-mutex (command-process-lifecycle-lock process)
+        (and (not (command-process-closed process)) (not (poll-process-unlocked! process))
+          (zero? (descriptor-check 'process (command-process-pid process)
+                   (c-kill (command-process-pid process) signal)))))))
 
   (edoc "The host's name, or #f."
         (returns (or string #f)))
@@ -1700,12 +1712,24 @@
     (open-fd-output-port (c-dup (output-file-descriptor port))
                          'block (native-transcoder)))
 
+  (edoc "Maximum characters per captured output chunk, or false for line delivery. Chunk delivery preserves newline characters and emits available partial output without retaining an unterminated line."
+        (value (or integer #f)))
+  (define capture-chunk-size
+    (make-parameter #f (lambda (n)
+                         (unless (or (not n) (and (integer? n) (exact? n) (> n 0)))
+                           (error 'capture-chunk-size "expected a positive integer or false" n)) n)))
+
   (define-record-type capture-stream
-    (fields target standard emit
+    (fields target standard emit chunk-size
             (mutable pipe) (mutable saved) (mutable input) (mutable output)
             (mutable reader) (mutable failure)))
 
   (define (read-capture! stream)
+    (define chunk (and (capture-stream-chunk-size stream) (make-string (capture-stream-chunk-size stream))))
+    (define (read-next)
+      (if (not chunk) (get-line (capture-stream-input stream))
+        (let ([n (get-string-some! (capture-stream-input stream) chunk 0 (string-length chunk))])
+          (if (eof-object? n) n (substring chunk 0 n)))))
     (define (failed! ex)
       (unless (capture-stream-failure stream)
         (capture-stream-failure-set! stream (list ex))))
@@ -1713,7 +1737,7 @@
       (lambda ()
         (guard (ex [else (failed! ex)])
           (let loop ()
-            (let ([line (get-line (capture-stream-input stream))])
+            (let ([line (read-next)])
               (unless (eof-object? line)
                 ;; A failed callback stops delivery, but keep draining so the
                 ;; producer can finish. The owner reports the failure after join.
@@ -1738,7 +1762,7 @@
     (unless (and (<= (length resume) 1) (for-all boolean? resume))
       (error 'call-with-streamed-output "expected at most one continuation policy"))
     (let ([streams (map (lambda (target standard emit)
-                          (make-capture-stream target standard emit #f #f #f #f #f #f))
+                          (make-capture-stream target standard emit (capture-chunk-size) #f #f #f #f #f #f))
                         '(1 2) (list (standard-output-port) (standard-error-port)) (list stdout! stderr!))]
           [ended? #f] [failure #f] [interrupted #f]
           [resumable? (and (pair? resume) (car resume))])
@@ -1747,10 +1771,13 @@
       (define ports
         (and resumable?
           (map (lambda (i)
-                 (make-custom-textual-output-port "evaluation output"
-                   (lambda (text start count)
-                     (let ([out (capture-stream-output (list-ref streams i))])
-                       (put-string out text start count) (flush-output-port out) count)) #f #f void)) '(0 1))))
+                 (let ([port (make-custom-textual-output-port "evaluation output"
+                               (lambda (text start count)
+                                 (let ([out (capture-stream-output (list-ref streams i))])
+                                   (put-string out text start count) (flush-output-port out) count)) #f #f void)])
+                   ;; The proxy must not retain output ahead of its explicitly
+                   ;; flushed segment port, especially before a long computation.
+                   (set-port-output-buffer! port (make-string 0)) port)) '(0 1))))
       (define (attempt thunk)
         (guard (ex [else (unless failure (set! failure (list ex)))]) (thunk)))
       (define (descriptor result)
@@ -1811,7 +1838,7 @@
                 (unless resumable? (error 'call-with-streamed-output "capture scope has ended"))
                 (set! streams (map (lambda (old)
                                      (make-capture-stream (capture-stream-target old) (capture-stream-standard old)
-                                       (capture-stream-emit old) #f #f #f #f #f #f)) streams))
+                                       (capture-stream-emit old) (capture-stream-chunk-size old) #f #f #f #f #f #f)) streams))
                 (set! ended? #f) (set! failure #f) (set! interrupted #f))
               (guard (ex [else (finish!) (raise ex)])
                 (for-each start! streams)

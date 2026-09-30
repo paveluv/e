@@ -17,6 +17,25 @@
 
      (define test-lock (make-mutex))
 
+     ;; Delivery runs after the domain lock is released, including on an
+     ;; exceptional exit; nesting must not release an inner batch early.
+     (let ([queue (kernel:make-delivery-queue)] [seen '()] [early? #f])
+       (define (queue! value)
+         (kernel:enqueue-delivery! queue
+           (lambda () (with-mutex test-lock (set! seen (append seen (list value))))))
+         (kernel:drain-deliveries! queue))
+       (let* ([result (call-with-values
+                        (lambda () (kernel:call-with-deferred-deliveries
+                                     (lambda () (with-mutex test-lock
+                                                  (queue! 'first)
+                                                  (kernel:call-with-deferred-deliveries (lambda () (queue! 'second)))
+                                                  (set! early? (pair? seen)) (values 1 2))))) list)]
+              [raised? (test:raises?
+                         (lambda () (kernel:call-with-deferred-deliveries
+                                      (lambda () (with-mutex test-lock (queue! 'third) (error 'test "abort"))))))])
+         (test:check 'deferred-delivery-preserves-order-values-and-exception-unlocking
+           (list result seen early? raised?) '((1 2) (first second third) #f #t))))
+
      ;; Both wait modes retain FIFO, real deadlines and the caller's fuel.
      (for-each
        (lambda (signals?)

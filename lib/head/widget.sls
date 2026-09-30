@@ -154,6 +154,7 @@
                         [(capture-contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
+                        [(source-receiver) (symbol? (cdr p))]
                         [(receivers)
                          (and (list? (cdr p))
                            (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
@@ -173,7 +174,7 @@
       (field (cons #f definition) 'actions '()))
     (kernel:registry-add! definitions (cons (list kind schema) (map (lambda (p) (cons (car p) (cdr p))) definition))))
 
-  (edoc "Capture explicit receivers from a mounted view's ancestry and declared child paths. Each row is (id kind schema generation owner label). Only local mirrors are read; private descendants are not searched."
+  (edoc "Capture explicit receivers from ancestry, declared child paths and an explicitly exposed model source. Rows are (id kind schema witness owner label): a view witness is its generation; a model witness retains its hosting view lease and optional namespace generation. Only local mirrors are read."
         (id model "focused view") (returns list) (effects internal))
   (define (receivers id)
     (define (row id label)
@@ -181,6 +182,14 @@
         (and d (definition d)
           (list id (view:kind d) (view:schema d) (view:generation d) (view:owner d)
             (or label (option d 'name #f) (symbol->string (view:kind d)))))))
+    (define (source-row at d label)
+      (and label
+        (let-values ([(available? source) (raw-source! (mounted at) d)])
+          (and available? source (model:reference? (cdr (assq 'id source)))
+            (let* ([value (cdr (assq 'value source))]
+                   [generation (and (list? value) (for-all pair? value) (assq 'generation value))])
+              (list (cdr (assq 'id source)) (cdr (assq 'kind source)) (cdr (assq 'schema source))
+                (list 'source at (view:generation d) (view:owner d) generation) #f (symbol->string label)))))))
     (mounted id)
     (fold-left
       (lambda (out at)
@@ -188,15 +197,26 @@
                [extra (map (lambda (p) (row (apply descendant at (cdr p)) (symbol->string (car p))))
                         (field (definition d) 'receivers '()))])
           (fold-left (lambda (out r) (if (or (not r) (assoc (car r) out)) out (append out (list r))))
-            out (cons (row at #f) extra)))) '() (reverse (path id))))
+            out (append (list (row at #f) (source-row at d (field (definition d) 'source-receiver #f))) extra)))) '() (reverse (path id))))
 
   (edoc "Whether a captured receiver still has its exact kind, schema, ownership generation and owner. No remote reads or implicit retargeting."
         (receiver list "row from receivers") (returns boolean) (effects internal))
   (define (receiver-live? receiver)
-    (let* ([id (car receiver)] [d (and (hashtable-contains? nodes id) (read-view id))])
+    (let* ([id (car receiver)] [witness (list-ref receiver 3)]
+           [at (if (pair? witness) (cadr witness) id)]
+           [d (and (hashtable-contains? nodes at) (read-view at))])
       (and d (definition d)
-        (equal? (list (view:kind d) (view:schema d) (view:generation d) (view:owner d))
-          (list-head (cdr receiver) 4)) #t)))
+        (if (not (pair? witness))
+          (equal? (list (view:kind d) (view:schema d) (view:generation d) (view:owner d))
+            (list-head (cdr receiver) 4))
+          (and (field (definition d) 'source-receiver #f)
+            (equal? (list (view:generation d) (view:owner d)) (list-head (cddr witness) 2))
+            (let-values ([(available? source) (raw-source! (mounted at) d)])
+              (and available? source (equal? id (cdr (assq 'id source)))
+                (equal? (list (cdr (assq 'kind source)) (cdr (assq 'schema source))) (list-head (cdr receiver) 2))
+                (let ([value (cdr (assq 'value source))])
+                  (equal? (list-ref witness 4)
+                    (and (list? value) (for-all pair? value) (assq 'generation value)))))))) #t)))
 
   (define (source-id id d)
     (and d (view:source d)

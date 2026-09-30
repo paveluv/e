@@ -12,6 +12,7 @@
           (prefix (foundation wire) wire:)
           (prefix (service doc) doc:)
           (prefix (service document) document:)
+          (prefix (service environment) environment:)
           (prefix (service file) file:)
           (prefix (service filesystem) filesystem:)
           ;; Startup also publishes these modules into base configuration.
@@ -38,7 +39,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
       "prompt-request" "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -77,6 +78,7 @@
         (lambda ()
           (set! source-fingerprint (kernel:fingerprint))
           (session:restore!)
+          (environment:restore!)
           (view:reset-owners!)
           ;; One producer for every head and for work while all heads are
           ;; absent. Log small operation facts, never retained text/deltas.
@@ -91,6 +93,7 @@
               (store:expire-trash! '(base e))))
           (thunk))
         (lambda ()
+          (environment:stop!)
           (dynamic-wind void vt:close-all!
             (lambda ()
               (for-each policy:revoke! (policy:live))
@@ -120,11 +123,18 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request))
+      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
     (case operation
+      [(environment-create) (control!) (arity 2) (apply environment:create! actor args)]
+      [(environment-evaluate) (control!) (arity 3) (apply environment:evaluate! actor args)]
+      [(environment-cancel) (control!) (arity 1) (environment:cancel! actor (car args))]
+      [(environment-reset) (control!) (arity 2) (apply environment:reset! actor args) #t]
+      [(environment-release) (control!) (arity 1) (environment:release! actor (car args))]
+      [(environment-close) (control!) (arity 2) (apply environment:close! actor args) #t]
+      [(environment-completion) (control!) (arity 5) (apply environment:completion args)]
       [(prompt-create) (control!) (head!) (arity 5) (apply prompt-request:create! actor args)]
       [(prompt-bind) (control!) (head!) (arity 3) (apply prompt-request:bind! actor args)]
       [(prompt-accept) (control!) (head!) (arity 3) (apply prompt-request:accept! actor args)]
@@ -180,7 +190,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings prompt-request widget-view) (generic-kind! (cdr (assq 'kind r)))])))
+             [(connection-topology connection-bindings prompt-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)

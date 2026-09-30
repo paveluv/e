@@ -10,13 +10,14 @@
       (mutable source) (mutable range) (mutable prepared) (mutable options)
       (mutable matches) (mutable index) (mutable candidates) (mutable page)
       (mutable note) (mutable preview) (mutable undo) (mutable preview-text)
-      (mutable searcher) (mutable maker) (mutable needle) (mutable hit)))
+      (mutable searcher) (mutable maker) (mutable needle) (mutable hit) (mutable basis)))
 
   (edoc "Create a head-local completion session. The optional text transformer applies only to completion edits; text ownership and submission remain with the host."
         (primary any "primary source; its track procedure may supply a live search")
         (transform (or procedure #f) "text and character caret -> (text . caret)"))
   (define (create primary transform)
-    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f #f #f #f #f #f))
+    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f #f #f #f #f #f #f))
+  (define (basis source) (and (completion:source? source) ((completion:source-basis source))))
 
   (edoc "Read a prepared session as (generation text caret candidates note page-sequence source preview). False candidates means the list is hidden. This never invokes a provider."
         (s any "completion session") (returns list))
@@ -49,7 +50,9 @@
 
   (edoc "Close reversible candidate and search previews. Only acceptance keeps a live search's chosen position; repeated cleanup is harmless."
         (s any "completion session") (accepted? boolean "whether input was accepted"))
-  (define (finish! s accepted?) (end-preview! s) (end-search! s accepted?))
+  (define (finish! s accepted?)
+    (end-preview! s) (end-search! s accepted?)
+    (when (completion:source? (state-primary s)) ((completion:source-release (state-primary s)))))
 
   (define (value candidate)
     (if (completion:candidate? candidate) (completion:candidate-value candidate) candidate))
@@ -77,7 +80,10 @@
       (error 'refresh! "invalid completion caret" position))
     (track! s text position)
     (when (and (state-preview s) (not (equal? text (state-preview-text s)))) (end-preview! s))
-    (unless (and (string=? text (state-text s)) (= position (state-position s)))
+    (unless (and (string=? text (state-text s)) (= position (state-position s))
+              (equal? (state-basis s) (basis (state-primary s))))
+      (unless (equal? (state-basis s) (basis (state-primary s))) (state-prepared-set! s #f))
+      (state-basis-set! s (basis (state-primary s)))
       (unless (prepared? s (state-source s) text position) (state-prepared-set! s #f))
       (if (state-source s)
         (let-values ([(start end options candidates)
@@ -118,6 +124,7 @@
         (s any "completion session") (source any "cursor-aware source, legacy prefix procedure or false")
         (backwards? boolean "visit the previous live-search match"))
   (define (normalize! s source backwards?)
+    (refresh! s (state-text s) (state-position s))
     (state-note-set! s "")
     (state-generation-set! s (+ 1 (state-generation s)))
     (let ([text (state-text s)] [position (state-position s)])
@@ -182,6 +189,7 @@
         (text string "candidate insertion value") (returns boolean))
   (define (choose! s generation text)
     (and (= generation (state-generation s))
+      (equal? (state-basis s) (basis (state-primary s)))
       (state-candidates s) (exists (lambda (candidate) (string=? text (value candidate))) (state-candidates s))
       (let ([next (if (state-source s) (replace-range s text) (cons text (string-length text)))])
         (dismiss! s) (edit! s next #f) #t))))
