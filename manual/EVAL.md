@@ -406,9 +406,12 @@ The second argument labels the data: an extension passes a symbol such as
 `'worksheet`, producing `(worksheet . result)` without adding M-x history.
 M-x passes its actual input as a string, producing `(input . result)` with history.
 
-Run on the head's main thread. Nested calls share the outer capture and
-interruption scope and one undo group. A continuation escape cleans up and
-escapes normally; grouping is not a rollback of edits or arbitrary Scheme
-effects. Parse inside the thunk so read errors use the same reporting path.
+Run on the head's main thread. Nested calls share the outer capture,
+interruption scope and undo group. A prompt suspension releases capture
+resources and closes that automatic group; resuming starts a new capture
+segment and undo step, separate from intervening commands. An explicit
+`edit:call-as-one-edit!` group cannot suspend. A continuation escape cleans
+up and escapes normally; grouping is not a rollback of edits or arbitrary
+Scheme effects. Parse inside the thunk so read errors use the same reporting path.
 For result insertion, edit inside the thunk and return the original values
 with `apply values`, keeping the computation and insertion in one undo step.

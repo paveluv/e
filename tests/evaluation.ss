@@ -8,6 +8,7 @@
      (import (prefix (apps eval) eval:) (prefix (head edit) edit:)
              (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head echo) echo:)
              (prefix (service log) log:) (prefix (test) test:)
+             (prefix (head suspension) suspension:) (prefix (head text-source) text-source:)
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
      (widget:init!) (edit:init!) (window:init!)
@@ -55,6 +56,33 @@
      (test:check 'capture-and-interrupt-state-restored
        (list (eq? handler (keyboard-interrupt-handler)) (= descriptors (test:fd-count))
              (eval:values (run (lambda () 7)))) '(#t #t (7)))
+
+     ;; A parked evaluation owns no capture descriptors or undo batch. Other
+     ;; commands can edit, then the resumed segment gets its own undo step.
+     (define ticket #f)
+     (define result #f)
+     (define batch #f)
+     (suspension:call! head:ui-actor void
+       (lambda ()
+         (set! result
+           (run (lambda ()
+                  (set! batch (text-source:current-batch head:ui-actor))
+                  (edit:insert-text! "before") (display "before pause\n")
+                  (suspension:wait! (lambda (t) (set! ticket t) void))
+                  (display "after pause" (current-error-port))
+                  (edit:insert-text! "after")
+                  (not (equal? batch (text-source:current-batch head:ui-actor))))))))
+     (test:check 'suspended-evaluation-releases-process-state
+       (list result (text-source:current-batch head:ui-actor)
+         (= descriptors (test:fd-count)) (eq? handler (keyboard-interrupt-handler))) '(#f #f #t #t))
+     (edit:insert-text! "other")
+     (suspension:resolve! ticket #t) (suspension:drain! raise)
+     (test:check 'evaluation-resumes-with-new-capture-and-batch
+       (list (eval:status result) (eval:values result) (car (output 'stdout)) (car (output 'stderr))
+         (= descriptors (test:fd-count))) '(ok (#t) "before pause" "after pause" #t))
+     (edit:undo!)
+     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text b) "beforeother\n")
+     (edit:undo!) (edit:undo!)
 
      (eval:report! nested 'probe)
      (test:check 'extension-label-is-data-without-mx-history

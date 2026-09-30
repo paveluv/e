@@ -1727,17 +1727,30 @@
         (stdout! procedure "(stdout! line)")
         (stderr! procedure "(stderr! line)")
         (thunk thunk "the work")
+        (resume (list-of boolean) "optionally reopen capture on continuation reentry; each segment releases all process descriptors")
         (returns any))
-  (define (call-with-streamed-output stdout! stderr! thunk)
+  (define (call-with-streamed-output stdout! stderr! thunk . resume)
     ;; Run thunk with Scheme's current ports and the process-level stdout and
     ;; stderr descriptors connected to pipes. Reader threads emit each line
     ;; as it arrives, including output inherited by child processes.
     (unless (and c-pipe c-dup c-dup2 c-close)
       (error 'call-with-streamed-output "output capture is unavailable"))
+    (unless (and (<= (length resume) 1) (for-all boolean? resume))
+      (error 'call-with-streamed-output "expected at most one continuation policy"))
     (let ([streams (map (lambda (target standard emit)
                           (make-capture-stream target standard emit #f #f #f #f #f #f))
                         '(1 2) (list (standard-output-port) (standard-error-port)) (list stdout! stderr!))]
-          [ended? #f] [failure #f] [interrupted #f])
+          [ended? #f] [failure #f] [interrupted #f]
+          [resumable? (and (pair? resume) (car resume))])
+      ;; A suspended continuation retains its Scheme ports, but no descriptor
+      ;; or reader thread. Stable proxies address the newly opened segment.
+      (define ports
+        (and resumable?
+          (map (lambda (i)
+                 (make-custom-textual-output-port "evaluation output"
+                   (lambda (text start count)
+                     (let ([out (capture-stream-output (list-ref streams i))])
+                       (put-string out text start count) (flush-output-port out) count)) #f #f void)) '(0 1))))
       (define (attempt thunk)
         (guard (ex [else (unless failure (set! failure (list ex)))]) (thunk)))
       (define (descriptor result)
@@ -1754,6 +1767,8 @@
           (open-fd-output-port (cdr (capture-stream-pipe stream)) 'line (native-transcoder)))
         (capture-stream-reader-set! stream (fork-thread (lambda () (read-capture! stream)))))
       (define (release!)
+        (when ports
+          (for-each (lambda (p) (unless (port-closed? p) (attempt (lambda () (flush-output-port p))))) ports))
         ;; Release all writers and restore both descriptors before either join.
         ;; A callback may still use the caller's ports until that join finishes.
         (for-each
@@ -1792,7 +1807,12 @@
         (lambda ()
           (dynamic-wind #t
             (lambda ()
-              (when ended? (error 'call-with-streamed-output "capture scope has ended"))
+              (when ended?
+                (unless resumable? (error 'call-with-streamed-output "capture scope has ended"))
+                (set! streams (map (lambda (old)
+                                     (make-capture-stream (capture-stream-target old) (capture-stream-standard old)
+                                       (capture-stream-emit old) #f #f #f #f #f #f)) streams))
+                (set! ended? #f) (set! failure #f) (set! interrupted #f))
               (guard (ex [else (finish!) (raise ex)])
                 (for-each start! streams)
                 (for-each (lambda (stream)
@@ -1800,8 +1820,8 @@
                             (descriptor (c-dup2 (cdr (capture-stream-pipe stream)) (capture-stream-target stream))))
                           streams)))
             (lambda ()
-              (parameterize ([current-output-port (capture-stream-output (car streams))]
-                             [current-error-port (capture-stream-output (cadr streams))])
+              (parameterize ([current-output-port (if ports (car ports) (capture-stream-output (car streams)))]
+                             [current-error-port (if ports (cadr ports) (capture-stream-output (cadr streams)))])
                 (thunk)))
             finish!))
         (lambda results

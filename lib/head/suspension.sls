@@ -51,7 +51,7 @@
   (define (wait! register)
     (let ([task (current)])
       (unless (and task (task-escape task)) (error 'wait! "input requires a command boundary"))
-      (when (text-source:current-batch (task-actor task))
+      (unless (text-source:suspension-safe?)
         (error 'wait! "an edit group cannot span a prompt"))
       (unless (procedure? register) (error 'wait! "expected a request registration procedure"))
       (call/1cc

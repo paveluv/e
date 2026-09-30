@@ -21,13 +21,14 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps eval)
   (export call-with-evaluation! completion-candidates completion-extensions completion-hint completion-span
-          (rename (evaluation-condition condition)) (rename (eval-copy-result copy-result))
+          (rename (evaluation:condition condition)) (rename (eval-copy-result copy-result))
           init! input-closers input-diagnostic (rename (eval-last-expression! last-expression!))
           (rename (eval-prompt! prompt!))
           (rename (eval-prompt-with! prompt-with!)) report! (rename (eval! run!)) settle-completion
-          (rename (evaluation-status status)) (rename (eval-top-level-form! top-level-form!)) type-fits?
-          (rename (evaluation-values values)))
+          (rename (evaluation:status status)) (rename (eval-top-level-form! top-level-form!)) type-fits?
+          (rename (evaluation:values values)))
   (import (chezscheme)
+          (prefix (core evaluation) evaluation:)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation fuzzy) fuzzy:)
@@ -44,10 +45,10 @@
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
           (prefix (head style) style:)
+          (prefix (head text-source) text-source:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
-          (prefix (only (service reference) signatures) reference:)
-          (prefix (only (sys sys) call-with-streamed-output duplicate-standard-output-port terminal-output-port) sys:))
+          (prefix (only (service reference) signatures) reference:))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -1186,51 +1187,20 @@
                       (lambda () (kernel:evaluate! form (interaction-environment)))
                       list)))))))
 
-  (edoc "An evaluation's outcome, before reporting or copying it."
-        (status symbol "ok, error or interrupted")
-        (values list "the returned values, empty on failure")
-        (condition (or condition #f) "the original condition, or #f on success")
-        (spoken any "private echo observation before execution"))
-  (define-record-type evaluation (fields status values condition spoken))
+  (define observations (make-weak-eq-hashtable))
 
-  (define evaluating? (make-thread-parameter #f))
-
-  (edoc "Run a thunk with C-g interruption, streamed stdout/stderr logging and one undo group. Return its values or original condition in an evaluation result, without reporting it. Nested calls share the outer capture and interruption scope. Runs on the head's main thread."
+  (edoc "Run a thunk with C-g interruption, streamed output logging and one undo group per uninterrupted command segment. Prompt suspension releases capture and closes the segment; resumption starts a fresh one. Return values or the original condition without reporting. Nested calls share capture and grouping. Runs on the head's main thread."
         (label string "the undo label")
         (thunk thunk "the computation, returning ordinary Scheme values")
         (returns (record evaluation)))
   (define (call-with-evaluation! label thunk)
-    (define spoken (echo:text))
-    (define (run)
-      (guard (ex [else (make-evaluation (if (head:interrupted? ex) 'interrupted 'error) '() ex spoken)])
-        (call-with-values
-          (lambda () (edit:call-as-one-edit! label thunk))
-          (lambda vals (make-evaluation 'ok vals #f spoken)))))
-    (if (evaluating?) (run)
-      (let ([lock (make-mutex)]
-            [terminal (sys:duplicate-standard-output-port)])
-        (define (record! channel line)
-          (parameterize ([sys:terminal-output-port terminal])
-            (with-mutex lock
-              (log:add! 'eval:call-with-evaluation! (cons channel line) (not (eq? channel 'compile))))))
-        (define compile-default (compile-library-handler))
-        (define (compile-quietly source object)
-          ;; A library compiled on import, once an extension enabled lazy
-          ;; compilation, is bookkeeping: a compile record naming its source
-          ;; for the log, nothing in the echo area, and Chez's own line
-          ;; withheld. A compilation that fails raises into the result.
-          (record! 'compile source)
-          (parameterize ([compile-file-message #f]) (compile-default source object)))
-        (dynamic-wind
-          void
-          (lambda ()
-            (parameterize ([sys:terminal-output-port terminal] [evaluating? #t]
-                           [compile-library-handler compile-quietly])
-              (sys:call-with-streamed-output
-                (lambda (line) (record! 'stdout line))
-                (lambda (line) (record! 'stderr line))
-                (lambda () (head:call-with-interrupt run)))))
-          (lambda () (close-port terminal))))))
+    (let* ([spoken (echo:text)]
+           [result (evaluation:call!
+                     (lambda () (text-source:call-segmented! head:ui-actor label thunk))
+                     (lambda (channel line)
+                       (log:add! 'eval:call-with-evaluation! (cons channel line) (not (eq? channel 'compile))))
+                     head:call-with-interrupt head:interrupted?)])
+      (hashtable-set! observations result spoken) result))
 
   (edoc "Report an evaluation under eval:report!, copying non-void values when copy-result is enabled and preserving a message a void command spoke. The datum is (destination . result): a symbol labels an extension's result; a string records M-x input and participates in its history."
         (outcome (record evaluation) "the execution result")
@@ -1241,20 +1211,20 @@
     ;; A command run at M-x that spoke in the echo area, (edit:answer! ...)
     ;; say, keeps its message: a void result is logged but not shown over
     ;; it. Spoken is the echo text before the evaluation, when known.
-    (let* ([failed? (not (eq? (evaluation-status outcome) 'ok))]
-           [vals (evaluation-values outcome)]
+    (let* ([failed? (not (eq? (evaluation:status outcome) 'ok))]
+           [vals (evaluation:values outcome)]
            [void? (and (not failed?)
                        (or (null? vals)
                          (and (null? (cdr vals))
                               (eq? (car vals) (void)))))]
            [result (if failed?
-                       (if (eq? (evaluation-status outcome) 'interrupted) "interrupted"
-                         (format "error: ~a" (kernel:condition-text (evaluation-condition outcome))))
+                       (if (eq? (evaluation:status outcome) 'interrupted) "interrupted"
+                         (format "error: ~a" (kernel:condition-text (evaluation:condition outcome))))
                        (string:join (map (lambda (v) (format "~s" v)) vals)
                                     ", "))]
            [spoke? (and void?
                         (let ([now (echo:text)])
-                          (and (string? now) (> (string-length now) 0) (not (equal? now (evaluation-spoken outcome))))))])
+                          (and (string? now) (> (string-length now) 0) (not (equal? now (hashtable-ref observations outcome #f))))))])
       (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
              [result-record
               (log:add! 'eval:report! (cons destination (if void? "#<void>" result)) #f)])

@@ -44,4 +44,7 @@
   (check 'suspension-requires-command-boundary-and-no-edit-transaction
     (list (test:raises? (lambda () (request void)))
       (test:raises? (lambda () (suspension:call! actor wake
-                                 (lambda () (text-source:call-grouped! actor #f (lambda () (request void)))))))) '(#t #t)))
+                                 (lambda () (text-source:call-grouped! actor #f (lambda () (request void)))))))
+      (test:raises? (lambda () (suspension:call! actor wake
+                                 (lambda () (text-source:call-segmented! actor "automatic"
+                                              (lambda () (text-source:call-grouped! actor #f (lambda () (request void)))))))))) '(#t #t #t)))

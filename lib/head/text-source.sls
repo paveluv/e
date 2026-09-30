@@ -1,9 +1,9 @@
 ;; Immutable text mirrors and declared edit intent, independent of a host.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-source)
-  (export adopt! basis-text call-grouped! changes current-batch edit! forget! history!
+  (export adopt! basis-text call-grouped! call-segmented! changes current-batch edit! forget! history!
           (rename (source-id id) (source-lines lines)) lookup make observe! open! project-positions rebase
-          (rename (source-revision revision)) snapshot span)
+          (rename (source-revision revision)) snapshot span suspension-safe?)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:) (prefix (foundation text) text:)
           (prefix (service log) log:) (prefix (state store) store:))
 
@@ -14,6 +14,7 @@
   ;; Grouping is command policy, shared by every text control and host.
   ;; The store still owns admission, attribution and undo history.
   (define group (make-parameter #f))
+  (define explicit-group? (make-parameter #f))
   (define-record-type edit-group (fields actor batch label labels))
 
   (edoc "The active command's batch for this actor, or false outside a group."
@@ -25,10 +26,28 @@
         (actor actor "editing actor") (label (or string #f) "undo label") (thunk thunk "commands") (returns any))
   (define (call-grouped! actor label thunk)
     (unless (or (not label) (string? label)) (error 'call-grouped! "expected a label or false" label))
+    (parameterize ([explicit-group? #t])
+      (if (current-batch actor) (thunk)
+        (parameterize ([group (make-edit-group actor
+                                (list actor (gensym->unique-string (gensym "batch"))) label (make-eqv-hashtable))])
+          (thunk)))))
+
+  (edoc "Group automatic command edits between suspension points. Every continuation reentry gets a fresh batch; explicit nested groups still forbid suspension. Nested evaluations retain the active outer segment."
+        (actor actor "editing actor") (label string "undo label") (thunk thunk "computation") (returns any))
+  (define (call-segmented! actor label thunk)
+    (unless (string? label) (error 'call-segmented! "expected an undo label"))
     (if (current-batch actor) (thunk)
-      (parameterize ([group (make-edit-group actor
-                              (list actor (gensym->unique-string (gensym "batch"))) label (make-eqv-hashtable))])
-        (thunk))))
+      (let ([saved #f])
+        (dynamic-wind
+          (lambda ()
+            (set! saved (group))
+            (group (make-edit-group actor (list actor (gensym->unique-string (gensym "batch"))) label (make-eqv-hashtable))))
+          thunk
+          (lambda () (group saved))))))
+
+  (edoc "Whether a command can park without spanning an explicit text edit group. Automatic evaluation segments close while the continuation unwinds."
+        (returns boolean) (effects internal))
+  (define (suspension-safe?) (not (explicit-group?)))
 
   (define (grouped-context actor id context proc)
     (let ([batch (current-batch actor)])
