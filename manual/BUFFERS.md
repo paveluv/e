@@ -1055,6 +1055,15 @@ returns `(draft-revision document source-revision text regions)` for an
 explicit document. `close!` retires the draft and scoped views while keeping
 the borrowed documents. Mutating operations take the actor first.
 
+Load `conflict-source` to present a review through a collection:
+`(collection:create! actor review "" '() 'persistent)`. Demand prepares
+bounded row pages in base workers; hidden queries stop work. Rows use stable
+`(document revision)` keys and keep scope order. `conflict-source:choose!`
+takes a displayed row selection, result basis and side. Its `choose-all!`
+and `settle!` take the query, displayed generation and basis (plus the side
+for choosing). These operations take the actor first and reject stale
+listings without sending alternative text back through the command channel.
+
 In the base, `(store:state id basis)` returns `#f` for an absent buffer, or
 `(name text revision facts [changes])` from one read. Pass `#f` for no chain,
 or a revision to include it. Names and facts are owned copies; text remains
