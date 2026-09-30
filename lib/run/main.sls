@@ -41,42 +41,45 @@
         (prompts))
   (define (shutdown!)
     (let ([token #f])
-      (dynamic-wind void
-        (lambda ()
-          (let review ([remote (client:request 'prepare-close)] [changed? #f])
-            (set! token (cadr remote))
-            (let-values ([(local valid?) (head:prepare-quit)])
-              (let* ([status (cadddr remote)]
-                     [count (lambda (key) (cdr (assq key status)))]
-                     [risks
-                      (filter values
-                        (map (lambda (n noun)
-                               (and (> n 0) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
-                          (list local (count 'terminals)
-                            (max 0 (- (count 'heads) 1)) (count 'agents) (count 'pending))
-                          '("local draft" "terminal" "other head" "agent session" "pending interaction")))]
-                     [answer (if (null? risks) #\y
-                                 (prompt:key!
-                                   (format "~aStop the base? ~a. Shared text and views are saved. y)es, n)o, v)iew"
-                                     (if changed? "Work changed; " "") (string:join risks ", ")) "ynv"))])
-                (case (and answer (char-downcase answer))
-                  [(#\y)
-                   (if (not (head:call-uninterrupted valid?))
-                       (review (client:request 'prepare-close) #t)
-                       (begin
-                         (head:checkpoint!)
-                         ;; The base rechecks transient work, then uses the
-                         ;; same save/stop path as a system stop or restart.
-                         (let ([next (client:request 'shutdown token)])
-                           (review next #t))))]
-                  [(#\v)
-                   (client:request 'cancel-review token)
-                   (set! token #f)
-                   (head:view-review!)]
-                  [else (void)])))))
-        (lambda ()
-          (when token
-            (guard (ex [else (void)]) (client:request 'cancel-review token)))))))
+      (define (finish!)
+        (when token
+          (guard (ex [else (void)]) (client:request 'cancel-review token))
+          (set! token #f)))
+      ;; A parked question releases its stack, not its review witness. The
+      ;; base owns this connection's review and drops it on departure.
+      (guard (ex [else (finish!) (raise ex)])
+        (let review ([remote (client:request 'prepare-close)] [changed? #f])
+          (set! token (cadr remote))
+          (let-values ([(local valid?) (head:prepare-quit)])
+            (let* ([status (cadddr remote)]
+                   [count (lambda (key) (cdr (assq key status)))]
+                   [risks
+                    (filter values
+                      (map (lambda (n noun)
+                             (and (> n 0) (format "~a ~a~a" n noun (if (= n 1) "" "s"))))
+                           (list local (count 'terminals)
+                             (max 0 (- (count 'heads) 1)) (count 'agents) (count 'pending))
+                           '("local draft" "terminal" "other head" "agent session" "pending interaction")))]
+                   [answer (if (null? risks) #\y
+                               (prompt:key!
+                                 (format "~aStop the base? ~a. Shared text and views are saved. y)es, n)o, v)iew"
+                                   (if changed? "Work changed; " "") (string:join risks ", ")) "ynv"))])
+              (case (and answer (char-downcase answer))
+                [(#\y)
+                 (if (not (head:call-uninterrupted valid?))
+                     (review (client:request 'prepare-close) #t)
+                     (begin
+                       (head:checkpoint!)
+                       ;; The base rechecks transient work, then uses the
+                       ;; same save/stop path as a system stop or restart.
+                       (let ([next (client:request 'shutdown token)])
+                         (review next #t))))]
+                [(#\v)
+                 (client:request 'cancel-review token)
+                 (set! token #f)
+                 (head:view-review!)]
+                [else (void)]))))
+        (finish!))))
 
   (define departure-hooked
     (head:set-departure!
@@ -268,7 +271,7 @@
           (kernel:load-modules!
             '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "eval" "extension" "finder" "git-view"
               "glyph" "head" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
-              "paint" "paren" "pretty-scheme" "prompt" "range" "render" "scheme-format"
+              "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "render" "scheme-format"
               "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "widget" "window"))))
       (load-config!)
       ;; Config loads the local view providers before resolving their plain

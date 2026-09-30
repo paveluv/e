@@ -1,6 +1,6 @@
 ;; A prompt composition runs through real head input and the ordinary pump.
 (let ([saved (head-read a '(head:buffer-name (head:current-buffer)))])
-  (head-read a '(begin (kernel:load-module! "prompt-request") (kernel:load-module! "prompt-control") #t))
+  (head-read a '(begin (kernel:load-module! "prompt-request") (kernel:load-module! "prompt") #t))
   (head-read a
     '(begin
        (define wire-prompt-answer #f)
@@ -17,7 +17,7 @@
        (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '()))
        (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) '(wire-prompt 1 ())))
        (define wire-prompt-view
-         (prompt-control:create! wire-prompt-request '((label . "Wire prompt:"))
+         (prompt:create! wire-prompt-request '((label . "Wire prompt:"))
            (list (list 'accepted wire-prompt-host 'accepted '()))))
        (view:arrange! head:ui-actor (list (list wire-prompt-host 0 (list (list 'prompt wire-prompt-view '(grow 1))) '())) '())
        (window:show-widget! (head:current-window) wire-prompt-host)
@@ -208,8 +208,7 @@
          (parameterize ([kernel:registering-module 'completion-wire])
            (head:add-pre-redraw-hook!
              (lambda ()
-               (when (and (not completion-status-bytes) (prompt:active?) (head:popup)
-                       (string:prefix? "<completions" (head:buffer-name (head:window-buffer (head:popup)))))
+               (when (and (not completion-status-bytes) (prompt:active?) (head:popup))
                  ;; Exclude unrelated mirror workers: inspection itself runs
                  ;; on this UI thread and must not write to the base.
                  (let ([io (lambda () (call-with-input-file "/proc/thread-self/io"
@@ -311,9 +310,12 @@
                                  (head:show-buffer! b) host)))])
     (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
     (head-send! a "\t")
+    ;; Completion writes the entry before its new query rows are admitted.
     (head-wait 'finder-widget-wire-completed a
-      (lambda () (equal? (head-read a `(let-values ([(text revision) (store:snapshot ,(cadadr pair))]) text))
-                   (vector (string-append (current-directory) "/lib/service/file-query.sls")))))
+      (lambda () (head-read a
+                   `(let-values ([(text revision) (store:snapshot ,(cadadr pair))])
+                      (and (equal? text (vector ,(string-append (current-directory) "/lib/service/file-query.sls")))
+                        (cdr (assq 'selection (view:state (interaction:snapshot (widget:descendant ',host 'app 'table))))) #t)))))
     (test:check 'finder-client-entry-table-and-base-completion-compose
       (head-read a `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
                            [selection (cdr (assq 'selection (view:state (interaction:snapshot table))))])

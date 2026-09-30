@@ -3,7 +3,7 @@
 (elibrary (head prompt-host)
   (export init!)
   (import (chezscheme) (prefix (head head) head:)
-          (prefix (head interaction) interaction:) (prefix (head prompt-control) prompt-control:)
+          (prefix (head interaction) interaction:) (prefix (head prompt) prompt:)
           (prefix (head widget) widget:) (prefix (head window) window:)
           (prefix (state model) model:) (prefix (state view) view:))
 
@@ -11,6 +11,7 @@
     (fields root (mutable buffer) window origin previous rows (mutable prompts)))
   (define current #f)
   (define (field r k) (cdr (assq k r)))
+  (define (unmounted-snapshot id) (caddr (caadr (model:snapshots (list id)))))
   (define (visible? s)
     (and s (eq? (head:window-buffer (head:popup)) (surface-buffer s))))
   (define (children prompts)
@@ -19,7 +20,7 @@
     ;; The envelope revision also covers focus publication. Read the structural
     ;; guard after publishing our own preceding input, never before that fence.
     (interaction:flush!)
-    (let* ([root (surface-root s)] [r (model:snapshot root)]
+    (let* ([root (surface-root s)] [r (if (surface-buffer s) (model:snapshot root) (unmounted-snapshot root))]
            [change (list root (field r 'revision) (children prompts) '((name . "prompt")))])
       (let-values ([(status rows)
                     (if (surface-buffer s) (widget:arrange! (list change))
@@ -49,7 +50,7 @@
            [root (head:window-widget w)] [d (and root (interaction:snapshot root))]
            [s (and (visible? current) (eq? w (head:popup)) current)]
            [parent (and s (car (car (reverse (surface-prompts s)))))]
-           [origin (list (cons 'view root) (cons 'generation (and d (view:generation d)))
+           [origin (list (cons 'window (head:window-index w)) (cons 'view root) (cons 'generation (and d (view:generation d)))
                      (cons 'focus (and d (view:focus d))) (cons 'source (and d (view:source d))))])
       (values parent origin
         (lambda (request receiver)
@@ -57,6 +58,12 @@
                            (view:create! head:ui-actor #f 'overlay 1 '((name . "prompt")) '() request)
                            #f w b (head:window-buffer (head:popup)) (head:popup-rows) '()))])
             (guard (ex [else (detach! s request) (raise ex)])
+              (let* ([r (unmounted-snapshot receiver)] [d (field r 'value)])
+                (let-values ([(status rows)
+                              (view:arrange! head:ui-actor
+                                (list (list receiver (field r 'revision) (view:children d)
+                                        (cons '(contexts global) (view:options d)))) '())])
+                  (unless (eq? status 'applied) (error 'prepare "prompt receiver changed" status))))
               (arrange! s (append (surface-prompts s) (list (list request receiver))))
               (unless (surface-buffer s)
                 (surface-buffer-set! s (window:show-widget! (head:popup) (surface-root s)))
@@ -69,4 +76,4 @@
               (lambda () (detach! s request))))))))
 
   (edoc "Install the default prompt placement in the outer pop-up. Nested input shares one overlay tree; removing or replacing the host cancels its waiting callers.")
-  (define (init!) (prompt-control:register-host! prepare)))
+  (define (init!) (prompt:register-host! prepare)))

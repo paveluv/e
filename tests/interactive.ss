@@ -120,14 +120,15 @@
            (wait-for! (list 'idle-resize-refreshes-the-screen prompt?)
              (lambda ()
                (let ([buffer (find-cell "*scratch*")] [close (find-cell "│×│")]
-                     [edge (find-cell (if prompt? "┊λ (resize-input" "┊(head"))]
-                     [echo-rows (if prompt? 1 2)])
+                     [edge (find-cell (if prompt? "λ (resize-input" "┊(head"))])
                  (and (contains? (transcript-text) "\x1b;[?2026h")
-                      buffer close (= (car buffer) (- rows 1 echo-rows)) (= (cdr close) (- cols 3))
-                      edge (= (cdr edge) (quotient (- cols (min cols 100)) 2))
+                      buffer close (= (cdr close) (- cols 3))
+                      edge (if prompt? (and (> (car edge) (car buffer)) (= (cdr edge) 0))
+                             (and (= (car buffer) (- rows 3)) (= (cdr edge) (quotient (- cols (min cols 100)) 2))))
                       (or prompt? (find-cell resize-question))))) 3000)))
        '((#f 18 160) (#t 24 80)))
      (send! "\x7;")                     ; C-g leaves the prompt
+     (wait-for! 'resize-prompt-closes (lambda () (not (find-cell "λ (resize-input"))) 3000)
      (sys:close-connection! asker)
 
      ;; A queued keyboard burst must have the same command/viewport semantics
@@ -269,16 +270,15 @@
                        (not (find-cell "<completions>")))) 5000)
      (send! "\t")
      (wait-for! 'completions-take-the-window
-                (lambda () (and (find-cell "<completions>  4 matches of symbol")
+                (lambda () (and (find-cell "4 matches of symbol")
                                 ;; each candidate carries its edoc hint, one per
                                 ;; row, a long hint wrapping under itself
-                                (find-cell "window:split-below!  ()  Split the selected")
-                                (find-cell "window:split-above!  ()  Split the selected")
+                                (find-cell "()  Split the selected")
                                 (find-cell "shows the same buffer.")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
-                (lambda () (not (find-cell "<completions>"))) 5000)
+                (lambda () (not (find-cell "λ ("))) 5000)
      ;; An argument whose type is documented completes to its values: the
      ;; buffers, spelled as the expressions that denote them.
      (send! "\x1b;xhead:show-buffer! \t\t")
@@ -289,7 +289,7 @@
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
-                (lambda () (not (find-cell "<completions>"))) 5000)
+                (lambda () (not (find-cell "λ ("))) 5000)
      ;; A string argument completes as a session: a sole directory opens the
      ;; type's literal and stays open without settling, and the pop-up lists
      ;; its entries at once.
@@ -301,7 +301,7 @@
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
-                (lambda () (not (find-cell "<completions>"))) 5000)
+                (lambda () (not (find-cell "λ ("))) 5000)
      ;; A needle argument searches as it is typed: the note counts the
      ;; matches, Tab visits the next without inserting, and C-g restores point.
      (evaluate '(let ([b (head:fresh-buffer! "needles")])
@@ -311,10 +311,10 @@
                   (head:buffer-name b)))
      (send! "\x1b;xsearch:replace! \"alp")
      (wait-for! 'a-needle-argument-counts-its-matches
-                (lambda () (find-cell "λ (search:replace! \"alp [1 of 3]")) 5000)
+                (lambda () (and (find-cell "λ (search:replace! \"alp") (find-cell "[1 of 3]"))) 5000)
      (send! "\t")
      (wait-for! 'tab-visits-the-next-match
-                (lambda () (find-cell "λ (search:replace! \"alp [2 of 3]")) 5000)
+                (lambda () (find-cell "[2 of 3]")) 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
@@ -368,6 +368,7 @@
      (send! "\x18;\t")
      (wait-for! 'the-listing-returns-to-the-buffers-keys
        (lambda () (and (find-cell "<bindings>") (not (find-cell "prompt keys")))) 5000)
+     (evaluate '(begin (bindings:hide!) (window:delete-others!) #t))
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

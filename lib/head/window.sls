@@ -23,7 +23,6 @@
           (prefix (head layout) layout:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head terminal-control) terminal:)
           (prefix (head widget) widget:)
           (prefix (state view) view:))
@@ -524,7 +523,7 @@
         [(split-current-window! 'below b #f)]
         [else #f])))
 
-  (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current one; focus stays where it was. The window, or #f when there was no room."
+  (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current ordinary window. From a pop-up, use the last ordinary window. Focus stays where it was. The window, or #f when there was no room."
         (b buffer "the buffer to show")
         (returns (or window #f)))
   (define (pop-up-or-reuse! b)
@@ -533,19 +532,16 @@
     (let ([b (edoc:type-value 'buffer b)])
       (head:add-buffer! b)
       (or (window-showing b)
-          (split-current-window! 'below b #f))))
+          (let ([anchor (if (head:popup? (head:current-window))
+                            (if (memq (head:previous-window) (ordinary-windows)) (head:previous-window) (car (ordinary-windows)))
+                            (head:current-window))])
+            (head:with-window anchor (split-current-window! 'below b #f))))))
 
   ;;; Registration -------------------------------------------------------------------
 
-  (edoc "Install the default window keys, C-x ESC and C-x C-g emptying the pop-up among them, and allow the window commands inside a prompt.")
+  (edoc "Install the default window keys, including C-x ESC and C-x C-g to empty the pop-up.")
   (define (init!)
     (init-widget-host!)
-    ;; the global commands a prompt may run without losing its input:
-    ;; pure window management
-    (for-each prompt:allow!
-              (list focus-up! focus-down! focus-left! focus-right! focus-next!
-                    split-below! split-right! split-above! split-left!
-                    delete! delete-others!))
     (for-each
       (lambda (entry) (keymap:bind-default! (car entry) (cadr entry)))
       `(("C-x o" ,focus-next!) ("C-x 0" ,delete!) ("C-x 1" ,delete-others!)

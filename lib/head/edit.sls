@@ -61,7 +61,6 @@
           (head literal)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
-          (prefix (head prompt) prompt:)
           (prefix (head render) render:)
           (prefix (head style) style:)
           (prefix (head table) table:)
@@ -1355,19 +1354,6 @@
           ("C-x C-w" ,(keymap:prefill save-file!)) ("C-x C-c" ,quit!)
           ("C-x k" ,(keymap:call kill-buffer! head:current-buffer))
           ("C-c a" ,(keymap:prefill answer!))))
-      (for-each
-        (lambda (entry)
-          (keymap:bind-default! 'prompt (car entry) (cadr entry)))
-        `(("C-g" ,prompt:cancel!) ("ESC" ,prompt:cancel!) ("RET" ,prompt:accept!)
-          ("C-a" ,prompt:beginning!) ("HOME" ,prompt:beginning!)
-          ("C-b" ,prompt:backward!) ("LEFT" ,prompt:backward!)
-          ("C-e" ,prompt:end!) ("END" ,prompt:end!) ("C-f" ,prompt:forward!) ("RIGHT" ,prompt:forward!)
-          ("UP" ,prompt:up!) ("DOWN" ,prompt:down!) ("C-d" ,prompt:delete-forward!)
-          ("DEL" ,prompt:delete-forward!) ("C-h" ,prompt:delete-backward!)
-          ("BS" ,prompt:delete-backward!) ("C-k" ,prompt:kill!) ("C-y" ,prompt:yank!)
-          ("TAB" ,prompt:complete!) ("S-TAB" ,prompt:alternate-complete!)
-          ("M-." ,prompt:inspect!) ("M-RET" ,prompt:newline!) ("PASTE" ,prompt:paste!)
-          ("SELF-INSERT" ,(keymap:call prompt:type! head:typed-text))))
       #t)
     ;; The loop's hooks live in (head): how to open the file
     ;; argument, how to quit (the modified-buffers check), and what runs

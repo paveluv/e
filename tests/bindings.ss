@@ -31,13 +31,14 @@
      (define check test:check)
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (edit-init!)
+     (prompt:init!)
      (bindings:init!)
      ;; a listing an older checkpoint brought back as a plain local buffer
      (define stale (head:new-local-buffer! "bindings"))
      (head:add-buffer! stale)
      (define popup (head:popup))
      (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
-     (define (view) (head:window-buffer popup))
+     (define (view) (head:buffer-named "<bindings>"))
      (define (lines) (vector->list (head:buffer-lines (view))))
      (define (index-of part) (let loop ([ls (lines)] [i 0]) (cond [(null? ls) #f] [(contains? (car ls) part) i] [else (loop (cdr ls) (+ i 1))])))
      (define (line-at i) (list-ref (lines) i))
@@ -55,12 +56,9 @@
 
      (check 'c-x-tab-and-c-x-s-tab-are-bound-to-the-helper
        (list (eq? (keymap:binding "C-x TAB") bindings:show!) (eq? (keymap:binding "C-x S-TAB") bindings:page-up!)) '(#t #t))
-     (check 'the-prompts-keys-are-its-commands-and-c-x-tab-is-allowed-there
-       (list (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("RET")))) prompt:accept!)
-             (eq? (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("C-g")))) prompt:cancel!)
-             (keymap:action-text (keymap:binding-action (cdr (keymap:resolved-binding 'prompt '("SELF-INSERT")))))
-             (prompt:allowed? bindings:show!))
-       (list #t #t "(prompt:type! (head:typed-text))" #t))
+     (check 'prompt-keys-name-the-composition-commands
+       (map (lambda (key) (keymap:call-action-procedure (bound-to 'widget-prompt key))) '("RET" "C-g" "TAB"))
+       (list prompt:accept! prompt:cancel! prompt:complete!))
      (bindings:show!)
      (paint:window-layout) ; tiled, the pop-up has its geometry for the painter's clamp below
      (head:before-frame!)
@@ -193,7 +191,7 @@
      (bindings:hide!)
      (head:before-frame!)
      (check 'hiding-gives-focus-back-and-drops-the-view
-       (list (head:popup-rows) (head:buffer-name (view)) (head:buffer-named "<bindings>") (eq? (head:current-window) w1))
+       (list (head:popup-rows) (head:buffer-name (head:window-buffer popup)) (head:buffer-named "<bindings>") (eq? (head:current-window) w1))
        '(0 "<pop-up>" #f #t))
      (check 'the-hidden-pop-up-is-not-selectable (list (window:focus! popup) (eq? (head:current-window) w1)) '(#f #t))
      (bindings:show!)
@@ -223,10 +221,11 @@
      (head:show-popup! (head:popup-default-rows))
      (window:focus! (head:popup))
      (bindings:show!)
-     (check 'esc-in-the-listing-returns-the-pop-up-to-what-it-showed
-       (list (head:buffer-name (head:current-buffer)) (eq? (bound-to 'bindings "ESC") bindings:return!)
-             (begin (bindings:return!) (head:buffer-name (head:window-buffer (head:popup)))) (> (head:popup-rows) 0))
-       '("<bindings>" #t "keyed" #t))
+     (check 'help-from-a-focused-pop-up-keeps-its-content-and-focus
+       (list (head:buffer-name (head:current-buffer)) (eq? (head:current-window) popup)
+         (and (find (lambda (w) (eq? (head:window-buffer w) (view))) (head:windows)) #t))
+       '("keyed" #t #t))
+     (bindings:hide!)
      (window:clear-pop-up!)
      (window:focus! w1)
      (bindings:show!)
@@ -253,6 +252,7 @@
      ;; not the keys of the window selected before, and keeps listing them
      ;; while the pop-up stays current
      (let ([k (head:buffer-named "<bindings>")]) (when k (kill-buffer! k)))
+     (window:delete-others!)
      (define app (head:new-local-buffer! "popped app"))
      (head:with-buffer app (mode:choose! "keys-test"))
      (head:set-window-buffer! popup app)
@@ -261,7 +261,7 @@
      (bindings:show!)
      (head:before-frame!)
      (check 'c-x-tab-in-the-pop-up-lists-the-pop-ups-apps-keys
-       (list (eq? (head:window-buffer popup) (view)) (index-of "keys-test keys") (< 0 (index-of "Global keys")) (eq? (head:current-window) popup))
+       (list (eq? (head:window-buffer popup) app) (index-of "keys-test keys") (< 0 (index-of "Global keys")) (eq? (head:current-window) popup))
        '(#t 0 #t #t))
      (head:set-current! w1)
 

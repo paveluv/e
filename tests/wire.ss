@@ -2490,7 +2490,8 @@
                    (head-wait 'split-before-scroll a (lambda () (and (head-sees? a "scrolling") (frame-complete?))))
                    (vector-set! a 3 "")
                    (head-send! a (apply string-append (make-list 30 "\x1b;[B")))
-                   (head-wait 'held-down-scroll a (lambda () (and (head-sees? a "row 030") (frame-complete?))))
+                   (head-wait 'held-down-scroll a
+                     (lambda () (and (head-sees? a "row 030") (head-sees? a "L31 C1") (frame-complete?))))
                    (let* ([frames (vector-ref a 3)] [opened (occurrences frames "\x1b;[?2026h")]
                           [closed (occurrences frames "\x1b;[?2026l")])
                      (test:check 'attached-split-scrolling-uses-balanced-2026

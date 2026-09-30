@@ -113,7 +113,7 @@
                 logbit? procedure-arity-mask
                 make-parameter make-thread-parameter parameterize make-mutex with-mutex fork-thread void
                 format remq cons* list-head iota time-second time-nanosecond current-time time? time-type time<? time<=? copy-time
-                make-time add-duration sleep
+                make-time add-duration sleep get-thread-id
                 make-weak-eq-hashtable box unbox set-box!
                 call-with-string-output-port)
           (prefix (core kernel) kernel:)
@@ -128,6 +128,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head pacing) pacing:)
           (prefix (head render) render:)
+          (prefix (head suspension) suspension:)
           (prefix (head terminal-state) terminal-state:)
           (prefix (head text-source) text-source:)
           (prefix (service file) file:)
@@ -953,6 +954,7 @@
   ;; the tty.
 
   (define mailbox (kernel:make-mailbox))
+  (define main-thread (get-thread-id))
   (define deferred '())          ; thunks posted during a nested pump
 
   ;; Main-thread presentation state: each frame derives its next deadline
@@ -981,12 +983,12 @@
     (when (or (not frame-deadline) (time<? deadline frame-deadline))
       (set! frame-deadline (copy-time deadline))))
 
-  (edoc "Run a thunk on the main thread: now when the main loop is pumping, else at the top of its loop."
+  (edoc "Queue a thunk for the next main-thread command boundary. Work posted by the UI runs before its next input; other threads enter through the mailbox. Nested readers defer it."
         (thunk thunk "what to run"))
   (define (run-on-main! thunk)
-    ;; run thunk on the main thread: immediately when the main loop is
-    ;; the one pumping the mailbox, otherwise at the top of its loop
-    (kernel:mailbox-post! mailbox (cons 'run thunk)))
+    (if (= main-thread (get-thread-id))
+      (begin (set! deferred (cons thunk deferred)) (wake-main!))
+      (kernel:mailbox-post! mailbox (cons 'run thunk))))
 
   ;; A burst of foreign edits (an agent's tight loop, a chatty PTY)
   ;; must not queue one repaint per event: a wake is posted only when
@@ -1020,11 +1022,13 @@
 
   (edoc "Run the thunks a nested pump set aside, oldest first.")
   (define (run-deferred!)
-    ;; the thunks a nested pump set aside, oldest first
-    (let ([runs (reverse deferred)])
-      (set! deferred '())
-      (unless (null? runs) (finish-frame!))
-      (for-each run-posted! runs)))
+    ;; Complete the causal chain before admitting another key, including a
+    ;; prompt outcome followed by its parked caller's resumption.
+    (let loop ()
+      (let ([runs (reverse deferred)])
+        (set! deferred '())
+        (unless (null? runs)
+          (finish-frame!) (for-each run-posted! runs) (loop)))))
 
   ;; The pump's hooks: the frame hook prepares and paints a frame (the
   ;; painter's, above); the mouse handler applies a report -- (handler handle? c b
@@ -1294,6 +1298,7 @@
        (read-key-event #t)]
       [(handle-mouse?)
        (let pump ()
+         (when (in-main-pump) (run-deferred!))
          ;; Fence before dequeueing: a rendering hook can itself read input.
          ;; Only ordinary keys in the outer pump may use prepared geometry;
          ;; mouse events, callbacks and modal readers require publication.
@@ -2856,7 +2861,12 @@
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 6 (window-index the-current) layout (map capture-buffer the-buffers))])
+           [ordinary (layout-leaves (layout-split-first the-root))]
+           [selected (cond [(memq the-current ordinary) the-current]
+                       [(memq the-previous ordinary) the-previous] [else (car ordinary)])]
+           ;; A pop-up has no retained layout slot. Preserve the preceding
+           ;; ordinary selection, including after loss during a prompt.
+           [state (list 'screen 6 (window-index selected) layout (map capture-buffer the-buffers))])
       (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
@@ -3899,11 +3909,15 @@
                    (string? (caddr payload)))
           (run-on-main!
             (lambda ()
-              (let ([reply (guard (ex [else (list 'evaluated (cadr payload) 'error (kernel:condition-text ex))])
-                             (let ([value (kernel:evaluate! (read (open-input-string (caddr payload))) (interaction-environment))])
-                               (list 'evaluated (cadr payload) (format "~s" value))))])
-                (guard (ex [else (void)]) (frame!) (checkpoint!))
-                (actor:send! from reply))))))))
+              (suspension:call! ui-actor
+                (lambda () (run-on-main! (lambda () (suspension:drain!
+                                                      (lambda (ex) (log:add! 'head:deliver-evaluation-mail! (kernel:condition-text ex)))))))
+                (lambda ()
+                  (let ([reply (guard (ex [else (list 'evaluated (cadr payload) 'error (kernel:condition-text ex))])
+                                 (let ([value (kernel:evaluate! (read (open-input-string (caddr payload))) (interaction-environment))])
+                                   (list 'evaluated (cadr payload) (format "~s" value))))])
+                    (guard (ex [else (void)]) (frame!) (checkpoint!))
+                    (actor:send! from reply))))))))))
 
   ;; another actor's message to this head wakes its loop; the question
   ;; is presented before the next frame

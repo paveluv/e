@@ -46,6 +46,11 @@
   (define pending-scroll (make-hashtable equal-hash equal?))
   (define pending-reveal (make-hashtable equal-hash equal?))
   (define scroll-positions (make-hashtable equal-hash equal?))
+  ;; Subscribers run on publisher/client threads. They only enqueue a
+  ;; coalesced refresh; mount caches and source demand belong to the pump.
+  (define notifications (make-eq-hashtable))
+  (define notification-lock (make-mutex))
+  (define pump-thread (get-thread-id))
   (define (release-service! id)
     (let ([n (hashtable-ref nodes id #f)]) (when n (node-activity-set! n #f)))
     (let ([entry (hashtable-ref services id #f)])
@@ -54,6 +59,10 @@
 
   (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
   (define (pump!)
+    (for-each (lambda (refresh) (refresh))
+      (with-mutex notification-lock
+        (let ([ready (vector->list (hashtable-values notifications))])
+          (hashtable-clear! notifications) ready)))
     (vector-for-each
       (lambda (id)
         (let* ([n (hashtable-ref nodes id #f)] [d (and n (read-view id))] [entry (definition d)]
@@ -313,7 +322,21 @@
           (lambda result (head:wake-main!) (apply values result))))))
 
   (define (subscribe! mount tree)
-    (let ([tokens (list #f #f)] [demand #f] [endpoints (map car tree)])
+    (let ([tokens (list #f #f #f)] [demand #f] [endpoints (map car tree)]
+          [live? #t] [acquire? #f])
+      (define (refresh)
+        (let ([work (with-mutex notification-lock
+                      (and live? (let ([work (if acquire? 'acquire 'change)])
+                                   (set! acquire? #f) work)))])
+          (when work (when (eq? work 'acquire) (acquire)) (changed))))
+      (define (schedule! demand?)
+        (if (= pump-thread (get-thread-id))
+          (when live? (when demand? (acquire)) (changed))
+          (with-mutex notification-lock
+            (when live?
+              (set! acquire? (or demand? acquire?))
+              (hashtable-set! notifications tokens refresh))))
+        (head:wake-main!))
       (define (changed)
         (interaction:reconcile!
           (filter values
@@ -338,16 +361,21 @@
                                    (if old (remq old texts) texts))))]
                   [(not (member source ids)) (set! ids (cons source ids))]))) tree)
           (unless (equal? demand ids)
-            (let ([fresh (model:subscribe! ids (lambda (notice) (changed)))] [old (car tokens)])
+            (let ([fresh (model:subscribe! ids (lambda (notice) (schedule! #f)))] [old (car tokens)])
               (set-car! tokens fresh) (set! demand ids) (when old (model:unsubscribe! old))))
           (for-each (lambda (p)
                       (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
           (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (connection:snapshot endpoints)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
-                       (when (cadr tokens) (connection:unsubscribe! (cadr tokens))) (raise ex)])
-        (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (acquire) (changed))))
+                       (when (cadr tokens) (connection:unsubscribe! (cadr tokens)))
+                       (when (caddr tokens) ((caddr tokens))) (raise ex)])
+        (set-car! (cddr tokens)
+          (lambda () (with-mutex notification-lock
+                       (set! live? #f) (hashtable-delete! notifications tokens))))
+        (set-car! (cdr tokens) (connection:subscribe! endpoints (lambda () (schedule! #t))))
         (acquire) tokens)))
   (define (unsubscribe! token)
+    ((caddr token))
     (model:unsubscribe! (car token)) (connection:unsubscribe! (cadr token)))
   (define (reconcile! mount tree)
     (let ([ids (map car tree)])
