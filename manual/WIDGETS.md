@@ -53,6 +53,13 @@ headings by zero-based position. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
+Use `((cell-commands (mine . mine) (disk . disk)))` to make specific columns
+invoke named table commands. Each command receives the same exact row
+selection and result basis as Enter. Other cells use `activate` when bound.
+`table:choose!` accepts an optional command name for the same operation in
+scripts. Stale rows or changed column geometry cannot activate a different
+cell; an explicit missing command refuses before changing selection.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown

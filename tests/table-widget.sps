@@ -4,12 +4,13 @@
   (define (get xs k) (cdr (assq k xs)))
   (define (contains? text needle) (and (string:search text needle 0 (string-length text)) #t))
   (define activated '())
+  (define inspected #f)
   (define (selection id) (get (view:state (interaction:snapshot id)) 'selection))
   (define (key id) (let ([s (selection id)]) (and s (caddr s))))
   (define source (collection:create-source! actor '((name "Name" string) (size "Size" integer) (flag "Flag" boolean))
                    (list->vector (map (lambda (i) (list i (list (cons 'name (format "path/界/~3,'0d" i)) (cons 'size (- 200 i)) (cons 'flag (even? i))) '())) (iota 200))) 'transient))
   (define query (collection:create! actor source "" '() 'transient))
-  (define table (table:create! actor query '(name size flag)))
+  (define table (table:create! actor query '(name size flag) '((cell-commands (size . inspect)))))
   (define list-view (table:create! actor query '(name) '((kind . list))))
   (define target (view:create! actor #f 'table-target 1 '() '()))
   (define root (view:create! actor #f 'row 1 '() '()))
@@ -22,9 +23,12 @@
   (define (await-key id expected)
     (test:await (list 'table-row expected) (lambda () (pump!) (equal? expected (key id)))))
   (table:init!)
-  (widget:register! 'table-target 1 (list (cons 'actions (list (cons 'open (lambda (id selection basis) (set! activated (cons selection activated))))))))
+  (widget:register! 'table-target 1 (list (cons 'actions
+                                            (list (cons 'open (lambda (id selection basis) (set! activated (cons selection activated))))
+                                              (cons 'inspect (lambda (id selection basis) (set! inspected selection)))))))
   (let ([d (view:snapshot table)])
-    (view:arrange! actor (list (list table 1 (view:children d) (append (view:options d) (list (list 'commands (list 'activate target 'open '())))))) '()))
+    (view:arrange! actor (list (list table 1 (view:children d) (append (view:options d)
+                                                                 (list (list 'commands (list 'activate target 'open '()) (list 'inspect target 'inspect '())))))) '()))
   (view:arrange! actor (list (list root 0 (list (list 'table table '(grow 1)) (list 'list list-view '(grow 1)) (list 'target target 'fit)) '())) '())
   (widget:mount! root 'table-fixture)
   (await-key table 0) (await-key list-view 0)
@@ -112,6 +116,13 @@
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-row-click-uses-shown-key-and-explicit-command
       (list (key table) (- (length activated) before)) '(71 1)))
+  (let* ([f (show! 80)] [line (car (widget:frame-lines f))]
+         [column (string:search line "Size" 0 (string-length line))] [before (length activated)])
+    (widget:pointer! '(pointer press primary ()) column 3)
+    (check 'table-cell-click-adopts-the-shown-row-and-invokes-only-its-command
+      (list (key table) (caddr inspected) (= before (length activated))) '(72 72 #t))
+    (check 'table-missing-explicit-command-refuses-before-selection
+      (list (refused? (lambda () (table:choose! table (list query (cadr inspected) 71) 'missing))) (key table)) '(#t 72)))
   (show! 80)
   ;; Streaming results insert rows before a scrolled viewport. Summary,
   ;; anchor rank and page arrive separately; every intermediate frame must
@@ -146,6 +157,9 @@
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-old-shown-generation-cannot-activate (length activated) before))
   (table:set-columns! table '(name flag))
+  (let ([before (length activated)])
+    (widget:pointer! '(pointer press primary ()) 2 2)
+    (check 'table-old-column-geometry-cannot-activate (length activated) before))
   (check 'table-columns-are-a-view-preference (get (view:options (interaction:snapshot table)) 'columns) '(name flag))
   (let ([r (collection:summary query)])
     (collection:configure! actor query (get r 'revision) '((filter . "000"))))
