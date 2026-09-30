@@ -281,6 +281,7 @@
       [(rewrite-preview)
        (arity 2)
        (call-with-values (lambda () (store:rewrite-preview (car args) (cadr args))) list)]
+      [(revision-span) (arity 2) (apply store:revision-span args)]
       [(conflict-review-create) (control!) (arity 1) (apply conflict-review:create! actor args)]
       [(conflict-review-refresh) (control!) (arity 3) (apply conflict-review:refresh! actor args)]
       [(conflict-review-choose) (control!) (arity 4) (apply conflict-review:choose! actor args)]

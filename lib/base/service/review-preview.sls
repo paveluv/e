@@ -4,7 +4,7 @@
   (export close! create!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core port) port:)
           (prefix (core review-contract) review-contract:) (prefix (core row) row:)
-          (prefix (core work-queue) work-queue:)
+          (prefix (core work-queue) work-queue:) (prefix (foundation text) text:)
           (prefix (service conflict-review) conflict-review:) (prefix (service rewrite) rewrite:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
@@ -17,13 +17,13 @@
                    (and (list? v) (for-all pair? v) (equal? (map car v) '(draft document selection status basis annotations truncated?))
                      (model:reference? (get v 'draft)) (natural? (get v 'document)) (> (get v 'document) 0)
                      (or (not (get v 'selection)) (row:selection? (get v 'selection)))
-                     (memq (get v 'status) '(pending ready unavailable)) (list? (get v 'annotations)) (boolean? (get v 'truncated?))))))
+                     (memq (get v 'status) '(pending ready blocked unavailable)) (list? (get v 'annotations)) (boolean? (get v 'truncated?))))))
   (define ports (port:register! '(model review-preview 1) review-contract:ports))
   (define worker (work-queue:create))
   (define lock (make-mutex))
   ;; Requests keep only dependency identities and a completed input stamp here.
   (define active (make-hashtable equal-hash equal?))
-  (define-record-type job (fields id draft document (mutable dependencies) (mutable token) (mutable source) (mutable stamp)))
+  (define-record-type job (fields id draft document (mutable dependencies) (mutable token) (mutable source) (mutable stamp) (mutable projection)))
   (define (record id)
     (let ([r (model:snapshot id)]) (and r (eq? (get r 'kind) 'review-preview) r)))
   (define (draft id)
@@ -76,7 +76,7 @@
       (model:commit! producer
         (list (list (get r 'id) (get r 'revision) (get r 'references)
                 (replace (replace (replace (replace v 'status status) 'basis basis) 'annotations annotations) 'truncated? truncated?))))))
-  (define (publish! job r stamp lines regions selected source)
+  (define (publish! job r stamp lines regions selected source blocked?)
     (let-values ([(old revision old-facts) (store:snapshot-state (job-document job))])
       (let ([publication (get old-facts 'publication)])
         (when (and (alive? job) (equal? stamp (input-stamp job)))
@@ -90,10 +90,10 @@
                      [kept (append (if chosen (list chosen) '()) (list-head rest (min 512 (length rest))))]
                      [annotations (list id (store:revision id)
                                     (map (lambda (p) (list (caddr p)
-                                                       (case (cadr p) [(mine) (if (eq? p chosen) 'conflict-mine-current 'conflict-mine)]
+                                                       (case (cadr p) [(rewrite) 'match] [(mine) (if (eq? p chosen) 'conflict-mine-current 'conflict-mine)]
                                                          [else (if (eq? p chosen) 'conflict-disk-current 'conflict-disk)]))) kept))])
-                (update! r 'ready stamp annotations truncated?)
-                (job-stamp-set! job stamp))))))))
+                (let-values ([(status rows) (update! r (if blocked? 'blocked 'ready) stamp annotations truncated?)])
+                  (when (eq? status 'applied) (job-stamp-set! job stamp))))))))))
   (define (inputs job)
     (let* ([r (record (job-id job))] [d (draft (job-draft job))]
            [selection (connection:read (job-id job) 'selection)])
@@ -116,6 +116,22 @@
                            (and target (store:revision (car target))) (and target (store:property (car target) 'conflicts 0))
                            (and target (store:property (car target) 'mode #f)))))))
   (define (input-stamp job) (list-ref (inputs job) 3))
+  (define (projection job d target stamp check!)
+    (let* ([key (cons (car target) (cons (car stamp) (cddr stamp)))] [cached (job-projection job)])
+      (if (and cached (equal? key (car cached))) (cdr cached)
+        (let ([value (if (eq? (get d 'kind) 'rewrite-draft)
+                       (list (rewrite:preview (get d 'id)))
+                       (list (conflict-review:preview (get d 'id) (car target))))])
+          (check!) (job-projection-set! job (cons key value)) value))))
+  (define (rewrite-region p selected)
+    (let ([entry (and selected (store:revision-span (cadr p) selected))])
+      (when (and entry (not (= (car entry) (list-ref p 6)))) (pending "source changed while locating the selected edit"))
+      (if (not (and entry (cadr entry))) '()
+        (let* ([original (text:datum->span (cadr entry))] [changes (map text:datum->delta (list-ref p 4))]
+               [span (fold-left (lambda (span change) (and span (text:rebase-span span change))) original changes)]
+               [point (and (not span) (fold-left (lambda (point change) (text:rebase-position point change))
+                                        (text:span-start original) changes))])
+          (list (list selected 'rewrite (if span (text:span->datum span) (list (car point) (cdr point) (car point) (cdr point)))))))))
   (define (prepare! job check!)
     (let* ([data (inputs job)] [r (car data)] [d (cadr data)] [target (caddr data)] [stamp (list-ref data 3)])
       (unless (equal? stamp (job-stamp job))
@@ -126,13 +142,14 @@
           (set! d (conflict-review:refresh! (get d 'actor) (get d 'id) (get d 'revision) (get (get d 'value) 'scope))))
         (check!)
         (let* ([data (inputs job)] [r (car data)] [d (cadr data)] [target (caddr data)] [stamp (list-ref data 3)])
-          (cond [(not target) (publish! job r stamp '#("") '() #f #f)]
+          (cond [(not target) (publish! job r stamp '#("") '() #f #f #f)]
             [(eq? (get d 'kind) 'rewrite-draft)
-             (let ([p (rewrite:preview (get d 'id))])
-               (check!) (publish! job r stamp (list-ref p 3) '() #f (car target)))]
+             (let* ([cached (projection job d target stamp check!)] [p (car cached)])
+               (check!) (publish! job r stamp (list-ref p 3) (rewrite-region p (cadr target))
+                          (cadr target) (car target) (pair? (list-ref p 5))))]
             [else
-             (let ([p (conflict-review:preview (get d 'id) (car target))])
-               (check!) (publish! job r stamp (list-ref p 3) (list-ref p 4) (cadr target) (car target)))])))))
+             (let ([p (car (projection job d target stamp check!))])
+               (check!) (publish! job r stamp (list-ref p 3) (list-ref p 4) (cadr target) (car target) #f))])))))
   (define (queue! job)
     (work-queue:submit! worker (job-id job) (lambda () (alive? job))
       (lambda (check!) (prepare! job check!))
@@ -152,7 +169,7 @@
           (when (and old (job-token old)) (model:unsubscribe! (job-token old))))
         (let ([job (with-mutex lock
                      (or (hashtable-ref active id #f)
-                       (let* ([v (get r 'value)] [job (make-job id (get v 'draft) (get v 'document) '() #f #f #f)])
+                       (let* ([v (get r 'value)] [job (make-job id (get v 'draft) (get v 'document) '() #f #f #f #f)])
                          (hashtable-set! active id job) job)))])
           (queue! job)))))
   (define observers
@@ -166,5 +183,8 @@
             (with-mutex lock (vector->list (hashtable-values active))))))
       (store:subscribe! #f
         (lambda (event)
-          (for-each (lambda (job) (when (equal? (cadr event) (job-source job)) (queue! job)))
+          (for-each (lambda (job)
+                      (when (equal? (cadr event) (job-source job))
+                        ;; Alternatives can change without a text revision or count change.
+                        (job-stamp-set! job #f) (job-projection-set! job #f) (queue! job)))
             (with-mutex lock (vector->list (hashtable-values active)))))))))

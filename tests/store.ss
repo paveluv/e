@@ -451,8 +451,8 @@
      ;; an insertion up front shifts every older span
      (store:edit! bot bl (store:revision bl) (span 0 0 0 0) '("> "))
      (check 'blame-rebases-older-spans
-            (span-ends (car (list-ref (store:blame bl) 2)))
-            '((0 . 2) (0 . 5)))
+            (list (span-ends (car (list-ref (store:blame bl) 2))) (store:revision-span bl 1) (store:revision-span bl 0))
+            '(((0 . 2) (0 . 5)) (3 (0 2 0 5)) (3 #f)))
 
      ;; a reset is a new baseline: blame starts over
      (store:reset! alice bl '("fresh"))

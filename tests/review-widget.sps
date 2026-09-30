@@ -19,6 +19,7 @@
       (store:edit! actor document 0 (text:make-span 0 0 0 4) '("mine"))
       (store:reload! bot document '("disk" "tail") '((base . "disk\ntail") (trailing . #f)))
       (store:edit! actor rewrite-document 0 (text:make-span 0 1 0 2) '("B"))
+      (store:edit! actor rewrite-document 1 (text:make-span 0 3 0 3) '("X"))
       (store:edit! actor other 0 (text:make-span 20 0 20 4) '("other mine"))
       (let ([disk (append (make-list 20 "context") '("other disk"))])
         (store:reload! bot other disk (list (cons 'base (string:join disk "\n")) '(trailing . #f))))
@@ -57,11 +58,16 @@
       (car (view:state (interaction:snapshot (child (child a 'preview) 'text))))) '("other disk" (20 . 0)))
   (check 'bulk-control-and-key-command-share-one-draft
     (begin (delta-log:choose-all! a 'mine) (await a) (store:line (output a) 20)) "other mine")
+  (let ([before (store:revision (output c))])
+    (table:select! (child c 'table) (list rewrite-document 1)) (await c)
+    (check 'rewrite-row-navigation-only-changes-provenance
+      (list (= before (store:revision (output c)))
+        (caddr (get (get (model:snapshot (preview c)) 'value) 'annotations))) '(#t (((0 1 0 2) match)))))
   (table:invoke! (child c 'table) 'activate) (await c)
   (check 'rewrite-widget-previews-without-touching-the-source
-    (list (store:line (output c) 0) (store:line rewrite-document 0)) '("abc" "aBc"))
+    (list (store:line (output c) 0) (store:line rewrite-document 0)) '("abcX" "aBcX"))
   (check 'rewrite-widget-settles-through-its-shown-basis
-    (list (car (delta-log:settle! c)) (store:line rewrite-document 0)) '(applied "abc"))
+    (list (car (delta-log:settle! c)) (store:line rewrite-document 0)) '(applied "abcX"))
   (delta-log:filter! c '((count . 1))) (await c)
   (check 'history-filter-keeps-the-query-and-bounds-the-visible-entries
     (get (get (collection:summary (query c)) 'value) 'count) 1)

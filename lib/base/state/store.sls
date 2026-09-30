@@ -23,7 +23,7 @@
   (export archive! backups-kept blame buffer-list buffer-name close! conflict-state conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
-          mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision
+          mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision revision-span
           rewrite! rewrite-preview set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
           snapshot-state state subscribe! trash-retention undo! undo-authors undo-labels unsubscribe!
           valid-import? validate-edit-context validate-properties visible? visit! watch!)
@@ -2182,6 +2182,16 @@
                           [(> (entry-revision (car entries)) (entry-revision entry)) (take (cdr entries) (cons (entry-delta (car entries)) acc))]
                           [else acc]))])
       (fold-left rebase-mark-value written later)))
+
+  (edoc "Locate one retained edit's written span in the current text. Return (source-revision span-datum), with false for an expired entry. Rebase only this entry, including swallowed regions, without calculating other history spans."
+        (id integer "document") (revision integer "entry revision") (returns list))
+  (define (revision-span id revision)
+    (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'revision-span "expected an entry revision"))
+    (locked
+      (lambda ()
+        (let* ([b (buffer-of 'revision-span id)]
+               [e (find (lambda (e) (= revision (entry-revision e))) (buffer-deltas b))])
+          (list (buffer-revision b) (and e (text:span->datum (current-span-of b e))))))))
 
   (define (span-union spans)
     (let loop ([spans (cdr spans)] [start (text:span-start (car spans))] [end (text:span-end (car spans))])

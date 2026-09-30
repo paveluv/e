@@ -67,6 +67,10 @@ the request's `selection` input to follow rows without an extra head command.
 The request's `annotations` output connects to an editor's `annotations`
 input. Both text and highlights carry their publication revision. A preview
 retains its upstream selection dependencies only while demanded.
+Moving among rows of one unchanged document reuses the derived text. A rewrite
+preview marks its selected revision and reports `blocked` when later edits
+prevent inversion. `store:revision-span` locates one retained edit with its
+current source revision without deriving provenance for the rest of the log.
 Highlight batches contain at most 512 other conflict regions plus the
 selected region; `truncated?` in the request reports omitted highlights.
 `review-preview:close!` takes the actor and request, retiring its scoped views

@@ -7,7 +7,7 @@
 (elibrary (state store)
   (export archive! blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite! rewrite-preview
+          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision revision-span rewrite! rewrite-preview
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           visible? visit! watch!)
@@ -514,6 +514,10 @@
   (define (blame id . count)
     (map (lambda (entry) (cons (text:datum->span (car entry)) (cdr entry)))
       (apply client:request 'blame id count)))
+
+  (edoc "Locate one retained edit in current text; return (source-revision span-datum), or false span for expired history."
+        (id integer "document") (revision integer "entry revision") (returns list))
+  (define (revision-span id revision) (client:request 'revision-span id revision))
 
   (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
         (actor actor "the actor identity")

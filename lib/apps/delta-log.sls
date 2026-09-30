@@ -28,9 +28,9 @@
   (define revision-mark #f)
   (define (preview-revision! revision)
     (let* ([b (head:current-buffer)] [id (head:buffer-store-id b)]
-           [entry (and id (find (lambda (e) (= (caddr e) revision)) (store:blame id (length (store:log id)))))])
-      (and entry
-        (let ([point (head:point)] [mark (cons b (car entry))])
+           [entry (and id (store:revision-span id revision))])
+      (and entry (cadr entry)
+        (let ([point (head:point)] [mark (cons b (text:datum->span (cadr entry)))])
           (set! revision-mark mark) (head:goto! (text:span-start (cdr mark)))
           (lambda ()
             (when (eq? revision-mark mark)
@@ -170,9 +170,9 @@
       (let* ([v (get source 'value '())] [basis (get v 'basis #f)]
              [selection (and basis (cadr basis))] [key (and selection (caddr selection))]
              [annotations (get v 'annotations '())] [editor (child id 'text)])
-        (when (and key (eq? (get v 'status #f) 'ready) (pair? annotations)
+        (when (and key (memq (get v 'status #f) '(ready blocked)) (pair? annotations)
                 (not (equal? key (view:state d))) (= (cadr annotations) (caddr (editor:basis editor))))
-          (let ([selected (find (lambda (p) (memq (cadr p) '(conflict-mine-current conflict-disk-current))) (caddr annotations))])
+          (let ([selected (find (lambda (p) (memq (cadr p) '(match conflict-mine-current conflict-disk-current))) (caddr annotations))])
             (when selected (editor:move! editor (cons (caar selected) (cadar selected))))
             (interaction:set-state! head:ui-actor id #f key))))))
   (define (busy? id d)
@@ -181,6 +181,7 @@
   (define (status-text id source inputs)
     (let ([v (get source 'value '())])
       (cond [(eq? (get v 'status #f) 'unavailable) "[Preview unavailable; refresh the selection]"]
+        [(eq? (get v 'status #f) 'blocked) "[Rewrite blocked by later edits]"]
         [(get v 'truncated? #f) "[Preview; additional regions unmarked]"] [else "Preview"])))
   (define (present cell cells attrs)
     (list (if (eq? (car cell) 'ready) (let ([v (cadr cell)]) (if (string? v) v (format "~s" v))) "")))

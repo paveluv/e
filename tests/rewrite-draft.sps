@@ -56,4 +56,16 @@
       (model:retire! actor query (model:revision query)))
     (for-each (lambda (id) (rewrite:close! actor id (revision id))) (list a b))
     (check 'closing-rewrite-drafts-keeps-the-borrowed-source
-      (list (model:snapshot a) (model:snapshot b) (lines)) '(#f #f ("AbaseB!?")))))
+      (list (model:snapshot a) (model:snapshot b) (lines)) '(#f #f ("AbaseB!?"))))
+  (let* ([id (store:create! actor "blocked rewrite" '("base"))]
+         [draft (rewrite:create! actor id)] [p (review-preview:create! actor draft)]
+         [token (model:subscribe! (list (car p)) (lambda (notice) (void)))])
+    (store:edit! actor id 0 (text:make-span 0 0 0 4) '("mine"))
+    (store:edit! bot id 1 (text:make-span 0 0 0 4) '("later"))
+    (rewrite:toggle! actor draft 0 '(1))
+    (test:await 'blocked-preview
+      (lambda () (eq? (get (get (model:snapshot (car p)) 'value) 'status) 'blocked)))
+    (check 'overlapping-rewrite-remains-inspectable-but-cannot-settle
+      (list (store:line (cadr p) 0) (car (call-with-values (lambda () (rewrite:settle! actor draft 1)) list)) (disabled draft))
+      '("later" blocked (1)))
+    (model:unsubscribe! token) (review-preview:close! actor (car p)) (rewrite:close! actor draft 1)))
