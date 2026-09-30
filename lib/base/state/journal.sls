@@ -1,7 +1,7 @@
 ;; journal.sls -- the base's log writer, history, and ordered delivery.
 (import (only (foundation edoc) elibrary))
 (elibrary (state journal)
-  (export add! progress retention snapshot subscribe! unsubscribe!)
+  (export add! indexed-snapshot observe! progress retention snapshot subscribe! unsubscribe!)
   (import (rnrs)
           (only (chezscheme) current-time time-second time-nanosecond
                 make-mutex with-mutex void make-parameter make-thread-parameter parameterize)
@@ -13,6 +13,7 @@
   ;; survive eviction; the ring bounds retained records, not payload bytes.
   (define lock (make-mutex))
   (define subscriptions (kernel:make-registry))
+  (define observers (kernel:make-registry))
   (define deliveries (kernel:make-delivery-queue))
 
   (edoc "Whether a logged message supersedes its component's newest echo line rather than stacking."
@@ -23,6 +24,13 @@
   ;; Growing the ring must not move this floor back over evicted entries.
   (define first 0)
   (define serial 0)
+  (define (changed!) (for-each (lambda (proc) (guard (ex [else (void)]) (proc))) (kernel:registry-items observers)))
+
+  (edoc "Observe journal append or retention changes without copying records. The nonblocking callback runs outside the writer; module retraction removes it."
+        (proc procedure "zero-argument invalidation"))
+  (define (observe! proc)
+    (unless (procedure? proc) (error 'observe! "expected a procedure"))
+    (kernel:registry-add! observers proc))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
 
   (edoc "How many records the log keeps; setting it drops the oldest."
@@ -40,7 +48,8 @@
                 (vector-set! next (mod i size) (vector-ref records (mod i (vector-length records)))))
               (set! records next)
               (set! first from)))
-          (vector-length records)))))
+          (vector-length records))
+        (changed!) size)))
 
   (edoc "Log records from an index on: (values records end first), at most limit of them, of one component and one actor when given."
         (start integer "the first index")
@@ -58,26 +67,33 @@
       [(start limit component)
        (snapshot start limit component #f)]
       [(start limit component actor)
-       ;; Newest matching records, end bookmark, and global retention floor
-       ;; from one commit. Expired starts clamp to the floor. Filter and limit
-       ;; before copying; immutable entries can be copied outside the writer.
-       (unless (and (natural? start) (or (not limit) (natural? limit))
-                    (or (not component) (symbol? component))
-                    (or (not actor) (actor:identity? actor)))
-         (error 'snapshot "expected a start, optional count, component and actor" start limit component actor))
-       (let-values ([(selected end first)
-                     (with-mutex lock
-                       (unless (<= start count) (error 'snapshot "start outside the log" start))
-                       (let ([from (max start first)])
-                         (let loop ([i (- count 1)] [left limit] [out '()])
-                           (if (or (< i from) (eqv? left 0))
-                               (values (reverse out) count first)
-                               (let ([entry (vector-ref records (mod i (vector-length records)))])
-                                 (if (and (or (not component) (eq? component (caddr entry)))
-                                          (or (not actor) (equal? actor (cadr entry))))
-                                     (loop (- i 1) (and left (- left 1)) (cons entry out))
-                                     (loop (- i 1) left out)))))))])
-         (values (map datum:copy selected) end first))]))
+       (let-values ([(rows end first) (indexed-snapshot start limit component actor)])
+         (values (map cdr rows) end first))]))
+
+  (edoc "Read a coherent bounded journal slice with absolute append indexes: each newest-first row is (index . record). This base query lets collections retain stable identities across filtering and expiry."
+        (start integer "first index") (limit (or integer #f) "maximum matching records")
+        (component (or symbol #f) "optional component") (actor (or actor #f) "optional actor"))
+  (define (indexed-snapshot start limit component actor)
+    ;; Newest matching records, end bookmark, and global retention floor
+    ;; from one commit. Expired starts clamp to the floor. Filter and limit
+    ;; before copying; immutable entries can be copied outside the writer.
+    (unless (and (natural? start) (or (not limit) (natural? limit))
+                 (or (not component) (symbol? component))
+                 (or (not actor) (actor:identity? actor)))
+      (error 'snapshot "expected a start, optional count, component and actor" start limit component actor))
+    (let-values ([(selected end first)
+                  (with-mutex lock
+                    (unless (<= start count) (error 'snapshot "start outside the log" start))
+                    (let ([from (max start first)])
+                      (let loop ([i (- count 1)] [left limit] [out '()])
+                        (if (or (< i from) (eqv? left 0))
+                            (values (reverse out) count first)
+                            (let ([entry (vector-ref records (mod i (vector-length records)))])
+                              (if (and (or (not component) (eq? component (caddr entry)))
+                                       (or (not actor) (equal? actor (cadr entry))))
+                                  (loop (- i 1) (and left (- left 1)) (cons (cons i entry) out))
+                                  (loop (- i 1) left out)))))))])
+      (values (map datum:copy selected) end first)))
 
   (edoc "Watch the log: (procedure entry presentation), presentation #f, append or progress; the token unsubscribes."
         (procedure procedure "the subscriber")
@@ -128,6 +144,7 @@
           (kernel:call-with-runtime-registrations
             (lambda () (reverse (kernel:registry-items subscriptions))))))
       (kernel:drain-deliveries! deliveries)
+      (changed!)
       (datum:copy entry)))
 
 )

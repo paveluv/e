@@ -1,0 +1,38 @@
+(let* ([all (journal-source:create! head #f)] [filtered (journal-source:create! head 'journal-fixture)]
+       [tokens (map (lambda (id) (model:subscribe! (list id) (lambda (notice) (void)))) (list all filtered))])
+  (define (get r k) (cdr (assq k r)))
+  (define (rows id expected)
+    (define answer #f)
+    (test:await 'journal-query
+      (lambda ()
+        (let* ([r (collection:summary id)] [v (and r (get r 'value))])
+          (and v (eq? (get v 'status) 'ready)
+            (let ([reply (collection:range id (get v 'generation) 0 10 '(entry))])
+              (and (eq? (car reply) 'ready)
+                (let ([data (list-ref reply 4)])
+                  (and (equal? expected (map (lambda (r) (log:datum (caddar (caddr r)))) data))
+                    (begin (set! answer data) #t))))))))) answer)
+  (test:await 'bounded-initial-journal
+    (lambda () (let ([r (collection:summary all)])
+                 (and r (eq? (get (get r 'value) 'status) 'ready)))))
+  (test:check 'journal-initial-result-is-bounded (get (get (collection:summary all) 'value) 'count) 4096)
+  (log:retention 3)
+  (for-each (lambda (n) (log:add! 'journal-fixture n #f)) '(first second third))
+  (let* ([shown (rows all '(first second third))] [key (cadr (cadr shown))])
+    (test:check 'journal-filter-preserves-absolute-record-identity
+      (map cadr (rows filtered '(first second third))) (map cadr shown))
+    (log:add! 'other 'fourth #f)
+    (test:check 'journal-expiry-and-filter-keep-surviving-identities
+      (list (cadar (rows all '(second third fourth))) (map cadr (rows filtered '(second third))))
+      (list key (map cadr (cdr shown))))
+    (log:retention 1)
+    (test:check 'journal-retention-invalidates-without-an-append
+      (list (length (rows all '(fourth))) (rows filtered '())) '(1 ())))
+  (for-each model:unsubscribe! tokens)
+  (let ([before (model:revision all)])
+    (log:add! 'journal-fixture 'hidden #f)
+    (test:check 'hidden-journal-query-is-not-published (model:revision all) before))
+  (let ([token (model:subscribe! (list filtered) (lambda (notice) (void)))])
+    (rows filtered '(hidden)) (model:unsubscribe! token))
+  (for-each (lambda (id) (model:retire! head id (model:revision id))) (list all filtered))
+  (log:retention 4096))
