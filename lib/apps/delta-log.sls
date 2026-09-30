@@ -93,9 +93,9 @@
     (unless (and (memq kind '(conflicts rewrite)) (list? documents)
               (or (eq? kind 'conflicts) (= (length documents) 1))) (error 'create! "invalid review scope"))
     (let* ([draft (if (eq? kind 'conflicts) (conflict-review:create! head:ui-actor documents) (rewrite:create! head:ui-actor (car documents)))]
-           [p (review-preview:create! head:ui-actor draft)]
-           [q (collection:create! head:ui-actor draft "" '() 'persistent (list draft (car p) (list 'buffer (cadr p))))]
+           [q (collection:create! head:ui-actor draft "" '() 'persistent (list draft))]
            [root (view:create! head:ui-actor q 'delta-review 1 (list (cons 'commands commands) (cons 'review kind)) '() q)]
+           [p (review-preview:create! head:ui-actor draft root)]
            [table (table:create! head:ui-actor q
                     (if (eq? kind 'conflicts) '(buffer revision actor position mine disk) '(revision actor position removed inserted state choice))
                     (append '((presentation review 1))
@@ -117,7 +117,7 @@
                              (if (eq? kind 'conflicts) '(activate mine disk) '(activate)))])
       (view:arrange! head:ui-actor
         (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'preview preview '(grow 1)))
-                (list (cons 'commands commands) (cons 'review kind)))
+                (list (cons 'commands commands) (cons 'review kind) (list 'owned (car p))))
           (list heading 0 buttons '((spacing . normal)))
           (list table 1 (view:children d) (cons (cons 'commands table-commands) (view:options d)))
           (list preview 0 (list (list 'status status 'fit) (list 'text editor '(grow 1))) '())) '())

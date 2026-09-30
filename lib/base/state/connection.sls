@@ -276,21 +276,20 @@
   (define (unsubscribe! token)
     (model:unsubscribe! (car token)) (store:unsubscribe! (cadr token)) (port:unobserve! (caddr token)))
 
-  (edoc "Allocate a view fork and its internal bindings in one model transaction; sources outside the fork remain borrowed."
-        (actor actor "creator") (originals list "view envelopes")
-        (build procedure "new view IDs -> view specifications")
-        (guards (list-of list) "optional resource-owner envelopes to witness") (returns list))
-  (define (fork! actor originals build . guards)
+  (edoc "Allocate a composition fork and its internal bindings in one model transaction; sources outside the fork remain borrowed."
+        (actor actor "creator") (originals list "view and owned resource envelopes")
+        (build procedure "new model IDs -> allocation specifications")
+        (guards list "resource-owner envelopes to witness") (aliases list "prepared old-to-new resource references") (returns list))
+  (define (fork! actor originals build guards aliases)
     (define witnesses
       (fold-left (lambda (out r) (if (exists (lambda (old) (equal? (field r 'id) (field old 'id))) out) out (cons r out)))
-        originals (if (pair? guards) (car guards) '())))
+        originals guards))
     (define (with-witnesses changes)
       (fold-left (lambda (out r)
                    (let ([old (assoc (field r 'id) out)])
                      (when (and old (not (= (cadr old) (field r 'revision))))
                        (error 'fork! "resource owner changed during fork; retry"))
                      (if old out (cons (witness r) out)))) changes witnesses))
-    (unless (<= (length guards) 1) (error 'fork! "expected at most one resource-owner witness list"))
     (if (null? (model:ids 'connection-topology))
       (or (model:allocate! actor (length originals) build (lambda (ids) (map witness witnesses)))
         (error 'fork! "composition changed during fork; retry"))
@@ -298,7 +297,7 @@
         (let* ([old-ids (map (lambda (r) (field r 'id)) originals)]
                [owned (filter (lambda (r) (member (field r 'scope) old-ids)) records)]
                [n (length old-ids)] [count (+ n (length owned))])
-          (define (mapping ids) (map cons old-ids (list-head ids n)))
+          (define (mapping ids) (append (map cons old-ids (list-head ids n)) aliases))
           (define (mapped ids id) (cond [(assoc id (mapping ids)) => cdr] [else id]))
           (or (model:allocate! actor count
                 (lambda (ids)

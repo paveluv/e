@@ -81,9 +81,18 @@ commands, explicit bulk/settle controls and an editor. Supply host commands,
 `conflicts` or `rewrite`, and an ordered list of document IDs (one for a
 rewrite). Each constructor call has its own draft and query. Row navigation
 publishes ordinary view interaction; base derivation follows the connection.
-The query owns its draft, preview request and output. Hiding the composition
-releases demand while keeping choices; retiring its query removes those
-resources. Source documents are borrowed and remain intact.
+The query owns its draft. Each root view owns its preview request and output:
+forking the view shares choices but gives each table an independent preview.
+Hiding the composition releases demand while keeping choices; retiring its
+query removes its scoped views and their resources. Source documents are
+borrowed and remain intact.
+
+A view declares private model resources in its `owned` option. Their model
+scope names that view. `view:fork!` copies them and remaps sources and internal
+connections; `view:retire!` releases them through their base kind's registered
+lifecycle. Borrowed sources remain shared. Base services register copy and
+release procedures with `view:register-resource-kind!`; copy preparation must
+provide rollback for output allocated before the guarded model transaction.
 
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of

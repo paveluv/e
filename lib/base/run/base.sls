@@ -291,7 +291,9 @@
       [(conflict-source-choose) (control!) (arity 3) (apply conflict-source:choose! actor args) #t]
       [(conflict-source-choose-all) (control!) (arity 4) (apply conflict-source:choose-all! actor args) #t]
       [(conflict-source-settle) (control!) (arity 3) (apply conflict-source:settle! actor args)]
-      [(review-preview-create) (control!) (arity 1) (apply review-preview:create! actor args)]
+      [(review-preview-create) (control!)
+       (unless (<= 1 (length args) 2) (error 'wire "expected draft and optional owning view"))
+       (apply review-preview:create! actor args)]
       [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
       [(rewrite-source-toggle) (control!) (arity 2) (apply rewrite-source:toggle! actor args) #t]
       [(rewrite-source-settle) (control!) (arity 3) (apply rewrite-source:settle! actor args)]

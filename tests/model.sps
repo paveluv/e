@@ -262,6 +262,22 @@
       (test:check 'view-ancestor-witness-prevents-concurrent-cycle
         (list (length (filter (lambda (status) (eq? status 'applied)) results))
               (and (view:parent (view:snapshot x)) (view:parent (view:snapshot y)))) '(1 #f))))
+  (let* ([root (view:create! author #f 'column 1 '() '())]
+         [resource (model:create! author 'sample 1 root 'persistent '() '("private"))]
+         [prepared? #f] [rolled-back? #f])
+    (view:register-resource-kind! 'sample 1
+      (lambda (actor r)
+        (set! prepared? #t)
+        ;; A concurrent interaction wins after resource preparation.
+        (view:set-state! author root #f 'moved)
+        (values (lambda (mapped) (list 'sample 1 (mapped root) 'persistent '() '("copy"))) '()
+          (lambda () (set! rolled-back? #t))))
+      (lambda (actor id) (model:retire! actor id (get (model:snapshot id) 'revision))))
+    (view:arrange! author (list (list root 0 '() (list (list 'owned resource)))) '())
+    (let ([before (model:ids)])
+      (test:check 'view-fork-rolls-back-prepared-resources-on-witness-race
+        (list (test:raises? (lambda () (view:fork! author root))) prepared? rolled-back?
+          (equal? before (model:ids)) (view:state (view:snapshot root))) '(#t #t #t #t moved))))
   (let* ([legacy (saved 1 'widget-view 1 (list '(model 3) 'text 1 7 author 9 2 '(4 2)))]
          [upgraded (view:upgrade legacy)] [d (get upgraded 'value)]
          [before (car (exported))])

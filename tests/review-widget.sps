@@ -27,6 +27,7 @@
   (define a (delta-log:create! '() 'conflicts (list document other)))
   (define b (delta-log:create! '() 'conflicts (list document)))
   (define c (delta-log:create! '() 'rewrite (list rewrite-document)))
+  (define copy (view:fork! actor a))
   (define root (view:create! actor #f 'row 1 '() '()))
   (define (preview id) (query (child id 'preview)))
   (define (output id) (cadr (query (child (child id 'preview) 'text))))
@@ -40,9 +41,9 @@
       (and (eq? (get v 'status) 'ready) s (= (cadr s) (get v 'generation))
            (eq? (get p 'status) 'ready) (equal? s (cadr (get p 'basis))))))
   (define (await id) (test:await 'review-ready (lambda () (pump!) (ready id))))
-  (view:arrange! actor (list (list root 0 (list (list 'a a '(grow 2)) (list 'b b '(grow 1)) (list 'c c '(grow 1))) '())) '())
+  (view:arrange! actor (list (list root 0 (list (list 'a a '(grow 2)) (list 'b b '(grow 1)) (list 'c c '(grow 1)) (list 'copy copy '(grow 1))) '())) '())
   (widget:mount! root 'review-fixture)
-  (for-each await (list a b c))
+  (for-each await (list a b c copy))
   (check 'independent-review-widgets-borrow-sources-and-own-output
     (list (not (equal? (query a) (query b))) (store:line (output a) 0) (store:property (output a) 'read-only)) '(#t "disk" #t))
   (let ([selection (selected a)] [shown (basis a)])
@@ -56,6 +57,10 @@
   (check 'selection-connection-retargets-preview-and-reveals-the-region
     (list (store:line (output a) 20)
       (car (view:state (interaction:snapshot (child (child a 'preview) 'text))))) '("other disk" (20 . 0)))
+  (await copy)
+  (check 'fork-shares-the-draft-but-copies-preview-and-its-selection-binding
+    (list (equal? (query a) (query copy)) (not (equal? (preview a) (preview copy)))
+      (not (= (output a) (output copy))) (store:line (output copy) 0)) '(#t #t #t "disk"))
   (check 'bulk-control-and-key-command-share-one-draft
     (begin (delta-log:choose-all! a 'mine) (await a) (store:line (output a) 20)) "other mine")
   (let ([before (store:revision (output c))])
@@ -81,6 +86,10 @@
   (widget:unmount! root)
   (check 'hidden-review-releases-derived-demand
     (map (lambda (id) (list (model:demanded? (query id)) (model:demanded? (preview id)))) (list a b c)) '((#f #f) (#f #f) (#f #f)))
+  (let ([p (preview copy)] [out (output copy)])
+    (view:retire! actor copy (model:revision copy))
+    (check 'retiring-one-view-releases-only-its-private-preview
+      (list (model:snapshot p) (store:exists? out) (store:exists? (output a)) (and (model:snapshot (query a)) #t)) '(#f #f #t #t)))
   (let ([q (query a)] [p (preview a)] [out (output a)])
     (model:retire! actor q (model:revision q))
     (test:await 'review-resource-retirement (lambda () (not (model:snapshot p))))

@@ -34,15 +34,25 @@
   (define (alive? job)
     (and (with-mutex lock (eq? job (hashtable-ref active (job-id job) #f)))
       (model:demanded? (job-id job)) (record (job-id job))))
+  (define (new-document!)
+    (store:publish! producer (gensym->unique-string (gensym "review-preview")) "<review-preview>" '("") facts #f))
+  (define (specification draft document scope)
+    (list 'review-preview 1 scope 'persistent (list draft (list 'buffer document))
+      (map cons '(draft document selection status basis annotations truncated?) (list draft document #f 'pending #f '() #f))))
 
   (edoc "Create an independent preview request and disposable read-only document over a borrowed conflict or rewrite draft; return (request document). Connect a table's selection output to the request's selection input. Derivation runs only while requested."
-        (actor actor "creator") (id model "conflict-review or rewrite draft") (returns list))
-  (define (create! actor id)
-    (draft id)
-    (let ([document (store:publish! producer (gensym->unique-string (gensym "review-preview")) "<review-preview>" '("") facts #f)])
+        (actor actor "creator") (id model "conflict-review or rewrite draft") (owner (list-of model) "optional owning view") (returns list))
+  (define (create! actor id . owner)
+    (unless (and (<= (length owner) 1) (for-all model:reference? owner)) (error 'create! "expected at most one owning view"))
+    (let* ([d (draft id)] [r (and (pair? owner) (model:snapshot (car owner)))]
+           [document (begin (when (and (pair? owner) (not (and r (eq? (get r 'kind) 'widget-view))))
+                              (error 'create! "owning view is unavailable")) (new-document!))])
       (guard (ex [else (store:delete! producer document) (raise ex)])
-        (list (model:create! actor 'review-preview 1 'session 'persistent (list id (list 'buffer document))
-                (map cons '(draft document selection status basis annotations truncated?) (list id document #f 'pending #f '() #f))) document))))
+        (let ([ids (model:allocate! actor 1
+                     (lambda (ids) (list (specification id document (if r (get r 'id) 'session))))
+                     (lambda (ids) (map (lambda (r) (list (get r 'id) (get r 'revision) (get r 'references) (get r 'value)))
+                                     (if r (list r d) (list d)))))])
+          (unless ids (error 'create! "draft or owner changed")) (list (car ids) document)))))
 
   (edoc "Retire a preview request, its scoped views and owned output document. The borrowed draft and original documents survive."
         (actor actor "caller") (id model "preview request"))
@@ -55,6 +65,12 @@
               [(applied) (view:retire-scope! actor id)
                (let ([document (get (get r 'value) 'document)])
                  (when (store:exists? document) (store:delete! producer document)))]))))))
+  (define (copy-resource! actor r)
+    (let* ([v (get r 'value)] [document (new-document!)])
+      (values (lambda (mapped) (specification (mapped (get v 'draft)) document (mapped (get r 'scope))))
+        (list (cons (list 'buffer (get v 'document)) (list 'buffer document)))
+        (lambda () (when (store:exists? document) (store:delete! producer document))))))
+  (define lifecycle (view:register-resource-kind! 'review-preview 1 copy-resource! close!))
 
   (define (target r selection)
     (let* ([v (get r 'value)] [rewrite? (eq? (get r 'kind) 'rewrite-draft)])
