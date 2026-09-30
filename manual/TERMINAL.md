@@ -140,7 +140,7 @@ preference.
 
 Run `terminal:yank!` through M-x to paste the copy buffer into the child.
 `C-]` is reserved for the toggle; to send its literal byte, evaluate
-`(terminal:send! "\x1d;")` through M-x. `C-] C-]` now toggles twice.
+`(terminal:send! view "\x1d;")` through M-x. `C-] C-]` now toggles twice.
 
 ## Display model
 
@@ -271,13 +271,14 @@ Headless emulators record the same signatures, readable through
 
 ```scheme
 (terminal:open! [command])
-(terminal:send! text)
+(terminal:send! view text)
+(terminal:toggle-capture! view)
 (terminal:close! [buffer])
 (terminal:scrollback [lines])
 (terminal:shell [path])
 ```
 
-`terminal:send!` writes UTF-8 text to the current terminal's PTY. It is useful
+`terminal:send!` writes UTF-8 text to an explicit terminal view's PTY. It is useful
 for macros and automation; it does not append text directly to the buffer.
 `terminal:shell` gets or sets the shell executable used by future terminal
 buffers; changing it does not affect processes that are already running.
@@ -361,8 +362,8 @@ adding `-c command` only when a command is supplied; there is no intermediate
 it exits. Escape parsing, screen state, scrollback, input translation, and the
 app lifecycle live in `vt.sls`, with no head or painter dependency. `terminal.sls`
 provides commands, escape/paging bindings, and local clipboard/diagnostic
-presentation. The shared app adapter owns each window's following and input
-projection. Killing the store buffer closes its process even when no head is
+presentation. A terminal widget owns capture and following and composes the
+shared read-only editor for its viewport. Ordinary windows mount this same tree. Killing the store buffer closes its process even when no head is
 looking at it. Quitting e detaches the head; the terminal continues in the
 daemon and can be displayed from another head or the next attachment.
 
@@ -370,9 +371,10 @@ Code that runs without a head can open and address the producer directly:
 
 ```scheme
 (vt:open! actor command-or-#f directory rows cols [color-scheme]) ; store id
-(vt:send! actor id text (list rows cols) paste? [color-scheme])
 (vt:close! id)
 ```
 
-The base library also exports the same emulator and shell/scrollback APIs
-as `terminal:`. Normal commands remain under `terminal:`.
+The base library also exports emulator and shell/scrollback APIs. Normal
+commands remain under `terminal:`. Input is an actor message carrying an owned
+terminal view and its current generation; there is no viewless send operation.
+See [terminal widgets](WIDGETS.md#terminal-views) for explicit view commands.

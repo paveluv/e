@@ -354,11 +354,10 @@
          ;; Transport an already attributed record. Sources are assigned at
          ;; the originating log:add! call, never by the relay.
          (journal:add! (car args) (cadr args) (and (caddr args) #t)))]
-      [(vt-open vt-send vt-close vt-color vt-option)
+      [(vt-open vt-close vt-color vt-option)
        (control!)
        (case operation
          [(vt-open) (arity 5) (apply vt:open! actor args)]
-         [(vt-send) (arity 5) (apply vt:send! actor args) #t]
          [(vt-close) (arity 1) (vt:close! (car args)) #t]
          [(vt-color) (arity 1) (vt:color-scheme! (car args) actor) #t]
          [(vt-option)

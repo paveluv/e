@@ -1,7 +1,7 @@
 ;; The terminal command facade talks to the base's PTY owner.
 (import (only (foundation edoc) elibrary))
 (elibrary (service vt)
-  (export close! color-scheme! open! scrollback send! shell)
+  (export close! color-scheme! open! scrollback shell)
   (import (chezscheme) (prefix (core client) client:))
 
   (edoc "How many scrolled-off lines the base's terminals keep, or set it."
@@ -37,17 +37,6 @@
   (define (open! actor command directory rows cols scheme)
     (own-head actor)
     (client:request 'vt-open command directory rows cols scheme))
-
-  (edoc "Send text to a terminal as this head, typed or pasted."
-        (actor actor "the actor identity")
-        (id integer "the buffer id")
-        (text string "the text")
-        (size list "(rows cols)")
-        (paste? boolean "whether it is a paste")
-        (scheme any "the color scheme"))
-  (define (send! actor id text size paste? scheme)
-    (own-head actor)
-    (client:request 'vt-send id text size paste? scheme))
 
   (edoc "Close a terminal by its buffer id."
         (id integer "the buffer id"))

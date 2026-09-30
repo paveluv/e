@@ -289,41 +289,15 @@ pointer and the wheel. A key that applies only in some state of the buffer,
 the delta log browser's conflict keys while its rows are a reload's
 conflicts, gets a state context through `mode:add-context!`.
 
-The handler has first refusal on every key the buffer's mode context leaves
-unbound: a true result consumes the event, a false one lets it continue
-through the keymaps -- the mode context, then the global map.  A key the
-context binds, starts a binding with, or leaves to e during partial capture
-goes straight to the keymaps; the handler never sees it. An app that embeds a complete
-interactive environment simply consumes everything it is offered while it
-is alive; a shared terminal declares that capture through its store facts.
+Legacy local apps give their handlers first refusal on keys left unbound by
+their mode context. Widget apps instead use recursive keymap and capture
+routing; see [Widgets](WIDGETS.md). A terminal capture parent intercepts input
+before its editor child and yields C-x and M-x in partial capture.
 
-A capturing app can declare a capture control and the keys left to e during
-partial capture. The terminal registers:
-
-```scheme
-(keymap:set-context-capture! 'terminal "C-]"
-  terminal:toggle-capture! '("C-x" "M-x"))
-```
-
-The declaration installs the toggle as a default context binding. It and the
-declaration retract with their module. All key specifications here are single
-events; a passed-through prefix such as `C-x` enters ordinary complete chord
-resolution, including any synchronous prompt. The toggle does not pause app
-following. Other context bindings remain editor controls in either state.
-Capture contexts apply only while the buffer hosts a live app. After exit or
-detachment, the mode still supplies presentation, but its keymap is inactive:
-ordinary global bindings apply, and the capture indicator disappears.
-Other live buffers using the same context keep their controls.
-
-`(head:full-capture? window)` reads the preference and
-`(head:set-full-capture! window boolean)` changes it. Windows start with partial
-capture; splits copy the preference and named-head checkpoints retain it. This is head
-state: it does not change the producer's capture facts or another head's input.
-`keymap:context-capture` returns `(toggle-key toggle-procedure editor-key ...)`
-or `#f`. Paint inserts the clickable `●` (full) or `◐` (partial) indicator after
-the first token of the producer's status. Status bars carry no key hints; the
-bindings listing on `C-x TAB` is where a key is looked up, and only `<bindings>`
-itself says so on its bar.
+Capture preferences belong to terminal views. Splits fork them and named-head
+resume retains them. `(terminal:toggle-capture! view)` changes the explicit
+view; the C-] binding and clickable ● / ◐ status control call that operation.
+Process exit removes capture without changing the terminal's identity or text.
 
 Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
 a `(lambda (buffer active?) ...)` returning a string, `(text . style)` span, or

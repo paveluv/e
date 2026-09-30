@@ -977,7 +977,8 @@ base rejects stale output and view generations.
 
 Accepted process input includes the view's latest grid size and claims
 resize control. Subsequent size offers are coalesced per view; observers,
-focus reports, painting and scrollback do not take control. Releasing a
+focus reports, painting and scrollback do not take control. Unrecognized keys
+that produce no process input cannot claim control. Releasing a
 controller invalidates its lease and keeps the last grid.
 
 `terminal:page!` and ordinary wheel scrolling retain the shown position and
@@ -987,3 +988,8 @@ resumes it. The `following` output is connected to the editor's `follow`
 input, so repeated process output causes no interaction publication.
 After process exit, capture bindings disappear and the same child remains
 available for ordinary selection, copying and navigation.
+
+Terminal clipboard requests and diagnostics are delivered on the service path,
+once per shared output source even with multiple views. Clipboard delivery uses
+the installed host capability and remains addressed to the controlling head.
+The base publishes process state and bell activity; head adapters choose glyphs.

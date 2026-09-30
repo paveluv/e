@@ -1,11 +1,12 @@
 ;; A process capture parent around the ordinary read-only editor viewport.
 (import (only (foundation edoc) elibrary))
 (elibrary (head terminal-control)
-  (export (rename (terminal-state:create! create-view!)) follow! page! paste! pointer! press! register! send! set-capture! toggle-capture!)
+  (export (rename (terminal-state:create! create-view!)) follow! forward-clipboard-to-copy-buffer page! paste! pointer! press! register! send! set-capture! toggle-capture!)
   (import (chezscheme) (prefix (core kernel) kernel:)
     (prefix (head editor) editor:) (prefix (head head) head:)
     (prefix (head interaction) interaction:) (prefix (head keymap) keymap:) (prefix (head render) render:)
-    (prefix (head terminal-state) terminal-state:) (prefix (head widget) widget:)
+    (prefix (head terminal-state) terminal-state:) (prefix (head text-source) text-source:)
+    (prefix (head widget) widget:) (prefix (service log) log:)
     (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state view) view:))
 
   (define-record-type mount (fields (mutable facts) (mutable offered) (mutable pointer) toggle))
@@ -14,6 +15,28 @@
     (or (hashtable-ref mounts id #f)
       (let ([m (make-mount '() #f #f (keymap:call toggle-capture! id))]) (hashtable-set! mounts id m) m)))
   (define (fact facts key fallback) (cond [(assq key facts) => cdr] [else fallback]))
+
+  (edoc "Whether terminal OSC 52 clipboard requests are forwarded through the installed clipboard capability."
+        (value boolean))
+  (define forward-clipboard-to-copy-buffer
+    (make-parameter #t (lambda (enabled?)
+                         (unless (boolean? enabled?) (error 'forward-clipboard-to-copy-buffer "expected a boolean")) enabled?)))
+  (define copy-text! #f)
+  (define presented (unbox (kernel:persistent-cell 'terminal-presented-sources (lambda () (make-weak-eq-hashtable)))))
+  (define (present-notices! document facts)
+    (let* ([source (text-source:lookup document)] [old (hashtable-ref presented source '(0))]
+           [clipboard (fact facts 'clipboard #f)] [diagnostics (fact facts 'diagnostics '())]
+           [sequence (if clipboard (car clipboard) (car old))])
+      ;; Claim before callbacks. Views share this source identity; output is
+      ;; delivered once even through reentrant pumps or multiple placements.
+      (hashtable-set! presented source (cons sequence diagnostics))
+      (when (and clipboard (> sequence (car old)) (equal? (cadr clipboard) head:ui-actor)
+              (forward-clipboard-to-copy-buffer) copy-text!)
+        (copy-text! (caddr clipboard))
+        (log:add! 'terminal-control:present-notices! (format "Copied clipboard text from ~a" (store:buffer-name document))))
+      (for-each (lambda (message)
+                  (unless (member message (cdr old))
+                    (log:add! 'terminal-control:present-notices! (format "~a: ~a" (store:buffer-name document) message)))) diagnostics)))
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (context id)
     (let-values ([(source d inputs) (widget:context id 'current)])
@@ -146,7 +169,10 @@
     (let* ([id (widget:frame-id frame)] [address (and (captured? id "MOUSE-CLICK") (pointer-address frame x y 0))])
       (if address (list (list '(click primary ()) (keymap:call pointer! id "MOUSE-CLICK" address))) '())))
   (define (status id d active?)
-    (let* ([facts (mount-facts (mounted id))] [text (fact facts 'status "")])
+    (let* ([facts (mount-facts (mounted id))]
+           [text (case (fact facts 'process-state 'starting)
+                   [(running) (if (fact facts 'bell #f) "♪" "▶")]
+                   [(failed) "■ error"] [(stopped) "■"] [else "starting"])])
       (append (list (cons (string-append " " text) #f))
         (if (live? id)
           (list (cons " " #f) (cons (if (eq? (car (terminal-state:state d)) 'full) "●" "◐") (mount-toggle (mounted id)))) '()))))
@@ -156,14 +182,17 @@
         (let* ([m (mounted id)] [facts (store:properties (cadr source))]
                [alive? (fact facts 'alive #f)] [grid (size id)] [lease (witness id d)] [offer (list lease grid)])
           (mount-facts-set! m facts)
+          (when (text-source:lookup (cadr source)) (present-notices! (cadr source) facts))
           (when (and (not alive?) (cadr (terminal-state:state d))) (follow! id #f))
           (when (and alive? grid (not (equal? offer (mount-offered m))))
             (mount-offered-set! m offer)
             (actor:send! (fact facts 'app #f) (list 'request head:ui-actor (cadr source) 'resize
                                                 (list (cons 'view lease) (cons 'size grid)))))))))
 
-  (edoc "Install terminal capture around the shared editor viewport; acquisition and resize offers run on the service path.")
-  (define (register!)
+  (edoc "Install terminal capture around the shared editor viewport; acquisition, notices and resize offers run on the service path."
+        (clipboard (or procedure #f) "text -> unspecified; optional host clipboard capability"))
+  (define (register! clipboard)
+    (set! copy-text! clipboard)
     (widget:register! 'terminal 1
       (list (cons 'service service!) (cons 'status status) (cons 'release (lambda (id) (hashtable-delete! mounts id)))
         (cons 'capture (lambda (id d) (if (live? id) 'full 'partial)))

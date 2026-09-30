@@ -299,20 +299,13 @@ mode's, so keys bound in it work only while the state holds, keep their
 other meanings elsewhere, and the bindings listing shows them only where they
 work.
 
-Buffer-mode contexts can bind command procedures and complete chords. Terminals
-also declare which keys reach e during partial capture. To include `C-c` as
-well as the default `C-x` and `M-x`, put this in `config.e`:
-
-```scheme
-(keymap:set-context-capture! 'terminal "C-]"
-  terminal:toggle-capture! '("C-x" "M-x" "C-c"))
-```
-
-`C-]` and the clickable `●` / `◐` indicator toggle the current window's capture.
-Full capture forwards these keys to the child; ordinary mode bindings such
-as `Shift-PageUp/Down` still belong to e. After the child exits, the terminal
-keymap becomes inactive and the transcript uses ordinary global bindings.
-See [Terminal buffers](TERMINAL.md).
+Buffer-mode contexts bind command procedures and complete chords. Widget
+contexts route recursively through the focused tree. Terminal views yield C-x
+and M-x in partial capture; C-] and the clickable ● / ◐ status control toggle
+that view's policy. Full capture forwards those prefixes to the child.
+Shift-PageUp/Down remain viewport commands in either state. After process exit,
+its capture context disappears and the editor child handles ordinary input.
+See [Terminal buffers](TERMINAL.md) and [Widgets](WIDGETS.md).
 
 ### `isearch`
 

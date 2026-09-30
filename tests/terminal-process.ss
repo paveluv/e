@@ -203,7 +203,7 @@
             [previous (head:window-buffer (head:current-window))]
             [id #f] [owner #f] [buffer #f] [subscription #f]
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
-            [send! vt:send!] [close! vt:close!]
+            [close! vt:close!] [views '()]
             [phase 'initial] [coherent? #f] [complete? #f] [interfered? #f]
             [gap-entered (test:gate)] [gap-release (test:gate)] [gap-result #f]
             [events (test:recorder)] [retired (test:recorder)])
@@ -216,8 +216,12 @@
        (define (stage)
          (guard (ex [else #f]) (call-with-input-file marker read)))
        (define (wait-stage value) (test:await value (lambda () (equal? (stage) value))))
-       (define (send from text size) (send! from id text size #f))
-       (define (offer from size) (actor:send! owner (list 'request from id 'resize size)))
+       (define (lease from)
+         (let ([v (cdr (assoc from views))]) (list v (view:generation (view:snapshot v)))))
+       (define (send from text size)
+         (actor:send! owner (list 'input from id "TEXT" (list (cons 'text text) (cons 'view (lease from)) (cons 'size size)))))
+       (define (offer from size)
+         (actor:send! owner (list 'request from id 'resize (list (cons 'view (lease from)) (cons 'size size)))))
        (define (head-view)
          (let ([frame (head:buffer-rendition buffer)] [w (head:current-window)])
            (list (head:buffer-lines buffer) (head:buffer-store-rev buffer)
@@ -281,6 +285,9 @@
            (head:before-frame!)
            (set! id (vt:open! first (format "exec scheme-script ~a" child) (current-directory) 3 24))
            (set! owner (store:property id 'app))
+           (set! views (map (lambda (who)
+                              (let ([v (view:create! who (list 'buffer id) 'terminal 1 '() '(partial #t))])
+                                (view:claim! who v) (cons who v))) (list first second)))
            (set! subscription
              (store:subscribe! id
                (lambda (event)
@@ -361,7 +368,7 @@
                (lambda (entry)
                  (actor:send! owner
                    (list 'input first id "MOUSE-CLICK"
-                     `((size 3 24) (revision . ,(car entry)) (generation . ,(cadr entry))
+                     `((view . ,(lease first)) (size 3 24) (revision . ,(car entry)) (generation . ,(cadr entry))
                        (cell . ,(caddr entry)) (button . 0)))))
                (list (list revision (- generation 1) '(1 . 4))
                      (list (- revision 1) generation '(1 . 5))
@@ -406,6 +413,8 @@
                              (when (and (eq? (car event) 'property) (eq? (caddr event) 'size))
                                (sizes (store:property id 'size))))))
              (input first (witness a) '(7 31)) (sized '(7 31))
+             (actor:send! owner (list 'input first id "UNKNOWN-KEY"
+                                  (list (cons 'view (witness b)) '(size 2 12))))
              (resize first (witness b) '(2 12))
              (offer first '(2 12))
              (resize first (witness a) '(6 30)) (sized '(6 30))
@@ -426,7 +435,7 @@
            (send second "size\n" '(5 30))
            (wait-stage 'size)
            (offer first '(3 24))
-           (actor:send! owner (list 'input first id "FOCUS" '((size 3 24))))
+           (actor:send! owner (list 'input first id "FOCUS" (list (cons 'view (lease first)) '(size 3 24))))
            (test:await 'latest-typist-size (lambda () (published? "5 30")))
            (offer second '(4 26))
            (test:await 'controller-size-offer (lambda () (equal? (store:property id 'size) '(4 26))))
@@ -475,7 +484,7 @@
                (list (length (completed)) (actor:checkpoint '(head "pause checkpoint"))) '(3 after)))
            (actor:detach! '(head "pause checkpoint"))
            (test:await 'offscreen-exit (lambda () (not (store:property id 'alive))))
-           (test:await 'actor-retired (lambda () (not (actor:send! owner (list 'request second id 'resize '(4 26))))))
+           (test:await 'actor-retired (lambda () (not (offer second '(4 26)))))
            (test:check 'exit-publishes-final-held-text-before-retiring-capture-and-rendition
              (list (has? "界q\x301;FINAL") interfered? (retired)
                    (exists (lambda (event) (eq? (car event) 'reset)) (events)))

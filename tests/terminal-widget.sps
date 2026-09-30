@@ -42,6 +42,14 @@
     (keymap:run! (cdr control))
     (check 'terminal-status-control-is-the-explicit-public-command
       (list (car control) (car (state a)) (keymap:call-action-arguments (cdr control))) (list "●" 'partial (list a))))
+  (let ([before (length (log:entries 'terminal-control:present-notices!))])
+    (store:set-properties! owner source (list (list 'clipboard 7 actor "shared clipboard") '(diagnostics "fixture diagnostic")))
+    (widget:pump!) (widget:pump!)
+    (check 'nested-views-share-one-clipboard-and-diagnostic-delivery
+      (list (copy-text) (- (length (log:entries 'terminal-control:present-notices!)) before)) '("shared clipboard" 2))
+    (store:set-property! owner source 'clipboard '(8 (head "another actor") "foreign clipboard"))
+    (widget:pump!)
+    (check 'clipboard-replies-stay-with-their-controlling-head (copy-text) "shared clipboard"))
   (show! 16) (widget:pointer! '(scroll 0 -3 cells) 1 0)
   (check 'ordinary-wheel-leaves-following-without-sending-process-input
     (list (cadr (state a)) (take)) '(#f ()))
