@@ -24,6 +24,7 @@
           (prefix (service prompt-request) prompt-request:)
           (prefix (service reference) reference:)
           (prefix (service sandbox) sandbox:)
+          (prefix (service search-request) search-request:)
           (prefix (service session) session:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
@@ -41,7 +42,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire"))
+      "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -124,7 +125,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request environment evaluation-job))
+      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -191,7 +192,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings prompt-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+             [(connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
@@ -389,6 +390,9 @@
             (if (null? (cdr args)) (option) (begin (option (cadr args)) #t)))])]
       [(reference-fetch) (control!) (arity 0) (reference:begin-fetch! actor) #t]
       [(markup-source) (control!) (arity 1) (markup-source:create! actor (car args))]
+      [(search-create) (control!) (head!) (arity 1) (search-request:create! actor (car args))]
+      [(search-configure) (control!) (head!) (arity 3) (apply search-request:configure! actor args)]
+      [(search-close) (control!) (head!) (arity 1) (search-request:close! actor (car args)) #t]
       [(reference-signatures) (arity 0) (reference:signatures)]
       [(reference-page) (arity 1) (reference:page actor (car args))]
       [(reference-create)
@@ -866,6 +870,7 @@
               (when session
                 (when registered?
                   (prompt-request:close-owner! (policy:session-actor session))
+                  (search-request:close-owner! (policy:session-actor session))
                   (view:release-owner! (policy:session-actor session)))
                 (policy:revoke! session))
               (kernel:retract-module! owner)))

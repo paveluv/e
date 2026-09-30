@@ -10,7 +10,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head dispatch)
-  (export cancel! global-key! input! (rename (handle-key! key!)) pending? resolve! set-prompt-opener!)
+  (export cancel! global-key! input! (rename (handle-key! key!)) pending? register-input-root! resolve! set-prompt-opener!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head echo) echo:)
@@ -25,6 +25,16 @@
 
   (define prompt-opener
     (lambda (name arguments) (error 'dispatch "no M-x prompt is installed to pre-fill" name)))
+  (define input-roots (kernel:make-registry))
+
+  (edoc "Register an outer host's temporary keyboard receiver. Called at input boundaries with the ordinary root and normalized event; return a mounted replacement root or false. The receiver uses ordinary widget routing, and unclaimed keys retain global host bindings."
+        (resolve procedure "(ordinary-root event) -> root or false"))
+  (define (register-input-root! resolve)
+    (unless (procedure? resolve) (error 'register-input-root! "expected a receiver resolver"))
+    (kernel:registry-add! input-roots resolve))
+  (define (input-root! event)
+    (let ([ordinary (head:window-widget (head:current-window))])
+      (or (exists (lambda (resolve) (resolve ordinary event)) (kernel:registry-items input-roots)) ordinary)))
 
   (edoc "Install the procedure that opens M-x with a call begun: (open name arguments), the command's top-level name and the arguments already given; a key bound with keymap:prefill calls it."
         (open procedure "(open name arguments)"))
@@ -179,7 +189,7 @@
                                       (cancel!)
                                       (echo:settle!)
                                       (void)]
-                                     [(head:window-widget (head:current-window))
+                                     [(input-root! event)
                                       => (lambda (root)
                                            (echo:settle!)
                                            (input! root (if (string=? event "PASTE") (list 'text (head:read-paste) 'paste)

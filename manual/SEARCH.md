@@ -6,15 +6,24 @@
 just beyond the current match. Pressing `C-s` again advances to the next match,
 wrapping at the end of the buffer. Backspace shortens the needle.
 
-Return or Escape accepts the current match without an extra message. `C-g`
-cancels the search and restores point to its position before the search began.
+Return or Escape accepts the latest needle when its search finishes. Arrow
+keys accept the currently displayed position and resume normal navigation.
+`C-g` cancels the search and restores its original point, carried across any
+intervening edits; it never undoes those edits. Switching to another text
+window retargets the search, while cancellation still restores the original
+window and point.
 Starting with an empty needle and pressing `C-s` recalls the previous search.
 
 Point remains just after the match. Consequently, setting the mark before a
 search leaves the found text inside the resulting region.
 
-All matches visible in the current window are highlighted, with the current
-match distinguished from the others.
+Visible matches are highlighted, with the current match distinguished from
+the others. Large searches run cooperatively in the base while the head
+continues handling input; annotation batches are bounded.
+
+Extensions can embed the same interaction using `search-control:create!`
+with an explicit mounted editor view and a `finished` host command. Its entry,
+request and annotations are scoped to that search and released on closure.
 
 ## Case sensitivity
 

@@ -11,11 +11,26 @@
   '(begin
      (import (prefix (test) test:)
              (prefix (core kernel) kernel:)
+             (prefix (core work-queue) work-queue:)
              (prefix (sys sys) sys:)
              (prefix (state store) store:)
              (prefix (state actor) actor:))
 
      (define test-lock (make-mutex))
+
+     (let ([queue (work-queue:create)] [started (test:gate)] [release (test:gate)] [seen (test:recorder)])
+       (define (failed ex) (seen 'failed))
+       (work-queue:submit! queue 'replace (lambda () #t)
+         (lambda (check!)
+           (started #t) (test:await 'release-old-job release)
+           (do ([i 0 (+ i 1)]) ((= i 32)) (check!))
+           (seen 'obsolete)) failed)
+       (test:await 'old-job-entered started)
+       (work-queue:submit! queue 'replace (lambda () #t) (lambda (check!) (seen 'new)) failed)
+       (work-queue:submit! queue 'other (lambda () #t) (lambda (check!) (seen 'other)) failed)
+       (release #t)
+       (test:await 'new-jobs-finished (lambda () (= (length (seen)) 2)))
+       (test:check 'cooperative-queue-drops-superseded-running-work (seen) '(new other)))
 
      ;; Delivery runs after the domain lock is released, including on an
      ;; exceptional exit; nesting must not release an inner batch early.

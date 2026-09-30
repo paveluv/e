@@ -63,8 +63,9 @@ top, `edit.sls`, the command layer, as the default app, and the other apps
 Feature modules compose the command API and the seams and, when necessary,
 narrowly scoped system facilities.
 
-`dispatch:key!` handles a key through the current app and keymaps; modal
-readers such as incremental search use the same dispatcher as the main loop.
+`dispatch:key!` handles a key through the current app and keymaps. Incremental
+search is an entry composition routed through that ordinary event pump;
+the default host supplies its temporary input root and editor target.
 The command layer installs the loop's file opener, quit command and after-key
 hook through `head:set-file-opener!`, `head:set-quit-command!` and
 `head:set-after-key!`. Commands and apps can use these head libraries without

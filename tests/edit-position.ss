@@ -14,6 +14,8 @@
              (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (apps search) search:)
+             (prefix (service search-request) search-request:)
+             (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
              (prefix (head mode) mode:)
@@ -21,6 +23,7 @@
 
      (define bot '(agent position-test))
      (define check test:check)
+     (include "tests/search-request.sps")
      (widget:init!) (edit:init!) (window:init!)
      (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines . local?)

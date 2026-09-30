@@ -1,0 +1,83 @@
+;; Default window placement and retargeting; the search control has no windows.
+(import (only (foundation edoc) elibrary))
+(elibrary (head search-host)
+  (export finish! init! open!)
+  (import (except (chezscheme) display) (prefix (head dispatch) dispatch:) (prefix (head head) head:)
+          (prefix (head interaction) interaction:) (prefix (head layout) layout:)
+          (prefix (head search-control) search-control:) (prefix (head widget) widget:)
+          (prefix (head window) window:) (prefix (service search-request) search-request:) (prefix (state view) view:))
+  (define-record-type display (fields root search buffer prior rows origin (mutable target-window)))
+  (define current #f)
+  (define remembered "")
+  (define (visible? s) (and s (eq? (display-buffer s) (head:window-buffer (head:popup))) (> (head:popup-rows) 0)))
+  (define (close! s accepted?)
+    (when (eq? s current) (set! current #f))
+    (when (visible? s)
+      (if (and (> (display-rows s) 0) (memq (display-prior s) (head:buffers)))
+        (begin (head:set-window-buffer! (head:popup) (display-prior s)) (head:show-popup! (display-rows s)))
+        (head:hide-popup!)))
+    (when (or (not accepted?) (eq? (head:current-window) (head:popup)))
+      (let ([w (if accepted? (display-target-window s) (display-origin s))])
+        (when (memq w (head:windows)) (window:focus! w))))
+    (widget:unmount! (display-root s))
+    (when (memq (display-buffer s) (head:buffers)) (head:forget-buffer! (display-buffer s))))
+
+  (edoc "Finish the default search placement, restore the previous pop-up and retain its nonempty needle for repeat. Cancellation returns focus to its original surviving window."
+        (id model "search host") (accepted? boolean "accept or cancel") (origin any "captured editor") (needle string "last needle"))
+  (define (finish! id accepted? origin needle)
+    (when (and current (equal? id (display-root current)))
+      (unless (string=? needle "") (set! remembered needle))
+      (close! current accepted?)))
+  (define (retarget! s)
+    (unless (eq? (head:current-window) (head:popup))
+      (let ([target (head:window-editor (head:current-window))])
+        (when target
+          (unless (equal? target (car (view:state (interaction:snapshot (display-search s)))))
+            (dispatch:cancel!) (search-control:retarget! (display-search s) target))
+          (display-target-window-set! s (head:current-window)) target))))
+  (define (refresh!)
+    (when current
+      (if (and (visible? current) (interaction:snapshot (display-search current))) (retarget! current)
+        (close! current #t))))
+  (define (route ordinary event)
+    (refresh!)
+    (and current
+      (or (eq? (head:current-window) (head:popup)) (head:window-editor (head:current-window)))
+      (if (member event '("UP" "DOWN" "LEFT" "RIGHT" "HOME" "END" "PAGEUP" "PAGEDOWN"))
+        (begin (search-control:accept! (display-search current) #f) (head:window-widget (head:current-window)))
+        (display-root current))))
+
+  (edoc "Start incremental search in this window through the ordinary event pump, or repeat an active search. Window switches explicitly retarget the same entry to another editor."
+        (policy (one-of smart fold exact) "case policy") (returns model "search view"))
+  (define (open! policy)
+    (refresh!)
+    (if current (begin (search-control:repeat! (display-search current)) (display-search current))
+      (let* ([w (head:current-window)] [target (head:window-editor w)])
+        (unless target (error 'open! "Incremental search requires a text editor"))
+        (let* ([search (search-control:create! target policy remembered '())]
+               [d (view:snapshot search)] [query (view:source d)]
+               [root (view:create! head:ui-actor #f 'search-host 1 '((name . "search")) '() query)]
+               [prior (head:window-buffer (head:popup))] [rows (head:popup-rows)])
+          (guard (ex [else
+                      (when (and current (equal? root (display-root current))) (close! current #t))
+                      (search-request:close! head:ui-actor query)
+                      (raise ex)])
+            (view:arrange! head:ui-actor
+              (list (list root 0 (list (list 'search search '(grow 1))) '((name . "search")))
+                (list search 1 (view:children d)
+                  (cons (list 'commands (list 'finished root 'finished '())) (remp (lambda (p) (eq? (car p) 'commands)) (view:options d))))) '())
+            (let* ([buffer (window:show-widget! (head:popup) root)] [s (make-display root search buffer prior rows w w)])
+              (set! current s)
+              (head:buffer-fact-set! buffer 'internal #t)
+              (head:buffer-fact-set! buffer 'resume-kind #f)
+              (head:show-popup! 1)
+              (widget:prepare! root (max 1 (head:window-content-width (head:popup))) 1)
+              (widget:focus! root (widget:descendant search 'entry)) search))))))
+
+  (edoc "Install default search placement and the temporary outer input receiver. Nested search controls do not use this adapter." (public))
+  (define (init!)
+    (search-control:init!)
+    (widget:register! 'search-host 1
+      (append (layout:container 'y) (list (cons 'actions (list (cons 'finished finish!))))))
+    (dispatch:register-input-root! route)
+    (head:add-pre-redraw-hook! refresh!)))

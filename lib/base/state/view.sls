@@ -9,7 +9,7 @@
     (rename (descriptor:options options))
     (rename (descriptor:owner owner))
     (rename (descriptor:parent parent)) publish! release!
-    release-owner! reset-owners! retire!
+    release-owner! reset-owners! retire! retire-scope!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
@@ -114,6 +114,19 @@
                                     (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
                                 (walk get root fail)))) (descriptor:children d)))) #f id)])
       (values status (model:snapshot id))))
+
+  (edoc "Retire views scoped to an already-retired resource and their scoped descendants. Guarded allocation cannot extend this closed lifetime; borrowed sources survive."
+        (actor actor "resource owner") (owner model "retired resource"))
+  (define (retire-scope! actor owner)
+    (when (model:snapshot owner) (error 'retire-scope! "retire the resource before its views" owner))
+    (for-each
+      (lambda (id)
+        (let retry ()
+          (let ([r (model:snapshot id)])
+            (when (and r (equal? (field r 'scope) owner))
+              (let-values ([(status current) (retire! actor id (field r 'revision))])
+                (case status [(stale) (retry)] [(applied) (retire-scope! actor id)]))))))
+      (model:ids 'widget-view)))
 
   (edoc "Read a canonical descriptor, or #f if unavailable." (id model "view id") (returns any))
   (define (snapshot id) (let ([r (entry id)]) (and r (value r))))
