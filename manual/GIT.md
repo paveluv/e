@@ -64,24 +64,29 @@ The API is query-only: e never runs a Git command that changes the repository.
 
 ## History browser
 
-`C-x g` or M-x `(git-view:log!)` opens the `<git-log>` app for the repository
+`C-x g` or M-x `(git-view:log!)` opens a Git browser for the repository
 containing the current file. `git-view:log-of!` browses another one:
 
 ```scheme
 (git-view:log-of! "/src/e")
 ```
 
-The app shows the latest 20 commits followed by each commit's changed files.
-The repository heading stays fixed while the body scrolls. Click `[refresh]`
-beside the repository name, or press `r`, to reload it; the control changes
-color briefly while pressed. The refresh label and clickable file rows become
-bold with a dotted underline on hover. Commit headings and blank space do not
-open patches. Use Up/Down or the wheel
-to move one row at a time. Enter on a file opens that file's patch in a
-read-only `<git-diff>` view in the current window, in place of the history.
-Clicking a file performs the same action immediately and keeps keyboard focus
-where it was, following the normal app mouse convention.
+The table lists the latest 20 commits. Enter or click a commit to expand its
+changed files; selecting a file shows its patch below the table. Up/Down moves
+the table selection; the wheel scrolls the pointed table or patch without
+changing selection. Tab moves focus between controls. Each browser keeps its
+own expanded commit and patch request.
 
-The patch view classifies and styles metadata, hunk headers, additions, and
-deletions. It is a special view rather than a file buffer: its text cannot be
-edited or saved, and selecting another file replaces it dynamically.
+Click `[refresh]`, or press `r` or `C-r`, to refresh this browser. Git commands
+run asynchronously in the base and only while the query is demanded. Changing
+selection supersedes earlier patch requests. There is no artificial refresh
+delay; long operations use the ordinary widget busy indicator.
+
+The patch is a read-only editor over generated base text, with normal selection
+and copy. Metadata, hunk headers, additions and deletions have distinct styles.
+It has no visited file; selecting a file never edits the working tree.
+
+`(git-view:create! path)` creates the same table/patch composition without a
+window, for embedding in other hosts. `git-view:refresh!` takes this explicit
+view. The base `git-source:` API exposes lazy history and patch queries for
+other presentations.

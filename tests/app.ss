@@ -259,26 +259,6 @@
      (check 'killed-tool-gets-new-identity (eq? transient recreated) #f)
      (store:unsubscribe! subscription)
 
-     ;; Git's lazy views use tool identity too, including after a kill.
-     ;; Seed their keys without opening a repository or spawning Git.
-     (define git-log (head:register-view! "*git-log*" void))
-     (define git-diff (head:register-view! "*git-diff*" void))
-     (head:buffer-name-set! git-log "renamed git log")
-     (head:buffer-name-set! git-diff "renamed git diff")
-     (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
-     (check 'git-rebinds-renamed-log (head:buffer-fact git-log 'mode #f) "git:log")
-     (check 'git-rebinds-renamed-diff (head:buffer-fact git-diff 'mode #f) "git:diff")
-     (kill-buffer! git-log)
-     (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
-     (define new-git-log (head:find-tool-buffer "*git-log*"))
-     (check 'git-recreates-killed-log (and new-git-log (not (eq? new-git-log git-log))) #t)
-     (check 'recreated-git-log-is-an-app (head:app-buffer? new-git-log) #t)
-     (check 'git-retains-surviving-diff
-            (eq? git-diff (head:find-tool-buffer "*git-diff*")) #t)
-     (kernel:retract-module! 'git-view-test)
-     (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
-     (check 'git-rebinds-after-registry-retraction (head:app-buffer? new-git-log) #t)
-
      (include "tests/journal-widget.sps")
 
      ;; Mouse routing needs the handler's focus decision, not only truth.
@@ -639,6 +619,7 @@
      (include "tests/prompt-widget.sps")
      (include "tests/search-control.sps")
      (include "tests/table-widget.sps")
+     (include "tests/git-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")
      (test:finish! 'app))

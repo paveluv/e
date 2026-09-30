@@ -18,6 +18,7 @@
           ;; Startup also publishes these modules into base configuration.
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
+          (prefix (service git-source) git-source:)
           (prefix (service journal-source) journal-source:)
           (prefix (service log) log:)
           (prefix (service markup-source) markup-source:)
@@ -43,7 +44,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -392,6 +393,11 @@
       [(reference-fetch) (control!) (arity 0) (reference:begin-fetch! actor) #t]
       [(markup-source) (control!) (arity 1) (markup-source:create! actor (car args))]
       [(journal-source) (control!) (arity 1) (journal-source:create! actor (car args))]
+      [(git-source) (control!) (arity 1) (git-source:create! actor (car args))]
+      [(git-expand) (control!) (arity 2) (apply git-source:expand! actor args)]
+      [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
+      [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args)]
+      [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args))]
       [(search-create) (control!) (head!) (arity 1) (search-request:create! actor (car args))]
       [(search-configure) (control!) (head!) (arity 3) (apply search-request:configure! actor args)]
       [(search-close) (control!) (head!) (arity 1) (search-request:close! actor (car args)) #t]
