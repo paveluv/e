@@ -40,7 +40,7 @@
           new-buffer! newline! next-line! next-list! open-line! page! page-down! page-up!
           (rename (paste-into-buffer! paste!)) present-log-entries! present-log-entry! previous-line!
           previous-list!
-          quit! redo! redraw-command! region-text reload! replace-region-text! reread! restore!
+          quit! redo! redraw-command! region-text (rename (text-control:register-policy! register-policy!)) reload! replace-region-text! reread! restore!
           rewrite-regions! save! save-file! (rename (editor:scroll! scroll!) (editor:select! select!) (editor:set-mark! set-mark!)) set-mark-command! set-message!
           set-point-without-scroll! transpose-expressions! trash type! undo! undo-actor! (rename (text-control:undo-scope undo-scope)) up-expression!
           visit-file! with-region

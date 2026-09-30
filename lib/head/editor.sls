@@ -471,7 +471,7 @@
                                                                  (let* ([mirror (text-control:mirror source)]
                                                                         [top (text-source:rebase (list (caddr (editor-state:state d))) (text-source:changes mirror basis (text-source:revision mirror)))])
                                                                    (next-state id (current-source source) d
-                                                                     (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))))])
+                                                                     (list (car ps) (car ps) (if top (car top) (car ps))) #f #t))) #t)])
                                                (mount-goal-set! m #f)
                                                (when (and settled? typing? (text-control:current? id source d))
                                                  (let ([now (interaction:snapshot id)])

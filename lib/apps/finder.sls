@@ -263,7 +263,10 @@
         (cons 'measure (lambda (s d axis cross child) (if (eq? axis 'y) '(1 1) (list 0 (glyph:cells s)))))
         (cons 'decorate (lambda (s d w h r) (if (zero? (car r)) (list (list (list 0 0 (min w (glyph:cells s)) 1) 'ghost)) '())))))
     (entry:register-presentation! 'finder 1 project-filter)
-    (entry:register-policy! 'rooted-path 1 normalize-path)
+    (edit:register-policy! 'rooted-path 1
+      (lambda (lines positions)
+        (let* ([text (vector-ref lines 0)] [results (map (lambda (p) (normalize-path text (cdr p))) positions)])
+          (values (vector (caar results)) (map (lambda (r) (cons 0 (cadr r))) results)))))
     (table:register-presentation! 'finder 1
       (list (list 'name 14 'text '(kind link) name-cell)
         (list 'size 6 'right '() (present size-text))

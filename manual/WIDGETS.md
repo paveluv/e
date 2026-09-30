@@ -651,9 +651,12 @@ Finder uses it for conjunction separators and italic missing path components;
 the source still contains ordinary spaces. Its `context` input is connected
 to the collection's `summary` output, without polling or copying result rows.
 An independent `(policy name schema)` option selects a logical text-edit
-normalizer registered with `entry:register-policy!`: `(text caret) → (text caret)`.
-This handles typed leading paths without encoding terminal coordinates.
-Programmatic whole-field replacements already supply their intended text.
+normalizer registered with `edit:register-policy!`. It receives proposed line
+strings and logical result positions, returning both normalized values.
+Entries and editors apply the same policy before one guarded journal edit.
+This handles typed leading paths or Scheme indentation without terminal
+coordinates. Programmatic whole-field replacements already supply their
+intended text and bypass this policy.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or
