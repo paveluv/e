@@ -771,13 +771,14 @@ its focus in the base; inactive roots retain it. Modal overlays confine focus
 and consume input even when their contents are empty.
 
 Definitions list ordinary `contexts` and optional `capture-contexts`.
-`contexts` may also be a read-only `(id descriptor)` procedure returning
-context symbols from already acquired state. Routing and binding inspection
-use the same provider; it must not perform I/O. A context change cancels an
-unfinished chord.
+`contexts`, `capture-contexts`, `capture` and `yield` may also be read-only
+`(id descriptor)` procedures returning their respective values from already
+acquired state. Routing and binding inspection use the same providers;
+they must not perform I/O. A context change cancels an unfinished chord.
 Captures are checked from outermost ancestor first; ordinary bindings bubble
-from the focused leaf. A `full` capture stops unhandled input; a `partial`
-capture can list first-key tokens in `yield`. Bind named actions through
+from the focused leaf. A `full` capture stops unhandled input. Either policy
+can list first-key exceptions in `yield`; every suffix of a yielded chord
+keeps that first key's route. Bind named actions through
 `keymap:call` and use `widget:target` to obtain the explicit receiver.
 
 `dispatch:input!` accepts a root and normalized `(key token text-fallback)`
@@ -785,6 +786,15 @@ or `(text string source)` input. Optional trailing contexts belong to the
 outer host. Paste uses the text path alone. Chords advance one event at a
 time, and focus, definition or binding changes invalidate their pending
 suffix. Prompt readers use the same resolver.
+
+An optional `capture-event` procedure uses the ordinary event signature but
+runs from the outermost ancestor before child handlers. Returning true
+consumes the input. It receives key/text events, pointer events with local
+coordinates, and `(scroll dx dy units x y)`. Yielded keys skip that ancestor's
+capture handler. Modal scope also bounds this phase. This lets a process
+control intercept input while alive and release its child text viewport after
+exit. `capture-pointer-bindings` describes its clickable commands with the
+same signature as `pointer-bindings`; inspection lists capture commands first.
 
 Pointer callbacks receive `(pointer phase button modifiers x y [click-count])`
 in their allocation's coordinates. Backends can append a click count;

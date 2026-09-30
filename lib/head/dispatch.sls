@@ -137,7 +137,7 @@
                                  (case (car event)
                                    [(text) (set! chord #f) (widget:input! root event)]
                                    [(key)
-                                    (let* ([key (cadr event)] [routing (widget:key-scopes! root key)]
+                                    (let* ([key (cadr event)] [routing (widget:key-scopes! root (if chord (car (list-ref chord 2)) key))]
                                            [reply (resolve! (car routing) (append (cadr routing) (if (null? contexts) '() (list (list 'editor contexts #f)))) key)]
                                            [receiver (cadr reply)] [sequence (list-ref reply 3)])
                                       (case (car reply)

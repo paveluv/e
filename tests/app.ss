@@ -692,7 +692,7 @@
        (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
-     (let* ([events '()] [owner 'routing-fixture]
+     (let* ([events '()] [owner 'routing-fixture] [capturing? #f]
             [a (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
             [b (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
             [row (view:create! head:ui-actor #f 'route-row 1 '() '())]
@@ -718,7 +718,14 @@
        (define (take) (let ([out (reverse events)]) (set! events '()) out))
        (install-leaf! #f)
        (widget:register! 'route-row 1
-         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
+         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts (lambda (id d) '(route-capture)))
+           (cons 'capture (lambda (id d) (if capturing? 'full 'partial)))
+           (cons 'yield (lambda (id d) (if capturing? '("C-x") '())))
+           (cons 'capture-event (lambda (id source d event)
+                                  (and capturing? (begin (record! id (list 'captured (car event))) #t))))
+           (cons 'capture-pointer-bindings
+             (lambda (f x y) (if capturing?
+                               (list (list '(click primary ()) (keymap:call widget:act! (widget:frame-id f) 'record 'captured))) '())))
            (cons 'actions (list (cons 'record record!)))
            (cons 'pointer-bindings
              (lambda (f x y) (map (lambda (button) (list (list 'click button '()) (keymap:call widget:act! (widget:frame-id f) 'record 'bubbled))) '(primary middle secondary))))
@@ -742,6 +749,18 @@
        (dispatch:input! root '(text "z z" paste))
        (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
          (list (list 'leaf a) (list 'parent-chord row) (list 'parent row) (list 'capture row) (list 'shortcut a) (list "z z" a)))
+       (set! capturing? #t)
+       (check 'capture-discovery-precedes-child-bindings-without-dispatch
+         (list (keymap:call-action-arguments (cadr (assoc '(click primary ()) (widget:pointer-bindings 1 0)))) (take))
+         (list (list row 'record 'captured) '()))
+       (key! "z") (dispatch:input! root '(text "paste" paste))
+       (key! "C-x") (key! "a")
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(scroll 0 3 cells) 1 0)
+       (check 'parent-capture-precedes-children-and-yielded-chords-keep-their-route (take)
+         (list (list '(captured key) row) (list '(captured text) row) (list 'leaf a)
+           (list '(captured pointer) row) (list '(captured scroll) row)))
+       (set! capturing? #f)
        (key! "C-x") (widget:focus! root b) (key! "a")
        (key! "C-x") (keymap:bind-default! 'unrelated "F9" void) (key! "a")
        (check 'focus-and-binding-change-do-not-replay-chord-suffix (take) '())
