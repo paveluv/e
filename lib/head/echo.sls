@@ -15,8 +15,8 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head echo)
-  (export compute-spans cursor ghost height indent indent-now input-end live-height log-prefix
-          log-rows log-spans pending queue! scroll set-cursor! set-ghost! set-height!
+  (export compute-spans ghost height indent indent-now input-end live-height log-prefix
+          log-rows log-spans pending queue! scroll set-ghost! set-height!
           set-indent! set-input-end! set-live-height! set-pending! set-scroll! set-spans!
           set-styles! set-text! settle! spans styles text text-owner)
   (import (rnrs)
@@ -33,7 +33,6 @@
   (define the-ghost "")      ; grey suggestion drawn after it
   (define the-styles #f)     ; (text . styler) for the current message
   (define the-pending '())   ; transient-log lines (component text styler ghost)
-  (define the-cursor #f)     ; content index to park the cursor at, or #f
   (define the-indent #f)     ; prompt continuation indent; #f = no prompt
   (define the-input-end #f)  ; content index past the prompt's input
   (define the-height 1)      ; echo area rows
@@ -92,16 +91,6 @@
         (entries list "the entries"))
   (define (set-pending! entries)
     (set! the-pending entries))
-
-  (edoc "The prompt cursor's content index, or #f without a prompt."
-        (returns (or integer #f)))
-  (define (cursor)
-    the-cursor)
-
-  (edoc "Set the prompt cursor's content index, or #f without a prompt."
-        (at (or integer #f) "the index"))
-  (define (set-cursor! at)
-    (set! the-cursor at))
 
   (edoc "The continuation indent of wrapped content, or #f for none."
         (returns (or integer #f)))

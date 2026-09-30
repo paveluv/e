@@ -183,7 +183,7 @@
                           (make-message-condition "buffer is read-only"))))))
 
   (edoc "The batch label of the edits in the current one-edit group, the (actor token) pair they share in the delta log, unique across head reattachments, or #f outside a group."
-        (returns (or list #f)))
+        (returns (or list #f)) (public))
   (define (current-batch) (text-source:current-batch head:ui-actor))
 
   (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
@@ -429,7 +429,7 @@
            (set! point-row (+ point-row 1)) (set! point-col 0)]))))
 
   (edoc "Move point a number of characters, negative to the left, crossing line ends as single steps do."
-        (delta integer "how far, negative for left"))
+        (delta integer "how far, negative for left") (public))
   (define (move-horizontal! delta)
     ;; Move point delta characters, negative to the left, crossing line
     ;; ends the way repeated single steps do.
@@ -786,7 +786,7 @@
         (edits))
   (define (reread!) (check-editable!) (reload-document! #t))
 
-  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it.")
+  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it." (public))
   (define (reload!) (reload-document! #f))
 
   (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."

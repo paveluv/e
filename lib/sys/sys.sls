@@ -14,7 +14,7 @@
           call-with-private-input-file call-with-private-output-file call-with-streamed-output
           call-with-verified-base canonical-file-path capture-chunk-size close-connection! close-directory-watch! close-local-listener!
           close-process! close-terminal-process! connect-local connection-alive?
-          connection-input connection-output directory-changes! directory-reader duplicate-output-port duplicate-standard-input-port
+          connection-input connection-output directory-changes! directory-reader duplicate-standard-input-port
           duplicate-standard-output-port durability-uncertain? durable-sync-hook duration
           ensure-private-directory! file-identity file-info host-name listen-local open-directory-watch open-process
           process-exited? process-identity process-input
@@ -1701,16 +1701,7 @@
     ;; fd 1 is the same terminal and is the safe fallback.
     (guard (ex [else 1]) (port-file-descriptor port)))
 
-  (edoc "A fresh port on a duplicate of an output port's descriptor."
-        (port port "the output port")
-        (returns port))
-  (define (duplicate-output-port port)
-    ;; Keep an independently closeable route to an existing descriptor.  PTY
-    ;; readers use this to outlive M-x's temporary evaluation display port.
-    (unless c-dup
-      (error 'duplicate-output-port "dup is unavailable"))
-    (open-fd-output-port (c-dup (output-file-descriptor port))
-                         'block (native-transcoder)))
+
 
   (edoc "Maximum characters per captured output chunk, or false for line delivery. Chunk delivery preserves newline characters and emits available partial output without retaining an unterminated line."
         (value (or integer #f)))

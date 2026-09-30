@@ -80,17 +80,17 @@
   ;; modifiers: S-PGUP binds the shifted PAGEUP.
   (define key-aliases '(("BS" . "BACKSPACE") ("DEL" . "DELETE") ("PGUP" . "PAGEUP") ("PGDN" . "PAGEDOWN")))
 
-  (define (expand-alias s)
-    ;; a spelling with its short key name written long, modifiers kept
+  (define (rename-key s names)
+    ;; Translate the key name in either direction, preserving modifiers.
     (let loop ([prefix ""] [rest s])
       (cond
         [(find (lambda (m) (and (string:prefix? m rest) (> (string-length rest) (string-length m)))) '("C-" "M-" "S-"))
          => (lambda (m) (loop (string-append prefix m) (string:tail rest (string-length m))))]
-        [(assoc rest key-aliases) => (lambda (hit) (string-append prefix (cdr hit)))]
+        [(assoc rest names) => (lambda (hit) (string-append prefix (cdr hit)))]
         [else s])))
 
   (define (key-token spelled)
-    (define s (expand-alias spelled))
+    (define s (rename-key spelled key-aliases))
     (cond
       [(string=? s "SPC") " "]
       [(string=? s "TAB") "TAB"]
@@ -137,20 +137,11 @@
     '(("BACKSPACE" . "BS") ("DELETE" . "DEL") ("PAGEUP" . "PGUP") ("PAGEDOWN" . "PGDN") (" " . "SPC")
       ("SELF-INSERT" . "any character")))
 
-  (define (token-text token)
-    ;; a token as shown: its modifiers, then the key's short name
-    (let loop ([prefix ""] [rest token])
-      (cond
-        [(find (lambda (m) (and (string:prefix? m rest) (> (string-length rest) (string-length m)))) '("C-" "M-" "S-"))
-         => (lambda (m) (loop (string-append prefix m) (string:tail rest (string-length m))))]
-        [(assoc rest short-names) => (lambda (hit) (string-append prefix (cdr hit)))]
-        [else token])))
-
   (edoc "Event tokens spelled as one key sequence, space-separated, the long-named keys short: BS, DEL, PGUP, PGDN and SPC; SELF-INSERT reads any character."
         (sequence (list-of string) "the tokens")
         (returns string))
   (define (sequence-text sequence)
-    (string:join (map token-text sequence) " "))
+    (string:join (map (lambda (token) (rename-key token short-names)) sequence) " "))
 
   ;; A key spelling as an edoc type: completion offers the spellings bound
   ;; in the global map now.

@@ -34,7 +34,7 @@
     (or (head:mouse-position) last-position))
 
   (edoc "Turn mouse tracking on or off; off restores the terminal's native selection."
-        (on boolean "whether to track the mouse"))
+        (on boolean "whether to track the mouse") (public))
   (define (track! on)
     (tty:mouse-reporting! on)
     (set! last-position #f)

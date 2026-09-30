@@ -16,7 +16,8 @@
                         (lambda (spec)
                           (source-import spec name
                             (lambda (library external)
-                              (let* ([choices (hashtable-ref by-name library '())]
+                              (let* ([choices (filter (lambda (s) (assq external (exports-of (stripped (caddr s)))))
+                                                (hashtable-ref by-name library '()))]
                                      [target (or (find (lambda (s) (equal? (path-parent (path-parent (car s)))
                                                                      (path-parent (path-parent path)))) choices)
                                                  (and (pair? choices) (car choices)))])
@@ -42,7 +43,21 @@
         (let ([form (stripped (caddr s))])
           (define (note! name owner)
             (let ([key (resolve s name)])
-              (unless (equal? key (cons (car s) owner)) (hashtable-set! used key #t))))
+              (unless (or (equal? key (cons (car s) owner)) (hashtable-contains? used key))
+                (hashtable-set! used key #t)
+                ;; Common libraries run in both runtime graphs. An imported
+                ;; seam API may resolve to either implementation; retaining
+                ;; both avoids mistaking the base half for an unused export.
+                (let ([origin (assoc (car key) sources)])
+                  (when origin
+                    (let* ([form (stripped (caddr origin))]
+                           [export (find (lambda (e) (eq? (cdr key) (cdr e))) (exports-of form))])
+                      (when export
+                        (for-each
+                          (lambda (other)
+                            (when (equal? (cadr (stripped (caddr other))) (cadr form))
+                              (cond [(assq (car export) (exports-of (stripped (caddr other)))) =>
+                                     (lambda (e) (hashtable-set! used (cons (car other) (cdr e)) #t))]))) sources))))))))
           (for-each
             (lambda (x)
               (cond [(source-definition x) =>

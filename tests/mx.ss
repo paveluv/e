@@ -137,8 +137,8 @@
              (test:raises? (lambda () (edoc:type-value 'mode 42))))
        '(#t #f #f "scheme" #t #t "scheme" #t #t #t))
 
-     ;; a producer that may return #f serves nothing by that #f: (echo:cursor),
-     ;; returning (or integer #f), is no completion for a (or mode #f) argument
+     ;; A producer returning (or integer #f) is no completion for a
+     ;; (or mode #f) argument merely because both allow #f.
      (check 'a-union-member-false-serves-no-producer
        (list (eval:type-fits? '(or mode #f) '(or integer #f)) (eval:type-fits? 'buffer '(or buffer #f))
              (eval:type-fits? '(or mode #f) 'mode) (eval:type-fits? '(or integer #f) '(or integer #f)))

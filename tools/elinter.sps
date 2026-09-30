@@ -202,7 +202,11 @@
                      (apply append (map (lambda (name) (source-words (call-with-input-file (string-append "manual/" name) get-string-all)))
                                      (filter (lambda (name) (equal? (path-extension name) "md")) (directory-list "manual")))) '())]
          [config (if (file-exists? "config.template.e") (source-words (call-with-input-file "config.template.e" get-string-all)) '())]
-         [startup (if (file-exists? "e") (source-words (call-with-input-file "e" get-string-all)) '())]
+         [startup (apply append
+                    (map (lambda (path) (source-words (call-with-input-file path get-string-all)))
+                      (append (if (file-exists? "e") '("e") '())
+                        (map (lambda (name) (string-append "tools/" name))
+                          (filter (lambda (name) (equal? (path-extension name) "sps")) (directory-list "tools"))))))]
          [tests (if (file-directory? "tests")
                     (apply append
                       (map (lambda (name) (source-words (call-with-input-file (string-append "tests/" name) get-string-all)))
@@ -212,7 +216,7 @@
     (for-each
       (lambda (c)
         (let ([s (assoc (vector-ref c 0) sources)])
-          (printf "~a:~a: warning: API ~a has no other code reference (~a); review external use / (public)\n"
+          (printf "~a:~a: warning: API ~a has no other library reference (~a); review external use / (public)\n"
             (car s) (line-of (cadr s) (start (vector-ref c 2))) (vector-ref c 1) (vector-ref c 3)))) candidates)
     (printf "API review: ~a candidates; exports are never deletion errors\n" (length candidates))))
 (when (or (member "--audit" (command-line-arguments)) (member "--clones" (command-line-arguments)))

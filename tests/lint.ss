@@ -36,7 +36,7 @@
          (named-let-initializer ((define (live) (let helper ([x (helper)]) x)) (define (helper) #t)) ())
          (internal-definition ((define (live) (define (helper) #t) (helper)) (define (helper) #f)) ((helper)))
          (initializer ((define (live) #t) (define registration (install! helper)) (define (helper) #t)) ())
-         (external ((define (live) #t) (edoc "External command." (public)) (define (helper) #t)) ())
+         (public-requires-export ((define (live) #t) (edoc "External command." (public)) (define (helper) #t)) ((helper)))
          (quoted-command ((define (live) '(helper)) (define (helper) #t)) ())
          (macro-template ((define (live) (invoke)) (define-syntax invoke (syntax-rules () [(_) (helper)])) (define (helper) #t)) ())
          (generated ((define (live) #t) (define-syntax make-it (lambda (x) (datum->syntax x 'generated))) (define (helper) #t)) ())
@@ -50,8 +50,12 @@
        (list (equal? (source-normalize '(lambda (x) (let ([y (f x)]) (g y 1))) values)
                      (source-normalize '(lambda (a) (let ([b (f a)]) (g b 1))) values))
              (equal? (source-normalize '(lambda (x) (f x)) values)
-                     (source-normalize '(lambda (x) (g x)) values)))
-       '(#t #f))
+                     (source-normalize '(lambda (x) (g x)) values))
+             (equal? (source-normalize '(let* ([x 1] [x (+ x 1)]) x) values)
+                     (source-normalize '(let* ([a 1] [b (+ a 1)]) b) values))
+             (equal? (source-normalize '(let*-values ([(x) 1] [(x) (+ x 1)]) x) values)
+                     (source-normalize '(let*-values ([(a) 1] [(b) (+ a 1)]) b) values)))
+       '(#t #f #t #t))
      ;; A pattern must reconstruct each input; repeated substitutions are
      ;; one parameter, and its cost includes both actual arguments.
      (let* ([a '(lambda (x) (if (small? x) (send! x "left") (send! x "left")))]
@@ -73,11 +77,17 @@
                      (define (unused) #t))]
             [bridge '(library (apps bridge) (export (rename (called exported)))
                        (import (only (apps probe) called)))]
+            [base '(library (service seam) (export common base-only) (import (chezscheme))
+                     (define (common) #t) (define (base-only) #t))]
+            [client '(library (service seam) (export common) (import (chezscheme)) (define (common) #t))]
             [caller '(library (apps caller) (export run!)
-                       (import (prefix (rename (only (apps bridge) exported) (exported renamed)) p:))
-                       (define (run!) (p:renamed)))]
+                       (import (prefix (rename (only (apps bridge) exported) (exported renamed)) p:)
+                               (prefix (service seam) seam:))
+                       (define (run!) (p:renamed) (seam:common) (seam:base-only)))]
             [sources (map (lambda (form path) (list path "" form (health-library form (lambda args (void)))))
-                       (list form bridge caller) '("lib/apps/probe.sls" "lib/apps/bridge.sls" "lib/apps/caller.sls"))])
+                       (list form bridge base client caller)
+                       '("lib/apps/probe.sls" "lib/apps/bridge.sls" "lib/base/service/seam.sls"
+                         "lib/client/service/seam.sls" "lib/apps/caller.sls"))])
        (test:check 'api-inventory-respects-imports-public-and-evidence
          (map (lambda (c) (list (vector-ref c 1) (vector-ref c 3)))
            (audit-apis sources '((manual probe:unused))))

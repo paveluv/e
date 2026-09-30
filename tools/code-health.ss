@@ -73,29 +73,35 @@
             (map (lambda (clause)
                    (let ([env (bind (source-formals (car clause)) env)])
                      (cons (formals (car clause) env) (body (cdr clause) env)))) (cdr x)))]
-         [(let let* letrec letrec*)
+         [(let*)
+          (let loop ([bindings (cadr x)] [env env] [out '()])
+            (if (null? bindings) (cons 'let* (cons (reverse out) (body (cddr x) env)))
+                (let* ([b (car bindings)] [v (walk (cadr b) env)] [next (bind (list (car b)) env)])
+                  (loop (cdr bindings) next (cons (list (cdar next) v) out)))))]
+         [(let letrec letrec*)
           (let* ([named? (symbol? (cadr x))]
                  [bindings (if named? (caddr x) (cadr x))]
                  [outer env]
                  [env (if named? (bind (list (cadr x)) env) env)]
                  [all (bind (map car bindings) env)]
                  [recursive? (memq (car x) '(letrec letrec*))]
-                 [sequential? (eq? (car x) 'let*)]
                  [normalized
                   (map (lambda (b)
                          (let ([v (walk (cadr b) (cond [recursive? all] [named? outer] [else env]))]
                                [slot (cdr (assq (car b) all))])
-                           (when sequential? (set! env (cons (cons (car b) slot) env)))
                            (list slot v))) bindings)])
             (append (list (car x)) (if named? (list (atom (cadr x) all)) '())
               (list normalized) (body (if named? (cdddr x) (cddr x)) all)))]
-         [(let-values let*-values)
+         [(let*-values)
+          (let loop ([bindings (cadr x)] [env env] [out '()])
+            (if (null? bindings) (cons 'let*-values (cons (reverse out) (body (cddr x) env)))
+                (let* ([b (car bindings)] [v (walk (cadr b) env)] [next (bind (source-formals (car b)) env)])
+                  (loop (cdr bindings) next (cons (list (formals (car b) next) v) out)))))]
+         [(let-values)
           (let* ([bindings (cadr x)] [all (bind (apply append (map (lambda (b) (source-formals (car b))) bindings)) env)]
                  [normalized
                   (map (lambda (b)
                          (let ([v (walk (cadr b) env)])
-                           (when (eq? (car x) 'let*-values)
-                             (set! env (append (map (lambda (n) (assq n all)) (source-formals (car b))) env)))
                            (list (formals (car b) all) v))) bindings)])
             (cons (car x) (cons normalized (body (cddr x) all))))]
          [(define-syntax let-syntax letrec-syntax syntax-case syntax-rules
@@ -138,6 +144,8 @@
                (eq-hashtable-set! definitions (car d) entry)
                (set! entries (cons entry entries))
                (when public? (set! roots (cons (car d) roots)))
+               (when (and public? (not (memq (car d) exports)))
+                 (report! at "a public declaration requires an exported definition"))
                ;; Unknown initializers may have effects. Only a literal,
                ;; alias or closure can be discarded without running it.
                (unless (or (not (pair? value)) (memq (car value) '(lambda case-lambda quote)))
