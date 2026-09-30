@@ -179,5 +179,6 @@
         (register! '(view editor 1) '((output text string (source-text)) (input annotations list (options annotations)) (input follow boolean (options follow))))
         (register! '(view terminal 1) '((output following boolean (state 1))))
         (register! '(view filter 1) '((output text string (source-text))))
+        (register! '(model search-request 1) '((output annotations list (value result annotations))))
         (register! '(view label 1) '((input text string (options text))))
         (register! '(view action-text 1) '((input text string (options text)) (input enabled boolean (options enabled))))))))

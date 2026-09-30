@@ -18,7 +18,9 @@
       (boolean? (get v 'fold?))
       (guard (ex [else #f]) (text:datum->span (get v 'visible)) #t)))
   (define (valid? v)
-    (and (fields? v '(owner origin generation request status result))
+    (and (fields? v '(owner draft origin generation request status result))
+      (let ([draft (get v 'draft)])
+        (and (list? draft) (= (length draft) 2) (eq? (car draft) 'buffer) (natural? (cadr draft)) (> (cadr draft) 0)))
       (descriptor:head? (get v 'owner)) (request? (get v 'origin)) (request? (get v 'request))
       (natural? (get v 'generation)) (memq (get v 'status) '(pending ready unavailable))))
   (define kind (model:register-kind! 'search-request 1 valid?))
@@ -38,7 +40,7 @@
       (list (get origin 'target) (list 'buffer (get origin 'document))
         (get request 'target) (list 'buffer (get request 'document)))))
   (define (change r value)
-    (list (get r 'id) (get r 'revision) (references (get value 'origin) (get value 'request)) value))
+    (list (get r 'id) (get r 'revision) (cons (get value 'draft) (references (get value 'origin) (get value 'request))) value))
   (define (replace v key value) (map (lambda (p) (if (eq? (car p) key) (cons key value) p)) v))
 
   (edoc "Create a transient search request naming an editor, document, basis, interaction sequence, start position, needle, fold? policy and visible logical span. The initial request also captures the cancellation origin. Results contain one next match and a bounded annotation batch; no complete match list is built."
@@ -46,8 +48,11 @@
   (define (create! actor request)
     (unless (and (descriptor:head? actor) (request? request) (available? actor request))
       (error 'create! "invalid or unavailable search target"))
-    (model:create! actor 'search-request 1 actor 'transient (references request request)
-      (map cons '(owner origin generation request status result) (list actor request 0 request 'pending #f))))
+    (let ([draft (list 'buffer (store:create! actor "<search>" (list (get request 'needle))
+                                 (list '(internal . #t) '(disposable . #t) (cons 'audience (list actor)))))])
+      (guard (ex [else (store:delete! actor (cadr draft)) (raise ex)])
+        (model:create! actor 'search-request 1 actor 'transient (cons draft (references request request))
+          (map cons '(owner draft origin generation request status result) (list actor draft request 0 request 'pending #f))))))
 
   (edoc "Replace a search request against its request generation; result publications do not invalidate this fence. Retargeting keeps the original cancellation receiver. Return the new generation, or false for a superseded, closed or unavailable request."
         (actor actor "request owner") (id model "search request") (generation integer "expected request generation")
@@ -69,7 +74,10 @@
       (let ([r (record id)])
         (when (owned r actor)
           (let-values ([(status current) (model:retire! actor id (get r 'revision))])
-            (when (eq? status 'stale) (retry)))))))
+            (case status [(stale) (retry)]
+              [(applied) (view:retire-scope! actor id)
+               (let ([draft (cadr (get (get r 'value) 'draft))])
+                 (when (store:exists? draft) (store:delete! actor draft)))]))))))
 
   (edoc "Close all transient search requests belonging to a departing head."
         (actor actor "departing request owner"))

@@ -304,9 +304,9 @@
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; A needle argument searches as it is typed: the note counts the
      ;; matches, Tab visits the next without inserting, and C-g restores point.
-     (evaluate '(let ([b (head:fresh-buffer! "needles")])
-                  (head:buffer-lines-set! b (vector "alpha beta alpha" "gamma alpha"))
+     (evaluate '(let ([b (head:new-buffer! "needles")])
                   (head:show-buffer! b)
+                  (edit:insert-text! "alpha beta alpha\ngamma alpha")
                   (head:goto! '(0 . 0))
                   (head:buffer-name b)))
      (send! "\x1b;xsearch:replace! \"alp")
@@ -318,6 +318,27 @@
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
+     (send! "\x13;alpha")
+     (wait-for! 'incremental-search-entry-on-main-pump
+       (lambda () (and (find-cell "I-search:") (equal? (evaluate '(head:point)) '(0 . 5)))) 5000)
+     (send! "\x13;")
+     (wait-for! 'incremental-search-repeat
+       (lambda () (equal? (evaluate '(head:point)) '(0 . 16))) 5000)
+     (check 'incremental-search-preserves-document
+       (equal? (evaluate '(head:buffer-lines (head:current-buffer))) '#("alpha beta alpha" "gamma alpha")))
+     (send! "\x7;")
+     (wait-for! 'incremental-search-cancel
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(0 . 0)))) 5000)
+     (send! "\x13;\x13;")
+     (wait-for! 'incremental-search-remembers-needle
+       (lambda () (equal? (evaluate '(head:point)) '(0 . 5))) 5000)
+     (send! "\x1b;[C")
+     (wait-for! 'arrow-finishes-search-and-moves-editor
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(0 . 6)))) 5000)
+     (evaluate '(begin (head:goto! '(0 . 0)) #t))
+     (send! "\x13;gamma\r")
+     (wait-for! 'return-settles-the-last-needle-before-closing
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(1 . 5)))) 5000)
      (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
      ;; A revision candidate previews its entry: a sole completion highlights
      ;; the text the entry wrote and brings point there; C-g undoes both.
