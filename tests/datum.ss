@@ -67,6 +67,13 @@
               (list void (list 1 void)))
             '(("expected plain protocol data" leaf) ("expected plain protocol data" (1 leaf))))
 
+     (check 'custom-leaf-copy-runs-once-and-keeps-cycle-checks-live
+       (let ([calls 0] [value (vector void #f)])
+         (list (refused? (lambda () (datum:copy value
+                                      (lambda (leaf) (set! calls (+ calls 1))
+                                        (vector-set! value 1 value) 'copied)))) calls))
+       '(cyclic 1))
+
      ;; The path-based check cost N^2/2 steps on a list: 1.5 s for 40,000
      ;; elements. One step per node leaves the bound far below that even on
      ;; a loaded machine.

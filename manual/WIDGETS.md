@@ -577,6 +577,12 @@ use a fallback when their producer is unavailable. Same-head interaction is
 immediate; another head sees published state. A notification never invokes
 an action or edits a consumer's saved fallback.
 
+The head captures a coherent dependency bundle when its mount's subscriptions
+change. Frame preparation reuses that bundle, resolving current provisional
+view state and mirrored text locally. Input callbacks retain the exact bundle
+of the displayed frame; a later rewire does not change what an earlier click
+saw. Treat the supplied source, descriptor and input data as immutable.
+
 Outside a mounted widget, use `connection:subscribe!` to acquire dependencies
 before local `connection:read` calls, and `connection:unsubscribe!` to release
 them. All consumers share the model mirror reader. Mounts acquire demand

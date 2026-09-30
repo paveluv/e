@@ -60,8 +60,11 @@
     (unless queued?
       (set! queued? #t)
       (client:enqueue! (lambda () (set! queued? #f) (refresh!) (notify!)))))
-  (define changes (kernel:registry-observe! readers (lambda (removed added) (defer-refresh!))))
-  (define contracts (port:observe! defer-refresh!))
+  (define changes
+    (kernel:call-with-runtime-registrations
+      (lambda () (kernel:registry-observe! readers (lambda (removed added) (defer-refresh!))))))
+  (define contracts
+    (kernel:call-with-runtime-registrations (lambda () (port:observe! defer-refresh!))))
 
   (edoc "Acquire endpoint dependency mirrors before rendering; callbacks run after adoption on the existing client pump."
         (ids list "endpoints") (procedure procedure "zero-argument invalidation") (returns any))
