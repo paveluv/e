@@ -90,10 +90,8 @@
   ;; Buffer facts and the store client -- the bridge between this
   ;; seat's records and the (store) -- live in (head) now; the
   ;; mode registry in (mode).
-  (define layout-split-first-weight-set!
-    head:layout-split-first-weight-set!)
-  (define layout-split-second-weight-set!
-    head:layout-split-second-weight-set!)
+
+
   (define-syntax windows
     (identifier-syntax [id (head:windows)]
       [(set! id v) (head:set-windows! v)]))
@@ -156,17 +154,9 @@
 
   ;;; Small utilities -------------------------------------------------------
 
-  (define (insert-before lst x y)
-    ;; A copy of lst with y inserted right before x (or at the end).
-    (cond [(null? lst) (list y)]
-          [(eq? (car lst) x) (cons y lst)]
-          [else (cons (car lst) (insert-before (cdr lst) x y))]))
 
-  (define (insert-after lst x y)
-    ;; A copy of lst with y inserted right after x (or at the end).
-    (cond [(null? lst) (list y)]
-          [(eq? (car lst) x) (cons x (cons y (cdr lst)))]
-          [else (cons (car lst) (insert-after (cdr lst) x y))]))
+
+
 
   ;;; Buffer access and undo ------------------------------------------------
 

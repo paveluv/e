@@ -19,36 +19,8 @@
 
 (include "tools/log-sources.ss")
 
-(define (sls-files directory)
-  ;; every .sls below directory, sorted by path
-  (let loop ([names (directory-list directory)] [acc '()])
-    (cond [(null? names) (list-sort string<? acc)]
-          [(file-directory? (string-append directory "/" (car names)))
-           (loop (cdr names) (append (sls-files (string-append directory "/" (car names))) acc))]
-          [(let ([n (string-length (car names))])
-             (and (> n 4) (string=? (substring (car names) (- n 4) n) ".sls")))
-           (loop (cdr names) (cons (string-append directory "/" (car names)) acc))]
-          [else (loop (cdr names) acc)])))
-
-(define (read-annotated path)
-  ;; the file's text and its top-level forms as annotations, positioned
-  ;; in the text
-  (let* ([text (call-with-input-file path get-string-all)]
-         [sfd (source-file-descriptor path 0)]
-         [port (open-string-input-port text)])
-    (let loop ([bfp 0] [acc '()])
-      (let-values ([(form efp) (get-datum/annotations port sfd bfp)])
-        (if (eof-object? form) (values text (reverse acc)) (loop efp (cons form acc)))))))
-
-(define (stripped x) (if (annotation? x) (annotation-stripped x) x))
-(define (parts x) (if (annotation? x) (annotation-expression x) x))
-(define (start x) (source-object-bfp (annotation-source x)))
-(define (end x) (source-object-efp (annotation-source x)))
-
-(define (line-of text pos)
-  ;; the 1-based line holding a character position
-  (let loop ([i 0] [line 1])
-    (if (>= i pos) line (loop (+ i 1) (if (char=? (string-ref text i) #\newline) (+ line 1) line)))))
+(include "tools/source.ss")
+(include "tools/code-health.ss")
 
 (define (library-form? form)
   (let ([d (stripped form)])
@@ -204,6 +176,8 @@
             (let ([subforms (parts form)])
               (check-exports! path text (caddr subforms) report!)
               (check-imports! path text (cadddr subforms) report!)
+              (health-library form
+                (lambda (at message) (report! path (line-of text (start at)) message)))
               (check-bindings! path text report!)
               (check-log-sources! form
                 (lambda (at expected message)

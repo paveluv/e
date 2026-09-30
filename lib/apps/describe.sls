@@ -81,23 +81,7 @@
     (syntax-rules ()
       [(_ name) (describe! 'name)]))
 
-  (define (complete-described-name part)
-    ;; Complete against the names that actually have a describe page.
-    (let ([seen (make-eq-hashtable)])
-      (sort string<?
-            (fold-left
-              (lambda (names entry)
-                (fold-left
-                  (lambda (names name)
-                    (let ([text (symbol->string name)])
-                      (if (or (eq-hashtable-ref seen name #f)
-                              (not (string:prefix? part text)))
-                          names
-                          (begin
-                            (eq-hashtable-set! seen name #t)
-                            (cons text names)))))
-                  names (doc:names entry)))
-              '() (reference:entries)))))
+
 
 
   ;;; The symbol at point ---------------------------------------------------------

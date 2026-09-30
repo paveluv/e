@@ -379,7 +379,7 @@
         (from needle "the text to find, within one line")
         (to string "its replacement")
         (returns integer "how many occurrences were replaced")
-        (edits))
+        (public) (edits))
   (define (replace! from to)
     (define m (string-length from))
     (define (occurrences r)

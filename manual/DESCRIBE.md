@@ -144,7 +144,7 @@ the predicate and the field procedures; a record with a protocol or a
 parent documents its constructor only through a `(constructor field ...)`
 clause naming the arguments among the fields. A condition type's edoc
 names its fields the same way. A keyword's clauses name the parts of its
-form. Four clauses are declarations rather than formals: `(prompts)` for
+form. Declarations rather than formals include `(prompts)` for
 a procedure that waits for a key, `(edits)` for a command whose purpose is
 editing the buffer's text, refused where it is read-only, `(effects
 internal)` for a query whose only changes are its own caches, and `(effects
@@ -157,6 +157,12 @@ the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
 `condition`, `datum`, `any`; `#f` for unions such as `(or string #f)`; and
 the compounds `(one-of literal ...)`, `(or type ...)`, `(list-of type)` and
 `(record name)` for an instance of a record type.
+
+`(public)` marks an intentional API for users, configuration or extensions,
+even when nothing in the repository calls it. It is retained in signature
+metadata and excludes the definition from elinter's unused-API candidates.
+Exporting a name alone makes it available to other libraries; it does not
+explain whether it is intended as an external entry point.
 
 Types are data. When the library initializes, each name a clause uses
 resolves to a type record with prose, a predicate and, optionally, a

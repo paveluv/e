@@ -14,10 +14,43 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 (include "tools/log-sources.ss")
+(include "tools/source.ss")
+(include "tools/code-health.ss")
 
 (eval
   '(begin
      (import (prefix (test) test:))
+     ;; Liveness follows references, including callbacks and dead cycles;
+     ;; initialization, external API and opaque syntax are retained.
+     (for-each
+       (lambda (example)
+         (let ([found '()])
+           (health-library `(library (probe) (export live) (import (chezscheme)) ,@(cadr example))
+             (lambda (at message) (set! found (cons (cadr at) found))))
+           (test:check (car example) (reverse found) (caddr example))))
+       '((dead-cycle ((define (live) #t) (define (a) (b)) (define (b) (a))) ((a) (b)))
+         (callbacks ((define (live) (list helper)) (define (helper) #t)) ())
+         (shadow ((define (live helper) helper) (define (helper) #t)) ((helper)))
+         (parallel-let ((define (live) (let ([helper (helper)]) helper)) (define (helper) #t)) ())
+         (named-let-initializer ((define (live) (let helper ([x (helper)]) x)) (define (helper) #t)) ())
+         (internal-definition ((define (live) (define (helper) #t) (helper)) (define (helper) #f)) ((helper)))
+         (initializer ((define (live) #t) (define registration (install! helper)) (define (helper) #t)) ())
+         (external ((define (live) #t) (edoc "External command." (public)) (define (helper) #t)) ())
+         (quoted-command ((define (live) '(helper)) (define (helper) #t)) ())
+         (macro-template ((define (live) (invoke)) (define-syntax invoke (syntax-rules () [(_) (helper)])) (define (helper) #t)) ())
+         (generated ((define (live) #t) (define-syntax make-it (lambda (x) (datum->syntax x 'generated))) (define (helper) #t)) ())
+         (renamed-export ((define live helper) (define (helper) #t) (define unused 1)) (unused))))
+     (test:check 'import-wrappers-preserve-identity
+       (map (lambda (name)
+              (source-import '(prefix (rename (only (probe) f g) (f renamed)) p:) name cons))
+         '(p:renamed p:f p:g p:other))
+       '(((probe) . f) #f ((probe) . g) #f))
+     (test:check 'alpha-normalization-keeps-free-identities-and-literals
+       (list (equal? (source-normalize '(lambda (x) (let ([y (f x)]) (g y 1))) values)
+                     (source-normalize '(lambda (a) (let ([b (f a)]) (g b 1))) values))
+             (equal? (source-normalize '(lambda (x) (f x)) values)
+                     (source-normalize '(lambda (x) (g x)) values)))
+       '(#t #f))
      ;; One table exercises attribution independently of the current tree.
      ;; Callbacks keep their owner; public spellings come from exports.
      (for-each

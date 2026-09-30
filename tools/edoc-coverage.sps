@@ -29,37 +29,7 @@
 ;; of disagreements, so the suite can run it.
 (import (chezscheme))
 
-(define (read-forms path)
-  (call-with-input-file path
-    (lambda (port)
-      (let loop ([out '()])
-        (let ([form (read port)])
-          (if (eof-object? form) (reverse out) (loop (cons form out))))))))
-
-(define (sls-files directory)
-  (let loop ([names (directory-list directory)] [acc '()])
-    (cond [(null? names) acc]
-          [(file-directory? (string-append directory "/" (car names)))
-           (loop (cdr names) (append (sls-files (string-append directory "/" (car names))) acc))]
-          [(let* ([name (car names)] [n (string-length name)])
-             (and (> n 4) (string=? (substring name (- n 4) n) ".sls")))
-           (loop (cdr names) (cons (string-append directory "/" (car names)) acc))]
-          [else (loop (cdr names) acc)])))
-
-(define (exports-of library)
-  ;; ((external . internal) ...) from the export clause
-  (let ([clause (assq 'export (cddr library))])
-    (apply append
-      (map (lambda (spec)
-             (cond [(symbol? spec) (list (cons spec spec))]
-                   [(and (pair? spec) (eq? (car spec) 'rename))
-                    (map (lambda (r) (cons (cadr r) (car r))) (cdr spec))]
-                   [else '()]))
-           (if clause (cdr clause) '())))))
-
-(define (import-specs library)
-  (let ([clause (assq 'import (cddr library))])
-    (if clause (cdr clause) '())))
+(include "tools/source.ss")
 
 (define (record-names form)
   ;; the names a define-record-type binds
@@ -188,13 +158,6 @@
       (let ([defs (let ([library (library-named name)]) (if library (definitions library) '()))])
         (hashtable-set! definition-table name defs)
         defs)))
-
-(define (strip-prefix prefix name)
-  ;; name without prefix, or #f
-  (let ([p (symbol->string prefix)] [n (symbol->string name)])
-    (and (> (string-length n) (string-length p))
-         (string=? p (substring n 0 (string-length p)))
-         (string->symbol (substring n (string-length p) (string-length n))))))
 
 (define standard-libraries '((rnrs) (chezscheme) (scheme)))
 
@@ -633,24 +596,12 @@
 (define (name-at path) (let ([e (entry-at path)]) (and e (car e))))
 
 (define (resolve-import-from from-path spec local)
-  ;; (path . external-name) when spec brings local in, or standard, or #f
-  (cond
-    [(not (pair? spec)) #f]
-    [(standard-library? spec) (and (eq-hashtable-ref standard-names local #f) 'standard)]
-    [(eq? (car spec) 'prefix)
-     (let ([inner (strip-prefix (caddr spec) local)])
-       (and inner (resolve-import-from from-path (cadr spec) inner)))]
-    [(eq? (car spec) 'only) (and (memq local (cddr spec)) (resolve-import-from from-path (cadr spec) local))]
-    [(eq? (car spec) 'except) (and (not (memq local (cddr spec))) (resolve-import-from from-path (cadr spec) local))]
-    [(eq? (car spec) 'rename)
-     (let ([renamed (find (lambda (r) (eq? (cadr r) local)) (cddr spec))])
-       (cond [renamed (resolve-import-from from-path (cadr spec) (car renamed))]
-             [(exists (lambda (r) (eq? (car r) local)) (cddr spec)) #f]
-             [else (resolve-import-from from-path (cadr spec) local)]))]
-    [(eq? (car spec) 'for) (resolve-import-from from-path (cadr spec) local)]
-    [else
-     (let ([entry (entry-for spec from-path)])
-       (and entry (assq local (exports-of (cadr entry))) (cons (caddr entry) local)))]))
+  (source-import spec local
+    (lambda (name local)
+      (if (standard-library? name)
+          (and (eq-hashtable-ref standard-names local #f) 'standard)
+          (let ([entry (entry-for name from-path)])
+            (and entry (assq local (exports-of (cadr entry))) (cons (caddr entry) local)))))))
 
 (define all-definitions (make-hashtable equal-hash equal?))   ; (path . name) -> vector
 (define definition-order '())
