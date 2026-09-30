@@ -8,8 +8,7 @@
 (eval
   '(begin
      (import (prefix (sys sys) sys:) (prefix (service vt) vt:) (prefix (service git) git:)
-             (prefix (head head) head:) (prefix (head paint) paint:) (prefix (head render) render:)
-             (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:)
+             (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:) (prefix (state view) view:)
              (prefix (core kernel) kernel:) (prefix (foundation text) text:)
              (prefix (sys activity) activity:)
              (prefix (test) test:))
@@ -200,12 +199,10 @@
      (let* ([child (format "/tmp/e-terminal-frame-~a.ss" (get-process-id))]
             [marker (string-append child ".phase")]
             [first '(head "first")] [second '(head "second")]
-            [previous (head:window-buffer (head:current-window))]
-            [id #f] [owner #f] [buffer #f] [subscription #f]
+            [id #f] [owner #f] [subscription #f]
             ;; Keep this caller's exports before reload rebinds M-x's prefix.
-            [send! vt:send!] [close! vt:close!]
-            [phase 'initial] [coherent? #f] [complete? #f] [interfered? #f]
-            [gap-entered (test:gate)] [gap-release (test:gate)] [gap-result #f]
+            [close! vt:close!] [views '()]
+            [interfered? #f]
             [events (test:recorder)] [retired (test:recorder)])
        (define (transcript) (let-values ([(text revision) (store:snapshot id)]) text))
        (define (has? part)
@@ -216,13 +213,12 @@
        (define (stage)
          (guard (ex [else #f]) (call-with-input-file marker read)))
        (define (wait-stage value) (test:await value (lambda () (equal? (stage) value))))
-       (define (send from text size) (send! from id text size #f))
-       (define (offer from size) (actor:send! owner (list 'request from id 'resize size)))
-       (define (head-view)
-         (let ([frame (head:buffer-rendition buffer)] [w (head:current-window)])
-           (list (head:buffer-lines buffer) (head:buffer-store-rev buffer)
-                 (render:header frame) (render:row frame (head:window-top w))
-                 (head:window-prow w) (head:window-pcol w) (head:window-top w))))
+       (define (lease from)
+         (let ([v (cdr (assoc from views))]) (list v (view:generation (view:snapshot v)))))
+       (define (send from text size)
+         (actor:send! owner (list 'input from id "TEXT" (list (cons 'text text) (cons 'view (lease from)) (cons 'size size)))))
+       (define (offer from size)
+         (actor:send! owner (list 'request from id 'resize (list (cons 'view (lease from)) (cons 'size size)))))
        (dynamic-wind
          (lambda ()
            (call-with-output-file child
@@ -243,7 +239,6 @@
                    (let loop ()
                      (let ([command (get-line (current-input-port))])
                        (case (string->symbol command)
-                         [(gap) (display "\x1b;[H\x1b;[31mGAP\x1b;[0m")]
                          [(alt)
                           (display "\x1b;[?1049h\x1b;[?25l\x1b;[6 q\x1b;[32m\x1b;]8;id=live;https://frame.example\x1b;\\界q\x301;NEW\x1b;]8;;\x1b;\\\x1b;[?1002h\x1b;[?1006h\x1b;]52;c;c2hhcmVk\x7;\x1b;]0;fixture\x7;")]
                          [(mouse)
@@ -276,18 +271,15 @@
                        (flush-output-port)
                        (loop)))))) 'replace)
            (kernel:load-module! "vt")
-           (kernel:load-module! "terminal")
-           (head:set-frame-hook! (lambda () (void)))
-           (head:before-frame!)
            (set! id (vt:open! first (format "exec scheme-script ~a" child) (current-directory) 3 24))
            (set! owner (store:property id 'app))
+           (set! views (map (lambda (who)
+                              (let ([v (view:create! who (list 'buffer id) 'terminal 1 '() '(partial #t))])
+                                (view:claim! who v) (cons who v))) (list first second)))
            (set! subscription
              (store:subscribe! id
                (lambda (event)
                  (events event)
-                 (when (and (not (gap-entered)) (eq? (car event) 'edit) (has? "GAP"))
-                   (gap-entered #t)
-                   (test:await 'release-frame gap-release))
                  ;; A receipt is its commit, not the state after callouts.
                  ;; Race one final frame with a forced edit through the seam.
                  (when (and (not interfered?) (eq? (car event) 'edit) (has? "FINAL"))
@@ -310,50 +302,14 @@
                    (map (lambda (name) (kernel:module-requires? "vt" name))
                         '("head" "edit" "paint" "mode" "log")))
              '(#t "*" (#f #f #f #f #f)))
-           (set! buffer (head:adopt-store-buffer! id))
-           (head:window-line-numbers-set! (head:current-window) #f)
-           (head:window-size-set! (head:current-window) 3)
-           (head:window-width-set! (head:current-window) 24)
-           (head:set-repaint-hook!
-             (lambda ()
-               (when (eq? phase 'initial)
-                 (set! phase 'waiting)
-                 (let ([header (render:header (head:buffer-rendition buffer))])
-                   (set! coherent? (and header (= (cadr header) (head:buffer-store-rev buffer)))))
-                 (let ([before (head-view)])
-                   (send first "gap\n" '(3 24))
-                   (test:await 'text-before-rendition gap-entered)
-                   (head:before-frame!)
-                   (set! gap-result (list (> (store:revision id) (cadr before))
-                                          (equal? before (head-view))))
-                   (gap-release #t)
-                   (test:await 'rendition-after-text (lambda () (published? "GAP")))
-                   ;; Paint may refresh after a surface overtakes its source.
-                   ;; Only the next adoption can install that complete pair.
-                   (head:refresh-renditions!)
-                   (set! gap-result (append gap-result (list (equal? before (head-view)))))
-                   (head:before-frame!)
-                   (let ([after (head-view)])
-                     (set! gap-result
-                       (append gap-result
-                         (list (and (= (cadr after) (store:revision id))
-                                    (equal? (car after) (transcript))
-                                    (equal? (caddr after) (surface:snapshot id))))))))
-                 (send first "alt\n" '(3 24))
-                 (test:await 'producer-during-repaint (lambda () (published? "NEW")))
-                 (head:before-frame!)
-                 (set! complete? #t))))
-           (head:set-window-buffer! (head:current-window) buffer)
+           (send first "alt\n" '(3 24))
+           (test:await 'alternate-output (lambda () (published? "NEW")))
            (test:await 'shared-title (lambda () (string=? (store:buffer-name id) "*fixture*")))
-           (test:check 'reentrant-adoption-uses-coherent-shared-rendition
-             (list coherent? complete? gap-result (head:app-of buffer)
-                   (substring (store:line id 1) 0 6) (has? "history0")
-                   (head:app-cursor-style buffer) (head:app-cursor-visible-in? (head:current-window))
-                   (paint:buffer-line-hyperlinks buffer 1)
-                   (store:property id 'clipboard) (store:buffer-name id))
-             `(#t #t (#t #t #t #t) #f "界q\x301;NEW" #t bar #f ((0 6 "https://frame.example" "live"))
-               (1 ,first "shared") "*fixture*"))
-           (head:set-repaint-hook! paint:invalidate-screen-cache!)
+           (test:check 'alternate-frame-retains-history-and-addresses-notices-to-controller
+             (list (substring (store:line id 1) 0 6) (has? "history0")
+                   (store:property id 'cursor-style) (caddr (caddr (surface:snapshot id)))
+                   (store:property id 'clipboard))
+             `("界q\x301;NEW" #t bar #f (1 ,first "shared")))
            (send first "mouse\n" '(3 24))
            (wait-stage 'mouse)
            (let* ([frame (surface:snapshot id)] [generation (car frame)] [revision (cadr frame)])
@@ -361,7 +317,7 @@
                (lambda (entry)
                  (actor:send! owner
                    (list 'input first id "MOUSE-CLICK"
-                     `((size 3 24) (revision . ,(car entry)) (generation . ,(cadr entry))
+                     `((view . ,(lease first)) (size 3 24) (revision . ,(car entry)) (generation . ,(cadr entry))
                        (cell . ,(caddr entry)) (button . 0)))))
                (list (list revision (- generation 1) '(1 . 4))
                      (list (- revision 1) generation '(1 . 5))
@@ -384,10 +340,51 @@
            (test:await 'main-screen-restored (lambda () (published? "live1")))
            (check 'alternate-output-preserves-main-history-and-releases-mouse-capture
              (and (has? "history0") (member "MOUSE-CLICK" (cdr (store:property id 'capture))) #t))
+           ;; One PTY, two views in one head and another head. The latest
+           ;; admitted input owns geometry; ownership generations fence input
+           ;; queued by a released mount even after the same actor reclaims it.
+           (let* ([a (view:create! first (list 'buffer id) 'terminal 1 '() '())]
+                  [b (view:create! first (list 'buffer id) 'terminal 1 '() '())]
+                  [c (view:create! second (list 'buffer id) 'terminal 1 '() '())]
+                  [sizes (test:recorder)] [token #f])
+             (define (witness v) (list v (view:generation (view:snapshot v))))
+             (define (input who witness size)
+               (actor:send! owner (list 'input who id "TEXT"
+                                    (list (cons 'text "") (cons 'view witness) (cons 'size size)))))
+             (define (resize who witness size)
+               (actor:send! owner (list 'request who id 'resize
+                                    (list (cons 'view witness) (cons 'size size)))))
+             (define (sized size)
+               (test:await 'view-controller-size (lambda () (equal? (store:property id 'size) size))))
+             (for-each (lambda (v) (view:claim! (if (equal? v c) second first) v)) (list a b c))
+             (set! token (store:subscribe! id
+                           (lambda (event)
+                             (when (and (eq? (car event) 'property) (eq? (caddr event) 'size))
+                               (sizes (store:property id 'size))))))
+             (input first (witness a) '(7 31)) (sized '(7 31))
+             (actor:send! owner (list 'input first id "UNKNOWN-KEY"
+                                  (list (cons 'view (witness b)) '(size 2 12))))
+             (resize first (witness b) '(2 12))
+             (offer first '(2 12))
+             (resize first (witness a) '(6 30)) (sized '(6 30))
+             (input first (witness b) '(8 32)) (sized '(8 32))
+             (let ([old (witness b)])
+               (view:release! first b (cadr old))
+               (view:claim! first b)
+               (input first old '(2 12))
+               (resize first (witness b) '(2 12))
+               (input second (witness c) '(9 33)) (sized '(9 33)))
+             (test:check 'view-generation-fences-input-and-same-head-resize
+               (sizes) '((7 31) (6 30) (8 32) (9 33)))
+             (for-each (lambda (v) (view:release! (if (equal? v c) second first) v
+                                     (view:generation (view:snapshot v)))) (list a b c))
+             (store:unsubscribe! token)
+             (test:check 'release-keeps-the-process-and-last-grid
+               (list (store:property id 'alive) (store:property id 'size)) '(#t (9 33))))
            (send second "size\n" '(5 30))
            (wait-stage 'size)
            (offer first '(3 24))
-           (actor:send! owner (list 'input first id "FOCUS" '((size 3 24))))
+           (actor:send! owner (list 'input first id "FOCUS" (list (cons 'view (lease first)) '(size 3 24))))
            (test:await 'latest-typist-size (lambda () (published? "5 30")))
            (offer second '(4 26))
            (test:await 'controller-size-offer (lambda () (equal? (store:property id 'size) '(4 26))))
@@ -397,7 +394,6 @@
            ;; endpoints must still reach the worker created by the old code.
            (kernel:reload-module! "vt")
            (test:check 'engine-and-facade-reload-retain-the-base-actor (store:property id 'app) owner)
-           (head:set-window-buffer! (head:current-window) previous)
            (send second "finish\n" '(4 26))
            (wait-stage 'finish-ready)
            (actor:register! '(head "pause checkpoint") void)
@@ -436,20 +432,16 @@
                (list (length (completed)) (actor:checkpoint '(head "pause checkpoint"))) '(3 after)))
            (actor:detach! '(head "pause checkpoint"))
            (test:await 'offscreen-exit (lambda () (not (store:property id 'alive))))
-           (test:await 'actor-retired (lambda () (not (actor:send! owner (list 'request second id 'resize '(4 26))))))
+           (test:await 'actor-retired (lambda () (not (offer second '(4 26)))))
            (test:check 'exit-publishes-final-held-text-before-retiring-capture-and-rendition
              (list (has? "界q\x301;FINAL") interfered? (retired)
                    (exists (lambda (event) (eq? (car event) 'reset)) (events)))
              '(#t applied ((#f #f)) #f)))
          (lambda ()
-           (gap-release #t)
-           (head:set-repaint-hook! paint:invalidate-screen-cache!)
-           (head:set-frame-hook! paint:redraw!)
            (when subscription (store:unsubscribe! subscription))
            (when id
              (close! id)
              (when (store:exists? id) (store:delete! first id)))
-           (when buffer (head:forget-buffer! buffer))
            (for-each (lambda (file) (when (file-exists? file) (delete-file file))) (list child marker)))))
 
      ;; Store lifetime owns the process even if no head ever adopts it.

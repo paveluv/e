@@ -766,10 +766,19 @@
                    (list (and (reject control 'restart (cadr review)) #t)
                          (> (occurrences (fixture:diagnostics base) "durability is uncertain") 0)
                          (sys:process-status (fixture:process base))) '(#t #t #f)))
-               (rpc head 'vt-send term "recovered\n" '(3 32) #f #f)
-               (test:await 'terminal-resumes-after-save-failures
-                 (lambda () (exists (lambda (line) (> (occurrences line "<recovered>") 0))
-                              (vector->list (car (rpc head 'snapshot term))))))
+               (let* ([view (rpc head 'view-create (list 'buffer term) 'terminal 1 '() '(partial #t))]
+                      [generation (begin (rpc head 'view-claim view) (cdr (assq 'generation (rpc head 'view-read view))))])
+                 (rpc head 'send (cdr (assq 'app (caddr (rpc head 'snapshot term))))
+                   (list 'input '(head "kept desk") term "TEXT"
+                     (list (cons 'view (list view generation)) '(size 3 32) '(text . "recovered\n"))))
+                 (test:await 'terminal-resumes-after-save-failures
+                   (lambda () (exists (lambda (line) (> (occurrences line "<recovered>") 0))
+                                (vector->list (car (rpc head 'snapshot term))))))
+                 (rpc head 'view-release view generation)
+                 (let ([initial (call-with-input-file model-state (lambda (port) (car (read port))))]
+                       [packet (rpc head 'model-read (list view))])
+                   (set! expected-models (list (+ (cadr view) 1)
+                                           (append (cadr initial) (list (caddr (car (cadr packet)))))))))
                (let ([review (rpc control 'prepare-restart)])
                  ;; Shared edits and checkpoint updates during review are
                  ;; saved at acceptance and do not require another question.
@@ -783,12 +792,11 @@
                    (exchange control (list 'request 7 'restart (cadr review))) '(closing restart)))
                (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
                (set! saved (call-with-input-file path read))
-               (set! expected-models (call-with-input-file model-state (lambda (port) (car (read port)))))
                (test:check 'snapshot-has-private-mode-and-no-temporary-file
                  (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 2)))
                (test:check 'session-saves-persistent-models-and-transient-allocation-gaps
                  (list (list-ref saved 6) (car expected-models) (length (cadr expected-models)))
-                 (list (cons* 'models (car expected-models) (cadr expected-models)) 4 2)))))
+                 (list (cons* 'models (car expected-models) (cadr expected-models)) 5 3)))))
          (write-text disk "changed while stopped\n")
          (let ([base (fixture:start! root base-directory)])
            (dynamic-wind void
@@ -798,7 +806,7 @@
                       [before (call-with-input-file initialized read)])
                  (hello head '(head "kept desk"))
                  (test:check 'session-restores-opaque-models-before-config-and-disables-unsupported-actions
-                   (call-with-input-file model-state read) (list expected-models '(#f #f)))
+                   (call-with-input-file model-state read) (list expected-models '(#f #f #t)))
                  (test:check 'restore-precedes-configuration-and-preserves-allocator-gaps
                    (list (list-sort < (car before)) (cadr before)
                      (assv omitted states) (assv gap states) (rpc head 'checkpoint))
@@ -878,7 +886,7 @@
                            (get-mode path) (file-exists? temporary))
                      (list (car expected) checkpoint
                            (cons* 'models (car expected-models) (cadr expected-models))
-                           (list expected-models '(#f #f)) #o600 #f))))))
+                           (list expected-models '(#f #f #t)) #o600 #f))))))
            '(shutdown 15 shutdown 2 shutdown 15) (iota 6))))
 
      (define (recovery-scenarios!)
@@ -2540,16 +2548,16 @@
                  (let ([terminal-id (head-read a '(head:buffer-store-id (head:current-buffer)))])
                    (head-read b `(begin (head:show-buffer! (head:adopt-store-buffer! ,terminal-id)) #t))
                    (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
-                   (head-read a '(begin (terminal:send! "through base\n") #t))
+                   (head-read a '(begin (terminal:send! (head:window-widget (head:current-window)) "through base\n") #t))
                    (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
                    (test:check 'terminal-output-keeps-authorship-without-tints
                      (map head-blame (list a b))
                      (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
                    (head-read a '(begin (window:delete-others!) (head:set-copy-text! "screen A kill") #t))
                    (head-read b '(begin (head:set-copy-text! "screen B kill")
-                                        (terminal:toggle-capture!) #t))
+                                        (terminal:toggle-capture! (head:window-widget (head:current-window))) #t))
                    (test:check 'shared-terminal-capture-is-local-to-each-head
-                     (list (head-read a '(head:full-capture? (head:current-window)))
+                     (list (head-read a '(eq? 'full (car (view:state (view:snapshot (head:window-widget (head:current-window)))))))
                            (and (head-sees? a "▶ ◐") #t) (and (head-sees? b "▶ ●") #t)) '(#f #t #t))
                    (head-send! a "\x18;\x03;")
                    (head-wait 'real-head-detaches a

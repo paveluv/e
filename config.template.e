@@ -64,8 +64,6 @@
 ;; (terminal:scrollback 10000)    ; retained shell lines; alternate screens excluded
 ;; (terminal:shell "/bin/bash")  ; defaults to $SHELL, then /bin/sh
 ;; Partial capture is the default: C-x and M-x reach e. C-] or ●/◐ toggles capture.
-;; To leave additional prefixes to e during partial capture:
-;; (keymap:set-context-capture! 'terminal "C-]" terminal:toggle-capture! '("C-x" "M-x" "C-c"))
 ;; (terminal:forward-clipboard-to-copy-buffer #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's copy buffer

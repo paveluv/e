@@ -204,17 +204,6 @@
                                              out))))))
                        groups))))))
 
-  (define (capture-note context)
-    ;; a capturing context's other keys go to the app: one row saying so,
-    ;; with the toggle and the keys the editor keeps
-    (let ([capture (keymap:context-capture context)])
-      (if (not capture) '()
-          (list (list (list "other keys") "to the app"
-                      (format "Every other key goes to the app; ~a keep~a to the editor unless ~a toggles full capture"
-                              (string:join (map (lambda (k) (keymap:sequence-text (list k))) (cddr capture)) " and ")
-                              (if (= (length (cddr capture)) 1) "s" "")
-                              (keymap:sequence-text (list (car capture)))))))))
-
   (define (read-only-text? b)
     ;; whether an editing command is refused in the buffer: an app's, or one
     ;; read-only outright; a guard deciding per edit does not count
@@ -272,14 +261,13 @@
             (let ([context (car contexts)])
               (loop (cdr contexts) (cons context nearer)
                     (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
-                                   (append (if (and prompting? (eq? context 'global))
-                                               (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
-                                               (if (and widget? (not prompting?))
-                                                 (context-groups context '() (and (eq? context 'global) read-only?)
-                                                   (lambda (binding) (reachable? b context binding))
-                                                   (lambda (binding) (describe-binding b context binding)))
-                                                 (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
-                                           (capture-note context))
+                                   (if (and prompting? (eq? context 'global))
+                                       (context-groups context nearer #f (lambda (b) (prompt:allowed? (keymap:binding-action b))) #f)
+                                       (if (and widget? (not prompting?))
+                                           (context-groups context '() (and (eq? context 'global) read-only?)
+                                             (lambda (binding) (reachable? b context binding))
+                                             (lambda (binding) (describe-binding b context binding)))
+                                           (context-groups context nearer (and (not prompting?) read-only?) #f #f)))
                                    width)
                           out)))))))
 

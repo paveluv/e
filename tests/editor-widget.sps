@@ -1,3 +1,42 @@
+;; A service rendition and its text arrive independently. The viewport keeps
+;; a coherent source packet, including the basis used by pointer commands.
+(let* ([actor head:ui-actor]
+       [source (store:create! actor "surface editor" '("old")
+                 '((read-only . #t) (manages-viewport . #t) (alive . #t) (size 1 3) (wrap . #f)))]
+       [id (create-view! actor source '((read-only . #t) (wrap . #f)))])
+  (define (publish face)
+    (surface:publish! source (let ([old (surface:snapshot source)]) (and old (car old)))
+      (store:revision source) (list (list 0 (make-vector 3 face) '#(#f #f #f) '())) '(0 1 #t) '(1 3)))
+  (define (shown)
+    (let ([f (widget:prepare! id 3 1)])
+      (list (widget:frame-lines f) (cdr (assq 'revision (widget:frame-source f)))
+        (vector->list (widget:frame-cell-styles f 0)))))
+  (publish "31") (widget:mount! id 'surface-editor)
+  (let ([before (shown)])
+    (store:edit! actor source (store:revision source) (text:make-span 0 0 0 3) '("new"))
+    (head:sync-foreign-edits! source) (widget:pump!)
+    (check 'editor-keeps-text-and-style-coherent-across-publication-gap (shown) before)
+    (publish "32") (widget:pump!)
+    (check 'editor-adopts-complete-surface-packet
+      (shown) (list '("new") (store:revision source) '("32" "32" "32"))))
+  (surface:withdraw! source (car (surface:snapshot source)))
+  (store:set-property! actor source 'alive #f) (widget:pump!)
+  (select! id '(0 . 0) '(0 . 3))
+  (check 'stopped-surface-remains-an-ordinary-selectable-editor
+    (list (car (shown)) (view:state (interaction:snapshot id)))
+    '(("new") ((0 . 0) (0 . 3) (0 . 0) #t)))
+  (widget:unmount! id)
+  (let ([bad? #f] [view (view:create! actor (list 'buffer source) 'snapshot-fixture 1 '() '())])
+    (widget:register! 'snapshot-fixture 1
+      (list (cons 'snapshot (lambda (id envelope)
+                              (list (assq 'revision envelope) (cons 'id (if bad? '(buffer 99999) (list 'buffer source)))
+                                (assq 'value envelope))))))
+    (widget:mount! view 'snapshot-fixture)
+    (check 'snapshot-envelopes-are-order-independent-and-cannot-retarget-a-source
+      (list (refused? (lambda () (widget:context view)))
+        (begin (set! bad? #t) (refused? (lambda () (widget:context view))))) '(#f #t))
+    (widget:unmount! view)))
+
 ;; Two widths share text and the existing renderer, but never interaction.
 (let* ([actor head:ui-actor] [ambient (head:current-buffer)]
        [source (store:create! actor "nested editor" '("abcdefghijklmno" "a界éz" "" "last") '((mode . "editor-test")))]

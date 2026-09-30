@@ -503,6 +503,14 @@ is the source envelope. A renderer receives
 rows and cell widths without splitting grapheme clusters. These callbacks
 must be bounded and free of remote requests or domain mutations.
 
+For sources with separately published presentation data, optional `snapshot`
+receives `(id latest-source)` and returns an already acquired coherent source
+envelope, or false while none is ready. It retains the source identity and
+never advances beyond the mirror. Commands and shown frames use that exact
+basis. The editor uses this to pair VT text with its rendition, retaining the
+previous pair across a publication gap. Acquisition belongs to `service`;
+`snapshot`, painting and navigation do no remote reads.
+
 `measure` receives `(data descriptor axis cross-extent measure-child)` and
 returns `(minimum preferred)`. `layout` receives
 `(descriptor width height measure-child locate-anchor)` and returns
@@ -771,13 +779,14 @@ its focus in the base; inactive roots retain it. Modal overlays confine focus
 and consume input even when their contents are empty.
 
 Definitions list ordinary `contexts` and optional `capture-contexts`.
-`contexts` may also be a read-only `(id descriptor)` procedure returning
-context symbols from already acquired state. Routing and binding inspection
-use the same provider; it must not perform I/O. A context change cancels an
-unfinished chord.
+`contexts`, `capture-contexts`, `capture` and `yield` may also be read-only
+`(id descriptor)` procedures returning their respective values from already
+acquired state. Routing and binding inspection use the same providers;
+they must not perform I/O. A context change cancels an unfinished chord.
 Captures are checked from outermost ancestor first; ordinary bindings bubble
-from the focused leaf. A `full` capture stops unhandled input; a `partial`
-capture can list first-key tokens in `yield`. Bind named actions through
+from the focused leaf. A `full` capture stops unhandled input. Either policy
+can list first-key exceptions in `yield`; every suffix of a yielded chord
+keeps that first key's route. Bind named actions through
 `keymap:call` and use `widget:target` to obtain the explicit receiver.
 
 `dispatch:input!` accepts a root and normalized `(key token text-fallback)`
@@ -785,6 +794,15 @@ or `(text string source)` input. Optional trailing contexts belong to the
 outer host. Paste uses the text path alone. Chords advance one event at a
 time, and focus, definition or binding changes invalidate their pending
 suffix. Prompt readers use the same resolver.
+
+An optional `capture-event` procedure uses the ordinary event signature but
+runs from the outermost ancestor before child handlers. Returning true
+consumes the input. It receives key/text events, pointer events with local
+coordinates, and `(scroll dx dy units x y)`. Yielded keys skip that ancestor's
+capture handler. Modal scope also bounds this phase. This lets a process
+control intercept input while alive and release its child text viewport after
+exit. `capture-pointer-bindings` describes its clickable commands with the
+same signature as `pointer-bindings`; inspection lists capture commands first.
 
 Pointer callbacks receive `(pointer phase button modifiers x y [click-count])`
 in their allocation's coordinates. Backends can append a click count;
@@ -796,6 +814,11 @@ device button codes before routing. Wheel movement changes scroll anchors,
 preserves focus and selection, and bubbles only its unconsumed remainder.
 
 ## Multiline editor views
+
+The editor's optional `follow` boolean input follows a service-provided
+cursor. This is derived from base output and does not publish a new selection
+for every frame. `editor:frame-state` captures the prepared logical selection
+and top anchor when a composition leaves follow mode.
 
 `(edit:create-view! actor document-id options)` creates an unmounted `editor`
 view over an existing store document. Mount it directly, compose it with
@@ -924,6 +947,55 @@ Callbacks use explicit `mode:source` text; they must avoid I/O and keep work
 bounded. The matching-bracket extension uses this interface, including in
 nested editors. Tool results acquired asynchronously use `annotations` instead.
 
-Nested editors currently provide these core commands. Ordinary editor windows
-still use their existing host; search/conflict producers and window chrome have not
-yet moved to the nested editor.
+Ordinary editor windows mount this same editor. Their outer placement and
+chrome remain host responsibilities; search and conflict tools retain their
+adapters until those applications migrate.
+
+## Terminal views
+
+Ordinary terminal windows mount this same composition. Splitting forks the
+view's capture and scroll state; switching buffers and resuming a named head
+retain the view identity. The process and its output remain shared.
+
+A definition may provide `status`, a pure `(id descriptor active?)` procedure
+returning text spans. Each span is `(text . style-or-action)`; a
+`keymap:call` makes it a clickable, inspectable control. Hosts decide where to
+present these spans. Reading status must use already acquired state.
+
+`(terminal:create-view! actor document-id)` creates an unmounted terminal
+composition over an existing base-owned process document. Its `text` child
+is the read-only editor. Multiple views share the process, output and grid,
+with independent capture, following and selection. View creation, forks and
+unmounting never spawn or terminate a process.
+
+Use `terminal:set-capture!` with `partial` or `full`, or
+`terminal:toggle-capture!`, with an explicit view. Partial capture yields
+`C-x` and `M-x`; `C-]` toggles capture. `terminal:send!` types text,
+`terminal:paste!` honors bracketed paste, and `terminal:press!` sends a
+normalized key. `terminal:pointer!` accepts a displayed frame address; the
+base rejects stale output and view generations.
+
+Accepted process input includes the view's latest grid size and claims
+resize control. Subsequent size offers are coalesced per view; observers,
+focus reports, painting and scrollback do not take control. Unrecognized keys
+that produce no process input cannot claim control. Releasing a
+controller invalidates its lease and keeps the last grid.
+
+`terminal:page!` and ordinary wheel scrolling retain the shown position and
+leave cursor following. Explicit process mouse capture can consume the wheel
+instead. `terminal:follow!` resumes following; process-directed input also
+resumes it. The `following` output is connected to the editor's `follow`
+input, so repeated process output causes no interaction publication.
+After process exit, capture bindings disappear and the same child remains
+available for ordinary selection, copying and navigation.
+
+The editor acquires service renditions on its service path, including styles,
+grapheme geometry and hyperlinks. It retains a coherent text/rendition pair
+across separate publications; the document mirror can advance independently.
+Surface-only changes wake the same widget pump. Painting and navigation use
+the prepared packet and do not request another rendition.
+
+Terminal clipboard requests and diagnostics are delivered on the service path,
+once per shared output source even with multiple views. Clipboard delivery uses
+the installed host capability and remains addressed to the controlling head.
+The base publishes process state and bell activity; head adapters choose glyphs.

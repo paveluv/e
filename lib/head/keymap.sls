@@ -21,11 +21,11 @@
     call-action-procedure call-action? call-with-command! choose-binding
     command-hint command-key command-keys command-state
     (rename (effective-bindings context-bindings))
-    context-capture (rename (key-event-binding event-binding))
+    (rename (key-event-binding event-binding))
     generation prefill prefill-action-arguments
     prefill-action-procedure prefill-action? prefill-name
     prefill-text resolved-binding run! same-sequence?
-    sequence-bindings sequence-text set-context-capture!
+    sequence-bindings sequence-text
     (rename (key-spec spec)) (rename (unbind-key! unbind!)))
   (import (rnrs)
           (only (chezscheme)
@@ -527,42 +527,6 @@
        (add-key-binding! 'global spec #f 'user)]
       [(context spec)
        (add-key-binding! context spec #f 'user)]))
-
-  ;;; Capture controls -----------------------------------------------------------
-
-  ;; Capture belongs to the app; full/partial capture is a window preference.
-  ;; A context declares the control and keys left to e in partial capture.
-  ;; The toggle is an ordinary binding, but does not pause following the app's cursor.
-  ;; Both declarations retract with their owning module on reload.
-  (define context-captures (kernel:make-registry))
-
-  (edoc "Declare a context's capture control: the key that toggles full capture, and the keys left to the editor in partial capture."
-        (context symbol "the keymap context")
-        (spec string "the toggle key")
-        (toggle procedure "the toggle command")
-        (keys (list-of string) "the keys the editor keeps"))
-  (define (set-context-capture! context spec toggle keys)
-    (define (single-key spec)
-      (let ([tokens (key-spec spec)])
-        (unless (null? (cdr tokens))
-          (error 'set-context-capture! "expected a single key" spec))
-        (car tokens)))
-    (unless (and (symbol? context) (procedure? toggle) (list? keys))
-      (error 'set-context-capture! "expected a context, toggle procedure, and key list" context toggle keys))
-    (let ([key (single-key spec)] [keys (map single-key keys)])
-      (bind-default-key! context spec toggle)
-      (kernel:registry-add! context-captures (cons* context key toggle keys))))
-
-  (edoc "A context's capture policy, (toggle-key toggle-procedure editor-key ...), or #f."
-        (context symbol "the keymap context")
-        (returns (or list #f)))
-  (define (context-capture context)
-    ;; (toggle-key toggle-procedure editor-key ...) or #f. Return owned
-    ;; key strings so a caller cannot change a registered capture policy.
-    (cond [(kernel:registry-find context-captures (lambda (entry) (eq? (car entry) context)))
-           => (lambda (entry) (cons* (string-copy (cadr entry)) (caddr entry)
-                                (map string-copy (cdddr entry))))]
-          [else #f]))
 
   ;;; Reverse lookup -------------------------------------------------------------
 

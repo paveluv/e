@@ -16,7 +16,7 @@
           (rename (terminal-emulator-unsupported emulator-unsupported))
           (rename (terminal-emulator? emulator?)) init!
           (rename (make-terminal-emulator make-emulator)) open! running
-          (rename (terminal-scrollback scrollback)) send! (rename (terminal-shell shell))
+          (rename (terminal-scrollback scrollback)) (rename (terminal-shell shell))
           transcript)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
@@ -27,6 +27,7 @@
           (prefix (state actor) actor:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (sys activity) activity:)
           (prefix (sys glyph) glyph:)
           (prefix (sys sys) sys:))
@@ -1571,7 +1572,7 @@
                 (terminal-state-clipboard-set! state clipboard)
                 (terminal-state-clipboard-sequence-set! state
                   (+ 1 (terminal-state-clipboard-sequence state)))
-                (terminal-state-clipboard-target-set! state (terminal-state-controller state)))))))))
+                (terminal-state-clipboard-target-set! state (controller-actor state)))))))))
 
   (define (dispatch-osc! state)
     (let* ([text (control-text state)]
@@ -3377,9 +3378,9 @@
     (for-each
       (lambda (state)
         (let ([from (if (pair? source) (car source)
-                        (with-mutex (terminal-state-lock state) (terminal-state-controller state)))])
-          (actor:send! (terminal-state-owner state)
-            (list 'request from (terminal-state-buffer state) 'color-scheme scheme))))
+                        (with-mutex (terminal-state-lock state) (controller-actor state)))])
+          (when from (actor:send! (terminal-state-owner state)
+                       (list 'request from (terminal-state-buffer state) 'color-scheme scheme)))))
       (instances)))
 
   (define (set-scheme! state scheme)
@@ -3388,9 +3389,33 @@
       (when (and scheme (memv 2031 (terminal-state-extra-modes state)))
         (write-bytes! state (string->utf8 (color-scheme-report scheme))))))
 
+  (define (view-witness? witness)
+    (and (list? witness) (= (length witness) 2)
+      (list? (car witness)) (= (length (car witness)) 2)
+      (eq? (caar witness) 'model) (integer? (cadar witness)) (exact? (cadar witness)) (> (cadar witness) 0)
+      (integer? (cadr witness)) (exact? (cadr witness)) (>= (cadr witness) 0)))
+  (define (lease-valid? state lease)
+    (and lease
+      (let ([d (view:snapshot (cadr lease))])
+        (and d (eq? (view:kind d) 'terminal) (= (view:schema d) 1)
+             (equal? (view:source d) (list 'buffer (terminal-state-buffer state)))
+             (equal? (view:owner d) (car lease)) (= (view:generation d) (caddr lease))))))
+  (define (sender-lease state from data)
+    (let* ([witness (fact data 'view #f)]
+           [lease (and (view-witness? witness) (cons from witness))])
+      (and (lease-valid? state lease) lease)))
+  (define (controller-actor state)
+    (let ([lease (terminal-state-controller state)])
+      (if (lease-valid? state lease) (car lease)
+        (begin (terminal-state-controller-set! state #f) #f))))
+  (define (resize-data? data)
+    (and (list? data) (for-all pair? data) (size? (fact data 'size #f))
+      (view-witness? (fact data 'view #f))))
+
   (define (input-data? data event)
     (and (list? data) (for-all (lambda (entry) (and (pair? entry) (symbol? (car entry)))) data)
          (size? (fact data 'size #f))
+         (view-witness? (fact data 'view #f))
          (memq (fact data 'color-scheme #f) '(dark light #f))
          (or (not (member event '("PASTE" "TEXT")))
              (string? (fact data (if (string=? event "PASTE") 'paste 'text) #f)))
@@ -3406,25 +3431,9 @@
          (let ([what (cadddr message)] [data (list-ref message 4)])
            (case (car message)
              [(input) (and (string? what) (input-data? data what))]
-             [(request) (case what [(resize) (size? data)] [(close) (null? data)]
+             [(request) (case what [(resize) (resize-data? data)] [(close) (null? data)]
                           [(color-scheme) (memq data '(dark light #f))] [else #f])]
              [else #f]))))
-
-  (edoc "Send text to a terminal's program as typed or pasted input, with the sender's screen size."
-        (from head "the sending head")
-        (id integer "the buffer id")
-        (text string "the text")
-        (size list "(rows cols)")
-        (paste? boolean "whether it is a paste")
-        (scheme (list-of any) "the color scheme, at most one"))
-  (define (send! from id text size paste? . scheme)
-    (unless (and (actor:identity? from) (string? text) (size? size) (boolean? paste?))
-      (error 'send! "expected actor, text, size, and paste flag"))
-    (let ([owner (store:property id 'app)])
-      (actor:send! owner
-        (list 'input from id (if paste? "PASTE" "TEXT")
-              (list (cons (if paste? 'paste 'text) text) (cons 'size size)
-                    (cons 'color-scheme (if (pair? scheme) (car scheme) #f)))))))
 
   (define mouse-events '("MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE"
                          "WHEEL-UP" "WHEEL-DOWN" "WHEEL-LEFT" "WHEEL-RIGHT"))
@@ -3439,35 +3448,39 @@
                 (when (terminal-state-alive state)
                   (case (car message)
                     [(request)
-                     (when (equal? from (terminal-state-controller state))
+                     (when (equal? from (controller-actor state))
                        (case what
-                         [(resize) (resize-screen! state (car data) (cadr data))]
+                         [(resize)
+                          (let ([size (fact data 'size #f)] [lease (sender-lease state from data)])
+                            (when (and lease (equal? lease (terminal-state-controller state)))
+                              (resize-screen! state (car size) (cadr size))))]
                          [(color-scheme) (set-scheme! state data)]))]
                     [(input)
-                     (let* ([mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
+                     (let* ([lease (sender-lease state from data)]
+                            [mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
                             [frame (terminal-state-rendered state)]
                             [y (and mouse? cell frame (+ 1 (- (car cell) (frame-top frame))))])
                        ;; A pointer addresses the published grid, not an arbitrary
                        ;; scrollback row or a newer frame the sender has not seen.
-                       (when (or (not mouse?)
-                                 (and (terminal-state-mouse state) y
-                                      (equal? (fact data 'revision #f) (terminal-state-revision state))
-                                      (equal? (fact data 'generation #f) (terminal-state-generation state))
-                                      (<= 1 y (car (frame-size frame)))
-                                      (< (cdr cell) (cadr (frame-size frame)))))
-                         (unless (member what '("FOCUS" "BLUR"))
-                           (terminal-state-controller-set! state from)
-                           (let ([size (fact data 'size #f)])
-                             (resize-screen! state (car size) (cadr size)))
-                           (set-scheme! state (fact data 'color-scheme #f)))
-                         (cond
-                           [mouse?
-                            (cond [(mouse-bytes state (or (fact data 'button #f) 0)
-                                                (+ 1 (cdr cell)) y (string=? what "MOUSE-RELEASE"))
-                                   => (lambda (bytes) (write-bytes! state bytes))])]
-                           [(string=? what "PASTE") (send-paste! state (fact data 'paste ""))]
-                           [(string=? what "TEXT") (write-bytes! state (string->utf8 (fact data 'text "")))]
-                           [(event-bytes state what) => (lambda (bytes) (write-bytes! state bytes))])))]))))))))
+                       (when (and lease (or (not mouse?)
+                                          (and (terminal-state-mouse state) y
+                                            (equal? (fact data 'revision #f) (terminal-state-revision state))
+                                            (equal? (fact data 'generation #f) (terminal-state-generation state))
+                                            (<= 1 y (car (frame-size frame)))
+                                            (< (cdr cell) (cadr (frame-size frame))))))
+                         (let ([bytes (cond [mouse? (mouse-bytes state (or (fact data 'button #f) 0)
+                                                      (+ 1 (cdr cell)) y (string=? what "MOUSE-RELEASE"))]
+                                        [(string=? what "PASTE") #t]
+                                        [(string=? what "TEXT") (string->utf8 (fact data 'text ""))]
+                                        [else (event-bytes state what)])])
+                           (when bytes
+                             (unless (member what '("FOCUS" "BLUR"))
+                               (terminal-state-controller-set! state lease)
+                               (let ([size (fact data 'size #f)])
+                                 (resize-screen! state (car size) (cadr size)))
+                               (set-scheme! state (fact data 'color-scheme #f)))
+                             (if (eq? bytes #t) (send-paste! state (fact data 'paste ""))
+                               (write-bytes! state bytes))))))]))))))))
 
   (define (app-facts state)
     (let* ([alive? (terminal-state-alive state)] [mouse (terminal-state-mouse state)]
@@ -3478,8 +3491,8 @@
                            (append '("MOUSE" "S-WHEEL-UP" "S-WHEEL-DOWN" "S-WHEEL-LEFT" "S-WHEEL-RIGHT")
                              (cond [(not mouse) mouse-events]
                                    [(< mouse 1002) '("MOUSE-DRAG")] [else '()])))))
-        (status . ,(cond [(not alive?) (if (terminal-state-failure state) "■ error" "■")]
-                         [(terminal-state-bell-visible state) "♪"] [else "▶"]))
+        (process-state . ,(if alive? 'running (if (terminal-state-failure state) 'failed 'stopped)))
+        (bell . ,(terminal-state-bell-visible state))
         (cursor-style . ,(terminal-state-cursor-shape state))
         (size . ,(list (terminal-state-rows state) (terminal-state-cols state)))
         (title . ,(terminal-state-title state))
@@ -3538,7 +3551,7 @@
             (let* ([frame (car captured)] [facts (cadr captured)]
                    [text (vector-map rendition-text (frame-rows frame))]
                    [live-facts (changed-facts id
-                                              (if final? (filter (lambda (entry) (not (memq (car entry) '(alive capture status)))) facts) facts))]
+                                              (if final? (filter (lambda (entry) (not (memq (car entry) '(alive capture process-state)))) facts) facts))]
                    [before (terminal-state-rendered state)]
                    [old-title (store:property id 'title)])
               ;; The live read-only grid is authoritative. A forced external edit
@@ -3694,11 +3707,10 @@
             (set! process (sys:spawn-terminal-process (terminal-shell) command directory rows cols))
             (set! id (store:create! owner (if (= serial 1) "*terminal*" (format "*terminal ~a*" serial))
                                     (make-vector rows (make-string cols #\space))
-                                    `((app . ,owner) (alive . #f) (capture . #f) (status . "starting")
+                                    `((app . ,owner) (alive . #f) (capture . #f) (process-state . starting)
                                       (read-only . #t) (disposable . #t) (mode . "terminal") (directory . ,directory)
                                       (wrap . #f) (scrollbar . #f) (manages-viewport . #t))))
             (set! state (blank-terminal-state owner id process rows cols #t))
-            (terminal-state-controller-set! state (datum:copy from))
             (terminal-state-scheme-set! state (if (pair? scheme) (car scheme) (unbox default-scheme)))
             (kernel:call-with-runtime-registrations
               (lambda ()

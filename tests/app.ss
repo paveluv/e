@@ -36,6 +36,7 @@
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
              (prefix (head dispatch) dispatch:)
              (prefix (apps paren) paren:)
+             (prefix (apps terminal) terminal:)
              (prefix (apps pretty-scheme) pretty-scheme:)
              (prefix (apps git-view) git-view:)
              (prefix (apps log-view) log-view:))
@@ -420,151 +421,6 @@
        (head:show-buffer! previous)
        (head:forget-buffer! b))
 
-     ;; One shared app exercises the complete head adapter. Its endpoint only
-     ;; receives data; no head app record or terminal renderer is registered.
-     (let* ([previous (head:current-buffer)] [w (head:current-window)] [owner '(app adapter-test)]
-            [messages (test:recorder)] [reenter #f]
-            [text (make-vector 50 "abc")])
-       (define (receive message)
-         (messages message)
-         (when reenter
-           (let ([next reenter]) (set! reenter #f) (next))))
-       (define (received kind) (filter (lambda (message) (eq? (car message) kind)) (messages)))
-       (vector-set! text 48 "界e\x301;Z")
-       (vector-set! text 49 "界e\x301;Z")
-       (actor:register! owner receive)
-       (let* ([id (store:create! owner "*adapter-test*" text
-                    `((app . ,owner) (alive . #t) (capture . all) (status . "working")
-                      (read-only . #t) (wrap . #f) (manages-viewport . #t) (cursor-style . bar)))]
-              [b (head:adopt-store-buffer! id)]
-              [other (head:make-window b 0 0 0 0 0 2 7 3 'default)])
-         (define (publish row visible?)
-           (surface:publish! id (let ([old (surface:snapshot id)]) (and old (car old))) 0
-             '((48 #(plain plain plain plain) #(#f #f #f #f) ((clusters (1 . 2) (2 . 1) (1 . 1))))
-               (49 #(plain plain plain plain) #(#f #f #f #f) ((clusters (1 . 2) (2 . 1) (1 . 1)))))
-             (list row 2 visible?) '(4 4)))
-         (define (position w) (list (head:window-prow w) (head:window-pcol w) (head:window-top w)))
-         (publish 48 #t)
-         (head:window-size-set! w 0)
-         (head:window-width-set! w 0)
-         (head:set-layout-root! (head:make-layout-split 'right w other 1 1))
-         (let ([seen #f])
-           (head:set-repaint-hook!
-             (lambda () (set! seen (list (position w) (head:app-cursor-style b)
-                                         (and (render:row (head:buffer-rendition b) 48) #t)))))
-           (head:set-window-buffer! w b)
-           (check 'shared-adoption-follows-before-first-layout-with-its-own-projection seen '((48 1 48) bar #t)))
-         (head:set-repaint-hook! paint:invalidate-screen-cache!)
-         (head:window-size-set! w 4)
-         (head:window-width-set! w 6)
-         (head:refresh-renditions!)
-         (check 'shared-grid-follows-in-different-window-sizes
-           (list (position w) (position other) (head:app-buffer? b) (head:app-of b))
-           '((48 1 46) (48 1 47) #t #f))
-         (head:follow-app! other #f)
-         (head:window-prow-set! other 0)
-         (head:window-pcol-set! other 0)
-         (head:window-top-set! other 0)
-         (publish 49 #f)
-         (head:refresh-renditions!)
-         (check 'following-is-per-window-and-honors-published-visibility
-           (list (position w) (position other) (head:app-cursor-visible-in? w)
-                 (head:app-cursor-visible-in? other)) '((49 1 46) (0 0 0) #f #t))
-         (check 'capture-is-declarative
-           (map (lambda (rule)
-                  (store:set-property! owner id 'capture rule)
-                  (map head:dispatch-app-event! '("UP" "x")))
-             '(#f all () ("UP") (except "UP")))
-           '((#f #f) (#t #t) (#f #f) (#t #f) (#f #t)))
-         (store:set-property! owner id 'capture 'all)
-         (let ([before (store:properties id)])
-           (check 'invalid-app-facts-refuse-the-whole-batch
-             (map (lambda (bad)
-                    (and (refused? (lambda () (store:set-properties! owner id (list '(status . "wrong") bad))))
-                         (equal? before (store:properties id))))
-               '((app . (head "wrong")) (alive . yes) (capture . #t) (capture except 4)
-                 (status . 3) (sticky-lines . -1) (cursor-style . invalid) (manages-viewport . 1)))
-             '(#t #t #t #t #t #t #t #t)))
-         (let ([paste (string-copy "paste me")] [raw (cons 48 1)] [identity (actor:current)])
-           (head:set-pending-paste! paste)
-           (parameterize ([head:app-event-buffer-position raw] [head:app-event-position '(3 . 2)] [head:app-event-button 0])
-             (head:dispatch-app-event! "PASTE"))
-           (string-set! paste 0 #\X)
-           (set-car! raw 999)
-           (let* ([message (car (reverse (received 'input)))] [data (list-ref message 4)])
-             (check 'shared-input-owns-paste-and-both-coordinate-spaces
-               (list (cadr message) (caddr message) (cadddr message) data)
-               (list head:ui-actor id "PASTE"
-                 `((paste . "paste me") (point 48 . 1) (cell 48 . 2) (viewport 3 . 2) (button . 0)
-                   (size 4 6) (color-scheme . #f) (revision . 0) (generation . ,(car (surface:snapshot id))))))
-             (set-car! (cadr message) 'damaged)
-             (check 'delivery-cannot-mutate-head-identity-or-context
-               (list (car head:ui-actor) (actor:current) (head:app-event-buffer-position)) (list 'head identity #f))))
-         (let ([before (length (received 'input))] [ran? #f] [commands 0])
-           (define (toggle!) (head:set-full-capture! (head:current-window) (not (head:full-capture? (head:current-window)))))
-           (mode:register! "adapter-test" '() '() (lambda (line) #f))
-           (head:with-buffer b (mode:choose! "adapter-test"))
-           (keymap:bind-default! 'adapter-test "UP" (lambda () (set! ran? #t)))
-           (keymap:set-context-capture! 'adapter-test "C-]" toggle! '("C-x" "M-x"))
-           (keymap:bind-default! "M-x" (lambda () (set! commands (+ commands 1))))
-           (dispatch:key! "UP")
-           (check 'mode-command-wins-and-pauses-following
-             (list ran? (head:app-following? w) (- (length (received 'input)) before)) '(#t #f 0))
-           (dispatch:key! "x")
-           (check 'captured-key-resumes-following (head:app-following? w) #t)
-           (check 'capture-routing-and-toggle-preserve-cursor-following
-             (reverse
-               (fold-left (lambda (out event)
-                            (let ([before (length (received 'input))])
-                              (dispatch:key! event)
-                              (cons (list (head:full-capture? w) commands (- (length (received 'input)) before)
-                                          (head:app-following? w)) out)))
-                 '() '("M-x" "x" "C-]" "M-x" "C-x" "C-]")))
-             '((#f 1 0 #f) (#f 1 1 #t) (#t 1 0 #t) (#t 1 1 #t) (#t 1 1 #t) (#f 1 0 #t)))
-           (head:follow-app! w #f)
-           (dispatch:key! "C-]")
-           (check 'capture-is-per-window-and-keeps-scrollback-and-producer-status
-             (list (head:full-capture? w) (head:full-capture? other) (head:app-following? w)
-                   (head:app-cursor-visible-in? w) (head:app-status b))
-             '(#t #f #f #t "working"))
-           (dispatch:key! "C-]"))
-         (set! reenter head:request-app-size!)
-         (head:request-app-size!)
-         (head:request-app-size!)
-         (head:window-width-set! w 5)
-         (head:request-app-size!)
-         (check 'size-offers-coalesce-before-reentrant-delivery
-           (received 'request)
-           (list (list 'request head:ui-actor id 'resize '(4 6))
-                 (list 'request head:ui-actor id 'resize '(4 5))))
-         (set! reenter (lambda () (head:follow-app! w #f) (head:refresh-renditions!)))
-         (head:dispatch-app-event! "x")
-         (check 'delivery-does-not-overwrite-reentrant-follow-state (head:app-following? w) #f)
-         (store:set-property! owner id 'audience '())
-         (check 'hidden-app-denies-retained-facts-and-input-before-cleanup
-           (list (head:app-facts b) (head:dispatch-app-event! "x")) '(#f #f))
-         (store:set-property! owner id 'audience 'all)
-         (actor:detach! owner)
-         (check 'unreachable-endpoint-declines-input (head:dispatch-app-event! "x") #f)
-         (actor:register! owner receive)
-         (store:set-properties! owner id '((alive . #f) (capture . #f) (status . "exited")))
-         (surface:withdraw! id (car (surface:snapshot id)))
-         (head:refresh-renditions!)
-         (check 'death-restores-ordinary-input-and-cursor-but-keeps-status
-           (list (head:app-buffer? b) (head:dispatch-app-event! "x") (head:app-cursor-style b)
-                 (head:app-cursor-visible-in? w) (head:app-manages-window-viewport? w)
-                 (head:app-status b) (store:line id 48) (mode:name-of b)
-                 (map (lambda (full?)
-                        (head:set-full-capture! w full?)
-                        (dispatch:key! "C-]")
-                        (list (mode:key-context b) (head:full-capture? w))) '(#f #t)))
-           '(#f #f #f #t #f "exited" "界e\x301;Z" "adapter-test" ((#f #f) (#f #t))))
-         (head:set-layout-root! w)
-         (head:set-window-buffer! w previous)
-         (store:delete! owner id)
-         (head:before-frame!)
-         (actor:detach! owner)))
-
      ;; The ordinary buffer path validates generated hyperlink ranges too.
      (let ([b (head:new-buffer! "*hyperlink-test*")])
        (head:with-buffer b (insert-text! "https://example.com/path"))
@@ -692,7 +548,7 @@
        (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
-     (let* ([events '()] [owner 'routing-fixture]
+     (let* ([events '()] [owner 'routing-fixture] [capturing? #f]
             [a (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
             [b (view:create! head:ui-actor #f 'route-leaf 1 '() '())]
             [row (view:create! head:ui-actor #f 'route-row 1 '() '())]
@@ -718,7 +574,14 @@
        (define (take) (let ([out (reverse events)]) (set! events '()) out))
        (install-leaf! #f)
        (widget:register! 'route-row 1
-         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts '(route-capture))
+         (list (cons 'contexts '(route-parent)) (cons 'capture-contexts (lambda (id d) '(route-capture)))
+           (cons 'capture (lambda (id d) (if capturing? 'full 'partial)))
+           (cons 'yield (lambda (id d) (if capturing? '("C-x") '())))
+           (cons 'capture-event (lambda (id source d event)
+                                  (and capturing? (begin (record! id (list 'captured (car event))) #t))))
+           (cons 'capture-pointer-bindings
+             (lambda (f x y) (if capturing?
+                               (list (list '(click primary ()) (keymap:call widget:act! (widget:frame-id f) 'record 'captured))) '())))
            (cons 'actions (list (cons 'record record!)))
            (cons 'pointer-bindings
              (lambda (f x y) (map (lambda (button) (list (list 'click button '()) (keymap:call widget:act! (widget:frame-id f) 'record 'bubbled))) '(primary middle secondary))))
@@ -742,6 +605,18 @@
        (dispatch:input! root '(text "z z" paste))
        (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
          (list (list 'leaf a) (list 'parent-chord row) (list 'parent row) (list 'capture row) (list 'shortcut a) (list "z z" a)))
+       (set! capturing? #t)
+       (check 'capture-discovery-precedes-child-bindings-without-dispatch
+         (list (keymap:call-action-arguments (cadr (assoc '(click primary ()) (widget:pointer-bindings 1 0)))) (take))
+         (list (list row 'record 'captured) '()))
+       (key! "z") (dispatch:input! root '(text "paste" paste))
+       (key! "C-x") (key! "a")
+       (widget:pointer! '(pointer press primary ()) 1 0)
+       (widget:pointer! '(scroll 0 3 cells) 1 0)
+       (check 'parent-capture-precedes-children-and-yielded-chords-keep-their-route (take)
+         (list (list '(captured key) row) (list '(captured text) row) (list 'leaf a)
+           (list '(captured pointer) row) (list '(captured scroll) row)))
+       (set! capturing? #f)
        (key! "C-x") (widget:focus! root b) (key! "a")
        (key! "C-x") (keymap:bind-default! 'unrelated "F9" void) (key! "a")
        (check 'focus-and-binding-change-do-not-replay-chord-suffix (take) '())
@@ -883,6 +758,7 @@
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")
+     (include "tests/terminal-widget.sps")
      (include "tests/table-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")

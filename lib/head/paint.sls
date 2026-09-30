@@ -498,19 +498,7 @@
                   (if value (append (reverse (spaced value)) out) out))))))
 
   (define (app-status-values w active?)
-    (let* ([b (head:window-buffer w)] [status (head:app-status b)]
-           [context (mode:key-context b)] [capture (and context (keymap:context-capture context))])
-      (cond [(or (not status) (string=? status "")) '()]
-            [capture
-             ;; Insert the window's control beside the producer's first status
-             ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix;
-             ;; the toggle's key is the keys listing's to tell, not the bar's
-             (let ([end (or (string:search status " " 0 (string-length status)) (string-length status))]
-                   [toggle (cadr capture)])
-               (list (cons (string-append " " (substring status 0 end) " ") #f)
-                     (cons (if (head:full-capture? w) "●" "◐") toggle)
-                     (cons (string:tail status end) #f)))]
-            [else (list (cons (string-append " " status) #f))])))
+    (let ([id (head:window-widget w)]) (if id (widget:status id active?) '())))
 
   (define (status-actions prefix spans visible-cells)
     ;; Hints already carry style spans. A procedure in the style slot makes
@@ -520,8 +508,10 @@
       (if (null? spans) (reverse out)
           (let* ([span (car spans)] [end (+ column (glyph:cells (car span)))])
             (loop (cdr spans) end
-              (if (and (procedure? (cdr span)) (<= end visible-cells))
+              (if (and (status-action? (cdr span)) (<= end visible-cells))
                   (cons (list column end (cdr span)) out) out))))))
+
+  (define (status-action? action) (or (procedure? action) (keymap:call-action? action)))
 
   (define conflicts-action #f)
 
@@ -731,7 +721,7 @@
                    [left (list-ref row 3)] [bound (list-ref row 4)] [shown (list-ref row 5)]
                    [styles (widget:frame-cell-styles f y)]
                    [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
-                   [links (cell-ranges frame i (text-hyperlinks b i line))]
+                   [links (cell-ranges frame i (line-hyperlinks b i line frame))]
                    [edge (if (window-wrapped? w)
                            (and (not (clean-wrap? w)) (< bound (render:width frame i (string-length line))) 'wrap)
                            (and (> bound (+ left width)) 'trunc))])
@@ -1022,10 +1012,10 @@
                             (case (cdr value)
                               [(italic) (ansi! "\x1b;[3m")]
                               [(red) (ansi! "\x1b;[31m")])
-                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                            (when (and (status-action? (cdr value)) (eq? (cdr value) hovered))
                               (ansi! (style:code 'hover)))
                             (ansi! (substring text at end))
-                            (when (and (procedure? (cdr value)) (eq? (cdr value) hovered))
+                            (when (and (status-action? (cdr value)) (eq? (cdr value) hovered))
                               (ansi! "\x1b;[0m" bar))
                             (case (cdr value)
                               [(italic) (ansi! "\x1b;[23m")]
@@ -1748,7 +1738,6 @@
                       ;; a prompt: the cursor is in the echo area's input,
                       ;; which is editable whatever the buffer behind it
                       [(echo:cursor) "\x1b;[0 q"]
-                      [widget-caret "\x1b;[6 q"]
                       [(and app-style (not (eq? app-style 'default)))
                        (case app-style
                          [(text) "\x1b;[0 q"]
@@ -1758,6 +1747,7 @@
                          [(blinking-block) "\x1b;[1 q"]
                          [(blinking-underline) "\x1b;[3 q"]
                          [(blinking-bar) "\x1b;[5 q"])]
+                      [widget-caret "\x1b;[6 q"]
                       ;; a bar where typing cannot land: a read-only buffer
                       [(head:buffer-read-only (head:window-buffer (head:current-window)))
                        "\x1b;[5 q"]
@@ -1799,8 +1789,7 @@
       (for-each (lambda (entry) (decide-scrollbar! (car entry) (caddr entry))) layout)
       (unless (equal? widths (map (lambda (entry) (head:window-content-width (car entry))) layout))
         (head:refresh-visible-views!)))
-    (window-layout)
-    (head:request-app-size!))
+    (window-layout))
 
   (define (paint-frame!)
     ;; Delivery may reenter and change the layout. Prepare and paint the
@@ -1829,7 +1818,7 @@
                                      (head:buffer-sticky-lines (head:window-buffer w))))
                              (head:windows)))])
         (for-each (lambda (entry)
-                    (let* ([w (car entry)] [id (head:window-editor w)])
+                    (let* ([w (car entry)] [id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
                       (if (and id (guard (ex [else #f]) (widget:host id)))
                         (begin (widget:set-active! id (eq? w (head:current-window)))
                           (widget:prepare! id (if (window-wrapped? w) (wrap-width w) (head:window-content-width w)) (caddr entry)))

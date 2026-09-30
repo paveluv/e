@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
+          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown status target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -100,6 +100,12 @@
   (define (definition d)
     (and d (kernel:registry-find definitions
              (lambda (entry) (equal? (car entry) (list (view:kind d) (view:schema d)))))))
+
+  (edoc "Read a mounted view's optional status spans without acquisition. Each span pairs text with a style, false, or an inspectable keymap call."
+        (id model "view") (active? boolean "host focus") (returns list) (effects internal))
+  (define (status id active?)
+    (let* ([d (read-view id)] [provider (field (definition d) 'status #f)])
+      (if provider (provider id d active?) '())))
   (define (field entry name fallback)
     (cond [(and entry (assq name (cdr entry))) => cdr] [else fallback]))
   (define (mounted id)
@@ -135,11 +141,11 @@
                                          (and (pair? (car rest)) (symbol? (caar rest)) (procedure? (cdar rest))
                                            (not (memq (caar rest) names)) (check (cdr rest) (cons (caar rest) names))))))]
                         [(contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
-                        [(capture-contexts) (and (list? (cdr p)) (for-all symbol? (cdr p)))]
-                        [(yield) (and (list? (cdr p)) (for-all string? (cdr p)))]
+                        [(capture-contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
+                        [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
-                        [(capture) (memq (cdr p) '(full partial))]
-                        [(prepare viewport service release render measure layout event pointer-bindings anchor locate decorate caret busy?) (procedure? (cdr p))]
+                        [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
+                        [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy? status) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -152,7 +158,7 @@
         (and (not (and input (exists (lambda (e) (and (equal? id (cadr e)) (eq? (cadr input) (caddr e))))
                                      (cadr (connection:snapshot (list id))))))
           (view:source d)))))
-  (define (source! n d)
+  (define (raw-source! n d)
     (let ([id (source-id (node-id n) d)])
       (cond
         [(not d) (values #f #f)]
@@ -170,6 +176,20 @@
          (unless (node-mirrored n)
            (node-mirrored-set! n (cons (cons #f (model:available? id)) (model:snapshot id))))
          (values (cdar (node-mirrored n)) (cdr (node-mirrored n)))])))
+
+  (define (source! n d)
+    (let-values ([(available? source) (raw-source! n d)])
+      (let ([snapshot (field (definition d) 'snapshot #f)])
+        (if (and available? snapshot source)
+          (let* ([next (snapshot (node-id n) source)]
+                 [revision (and (list? next) (for-all pair? next) (assq 'revision next))])
+            (unless (or (not next)
+                      (and revision (assq 'id next) (equal? (assq 'id next) (assq 'id source))
+                        (integer? (cdr revision)) (exact? (cdr revision))
+                        (<= 0 (cdr revision) (cdr (assq 'revision source)))))
+              (error 'source! "snapshot must retain source identity and an acquired revision" (node-id n)))
+            (values (and next #t) next))
+          (values available? source)))))
 
   (edoc "List available named actions of a mounted view, including a nested child."
         (id model "view id") (returns list) (effects internal))
@@ -513,8 +533,8 @@
     (let ([rows (list->vector (map (lambda (i) (make-vector (caddr clip) #f)) (iota (cadddr clip))))])
       (for-each (lambda (p)
                   (unless (and (list? p) (= (length p) 2) (rectangle? (car p))
-                            (or (symbol? (cadr p))
-                              (and (pair? (cadr p)) (list? (cadr p)) (for-all symbol? (cadr p)))))
+                            (or (symbol? (cadr p)) (string? (cadr p))
+                              (and (pair? (cadr p)) (list? (cadr p)) (for-all (lambda (face) (or (symbol? face) (string? face))) (cadr p)))))
                     (error 'prepare! "invalid decoration" p))
                   (let ([r (layout:intersect clip (layout:translate (car p) (car rect) (cadr rect)))])
                     (do ([y (cadr r) (+ y 1)]) ((= y (+ (cadr r) (cadddr r))))
@@ -634,8 +654,11 @@
         frame)))
 
   (edoc "Read the latest prepared frame, which may not have been displayed."
-        (id model "root view") (returns any))
-  (define (prepared id) (hashtable-ref preparations id #f))
+        (id model "mounted root or descendant") (returns any))
+  (define (prepared id)
+    (or (hashtable-ref preparations id #f)
+      (let ([n (hashtable-ref nodes id #f)])
+        (and n (find-frame (hashtable-ref preparations (mount-id (node-root n)) #f) id)))))
 
   (edoc "Adopt the exact frames whose output was successfully flushed. The painter calls this before publication hooks."
         (placements list "(frame screen-x screen-y) entries"))
@@ -710,9 +733,9 @@
     (let loop ([id id] [out '()])
       (let ([d (and id (read-view id))])
         (if d (loop (view:parent d) (cons id out)) out))))
-  (define (send! id event frame)
+  (define (send! id event frame . phase)
     (let* ([n (hashtable-ref nodes id #f)] [d (and n (read-view id))] [entry (definition d)]
-           [handler (field entry 'event #f)])
+           [handler (field entry (if (pair? phase) (car phase) 'event) #f)])
       (and handler (or (not frame) (live-frame? frame))
         (let-values ([(available? source) (source! n d)])
           (and available?
@@ -769,6 +792,18 @@
     (ensure-focus! root)
     (key-scopes root key))
 
+  ;; Routing policies read only already acquired descriptors/service state.
+  (define (routing-policy id d name fallback)
+    (let* ([provider (field (definition d) name fallback)]
+           [value (if (procedure? provider) (provider id d) provider)])
+      (unless (case name
+                [(capture) (memq value '(full partial))]
+                [(yield) (and (list? value) (for-all string? value))]
+                [else (and (list? value) (for-all symbol? value))])
+        (error 'routing-policy "invalid routing policy" id name value)) value))
+  (define (scope-path ids barrier)
+    (if barrier (or (member barrier ids) '()) ids))
+
   (edoc "Read the remembered focus's key routing without changing focus or consuming a pending chord. Includes capture, yield and modal boundaries; hosts can append their contexts."
         (root model "mounted root") (key string "first key token, or empty for all contexts") (returns list "(basis scopes focused-view)") (effects internal))
   (define (key-scopes root key)
@@ -777,17 +812,21 @@
            [normal (let loop ([rest (reverse path)] [out '()])
                      (if (null? rest) (reverse out)
                        (let* ([id (car rest)] [d (read-view id)] [entry (definition d)]
-                              [full? (eq? (field entry 'capture 'partial) 'full)]
-                              [yield? (and (not full?) (member key (field entry 'yield '())))]
+                              [full? (eq? (routing-policy id d 'capture 'partial) 'full)]
+                              [yield? (member key (routing-policy id d 'yield '()))]
                               [provider (field entry 'contexts '())]
                               [contexts (if yield? '() (if (procedure? provider) (provider id d) provider))]
                               [item (list id (if (or (equal? id root) (equal? id barrier)) (append contexts '(widget-host)) contexts)
-                                      (or full? (equal? id barrier)))])
+                                      (or (and full? (not yield?)) (equal? id barrier)))])
                          (unless (and (list? contexts) (for-all symbol? contexts))
                            (error 'key-scopes "expected context symbols" id contexts))
                          (if (equal? id barrier) (reverse (cons item out)) (loop (cdr rest) (cons item out))))))]
            [captures (filter (lambda (scope) (pair? (cadr scope)))
-                       (map (lambda (id) (list id (field (definition (read-view id)) 'capture-contexts '()) #f)) path))]
+                       (map (lambda (id)
+                              (let* ([d (read-view id)] [full? (eq? (routing-policy id d 'capture 'partial) 'full)]
+                                     [yield? (member key (routing-policy id d 'yield '()))])
+                                (list id (if yield? '() (routing-policy id d 'capture-contexts '())) (and full? (not yield?)))))
+                         (scope-path path barrier)))]
            [basis (map (lambda (id) (let ([d (read-view id)]) (list id (and d (view:generation d)) (definition d)))) path)])
       (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis normal captures) (append captures normal) focus)))
 
@@ -797,14 +836,17 @@
     (drain-cancels!)
     (let* ([focus (ensure-focus! root)] [scope (focus-frame root)]
            [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))])
-      (let loop ([ids (reverse (if focus (path focus) (if scope (path (frame-id scope)) (list root))))])
-        (and (pair? ids)
-          (let* ([id (car ids)] [d (read-view id)] [entry (definition d)])
-            (or (and (not (and (eq? (car event) 'key) (member (cadr event) (field entry 'yield '()))))
-                     (or (send! id (if (eq? (car event) 'key) (list-head event 2) event) #f)
-                       (and (eq? (car event) 'key) (= (length event) 3) (caddr event)
-                         (send! id (list 'text (caddr event) 'typed) #f))))
-                (eq? (field entry 'capture 'partial) 'full) (equal? id barrier) (loop (cdr ids))))))))
+      (let ([ids (scope-path (if focus (path focus) (if scope (path (frame-id scope)) (list root))) barrier)])
+        (define (yield? id d) (and (eq? (car event) 'key) (member (cadr event) (routing-policy id d 'yield '()))))
+        (or (exists (lambda (id) (and (not (yield? id (read-view id))) (send! id event #f 'capture-event))) ids)
+          (let loop ([ids (reverse ids)])
+            (and (pair? ids)
+              (let* ([id (car ids)] [d (read-view id)] [entry (definition d)])
+                (or (and (not (yield? id d))
+                      (or (send! id (if (eq? (car event) 'key) (list-head event 2) event) #f)
+                        (and (eq? (car event) 'key) (= (length event) 3) (caddr event)
+                          (send! id (list 'text (caddr event) 'typed) #f))))
+                  (and (not (yield? id d)) (eq? (routing-policy id d 'capture 'partial) 'full)) (equal? id barrier) (loop (cdr ids))))))))))
 
   (edoc "Capture pointer motion and release for the current shown press target, including outside its allocation."
         (id model "current event receiver"))
@@ -843,18 +885,21 @@
       (and at
         (let* ([root (car at)] [f (cadr at)] [scope (or (modal root) root)])
           (if (not (and f (live-frame? f))) '()
-            (let loop ([ids (reverse (path (frame-id f)))] [out '()] [scroll? #f])
-              (if (null? ids)
-                (append out (if scroll?
-                              (list (list '(wheel up ()) (keymap:call pointer! '(scroll 0 -3 cells) x y))
-                                (list '(wheel down ()) (keymap:call pointer! '(scroll 0 3 cells) x y))) '()))
-                (let* ([frame (find-frame scope (car ids))] [definition (and frame (frame-definition frame))]
-                       [describe (field definition 'pointer-bindings #f)]
-                       [bindings (if (and describe (live-frame? frame))
-                                   (describe frame (- (caddr at) (car (frame-rect frame))) (- (cadddr at) (cadr (frame-rect frame)))) '())])
-                  (loop (cdr ids)
-                    (append out (filter (lambda (b) (not (assoc (car b) out))) bindings))
-                    (or scroll? (and definition (assq 'scroll (field definition 'actions '())))))))))))))
+            (let* ([ids (scope-path (path (frame-id f)) (frame-id scope))]
+                   [phases (append (map (lambda (id) (cons id 'capture-pointer-bindings)) ids)
+                             (map (lambda (id) (cons id 'pointer-bindings)) (reverse ids)))])
+              (let loop ([ids phases] [out '()] [scroll? #f])
+                (if (null? ids)
+                  (append out (if scroll?
+                                (list (list '(wheel up ()) (keymap:call pointer! '(scroll 0 -3 cells) x y))
+                                  (list '(wheel down ()) (keymap:call pointer! '(scroll 0 3 cells) x y))) '()))
+                  (let* ([frame (find-frame scope (caar ids))] [definition (and frame (frame-definition frame))]
+                         [describe (field definition (cdar ids) #f)]
+                         [bindings (if (and describe (live-frame? frame))
+                                     (describe frame (- (caddr at) (car (frame-rect frame))) (- (cadddr at) (cadr (frame-rect frame)))) '())])
+                    (loop (cdr ids)
+                      (append out (filter (lambda (b) (not (assoc (car b) out))) bindings))
+                      (or scroll? (and definition (assq 'scroll (field definition 'actions '()))))))))))))))
 
   (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
         (event list "(pointer phase button modifiers [click-count]) or (scroll dx dy units)")
@@ -885,26 +930,38 @@
       (and root
         (begin
           (when (and f (live-frame? f))
-            (if (eq? (car event) 'scroll)
-              (let loop ([ids (reverse (path (frame-id f)))] [left (caddr event)])
-                (unless (or (null? ids) (zero? left))
-                  (let* ([id (car ids)] [scope (or (modal root) root)] [d (read-view id)] [entry (definition d)]
-                         [scroll? (assq 'scroll (field entry 'actions '()))])
-                    (when (find-frame scope id) (loop (cdr ids) (if scroll? (act! id 'scroll left) left))))))
-              (begin
-                (when (and (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f)) (parameterize ([event-frame f]) (focus! (frame-id root) (frame-id f))))
-                (when (or (not captured) (eq? (caddr event) capture-button))
-                  (let ([scope (or (modal root) root)])
-                    (let loop ([ids (reverse (path (frame-id f)))])
-                      (unless (null? ids)
-                        (let ([target (find-frame scope (car ids))])
-                          (when target
-                            (unless (parameterize ([pointer-event event])
-                                      (send! (frame-id target)
-                                        (append (list-head event 4)
-                                          (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))
-                                          (cddddr event)) target))
-                              (loop (cdr ids))))))))))))
+            (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f))
+              (parameterize ([event-frame f]) (focus! (frame-id root) (frame-id f))))
+            (unless
+              (let ([scope (or (modal root) root)])
+                (exists (lambda (id)
+                          (let ([target (find-frame scope id)])
+                            (and target
+                              (parameterize ([pointer-event event])
+                                (send! id
+                                  (append (list-head event 4)
+                                    (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))
+                                    (cddddr event)) target 'capture-event)))))
+                  (scope-path (path (frame-id f)) (frame-id scope))))
+              (if (eq? (car event) 'scroll)
+                (let loop ([ids (reverse (path (frame-id f)))] [left (caddr event)])
+                  (unless (or (null? ids) (zero? left))
+                    (let* ([id (car ids)] [scope (or (modal root) root)] [d (read-view id)] [entry (definition d)]
+                           [scroll? (assq 'scroll (field entry 'actions '()))])
+                      (when (find-frame scope id) (loop (cdr ids) (if scroll? (act! id 'scroll left) left))))))
+                (begin
+                  (when (or (not captured) (eq? (caddr event) capture-button))
+                    (let ([scope (or (modal root) root)])
+                      (let loop ([ids (reverse (path (frame-id f)))])
+                        (unless (null? ids)
+                          (let ([target (find-frame scope (car ids))])
+                            (when target
+                              (unless (parameterize ([pointer-event event])
+                                        (send! (frame-id target)
+                                          (append (list-head event 4)
+                                            (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))
+                                            (cddddr event)) target))
+                                (loop (cdr ids)))))))))))))
           (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'release) (eq? (caddr event) capture-button))
             (set! pointer-capture #f) (set! capture-button #f))
           (list (frame-id root) (and (not (retain-focus?)) f (eq? (car event) 'pointer) (eq? (cadr event) 'press)
