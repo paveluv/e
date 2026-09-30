@@ -43,6 +43,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
           (prefix (head completion) completion:)
+          (prefix (head completion-state) completion-state:)
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
@@ -585,13 +586,6 @@
     (define draft (draft-input))
     (define labeler (completion-label))
     (define kind (completion-kind))
-    (define searcher-maker #f)
-    (define searcher #f)
-    (define searcher-needle #f)
-    (define search-hit #f)
-    (define previewed #f)
-    (define preview-undo #f)
-    (define previewed-input #f)
     (define highlight? (completion-highlight))
     (define styler (paint:echo-highlight))
     (define ghost (prompt-ghost))
@@ -605,11 +599,12 @@
     (define stash "")
     (define last-edge #f)
     (define completion-source #f)
-    (define completion-range #f)
-    (define prepared #f)
-    (define completion-options '())
-    (define completion-matches '())
-    (define option-index 0)
+    (define completion-state
+      (completion-state:create complete
+        (lambda (s pos)
+          (let ([reindent (prompt-reindent)])
+            (if reindent (guard (ex [else (cons s pos)]) (reindent s pos)) (cons s pos))))))
+    (define page-sequence 0)
     (define candidates #f)
     (define candidate-rows '#())
     (define candidate-width 0)
@@ -620,6 +615,7 @@
     (define previous #f)
     (define borrowed '())
     (define shown-rows '#())
+    (define shown-generation 0)
     (define clicked #f)
     (define validation-message #f)
 
@@ -666,47 +662,6 @@
                (not (eq? owner (head:current-window)))
                (not (eq? (head:window-buffer owner) view))
                (not (memq view (head:buffers))))))
-    (define (search-note)
-      ;; the live search's note: which match of how many, or that none matches
-      (cond [(not search-hit) ""]
-            [(car search-hit) (format " [~a of ~a]" (car search-hit) (cdr search-hit))]
-            [(> (string-length (or searcher-needle "")) 0) " [no match]"]
-            [else ""]))
-    (define (end-search! accepted?)
-      (when searcher
-        (guard (ex [else (void)]) ((completion:searcher-done searcher) accepted?))
-        (set! searcher #f) (set! searcher-maker #f) (set! searcher-needle #f) (set! search-hit #f)))
-    (define (end-preview!)
-      (when preview-undo (guard (ex [else (void)]) (preview-undo)))
-      (set! previewed #f) (set! preview-undo #f) (set! previewed-input #f))
-    (define (preview! candidate)
-      ;; show the candidate now inserted, the previous showing undone; the
-      ;; showing lasts while the input stays as the completion left it
-      (unless (eq? candidate previewed)
-        (end-preview!)
-        (when (and (completion:candidate? candidate) (completion:candidate-preview candidate))
-          (set! previewed candidate)
-          (set! preview-undo (guard (ex [else #f]) ((completion:candidate-preview candidate)))))))
-    (define (candidate-for text)
-      ;; the candidate whose insertion is text, among the current matches
-      (find (lambda (v) (and (completion:candidate? v) (string=? (completion:candidate-value v) text))) completion-matches))
-    (define (sync-searcher! s pos)
-      ;; the live search the completer wants at the cursor: started when the
-      ;; cursor enters a searching argument, fed the needle as it changes,
-      ;; ended as the cursor leaves
-      (let ([wanted (and (completion:source? complete) (completion:source-track complete)
-                         (guard (ex [else #f]) ((completion:source-track complete) s pos)))])
-        (cond
-          [(not wanted) (end-search! #f)]
-          [(and searcher (eq? (car wanted) searcher-maker))
-           (set! searcher-needle (cdr wanted))
-           (set! search-hit ((completion:searcher-find searcher) searcher-needle))]
-          [else
-           (end-search! #f)
-           (set! searcher-maker (car wanted))
-           (set! searcher ((car wanted)))
-           (set! searcher-needle (cdr wanted))
-           (set! search-hit ((completion:searcher-find searcher) searcher-needle))])))
     (define (kind-text)
       ;; what the completions are: the completer's own kind, else the
       ;; completion-kind parameter, else the prompt's label stem
@@ -744,8 +699,10 @@
                      [choice
                       (let ([value (if (procedure? (caddr choice)) ((caddr choice)) (caddr choice))])
                         (if value
-                            (set! clicked (if completion-source (replace-completion input value)
-                                            (cons value (string-length value))))
+                            (if (and body (not candidates)) (set! clicked (cons value (string-length value)))
+                              (when (completion-state:choose! completion-state shown-generation value)
+                                (let ([snapshot (completion-state:snapshot completion-state)])
+                                  (set! clicked (cons (cadr snapshot) (caddr snapshot))))))
                             (set! page 0)))]))))
          (if in-window? #t 'keep-focus)]
         [else #f]))
@@ -769,57 +726,20 @@
             (head:set-window-buffer! target view)
             (set! borrowed (list target))
             (unless in-window? (head:show-popup! (popup-height (or candidates '()))))))))
+    (define (sync-completion!)
+      (let* ([snapshot (completion-state:snapshot completion-state)]
+             [values (list-ref snapshot 3)] [sequence (list-ref snapshot 5)])
+        (set! completion-source (list-ref snapshot 6))
+        (unless (equal? values candidates)
+          (set! candidates values) (set! candidate-width 0) (set! page 0)
+          (when (and view (head:popup? target) (pair? values))
+            (head:show-popup! (popup-height values))))
+        (when (> sequence page-sequence) (set! page (mod (+ page (- sequence page-sequence)) (max 1 pages))))
+        (set! page-sequence sequence)
+        (if candidates (take-view!)
+          (begin (set! pages 1) (set! page 0) (unless in-window? (release-view!))))))
     (define (dismiss-completions!)
-      (set! completion-source #f) (set! completion-range #f) (set! prepared #f)
-      (set! completion-options '()) (set! completion-matches '()) (set! option-index 0)
-      (set! candidates #f) (set! pages 1) (set! page 0)
-      (unless in-window? (release-view!)))
-    (define (replace-completion s value)
-      (cons (string-append (substring s 0 (car completion-range)) value
-                           (string:tail s (cdr completion-range)))
-            (+ (car completion-range) (string-length value))))
-    (define (prepared? completer s pos)
-      (and prepared (eq? completer (car prepared))
-           (string=? s (cadr prepared)) (= pos (caddr prepared))))
-    (define (set-candidates! values)
-      (unless (equal? values candidates)
-        (set! candidates values) (set! candidate-width 0) (set! page 0)
-        (when (and view (head:popup? target) (pair? values))
-          (head:show-popup! (popup-height values)))))
-    (define (invalidate-input! new-s new-pos)
-      (unless (and (string=? new-s input) (= new-pos position))
-        (unless (prepared? completion-source new-s new-pos) (set! prepared #f))
-        (if completion-source
-            (let-values ([(start end expansion values) ((completion:source-lookup completion-source) new-s new-pos)])
-              (if (and start (= start (car completion-range)))
-                  (begin (set! completion-range (cons start end))
-                         ;; A normalized or cycled spelling keeps its options,
-                         ;; but the matches underline the symbol as it now reads.
-                         (set! completion-matches values)
-                         (when candidates (set-candidates! values)))
-                  (dismiss-completions!)))
-            (unless (string=? new-s input) (dismiss-completions!)))))
-    (define (continue-or-end! completer s pos)
-      ;; after a sole completion: the session goes on when the completer
-      ;; still offers more than the token now at pos, one within what the
-      ;; completion wrote -- a directory's entries, inside the literal the
-      ;; completion opened, say -- and the list shows it; else the session ends
-      (let-values ([(start end options values) ((completion:source-lookup completer) s pos)])
-        (if (and start completion-range (<= (car completion-range) start pos) (pair? values)
-                 (not (and (null? (cdr values))
-                           (string=? (if (completion:candidate? (car values)) (completion:candidate-value (car values)) (car values))
-                                     (substring s start end)))))
-            (begin
-              (set! completion-range (cons start end))
-              (set! completion-matches values)
-              (set-candidates! values)
-              (take-view!))
-            (dismiss-completions!))))
-    (define (show-completions! values)
-      (if (equal? values candidates)
-          (set! page (mod (+ page 1) (max 1 pages)))
-          (set-candidates! values))
-      (take-view!))
+      (completion-state:dismiss! completion-state) (sync-completion!))
     (define (page-rows width available)
       (cond [body
              (let-values ([(lines count) ((content-view-render body) input target available page)])
@@ -890,6 +810,7 @@
                             (cons (+ pad (length choices) (- cursor-row from))
                               (- cursor (car (row-input (list-ref all cursor-row))))) '(0 . 0))])
             (set! shown-rows (list->vector rows))
+            (set! shown-generation (car (completion-state:snapshot completion-state)))
             (head:view-replace! view (map row-text rows) '()
               (list (cons target point) (cons (cons 'top target) '(0 . 0))))
             (let ([lines (head:buffer-lines view)])
@@ -916,15 +837,10 @@
                    (or (not (memq target (head:windows)))
                        (not (eq? (head:window-buffer target) view))))
           (dismiss-completions!))
-        (invalidate-input! s pos)
-        (sync-searcher! s pos)
-        ;; a previewed candidate stays shown while the input is as its
-        ;; completion left it; typing on ends the showing
-        (when previewed
-          (cond [(not previewed-input) (set! previewed-input s)]
-                [(not (string=? previewed-input s)) (end-preview!)]))
+        (completion-state:refresh! completion-state s pos)
+        (sync-completion!)
         (set! input s) (set! position pos)
-        (set! note (if (and searcher (string=? next-note "")) (search-note) next-note))
+        (set! note (if (string=? next-note "") (list-ref (completion-state:snapshot completion-state) 4) next-note))
         (when draft (set-box! draft (cons s pos)))
         (if (window-lost?) #f
             (let ()
@@ -936,8 +852,6 @@
                        [result (if reindent
                                    (guard (ex [else (cons new-s new-pos)]) (reindent new-s new-pos))
                                    (cons new-s new-pos))])
-                  (when (pair? completed)
-                    (set! prepared (list (car completed) (car result) (cdr result))))
                   (loop (car result) (cdr result) "")))
               (define (history-show entry) (clear-validation!) (loop entry (string-length entry) ""))
               (define (history-up)
@@ -956,77 +870,12 @@
                 (let* ([p (paint:echo-position echo-cursor)]
                        [k (paint:echo-index-at (+ (car p) delta) (cdr p))])
                   (loop s (min (max 0 (- k (string-length label))) len) note)))
-              (define (complete-input completer)
-                (set! hist-pos -1)
-                (if (completion:source? completer)
-                    (let-values ([(start end options values) ((completion:source-lookup completer) s pos)])
-                      (cond
-                        [(not start)
-                         ;; nothing open at point: the datum before it, a closed
-                         ;; string or form, is final, and Tab settles the input
-                         ;; around it, closing complete forms and stepping to a due
-                         ;; argument, whose candidates then show; else the note
-                         (let ([settled (if (completion:source-settle completer) ((completion:source-settle completer) s pos) (cons s pos))])
-                           (if (and (string=? (car settled) s) (= (cdr settled) pos))
-                               (begin (dismiss-completions!) (loop s pos " [No symbol]"))
-                               (begin
-                                 (set! completion-source completer) (set! completion-range (cons pos pos))
-                                 (continue-or-end! completer (car settled) (cdr settled))
-                                 (edited (car settled) (cdr settled)))))]
-                        [else
-                         (set! completion-source completer) (set! completion-range (cons start end))
-                         (cond
-                           [(null? values)
-                            (when candidates (set-candidates! values))
-                            (loop s pos " [No match]")]
-                           [(and (null? (cdr values)) (completion:source-settle completer))
-                            ;; One match: insert it, close the list, and let the
-                            ;; completer settle what follows the symbol.
-                            (let* ([options (if (procedure? options) (options) options)]
-                                   [value (car values)]
-                                   [text (if (pair? options) (car options)
-                                             (if (completion:candidate? value) (completion:candidate-value value) value))]
-                                   [next (replace-completion s text)]
-                                   [settled ((completion:source-settle completer) (car next) (cdr next))])
-                              (if (and (string=? (car settled) s) (= (cdr settled) pos))
-                                  (begin (dismiss-completions!) (loop s pos ""))
-                                  (begin
-                                    (preview! value)
-                                    (continue-or-end! completer (car settled) (cdr settled))
-                                    (edited (car settled) (cdr settled)))))]
-                           [(prepared? completer s pos)
-                            (if (null? (cdr completion-options))
-                                (begin (show-completions! completion-matches) (loop s pos ""))
-                                (begin
-                                  (set! option-index (mod (+ option-index 1) (length completion-options)))
-                                  (set-candidates! completion-matches) (take-view!)
-                                  (let* ([text (list-ref completion-options option-index)] [next (replace-completion s text)])
-                                    (preview! (candidate-for text))
-                                    (edited (car next) (cdr next) completer))))]
-                           [else
-                            (set! completion-options (if (procedure? options) (options) options)) (set! option-index 0)
-                            (set! completion-matches values)
-                            (when candidates (set-candidates! values))
-                            (let ([next (replace-completion s (car completion-options))])
-                              (preview! (candidate-for (car completion-options)))
-                              (if (string=? (car next) s)
-                                  (begin
-                                    (set! prepared (list completer s (cdr next)))
-                                    (loop s (cdr next) (if candidates ""
-                                                           (format " [~a matches; Tab to list]" (length values)))))
-                                  (edited (car next) (cdr next) completer)))])]))
-                    (begin
-                      (when completion-source (dismiss-completions!))
-                      (let ([values (completer s)])
-                        (cond [(null? values) (dismiss-completions!) (loop s pos " [No match]")]
-                          [(null? (cdr values))
-                           (dismiss-completions!)
-                           (if (string=? (car values) s) (loop s len " [Sole completion]")
-                             (edited (car values) (string-length (car values))))]
-                          [else
-                           (let ([prefix (string:common-prefix values)])
-                             (if (> (string-length prefix) len) (edited prefix (string-length prefix))
-                               (begin (show-completions! values) (loop s pos ""))))])))))
+              (define (complete-input completer backwards?)
+                (set! hist-pos -1) (clear-validation!)
+                (completion-state:normalize! completion-state completer backwards?)
+                (sync-completion!)
+                (let ([snapshot (completion-state:snapshot completion-state)])
+                  (loop (cadr snapshot) (caddr snapshot) (list-ref snapshot 4))))
               (if in-window? (render!) (render-echo!))
               (paint:redraw!)
               (let* ([event (head:read-key-event #t)]
@@ -1049,7 +898,7 @@
                   [(and body (content-action! body event)) (set! page 0) (loop s pos "")]
                   [(and body (content-view-handle body) ((content-view-handle body) event))
                    (set! page 0) (loop s pos "")]
-                  [(eq? action 'cancel) (end-search! #f) (set! message "Quit") #f]
+                  [(eq? action 'cancel) (completion-state:finish! completion-state #f) (set! message "Quit") #f]
                   [(eq? action 'accept)
                    (let* ([out (if normalize (normalize s) s)]
                           [problem (and validator (validator out))])
@@ -1061,7 +910,7 @@
                              (echo:set-text! problem validation-message))
                            (loop out (if (string=? out s) pos (string-length out))
                              (if (notice? problem) problem (string-append " [" problem "]"))))
-                         (begin (end-search! #t) (record-history! out) (set! message "") out)))]
+                         (begin (completion-state:finish! completion-state #t) (record-history! out) (set! message "") out)))]
                   [(memq action '(beginning end))
                    (set! last-edge action)
                    (let ([move (prompt-edge-motion)])
@@ -1083,15 +932,8 @@
                   [(eq? action 'yank)
                    (let ([text (head:copy-text)])
                      (edited (string:insert s pos text) (+ pos (string-length text))))]
-                  ;; a live search visits its matches instead of completing
-                  [(eq? action 'complete)
-                   (cond [searcher (set! search-hit ((completion:searcher-next searcher))) (loop s pos "")]
-                         [complete (complete-input complete)]
-                         [else (loop s pos "")])]
-                  [(eq? action 'alternate-complete)
-                   (cond [searcher (set! search-hit ((completion:searcher-previous searcher))) (loop s pos "")]
-                         [alt-complete (complete-input alt-complete)]
-                         [else (loop s pos "")])]
+                  [(eq? action 'complete) (complete-input complete #f)]
+                  [(eq? action 'alternate-complete) (complete-input alt-complete #t)]
                   [(eq? action 'inspect)
                    (let ([inspect (prompt-inspector)])
                      (when inspect (guard (ex [else (void)]) (inspect s pos))))
@@ -1127,8 +969,7 @@
               (lambda () (when in-window? (take-view!)))
               run-prompt
               (lambda ()
-                (end-preview!)
-                (end-search! #f)
+                (completion-state:finish! completion-state #f)
                 (release-view!)
                 (clear-validation!)
                 (set! echo-cursor #f) (set! echo-indent #f) (set! echo-input-end #f)

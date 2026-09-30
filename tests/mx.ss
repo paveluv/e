@@ -14,7 +14,7 @@
 (eval
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
-             (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
              (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
              (prefix (state model) model:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
@@ -161,6 +161,43 @@
      ;; extends a token to the longest text every candidate still matches,
      ;; a sole candidate whole.
      (define (extensions text) (eval:completion-extensions text (string-length text)))
+     (let* ([expansions 0]
+            [source (completion:make-source
+                      (lambda (text caret)
+                        (values 0 (string-length text)
+                          (lambda () (set! expansions (+ expansions 1)) '("abc" "bca" "cba"))
+                          (if (string=? text "z") '() '("abc" "bca" "cba")))))]
+            [s (completion-state:create source #f)])
+       (completion-state:refresh! s "a" 1)
+       (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source #f)
+       (let ([page (completion-state:snapshot s)])
+         (check 'completion-normalizes-and-cycles-without-recomputing-extensions
+           (list (cadr page) (list-ref page 3) expansions) '("bca" ("abc" "bca" "cba") 1))
+         (completion-state:refresh! s "z" 1)
+         (check 'completion-refuses-stale-page-without-expansion-or-text-change
+           (list (completion-state:choose! s (car page) "abc")
+             (cadr (completion-state:snapshot s)) expansions) '(#f "z" 1)))
+       (completion-state:refresh! s "a" 1)
+       (completion-state:normalize! s source #f) (completion-state:normalize! s source #f)
+       (check 'completion-selects-current-value-and-hides-its-page
+         (list (completion-state:choose! s (car (completion-state:snapshot s)) "cba")
+           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)) '(#t "cba" #f)))
+     (let* ([events '()] [track-count 0]
+            [maker (lambda () (completion:make-searcher
+                                (lambda (needle) (set! track-count (+ track-count 1)) '(1 . 2))
+                                (lambda () '(2 . 2)) (lambda () '(1 . 2))
+                                (lambda (accepted?) (set! events (cons accepted? events)))))]
+            [source (completion:make-source (lambda (text caret) (values #f #f '() '())) #f #f
+                      (lambda (text caret) (cons maker text)))]
+            [s (completion-state:create source #f)])
+       (completion-state:refresh! s "needle" 6)
+       (completion-state:normalize! s source #f)
+       (completion-state:refresh! s "needle" 6)
+       (check 'completion-search-navigation-survives-unchanged-refresh
+         (list (list-ref (completion-state:snapshot s) 4) track-count) '(" [2 of 2]" 1))
+       (completion-state:finish! s #t) (completion-state:finish! s #f)
+       (check 'completion-search-finishes-once events '(#t)))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
          (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
