@@ -305,21 +305,25 @@
 
   (edoc "Create a table, or a single-column list, over a base collection. Each view keeps its own selection and geometry."
         (actor datum "creator") (query row-source "collection") (columns list "stable column names")
-        (configuration (list-of list) "optional alist: kind table|list, identity column, presentation (name schema), selection-policy retain|suggest after filter changes") (returns model "root view"))
+        (configuration (list-of list) "optional alist: kind table|list, identity column, presentation (name schema), selection-policy retain|suggest after filter changes, cell-commands column-to-command alist") (returns model "root view"))
   (define (create! actor query columns . configuration)
     (unless (and (list? columns) (pair? columns) (for-all symbol? columns) (distinct? columns)
               (<= (length configuration) 1)) (error 'create! "invalid table columns/options"))
     (let* ([config (if (null? configuration) '() (car configuration))]
-           [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation selection-policy)))) config)
+           [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation selection-policy cell-commands)))) config)
                     (distinct? (map car config)))]
            [kind (and valid (get config 'kind 'table))] [identity (and valid (get config 'identity (car columns)))]
-           [profile (and valid (get config 'presentation #f))])
+           [profile (and valid (get config 'presentation #f))]
+           [cells (and valid (get config 'cell-commands '()))])
       (unless (and (memq kind '(table list)) (memq identity columns)
+                (list? cells) (for-all (lambda (p) (and (pair? p) (memq (car p) columns) (symbol? (cdr p)))) cells)
+                (distinct? (map car cells))
                 (memq (get config 'selection-policy 'retain) '(retain suggest))
                 (or (eq? kind 'table) (= (length columns) 1))
                 (or (not profile) (and (list? profile) (= (length profile) 2) (symbol? (car profile)) (natural? (cadr profile)) (> (cadr profile) 0))))
         (error 'create! "invalid table presentation" config))
-      (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain))) (if profile (list (cons 'presentation profile)) '()))]
+      (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain)))
+                        (if profile (list (cons 'presentation profile)) '()) (if (null? cells) '() (list (cons 'cell-commands cells))))]
              [root (view:create! actor query kind 1 options '((selection . #f) (basis)))]
              [heading (and (eq? kind 'table) (view:create! actor #f 'table-heading 1 '() '()))]
              [scroll (view:create! actor #f 'scroll 1 '() #f)]
@@ -537,7 +541,7 @@
       (unless (equal? key (hashtable-ref emphasis id #f))
         (if key (hashtable-set! emphasis id key) (hashtable-delete! emphasis id))
         (let ([s (hashtable-ref sessions id #f)]) (when s (repaint! s))))))
-  (define-record-type visible (fields session metadata rows status spans format styles selection hover focus emphasis))
+  (define-record-type visible (fields session metadata rows status spans format styles selection hover focus emphasis options))
   (define (viewport id d width height clip)
     (let* ([s (hashtable-ref sessions (root id) #f)] [current (and s (metadata s))]
            [display (and s (session-display s))] [v (if display (car display) current)]
@@ -556,7 +560,8 @@
         (make-visible s v rows (if pending? 'pending 'ready) spans format styles
           selection (and s (or (hovered-row s)
                              (let ([h (session-hovered s)]) (and (pair? h) (eq? (car h) 'column) h))))
-          (and s (focused? s)) (and s (hashtable-ref emphasis (session-id s) #f))))))
+          (and s (focused? s)) (and s (hashtable-ref emphasis (session-id s) #f))
+          (and s (view:options (descriptor s)))))))
   (define (busy? id d)
     (let* ([s (hashtable-ref sessions id #f)] [current (and s (metadata s))]
            [display (and s (session-display s))])
@@ -618,9 +623,12 @@
               (let ([r (range:locate (session-query s) (get v 'generation 0) (caddr anchor))])
                 (and (eq? (car r) 'ready) (or (list-ref r 3) 0)))))) 0)))
 
-  (edoc "Choose an explicitly identified displayed row and activate it if the table has an activate command. Refuse a stale result or a row no longer displayed; no deferred activation is queued."
-        (receiver id (view table list)) (id model "table or descendant") (selection list "(collection generation key)"))
-  (define (choose! id selection)
+  (edoc "Choose an explicitly identified displayed row and invoke its named command, defaulting to activate when present. An explicit missing command, stale result or row no longer displayed refuses before changing selection; no deferred activation is queued."
+        (receiver id (view table list)) (id model "table or descendant") (selection list "(collection generation key)")
+        (command (list-of symbol) "optional command binding"))
+  (define (choose! id selection . command)
+    (unless (or (null? command) (and (= (length command) 1) (symbol? (car command))))
+      (error 'choose! "expected an optional command name"))
     (let* ([s (runtime id)] [current (metadata s)]
            [frame (exists (lambda (p) (find-frame (car p) (body s))) (widget:shown))]
            [shown (and frame (widget:frame-data frame))]
@@ -629,14 +637,17 @@
                   (= (cadr selection) (get (visible-metadata shown) 'generation -1))
                   (find (lambda (row) (and (equal? (cadr row) (caddr selection)) (get (cadddr row) 'selectable #t))) (or (visible-rows shown) '())))])
       (unless row (error 'choose! "displayed row is no longer available" selection))
+      (when (and (pair? command) (not (assq (car command) (widget:commands (session-id s)))))
+        (error 'choose! "table command is unavailable" (car command)))
       (save-selection! s (cadr selection) (caddr selection) (get current 'basis '()) (car row))
       (session-hovered-set! s #f) (repaint! s)
-      (when (assq 'activate (widget:commands (session-id s))) (invoke! (session-id s)))))
+      (when (or (pair? command) (assq 'activate (widget:commands (session-id s))))
+        (apply invoke! (session-id s) command))))
 
   (define (pointer-hit f x y)
     (let* ([v (widget:frame-data f)] [s (runtime (widget:frame-id f))]
            [heading? (eq? (view:kind (widget:frame-descriptor f)) 'table-heading)])
-      (and v
+      (and v (equal? (visible-options v) (view:options (descriptor s)))
         (if heading?
           (find (lambda (p) (and (memq (car (list-ref (columns s (visible-metadata v)) (car p))) (get (visible-metadata v) 'sortable '()))
                               (<= (cadr p) x (- (caddr p) 1)))) (visible-spans v))
@@ -649,7 +660,12 @@
         (list (list '(click primary ())
                 (if (eq? (view:kind (widget:frame-descriptor f)) 'table-heading)
                   (keymap:call toggle-sort! (session-id s) (car (list-ref (columns s shown) (car hit))))
-                  (keymap:call choose! (session-id s) (list (session-query s) (get shown 'generation 0) (cadr hit)))))))))
+                  (let* ([span (find (lambda (p) (<= (cadr p) x (- (caddr p) 1))) (visible-spans v))]
+                         [name (and span (car (list-ref (columns s shown) (car span))))]
+                         [command (assq name (get (view:options (descriptor s)) 'cell-commands '()))])
+                    (let ([selection (list (session-query s) (get shown 'generation 0) (cadr hit))])
+                      (if command (keymap:call choose! (session-id s) selection (cdr command))
+                        (keymap:call choose! (session-id s) selection))))))))))
   (define (event! id source d event)
     (let ([s (runtime id)])
       (case (car event)

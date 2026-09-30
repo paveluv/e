@@ -7,8 +7,8 @@
     (rename (descriptor:generation generation))
     (rename (descriptor:kind kind))
     (rename (descriptor:options options))
-    (rename (descriptor:owner owner))
-    (rename (descriptor:parent parent)) publish! release!
+    (rename (descriptor:owned owned)) (rename (descriptor:owner owner))
+    (rename (descriptor:parent parent)) publish! register-resource-kind! release!
     release-owner! reset-owners! retire! retire-scope!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
@@ -27,6 +27,25 @@
   (define (change r d) (list (field r 'id) (field r 'revision) (descriptor:references d) d))
   (define (row r) (cons (field r 'id) (value r)))
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
+  (define resource-kinds (kernel:make-registry car))
+
+  (edoc "Register a base lifecycle for explicitly owned per-view resources. Prepare receives actor and resource envelope, returning three values: a pure mapping-to-allocation-spec builder, extra old-to-new reference pairs and a rollback thunk. It may prepare owned output before the guarded allocation; rollback releases it if the fork fails. Release receives actor and resource ID. Borrowed models never use this protocol."
+        (kind symbol "model kind") (schema integer "model schema") (prepare procedure "prepare a copy")
+        (release procedure "retire resource and its owned output"))
+  (define (register-resource-kind! kind schema prepare release)
+    (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0) (procedure? prepare) (procedure? release))
+      (error 'register-resource-kind! "invalid resource lifecycle"))
+    (kernel:registry-add! resource-kinds (list (list kind schema) prepare release)))
+  (define (resource-kind r)
+    (or (kernel:registry-find resource-kinds (lambda (p) (equal? (car p) (list (field r 'kind) (field r 'schema)))))
+        (error 'view "resource lifecycle is unavailable" (field r 'kind))))
+  (define (resources r)
+    (filter values
+      (map (lambda (id)
+             (let ([resource (model:snapshot id)])
+               (when (and resource (not (equal? (field resource 'scope) (field r 'id))))
+                 (error 'view "owned resource belongs to another view" id)) resource))
+        (descriptor:owned (value r)))))
   ;; Every supported record read becomes a witness, even when unchanged.
   (define (transaction! actor plan retry? . retired)
     (let loop ()
@@ -88,32 +107,36 @@
                    (lambda (ids) (if owner (list (list (field owner 'id) (field owner 'revision) (field owner 'references) (value owner))) '())))])
         (unless ids (error 'create! "resource owner changed; retry")) (car ids))))
 
-  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing its child subtrees as unowned roots. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke their scoped views on departure. Return status and current target envelope."
+  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing its child subtrees as unowned roots, then releasing its explicitly owned resources. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke their scoped views on departure. Return status and current target envelope."
         (actor actor "resource owner") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision)
     (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'retire! "expected a revision"))
-    (let-values ([(status rows)
-                  (transaction! actor
-                    (lambda (get need put read fail)
-                      (let* ([d (need id)] [r (hashtable-ref read id #f)] [parent (descriptor:parent d)]
-                             [subtree (walk get id fail)])
-                        (unless (= revision (field r 'revision)) (fail 'stale))
-                        (when parent
-                          (let* ([p (need parent)] [root (root-of need parent fail)] [root-d (need root)])
-                            (unless (member id (map cadr (descriptor:children p))) (fail 'invalid))
-                            (when (member (descriptor:focus root-d) subtree)
-                              (put root (descriptor:with root-d '((focus . #f)))))
-                            (put parent (descriptor:with (need parent)
-                                          (list (cons 'children (filter (lambda (c) (not (equal? id (cadr c)))) (descriptor:children p))))))))
-                        (for-each
-                          (lambda (child)
-                            (let ([root (cadr child)])
-                              (for-each
-                                (lambda (id)
-                                  (let* ([d (need id)] [d (if (descriptor:owner d) (ownership d #f) d)])
-                                    (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
-                                (walk get root fail)))) (descriptor:children d)))) #f id)])
-      (values status (model:snapshot id))))
+    (let* ([before (entry id)]
+           [owned (if (and before (= revision (field before 'revision)))
+                    (map (lambda (r) (cons (field r 'id) (caddr (resource-kind r)))) (resources before)) '())])
+      (let-values ([(status rows)
+                    (transaction! actor
+                      (lambda (get need put read fail)
+                        (let* ([d (need id)] [r (hashtable-ref read id #f)] [parent (descriptor:parent d)]
+                               [subtree (walk get id fail)])
+                          (unless (= revision (field r 'revision)) (fail 'stale))
+                          (when parent
+                            (let* ([p (need parent)] [root (root-of need parent fail)] [root-d (need root)])
+                              (unless (member id (map cadr (descriptor:children p))) (fail 'invalid))
+                              (when (member (descriptor:focus root-d) subtree)
+                                (put root (descriptor:with root-d '((focus . #f)))))
+                              (put parent (descriptor:with (need parent)
+                                            (list (cons 'children (filter (lambda (c) (not (equal? id (cadr c)))) (descriptor:children p))))))))
+                          (for-each
+                            (lambda (child)
+                              (let ([root (cadr child)])
+                                (for-each
+                                  (lambda (id)
+                                    (let* ([d (need id)] [d (if (descriptor:owner d) (ownership d #f) d)])
+                                      (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
+                                  (walk get root fail)))) (descriptor:children d)))) #f id)])
+        (when (eq? status 'applied) (for-each (lambda (p) ((cdr p) actor (car p))) owned))
+        (values status (model:snapshot id)))))
 
   (edoc "Retire views scoped to an already-retired resource and their scoped descendants. Guarded allocation cannot extend this closed lifetime; borrowed sources survive."
         (actor actor "resource owner") (owner model "retired resource"))
@@ -269,7 +292,7 @@
                           (let ([d (need id)]) (when (descriptor:owner d) (fail 'owned))
                             (put id (descriptor:with d (list (cons 'basis basis) (cons 'state state)))))) #t))
 
-  (edoc "Fork a supported subtree, sharing sources and resetting ownership; the new root id."
+  (edoc "Fork a supported subtree, sharing borrowed sources and copying explicitly owned resources and their internal connections. Prepare resource output before guarded allocation; failed forks release it. Return the new root ID."
         (actor actor "creator") (id model "source view") (returns model))
   (define (fork! actor id)
     (let* ([rows (tree id)]
@@ -277,7 +300,9 @@
                              (let ([r (model:snapshot (car row))])
                                (unless (and r (equal? (value r) (cdr row)))
                                  (error 'fork! "composition changed during fork; retry")) r)) rows)]
-           [scopes (unique (filter model:reference? (map (lambda (r) (field r 'scope)) originals)))]
+           [owned (apply append (map resources originals))]
+           [all (append originals owned)]
+           [scopes (unique (filter model:reference? (map (lambda (r) (field r 'scope)) all)))]
            [owners (map (lambda (scope) (or (model:snapshot scope) (error 'fork! "resource owner is unavailable" scope))) scopes)])
       (unless (and (assoc id rows)
                    (for-all
@@ -289,39 +314,45 @@
         (error 'fork!
           "subtree contains unavailable descriptors"
           id))
-      (car (connection:fork!
-             actor
-             originals
-             (lambda (ids)
-               (let ([copies (map (lambda (row new) (cons (car row) new))
-                                  rows
-                                  ids)])
-                 (define (mapped id)
-                   (let ([found (assoc id copies)]) (and found (cdr found))))
-                 (map (lambda (row original)
-                        (let* ([old (cdr row)]
-                               [d (descriptor:with
-                                    old
-                                    (list
-                                      (cons
-                                        'parent
-                                        (and (not (equal? (car row) id))
-                                             (mapped (descriptor:parent old))))
-                                      (cons
-                                        'children
-                                        (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c)))
-                                             (descriptor:children old)))
-                                      (cons 'focus (mapped (descriptor:focus old))) '(owner . #f)
-                                      (cons 'options
-                                        (map (lambda (p)
-                                               (if (eq? (car p) 'commands)
-                                                 (cons 'commands
-                                                   (map (lambda (c) (list (car c) (or (mapped (cadr c)) (cadr c)) (caddr c) (cadddr c))) (cdr p))) p))
-                                          (descriptor:options old)))
-                                      '(generation . 0) '(sequence . 0)))])
-                          (list 'widget-view 2 (or (mapped (field original 'scope)) (field original 'scope)) (field original 'persistence)
-                            (descriptor:references d) d)))
-                      rows originals))) owners))))
+      (unless (= (length owned) (apply + (map (lambda (r) (length (descriptor:owned (value r)))) originals)))
+        (error 'fork! "an owned resource is unavailable"))
+      (let ([prepared '()])
+        (guard (ex [else
+                    (for-each (lambda (p) (guard (cleanup [else (void)]) ((caddr p)))) prepared)
+                    (raise ex)])
+          (for-each
+            (lambda (r)
+              (let-values ([(build aliases rollback) ((cadr (resource-kind r)) actor r)])
+                (when (procedure? rollback) (set! prepared (cons (list build aliases rollback) prepared)))
+                (unless (and (procedure? build) (list? aliases) (for-all pair? aliases) (procedure? rollback))
+                  (error 'fork! "invalid resource copy plan" (field r 'id))))) owned)
+          (set! prepared (reverse prepared))
+          (let ([aliases (apply append (map cadr prepared))])
+            (unless (and (= (length aliases) (length (unique (map car aliases))))
+                      (not (exists (lambda (r) (assoc (field r 'id) aliases)) all)))
+              (error 'fork! "ambiguous resource reference mapping"))
+            (car
+              (connection:fork! actor all
+                (lambda (ids)
+                  (let ([copies (append (map (lambda (r new) (cons (field r 'id) new)) all ids) aliases)])
+                    (define (mapped id) (cond [(assoc id copies) => cdr] [else id]))
+                    (append
+                      (map
+                        (lambda (row original)
+                          (let* ([old (cdr row)]
+                                 [d (descriptor:with old
+                                      (list (cons 'source (mapped (descriptor:source old)))
+                                        (cons 'parent (and (not (equal? (car row) id)) (mapped (descriptor:parent old))))
+                                        (cons 'children (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c))) (descriptor:children old)))
+                                        (cons 'focus (and (assoc (descriptor:focus old) copies) (mapped (descriptor:focus old)))) '(owner . #f)
+                                        (cons 'options
+                                          (map (lambda (p)
+                                                 (case (car p)
+                                                   [(commands) (cons 'commands (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c) (cadddr c))) (cdr p)))]
+                                                   [(owned) (cons 'owned (map mapped (cdr p)))] [else p])) (descriptor:options old)))
+                                        '(generation . 0) '(sequence . 0)))])
+                            (list 'widget-view 2 (mapped (field original 'scope)) (field original 'persistence) (descriptor:references d) d))) rows originals)
+                      (map (lambda (p) ((car p) mapped)) prepared)))) owners aliases)))))))
 
   (edoc "Release this disconnected head's descriptors, including detached or malformed trees."
         (actor actor "head"))

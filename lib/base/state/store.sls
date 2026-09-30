@@ -23,10 +23,10 @@
   (export archive! backups-kept blame buffer-list buffer-name close! conflict-state conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
-          mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision
-          rewrite! set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
+          mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision revision-span
+          rewrite! rewrite-preview set-mark! set-marks! set-properties! set-property! snapshot snapshot-since
           snapshot-state state subscribe! trash-retention undo! undo-authors undo-labels unsubscribe!
-          valid-import? validate-edit-context validate-properties view visible? visit! watch!)
+          valid-import? validate-edit-context validate-properties visible? visit! watch!)
   (import (rnrs)
           (only (chezscheme)
                 box unbox set-box! set-cdr! make-mutex with-mutex format void remq
@@ -1826,24 +1826,24 @@
                        (begin (hashtable-set! seen r #t) #t)))
              (list-sort > revisions)))))
 
-  (edoc "A view of a buffer with entries disabled, the rest rebased over their absence: (values text mapping conflicts), the text as lines, the mapping the deltas taking the current text to it as data, oldest first, and the conflicts as (revision . cause) for the entries left applied -- the revision of a later entry overlapping one, or basis-too-old. Nothing changes; facts are not consulted."
+  (edoc "A rewrite preview with entries disabled, the rest rebased over their absence: (values text mapping conflicts revision), from one source snapshot. Text is lines; mapping contains the deltas taking current text to it, oldest first; conflicts are (revision . cause) for entries left applied, with a later overlapping revision or basis-too-old as cause. Nothing changes; facts are not consulted."
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable, repetitions counted once")
-        (returns any "(values text mapping conflicts)"))
-  (define (view id disabled)
+        (returns any "(values text mapping conflicts revision)"))
+  (define (rewrite-preview id disabled)
     (locked
       (lambda ()
-        (let* ([b (buffer-of 'view id)]
-               [targets (entries-for 'view b disabled)])
+        (let* ([b (buffer-of 'rewrite-preview id)]
+               [targets (entries-for 'rewrite-preview b disabled)])
           (let-values ([(steps conflicts)
                         (plan-inversion b #f targets
-                          (lambda (target) (list 'view #f (buffer-revision b) (entry-revision target)))
+                          (lambda (target) (list 'rewrite-preview #f (buffer-revision b) (entry-revision target)))
                           #f)])
             (values (if (null? steps) (buffer-text b) (car (car (reverse steps))))
                     (map (lambda (step) (text:delta->datum (cadr step))) steps)
-                    (datum:copy conflicts)))))))
+                    (datum:copy conflicts) (buffer-revision b)))))))
 
-  (edoc "Disable entries of a buffer for everyone: their inverses, rebased across what followed, are installed as the actor's own action. Their original actions skip them while disabled; undoing the rewrite restores their membership. (values applied revision); (values blocked conflicts) as view reports them when any entry cannot be inverted or a fact it set changed; (values refused read-only|buffer)."
+  (edoc "Disable entries of a buffer for everyone: their inverses, rebased across what followed, are installed as the actor's own action. Their original actions skip them while disabled; undoing the rewrite restores their membership. (values applied revision); (values blocked conflicts) as rewrite-preview reports them when any entry cannot be inverted or a fact it set changed; (values refused read-only|buffer)."
         (actor actor "the actor identity")
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable, repetitions counted once")
@@ -2182,6 +2182,16 @@
                           [(> (entry-revision (car entries)) (entry-revision entry)) (take (cdr entries) (cons (entry-delta (car entries)) acc))]
                           [else acc]))])
       (fold-left rebase-mark-value written later)))
+
+  (edoc "Locate one retained edit's written span in the current text. Return (source-revision span-datum), with false for an expired entry. Rebase only this entry, including swallowed regions, without calculating other history spans."
+        (id integer "document") (revision integer "entry revision") (returns list))
+  (define (revision-span id revision)
+    (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'revision-span "expected an entry revision"))
+    (locked
+      (lambda ()
+        (let* ([b (buffer-of 'revision-span id)]
+               [e (find (lambda (e) (= revision (entry-revision e))) (buffer-deltas b))])
+          (list (buffer-revision b) (and e (text:span->datum (current-span-of b e))))))))
 
   (define (span-union spans)
     (let loop ([spans (cdr spans)] [start (text:span-start (car spans))] [end (text:span-end (car spans))])

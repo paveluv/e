@@ -590,10 +590,4 @@
             (list (length batches) (equal? (car batches) (cadr batches)) (equal? (caddr batches) (cadddr batches))
                   (equal? (car (car batches)) head:ui-actor))
             '(4 #t #f #t))
-     (let* ([oldest (car (car (reverse (store:log batched-id))))]
-            [outcome (call-with-values (lambda () (head:store-rewrite! batched (list oldest))) list)])
-       (check 'the-head-rewrites-through-the-store-and-adopts-the-result
-              (list outcome (head:buffer-line batched 0))
-              (list (list 'applied (store:revision batched-id)) "bcd")))
-
      (test:finish! 'edit-state)))

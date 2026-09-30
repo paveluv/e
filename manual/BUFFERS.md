@@ -261,52 +261,38 @@ conflict alternatives as well as the text. If another disk change would
 overwrite further edits to an unresolved region, reload leaves the buffer
 and its history intact and asks you to resolve the pending conflicts first.
 
-`C-x !` opens the **conflicts browser**, `<conflicts>`, in the pop-up,
-window 0, and `(delta-log:conflicts! (window n))` in any window; clicking
-the red `!!` on a status line opens it too. It lists one row per pending
-conflict of every buffer a window shows, in the order of their regions in
-the text: its buffer, the entry's revision and actor, where it stands and
-both sides. It initially selects the invoking buffer's first conflict,
-or the first available row if that buffer has none. Review is pick, then
-settle. `LEFT` picks the row's Mine side and `RIGHT` its Disk side; clicking
-either cell picks that side too.
-`S-LEFT` or the clickable `(all)` beside Mine picks Mine throughout the
-visible review; `S-RIGHT` or Disk's `(all)` picks Disk. These only change
-previews. If Mine regions overlap, the bulk choice refuses without changing
-the picks; choose those sides individually.
-`RET` and `SPC` flip the pick; nothing is settled yet,
-the picks show at once in a preview, a read-only `<preview: name>` buffer
-where the buffer was, with every mine pick's lines in place. Each region
-is coloured by the side it shows, mine one colour and disk another, and
-the row's cell for that side carries the same colour, the current row's
-brighter; the buffer's window follows the current row. Two mine picks
-whose regions share text cannot both be written, so the later pick sends
-the other back to disk and says so. The last row, `Settle all as picked:
-3 mine, 2 disk`, settles every conflict as picked on `RET`, `SPC` or a
-click; `M-RET` commits the picks from any row. Each written alternative is
-one undoable edit. A buffer's choices commit together; if its alternatives
-changed since the displayed review, Settle leaves them pending and refreshes
-the review. Changed alternatives lose their old Mine picks.
-Hovering a side cell or Settle makes it bold with a dotted
-underline. `(delta-log:show-row!)` describes both sides in full without
-changing text or picks, including on the Settle row.
-`C-x C-s` saves the row's buffer, and `ESC`
-closes the browser, the picks abandoned, the window showing what it showed
-before. The browser follows the windows and the store, so a conflict
-settled elsewhere leaves its rows, and with the last one settled the red
-`!!` goes and the buffer is savable again. The same at M-x:
-`(delta-log:conflicts)` lists the current buffer's conflicts,
-`(delta-log:pick! (conflict n) 'mine)` picks a side and
-`(delta-log:flip! (conflict n))` flips it, `(delta-log:picks)` tells the
-sides shown. `(delta-log:pick-all! 'mine)` picks every conflict of the current
-buffer; `(delta-log:pick-all! 'disk 'visible)` picks across the visible review.
-`(delta-log:resolve-all!)` settles the current buffer's conflicts
-as picked and `(delta-log:resolve-all! 'disk)` settles that same buffer all
-one way. `(delta-log:commit-picks!)` commits the whole visible review, as
-the Settle button does. `(delta-log:resolve!
-(conflict n) 'mine)` settles one now, replacement lines writing those. The
-`conflict` type completes from the pending ones and previews a candidate by
-showing its mine side while Tab has it.
+`C-x !` opens the **conflict review**, `<conflicts>`, in the pop-up;
+`(delta-log:conflicts! (window n))` opens it in another window. Clicking
+the red `!!` opens it too. Its initial scope captures the visible shared
+documents, with the invoking document first. Each row names the document,
+revision, actor, position and both alternatives. Navigating other windows
+does not silently change the scope of an existing review.
+
+`LEFT` picks Mine and `RIGHT` picks Disk; clicking those cells does the same.
+`RET` and `SPC` flip a row's choice. `S-LEFT` and `S-RIGHT`, or the
+`Mine (all)` and `Disk (all)` controls, choose throughout the review.
+Overlapping Mine alternatives cannot all be selected together; a bulk choice
+refuses atomically, while an individual Mine choice displaces overlapping
+choices. The connected read-only preview below the table follows the selected
+document and highlights its reviewed alternatives. It never replaces another
+window's source buffer. Wheel scrolling uses the ordinary widget viewport.
+
+Click **Settle** or press `M-RET` to apply the choices. Selection and preview
+commands never settle. Each document settles atomically and is undoable;
+changed alternatives or read-only sources refuse without losing other drafts.
+Unrelated source edits survive. A stale table cannot silently apply unseen
+alternatives. Changes elsewhere refresh the demanded review asynchronously.
+`ESC` returns to the host's previous document; the retained review keeps its
+choices for reopening. New reviews have independent drafts.
+
+At M-x, `(delta-log:conflicts)` lists the current document's alternatives and
+`(delta-log:resolve! (conflict n) 'mine)` settles one explicitly; replacement
+lines may be supplied instead. For scripted or embedded reviews, use
+`delta-log:create!` with an explicit document scope and host commands.
+`conflict-review:create!`, `choose!`, `preview` and `settle!` expose the base
+draft independently of any head. `delta-log:choose!`, `choose-all!` and
+`settle!` operate the widget through the same guarded paths as its controls.
+`C-x TAB` shows their forwarding chains.
 
 `C-x C-r` **rereads** the file instead: the disk's text replaces the
 buffer's as one undoable edit, settling every pending conflict, so the red
@@ -406,66 +392,35 @@ returns the same text for an extension's own label or pop-up.
 
 ## The delta log
 
-Every edit of a shared buffer is an entry in its delta log: the revision,
-the actor, the labels its command attached (a `batch` for the edits made
-together), the delta itself and, for an inverse, its origin. The log is
-saved with the session and reaches back `store:log-retention` entries. At
-M-x the `delta-log:` commands work on the current buffer's log:
+The retained delta log records edits, actors, grouping labels and inverse
+relationships. `(delta-log:log)` returns the current document's entries,
+newest first, as `(revision actor labels delta origin state)` records.
+An optional selector narrows them by `count`, `actor`, `batch`, `since`,
+`until` or `state`, for example `(delta-log:log '((count . 10)))`.
+A `(batch '(...))` literal selects that batch. `(delta-log:show! (revision n))`
+describes one retained entry in the echo area. Revision and batch arguments
+complete from the current document's log.
 
-- `(delta-log:log [selector])` lists the entries as data, newest first,
-  `(revision actor labels delta origin state)` each; a selector narrows
-  them, `'((count . 10))`, `'((actor . (agent "helper")))`, `'((state .
-  disabled))`, or by `batch`, `since` and `until`. A batch given alone, as
-  its literal `(batch '(...))`, selects its entries; Tab at the argument
-  offers the buffer's batches newest first, a replacement's the first after
-  one.
-- `(delta-log:show! (revision 12))` describes one entry in the echo area:
-  its actor, where it wrote, what it removed and inserted.
-- `(delta-log:toggle! (revision 12) ...)` disables entries in a **view**: the
-  buffer as it would read with those entries taken back and the later ones
-  rebased over their absence. The view shows at once in the window as a
-  read-only local buffer, `<view: notes.md>`, point carried across; toggling
-  a disabled entry enables it again, and further toggles re-render the view.
-  A later entry that overlaps a disabled one is a conflict, named in the echo
-  area as `5 over 1`; the view then shows the text as it stands there.
-- `(delta-log:commit!)` makes the view the trunk: the store rewrites the
-  buffer for everyone, the inverses being this head's own undoable action,
-  and the window returns to the trunk. A view with conflicts is blocked
-  until they are toggled back. `(delta-log:revert!)` abandons the view.
-- `(delta-log:view)` and `(delta-log:disabled)` report the live view.
+`C-x l` opens `<delta-log>` in the pop-up; `(delta-log:open! (window n))`
+chooses another window. The browser shows one document's retained history,
+newest first, above an independent read-only rewrite preview. `RET` or `SPC`
+toggles whether the selected revision is kept in the preview. The Preview
+column marks `keep` or `omit`. Later edits are rebased over omitted entries;
+overlapping later edits block settlement. `Settle` or `M-RET` commits the
+rewrite as an undoable action. `ESC` returns to the previous document,
+retaining the draft. The original remains editable throughout review.
 
-`C-x l` opens the **delta log browser**, `<delta-log>`, in the pop-up,
-window 0, and `(delta-log:open! (window n))` in any window, the current one
-without an argument; it lists one row per entry of every buffer a window
-shows, newest first within a buffer, under a heading: the buffer, the
-revision, the actor, the place, the removed and inserted text and the
-batch, an inverse naming the entry it undoes, redoes or reverts and a
-disabled entry the inverse it was undone, redone or reverted by, an entry
-disabled in the view marked with `-`. It starts on the invoking buffer's
-newest entry when available. The current row's text is highlighted
-in its buffer's window and point sits on it, so the window follows the rows
-as a search's follows its matches, and the rows follow the windows and the
-store before every frame. `DOWN` and `UP` move, `PGDN` and `PGUP` page,
-`M-t` toggles the row's entry in its buffer's view, which shows where the
-buffer was, `RET` describes the entry, `M-RET` commits the view, `ESC` closes
-the browser leaving point on the row's text, the window showing what it
-showed before, and `C-g` closes it putting point back where it stood.
-`(delta-log:filter! '((actor . (agent "helper"))))` narrows the rows,
-`(delta-log:filter! (batch '(...)))` to a batch's entries, a replacement's
-occurrences say, and `#f` widens them again. Both browsers look like the
-finder: a heading row, a tinted current row and no cursor. They are views
-over the commands above and ask nothing themselves; their keys are commands
-bound in the `delta-log` and `conflicts` mode contexts, so `C-x TAB` lists
-them and M-x reaches them: `delta-log:choose!` activates the selected row;
-`show-row!` only describes it, and `toggle-row!` and `flip-row!` only change
-previews. The other commands include `pick-disk!`, `pick-mine!`,
-`commit-picks!`, `next!`, `previous!`, `page-down!`,
-`page-up!`, `close!` and `cancel!`. `C-x C-s` in either browser saves the row's buffer, as it would in that buffer's window, refused while its conflicts pend.
+`(delta-log:filter! review selector)` narrows an explicit rewrite browser by
+the same selector or a batch literal; `#f` shows all history again. Filtering
+does not discard choices. Navigation, scrolling, columns and pointer handling
+use the ordinary table widget. Sources and row generations fence each action.
 
-The `revision` and `batch` types complete from the log with the entry as
-the hint, and a revision candidate previews itself: while Tab has it
-inserted, the text it wrote is highlighted in the buffer and point sits on
-it; typing on or leaving the prompt puts both back.
+`(rewrite:create! actor document)` creates an independent base draft.
+`rewrite:toggle!` and `rewrite:settle!` take its ID and expected revision;
+`rewrite:preview` returns choices, derived text, mapping, conflicts and source
+revision. `rewrite:close!` abandons it without changing the source. For a
+composition, `(delta-log:create! commands 'rewrite (list document))` creates
+an unmounted table/preview over a fresh draft, usable without an editor window.
 
 ## Line numbers
 
@@ -1034,6 +989,30 @@ the head's cached buffer. Each conflict is
 text that choosing Disk keeps, including changes since the first reload.
 Settled conflict records remain only while their resolution can be undone.
 
+For independent review drafts, use `(conflict-review:create! actor documents)`.
+The persistent model records an explicit scope, exact reviewed alternatives
+and Mine choices. `choose!` takes the draft ID, expected model revision,
+groups of `(document alternative ...)`, and `mine` or `disk`. It only changes
+choices. `refresh!` takes the draft and expected revision plus its new scope;
+it retains choices through unrelated edits when the retained history proves
+their identity and records invalidated choices otherwise.
+`settle!` takes the draft, expected revision and scoped document IDs, returning
+`(document status detail)` per document. It validates the complete reviewed
+set without silently refreshing before writing. Each document settles
+atomically and undoably; refused documents keep their choices. `preview`
+returns `(draft-revision document source-revision text regions)` for an
+explicit document. `close!` retires the draft and scoped views while keeping
+the borrowed documents. Mutating operations take the actor first.
+
+Load `conflict-source` to present a review through a collection:
+`(collection:create! actor review "" '() 'persistent)`. Demand prepares
+bounded row pages in base workers; hidden queries stop work. Rows use stable
+`(document revision)` keys and keep scope order. `conflict-source:choose!`
+takes a displayed row selection, result basis and side. Its `choose-all!`
+and `settle!` take the query, displayed generation and basis (plus the side
+for choosing). These operations take the actor first and reject stale
+listings without sending alternative text back through the command channel.
+
 In the base, `(store:state id basis)` returns `#f` for an absent buffer, or
 `(name text revision facts [changes])` from one read. Pass `#f` for no chain,
 or a revision to include it. Names and facts are owned copies; text remains
@@ -1091,8 +1070,8 @@ every head edit carries one, per action or per grouped command.
 `(store:log id [selector])` lists the retained entries newest first as
 `(revision actor labels delta origin state)`, narrowed by a selector alist
 among `count`, `actor`, `batch`, `since`, `until` and `state`; an entry is
-`disabled` while a live undo or rewrite reverts it. `(store:view id
-revisions)` gives `(values text mapping conflicts)`, the text with those
+`disabled` while a live undo or rewrite reverts it. `(store:rewrite-preview id
+revisions)` gives `(values text mapping conflicts revision)`, the text with those
 entries disabled and the rest rebased over their absence, the deltas
 taking the current text there, and `(revision . cause)` pairs for the
 entries a later entry overlaps, without changing anything;

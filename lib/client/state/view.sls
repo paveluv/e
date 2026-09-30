@@ -8,7 +8,7 @@
     (rename (descriptor:generation generation))
     (rename (descriptor:kind kind))
     (rename (descriptor:options options))
-    (rename (descriptor:owner owner))
+    (rename (descriptor:owned owned)) (rename (descriptor:owner owner))
     (rename (descriptor:parent parent)) publish! release! retire!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
@@ -24,7 +24,7 @@
   (define (create! actor source kind schema options state . scope)
     (apply client:request 'view-create source kind schema options state scope))
 
-  (edoc "Retire an unmounted view against its revision, atomically detaching it and releasing its child subtrees. Sources and command targets survive. Return status and current target envelope."
+  (edoc "Retire an unmounted view against its revision, atomically detaching it and releasing its child subtrees, then releasing explicitly owned resources. Borrowed sources and command targets survive. Return status and current target envelope."
         (actor actor "connection attribution") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision) (apply values (client:request 'view-retire id revision)))
 
@@ -35,7 +35,7 @@
         (actor actor "connection identity") (changes list "(id revision children options)") (leases list "(root generation)"))
   (define (arrange! actor changes leases) (apply values (client:request 'view-arrange changes leases)))
 
-  (edoc "Fork view descriptors while sharing domain sources." (actor actor "connection identity") (id model "view") (returns model))
+  (edoc "Fork a view subtree, sharing borrowed sources and copying explicitly owned resources and their internal connections." (actor actor "connection identity") (id model "view") (returns model))
   (define (fork! actor id) (client:request 'view-fork id))
 
   (edoc "Read a canonical view descriptor from the base. Rendering uses interaction:snapshot instead."

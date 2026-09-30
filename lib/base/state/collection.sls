@@ -6,7 +6,7 @@
           (prefix (core row) row:) (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:) (prefix (foundation string) string:)
           (prefix (foundation wire) wire:) (prefix (state connection) connection:)
-          (prefix (state model) model:) (prefix (state store) store:))
+          (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
   (define providers (kernel:make-registry car))
   (define results (make-hashtable equal-hash equal?))
   (define desired (make-hashtable equal-hash equal?))
@@ -186,7 +186,8 @@
             (for-each (lambda (ref)
                         (if (eq? (car ref) 'buffer)
                           (when (store:exists? (cadr ref)) (store:delete! '(base collection) (cadr ref)))
-                          (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)))
+                          (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)
+            (view:retire-scope! '(base collection) id)))
         (begin
           (with-mutex lock (hashtable-set! owned id (get (field r 'value) 'owned '())))
           (if (not (model:demanded? id)) (release! id #t)

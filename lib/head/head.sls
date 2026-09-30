@@ -89,7 +89,6 @@
     set-window-buffer! set-window-mounter! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
     store-history! store-reset!
-    store-resolve! store-resolve-picks! store-rewrite!
     sync-foreign-edits! tile! tool-buffer! transfer-split!
     typed-text ui-actor view-buffer? view-replace!
     view-review!  wait-for-frame! wake-main!
@@ -2156,47 +2155,6 @@
       [else
        (let-values ([(status detail)
                      (text-source:history! ui-actor (buffer-store-id b) direction scope)])
-         (when (eq? status 'applied)
-           (sync-store-buffer! b)
-           (flush-ui-audit! (buffer-store-id b)))
-         (values status detail))]))
-
-  (edoc "Disable entries of a shared buffer through the store, their inverses this head's own action, adopting the result: (values status detail), status applied, blocked or refused, nothing for a local buffer."
-        (b buffer "the buffer")
-        (disabled (list-of integer) "the revisions to disable"))
-  (define (store-rewrite! b disabled)
-    (cond
-      [(not (buffer-store-id b)) (values 'nothing #f)]
-      [else
-       (let-values ([(status detail)
-                     (guard (ex [else (values 'blocked 'store-unavailable)])
-                       (store:rewrite! ui-actor (buffer-store-id b) disabled 'any))])
-         (when (eq? status 'applied)
-           (sync-store-buffer! b)
-           (flush-ui-audit! (buffer-store-id b)))
-         (values status detail))]))
-
-  (edoc "Settle a reload conflict of a shared buffer through the store as this head's own edit, adopting the result: (values status detail), applied with the revision, refused, or nothing for a local buffer."
-        (b buffer "the buffer")
-        (revision integer "the conflicted entry's revision, as the store's conflicts list it")
-        (choice any "disk, mine or the replacement lines"))
-  (define (store-resolve! b revision choice)
-    (resolve-through-store! b (lambda (id) (store:resolve! ui-actor id revision choice 'any))))
-
-  (edoc "Settle the displayed conflict snapshot atomically as this head and adopt the result: (values status detail)."
-        (b buffer "the buffer")
-        (expected list "the reviewed conflict records")
-        (mine (list-of integer) "the revisions picked Mine"))
-  (define (store-resolve-picks! b expected mine)
-    (resolve-through-store! b (lambda (id) (store:resolve-picks! ui-actor id expected mine 'any))))
-
-  (define (resolve-through-store! b resolve)
-    (cond
-      [(not (buffer-store-id b)) (values 'nothing #f)]
-      [else
-       (let-values ([(status detail)
-                     (guard (ex [else (values 'refused 'store-unavailable)])
-                       (resolve (buffer-store-id b)))])
          (when (eq? status 'applied)
            (sync-store-buffer! b)
            (flush-ui-audit! (buffer-store-id b)))

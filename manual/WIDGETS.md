@@ -53,6 +53,47 @@ headings by zero-based position. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
+Use `((cell-commands (mine . mine) (disk . disk)))` to make specific columns
+invoke named table commands. Each command receives the same exact row
+selection and result basis as Enter. Other cells use `activate` when bound.
+`table:choose!` accepts an optional command name for the same operation in
+scripts. Stale rows or changed column geometry cannot activate a different
+cell; an explicit missing command refuses before changing selection.
+
+`review-preview:create!` takes an actor and a conflict or rewrite draft,
+returning `(request document)`. The document is disposable, read-only output;
+the original text remains editable. Connect a table's `selection` output to
+the request's `selection` input to follow rows without an extra head command.
+The request's `annotations` output connects to an editor's `annotations`
+input. Both text and highlights carry their publication revision. A preview
+retains its upstream selection dependencies only while demanded.
+Moving among rows of one unchanged document reuses the derived text. A rewrite
+preview marks its selected revision and reports `blocked` when later edits
+prevent inversion. `store:revision-span` locates one retained edit with its
+current source revision without deriving provenance for the rest of the log.
+Highlight batches contain at most 512 other conflict regions plus the
+selected region; `truncated?` in the request reports omitted highlights.
+`review-preview:close!` takes the actor and request, retiring its scoped views
+and owned output while preserving the draft and source documents.
+
+`delta-log:create!` composes these services with a table, Mine/Disk cell
+commands, explicit bulk/settle controls and an editor. Supply host commands,
+`conflicts` or `rewrite`, and an ordered list of document IDs (one for a
+rewrite). Each constructor call has its own draft and query. Row navigation
+publishes ordinary view interaction; base derivation follows the connection.
+The query owns its draft. Each root view owns its preview request and output:
+forking the view shares choices but gives each table an independent preview.
+Hiding the composition releases demand while keeping choices; retiring its
+query removes its scoped views and their resources. Source documents are
+borrowed and remain intact.
+
+A view declares private model resources in its `owned` option. Their model
+scope names that view. `view:fork!` copies them and remaps sources and internal
+connections; `view:retire!` releases them through their base kind's registered
+lifecycle. Borrowed sources remain shared. Base services register copy and
+release procedures with `view:register-resource-kind!`; copy preparation must
+provide rollback for output allocated before the guarded model transaction.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown

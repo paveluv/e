@@ -7,10 +7,10 @@
 (elibrary (state store)
   (export archive! blame buffer-list buffer-name conflict-state conflicts create! delete! discard! edit! edit-with-snapshot! exists?
           extract find-file find-named history history-step! line line-count
-          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision rewrite!
+          (rename (log-entries log)) marks metadata properties property reload! rename! reread! reset! resolve! resolve-picks! revision revision-span rewrite! rewrite-preview
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
-          view visible? visit! watch!)
+          visible? visit! watch!)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core identity) identity:)
@@ -435,12 +435,12 @@
   (define (log-entries id . selector)
     (apply client:request 'log id selector))
 
-  (edoc "A view of a buffer with entries disabled, from the base: (values text mapping conflicts)."
+  (edoc "A rewrite preview with entries disabled, from one base snapshot: (values text mapping conflicts revision)."
         (id integer "the buffer id")
         (disabled (list-of integer) "the revisions to disable")
-        (returns any "(values text mapping conflicts)"))
-  (define (view id disabled)
-    (apply values (client:request 'view id disabled)))
+        (returns any "(values text mapping conflicts revision)"))
+  (define (rewrite-preview id disabled)
+    (apply values (client:request 'rewrite-preview id disabled)))
 
   (edoc "Disable entries of a buffer for everyone through the base: (values status detail)."
         (actor actor "the actor identity")
@@ -514,6 +514,10 @@
   (define (blame id . count)
     (map (lambda (entry) (cons (text:datum->span (car entry)) (cdr entry)))
       (apply client:request 'blame id count)))
+
+  (edoc "Locate one retained edit in current text; return (source-revision span-datum), or false span for expired history."
+        (id integer "document") (revision integer "entry revision") (returns list))
+  (define (revision-span id revision) (client:request 'revision-span id revision))
 
   (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
         (actor actor "the actor identity")
