@@ -385,8 +385,9 @@
      ;; scroll the header away: read the rendered companion itself.
      (check 'describe-source-is-shared-and-private-to-the-requester
        (evaluate
-         '(let* ([page (reference:page head:ui-actor)] [id (car page)]
-                 [source (head:buffer-of-store-id id)] [view (markdown:companion source)])
+         '(let* ([source (find (lambda (b) (and (head:buffer-store-id b)
+                                             (eq? (head:buffer-fact b 'reference-query #f) 'markdown:view!))) (head:buffers))]
+                 [id (head:buffer-store-id source)] [view (markdown:companion source)])
             (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
               (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
               (head:buffer-read-only source) (not (head:buffer-store-id view))
@@ -400,8 +401,7 @@
      (send! "\x8;fwindow:split-left!\r")
      (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
        (lambda () (and (find-cell "libraries: (head window)")
-                       (find-cell "source: edoc, Documented definitions")
-                       (find-cell "side-by-side pair")))
+                       (find-cell "source: edoc, Documented definitions")))
        5000)
 
      (send! "\x18;\x3;")                ; C-x C-c

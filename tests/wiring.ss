@@ -236,8 +236,10 @@
      (check 'describe-page-retains-selection-and-refreshes-through-reload
        (read-editor
          '(let ([request-window (head:current-window)] [request-buffer (head:current-buffer)])
-            (define (show! name) ((top-level-value 'describe:show!) name))
-            (define (page) ((top-level-value 'reference:page) head:ui-actor))
+            (define receiver #f)
+            (define (show! name)
+              (set! receiver (apply (top-level-value 'describe:show!) name (if receiver (list receiver) '()))))
+            (define (page) ((top-level-value 'reference:page) head:ui-actor receiver))
             (define (document! body)
               (kernel:call-with-registration-update
                 (lambda ()

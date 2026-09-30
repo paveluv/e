@@ -2567,8 +2567,8 @@
                           (doc:register! (list data)))
                         (set-car! names 'changed-document)
                         (string-set! body 0 #\X)
-                        (describe:show! 'attached-document)
-                        (let* ([page (reference:page head:ui-actor)]
+                        (let* ([receiver (describe:show! 'attached-document)]
+                               [page (reference:page head:ui-actor receiver)]
                                [source (head:buffer-of-store-id (car page))]
                                [entry (car (reference:lookup 'attached-document))])
                           (string-set! (doc:description entry) 0 #\Y)

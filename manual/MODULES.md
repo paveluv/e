@@ -103,9 +103,9 @@ including `head:before-frame!` after establishing geometry.
 
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
-head's prompts, key annotations, and Markdown display. `reference:page!`
-publishes a private Markdown source per requesting head; the head uses the
-ordinary local Markdown companion to display it.
+head's prompts, key annotations, and Markdown display. `reference:create!`
+publishes an independent private Markdown source. `reference:select!` changes
+that explicit page against its reviewed revision; presentation stays in the head.
 
 Every library is imported with its own prefix, and that is also how M-x
 sees it: `edit:`, `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only

@@ -20,7 +20,8 @@
           (prefix (head window) window:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
-          (prefix (service reference) reference:))
+          (prefix (service reference) reference:)
+          (prefix (state store) store:))
 
   ;;; Fetching --------------------------------------------------------------------
 
@@ -38,15 +39,28 @@
 
   ;;; Display -------------------------------------------------------------------
 
+  (define refreshed '())
+  (define definition-generation 0)
+  (define (invalidate-pages!) (set! definition-generation (+ definition-generation 1)))
   (define (refresh-describe!)
-    (let* ([page (reference:page head:ui-actor)]
-           [source (and page (head:buffer-of-store-id (car page)))]
-           [view (and source (markdown:companion source))])
-      (when (and source (or (head:buffer-window-size source)
-                            (and view (head:buffer-window-size view))))
-        (let ([id (reference:page! head:ui-actor (caddr page)
-                    (keymap:command-keys (caddr page)) (cons (car page) (cadr page)))])
-          (when id (head:sync-foreign-edits! id))))))
+    ;; This outer-host adapter disappears with the Markdown widget. Keep
+    ;; refresh demand local: ordinary frames must not serialize the namespace
+    ;; or publish every visible page over the wire again.
+    (let ([context (delay (list (keymap:generation) (doc:entries) definition-generation))] [next '()])
+      (for-each
+        (lambda (w)
+          (let* ([b (head:window-buffer w)]
+                 [source (if (head:buffer-store-id b) b (head:buffer-fact b 'markdown-input #f))]
+                 [id (and (head:buffer? source) (head:buffer-store-id source))]
+                 [name (and id (head:buffer-fact source 'reference-query #f))])
+            (when (and name (not (assv id next)))
+              (let* ([basis (cons (store:revision id) (force context))] [old (assv id refreshed)])
+                (unless (and old (equal? (cdr old) basis))
+                  (when (reference:select! head:ui-actor id (car basis) name (keymap:command-keys name))
+                    (head:sync-foreign-edits! id)))
+                (set! next (cons (cons id (cons (store:revision id) (force context))) next))))))
+        (head:windows))
+      (set! refreshed next)))
 
   (define (top-level-name value)
     ;; the symbol the top level binds to a value, so a procedure written
@@ -54,13 +68,19 @@
     (find (lambda (sym) (and (top-level-bound? sym) (eq? (top-level-value sym) value)))
           (environment-symbols (interaction-environment))))
 
-  (edoc "Show every documentation entry for a name in the read-only Markdown describe buffer, or say there is none."
-        (name (or symbol string procedure) "the documented name"))
-  (define (describe! name)
+  (edoc "Show documentation in an independent Markdown page and return its source document. An optional explicit page changes that receiver only."
+        (name (or symbol string procedure) "the documented name")
+        (receiver (list-of integer) "optional reference source document") (returns (or integer #f)))
+  (define (describe! name . receiver)
+    (unless (<= (length receiver) 1) (error 'describe! "expected at most one page"))
     (let* ([name (cond [(string? name) (string->symbol name)]
                        [(symbol? name) name]
                        [else (or (top-level-name name) name)])]
-           [id (reference:page! head:ui-actor name (keymap:command-keys name))])
+           [id (if (null? receiver)
+                 (reference:create! head:ui-actor name (keymap:command-keys name))
+                 (let ([page (reference:page head:ui-actor (car receiver))])
+                   (and page (reference:select! head:ui-actor (car page) (cadr page)
+                               name (keymap:command-keys name)))))])
       (if (not id)
           (edit:set-message! (format "No documentation for ~a" name))
           (head:call-with-display-update
@@ -72,8 +92,8 @@
                     (head:with-buffer b (head:goto! '(0 . 0)))
                     (if (window:pop-up-or-reuse! b)
                         (edit:set-message! "")
-                        (edit:set-message! (format "~a: see ~a" name (head:buffer-name b)))))))))))
-    (void))
+                        (edit:set-message! (format "~a: see ~a" name (head:buffer-name b))))))))))
+      id))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
         (name symbol "the name, unquoted"))
@@ -233,12 +253,16 @@
   (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f and C-h k bindings." (public))
   (define (init!)
     ;; Rebind a head callback; selection itself belongs to the store page.
+    (kernel:add-after-reload-hook! (lambda (name) (invalidate-pages!)))
+    (log:subscribe! (lambda (entry presentation)
+                      (when (memq (log:component entry) '(reference:run-fetch! reference:begin-fetch!))
+                        (invalidate-pages!))))
     (head:add-pre-redraw-hook! refresh-describe!)
     (keymap:bind-default! "C-h k" describe-key!)
     (doc:register!
-      '(((describe:show!) (("procedure" . "(describe:show! name)")) "void"
+      '(((describe:show!) (("procedure" . "(describe:show! name [page])")) "document id or #f"
          ("(apps describe)") describe "Documentation commands" #f
-         "Display every documentation entry for `name` in a read-only Markdown `<describe>` buffer.")
+         "Open an independent Markdown page for `name` and return its source document. Supply an existing page document to change only that receiver.")
         ((describe:at-point!)
          (("procedure" . "(describe:at-point!)")) "void"
          ("(apps describe)") describe "Documentation commands" #f

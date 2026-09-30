@@ -388,11 +388,15 @@
             (if (null? (cdr args)) (option) (begin (option (cadr args)) #t)))])]
       [(reference-fetch) (control!) (arity 0) (reference:begin-fetch! actor) #t]
       [(reference-signatures) (arity 0) (reference:signatures)]
-      [(reference-page) (arity 0) (reference:page actor)]
-      [(reference-page!)
-       (control!) (arity 4)
-       (doc:call-with-entries (cadddr args)
-         (lambda () (apply reference:page! actor (car args) (cadr args) (caddr args))))]
+      [(reference-page) (arity 1) (reference:page actor (car args))]
+      [(reference-create)
+       (control!) (arity 3)
+       (doc:call-with-entries (caddr args)
+         (lambda () (reference:create! actor (car args) (cadr args))))]
+      [(reference-select)
+       (control!) (arity 5)
+       (doc:call-with-entries (list-ref args 4)
+         (lambda () (apply reference:select! actor (list-head args 4))))]
       [(reference-lookup)
        (arity 2)
        (doc:call-with-entries (cadr args) (lambda () (map doc:to-datum (reference:lookup (car args)))))]

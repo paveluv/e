@@ -1,14 +1,12 @@
 ;; Corpus work and private page publication remain in the base. Local
 ;; module documentation accompanies a query instead of becoming global.
-;; The head's page receipt is read once and kept until this head changes
-;; the page or the store reports a change to its buffer.
+;; Page receivers are explicit documents, independent within one head.
 (import (only (foundation edoc) elibrary))
 (elibrary (service reference)
-  (export browser-url entries fetch! lookup page page! signatures)
+  (export browser-url create! entries fetch! lookup page select! signatures)
   (import (chezscheme)
           (prefix (core client) client:)
           (prefix (core kernel) kernel:)
-          (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:)
           (prefix (service doc) doc:))
   (define (documents)
@@ -27,16 +25,6 @@
                          [entry (and signatures (edoc:edoc-entry sym signatures))])
                     (if entry (cons entry out) out)))
                 '() (environment-symbols (interaction-environment))))))
-  (define current 'unknown)
-  (define (forget-page!) (set! current 'unknown))
-  (define invalidation
-    (kernel:call-with-runtime-registrations
-      (lambda ()
-        (client:subscribe! 'changed
-          (lambda (batch)
-            (when (or (not batch) (and (pair? current) (assv (car current) batch)))
-              (forget-page!)))))))
-
   (define signature-cache #f) ; the base's signatures as last fetched, until the corpus changes
   (define signature-invalidation
     (kernel:call-with-runtime-registrations
@@ -49,7 +37,6 @@
 
   (edoc "Ask the base to start downloading the reference corpus; it returns at once, and the fetch's progress arrives as this head's log records, redrawn in place in the echo area.")
   (define (fetch!)
-    (forget-page!)
     (set! signature-cache #f)
     (client:request 'reference-fetch))
 
@@ -62,26 +49,30 @@
           (set! signature-cache next)
           next)))
   (define (check-head head)
-    (unless (equal? head (client:identity)) (error 'reference "a head addresses its own page")))
+    (unless (equal? head (client:identity)) (error 'reference "expected this head's identity")))
 
-  (edoc "This head's describe page receipt, (id revision selected-name), or #f."
-        (head head "the head's identity")
+  (edoc "Read an explicit reference page as (id revision selected-name), or false when unavailable."
+        (head head "requesting head") (id integer "source document")
         (returns (or list #f))
         (effects internal))
-  (define (page head)
+  (define (page head id)
     (check-head head)
-    (when (eq? current 'unknown) (set! current (client:request 'reference-page)))
-    (datum:copy current))
+    (client:request 'reference-page id))
 
-  (edoc "Publish or refresh this head's describe page for a name, sending its documented definitions along."
-        (head head "the head's identity")
-        (name (or symbol string) "the documented name")
-        (keys (list-of string) "the key spellings bound to it")
-        (basis (list-of pair) "(id . revision) to refresh, at most one"))
-  (define (page! head name keys . basis)
+  (edoc "Create an independent private reference page with this head's documented definitions. Return its source document or false for an undocumented name."
+        (head head "requesting head") (name (or symbol string) "documented name")
+        (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
+  (define (create! head name keys)
     (check-head head)
-    (forget-page!)
-    (client:request 'reference-page! name keys basis (documents)))
+    (client:request 'reference-create name keys (documents)))
+
+  (edoc "Select or refresh an explicit reference page against its revision; changed or deleted sources refuse."
+        (head head "requesting head") (id integer "source document")
+        (revision integer "reviewed revision") (name (or symbol string) "documented name")
+        (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
+  (define (select! head id revision name keys)
+    (check-head head)
+    (client:request 'reference-select id revision name keys (documents)))
 
   (edoc "Every entry for a name, this head's documented definitions included."
         (name (or symbol string) "the name")
