@@ -5,7 +5,7 @@
   (import (chezscheme) (prefix (core descriptor) descriptor:)
           (prefix (core kernel) kernel:) (prefix (foundation datum) datum:)
           (prefix (foundation text) text:) (prefix (state model) model:)
-          (prefix (state store) store:) (prefix (sys activity) activity:))
+          (prefix (state store) store:) (prefix (state view) view:) (prefix (sys activity) activity:))
 
   (define (get r k) (cdr (assq k r)))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
@@ -56,6 +56,18 @@
         (store:create! actor "<prompt>"
           (if trailing? (list->vector (append (vector->list lines) '(""))) lines)
           (list '(internal . #t) '(disposable . #t) (cons 'audience (list actor)))))))
+  (define (close-views! actor owner)
+    ;; The resource owner has already been retired. Guarded view allocation
+    ;; and forks cannot extend its lifetime while this finite set is retired.
+    ;; Command targets, sources and borrowed containment are not ownership.
+    (for-each
+      (lambda (id)
+        (let retry ()
+          (let ([r (model:snapshot id)])
+            (when (and r (equal? (get r 'scope) owner))
+              (let-values ([(status current) (view:retire! actor id (get r 'revision))])
+                (case status [(stale) (retry)] [(applied) (close-views! actor id)]))))))
+      (model:ids 'widget-view)))
 
   (edoc "Create a transient input request with a captured origin and provider recipe. A false draft creates an owned internal disposable buffer from text; an explicit buffer borrows its authored text unchanged. Parent must still be editing and belong to this head. Return a model or false when the parent became unavailable."
         (actor actor "requesting head") (parent (or model #f) "owning request")
@@ -144,6 +156,7 @@
                 (case status
                   [(stale) (loop)]
                   [(applied)
+                   (close-views! actor id)
                    (let* ([v (get r 'value)] [draft (cadr (get v 'draft))])
                      (when (and (get v 'owned?) (store:exists? draft)) (store:delete! actor draft)))]))))))))
 

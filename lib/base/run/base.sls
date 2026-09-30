@@ -129,7 +129,13 @@
       [(prompt-accept) (control!) (head!) (arity 3) (apply prompt-request:accept! actor args)]
       [(prompt-cancel) (control!) (head!) (arity 1) (prompt-request:cancel! actor (car args))]
       [(prompt-close) (control!) (head!) (arity 1) (prompt-request:close! actor (car args)) #t]
-      [(view-create) (control!) (arity 5) (apply view:create! actor args)]
+      [(view-create) (control!)
+       (unless (<= 5 (length args) 6) (error 'wire "view-create expects optional resource owner"))
+       (apply view:create! actor args)]
+      [(view-retire) (control!) (arity 2)
+       (let ([d (view:snapshot (car args))])
+         (when (and d (view:owner d)) (error 'wire "unmount a view before retiring it")))
+       (call-with-values (lambda () (apply view:retire! actor args)) list)]
       [(view-read) (arity 1) (view:snapshot (car args))]
       [(view-tree) (arity 1) (view:tree (car args))]
       [(view-arrange) (control!) (arity 2) (call-with-values (lambda () (apply view:arrange! actor args)) list)]
@@ -173,8 +179,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings prompt-request) (generic-kind! (cdr (assq 'kind r)))]
-             [(widget-view) (when (view:owner (cdr (assq 'value r))) (error 'wire "unmount a view before retiring it"))])))
+             [(connection-topology connection-bindings prompt-request widget-view) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)

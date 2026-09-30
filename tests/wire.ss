@@ -1508,15 +1508,20 @@
                (hello temporary '(head "prompt owner")) (receive temporary)
                (let* ([id (rpc temporary 'prompt-create #f #f "input" '((origin . explicit)) '(head-symbols 1))]
                       [record (caddr (caadr (rpc head 'model-read (list id))))]
-                      [draft (cadr (cdr (assq 'draft (cdr (assq 'value record)))))])
+                      [draft (cadr (cdr (assq 'draft (cdr (assq 'value record)))))]
+                      [view (rpc temporary 'view-create (list 'buffer draft) 'entry 1 '() '((0 . 0) (0 . 0)) id)]
+                      [removed (rpc temporary 'view-create #f 'label 1 '() '() id)])
                  (test:check 'prompt-wire-attribution-and-service-ownership
                    (list (rpc head 'prompt-accept id 0 0)
                      (rpc temporary 'prompt-accept id 0 0)
-                     (list-head (exchange temporary `(request 7 model-retire ,id 1)) 3))
-                   '(unavailable applied (reply 7 error)))
+                     (list-head (exchange temporary `(request 7 model-retire ,id 1)) 3)
+                     (list-head (exchange temporary `(request 7 model-retire ,removed 0)) 3)
+                     (rpc temporary 'view-retire removed 0))
+                   '(unavailable applied (reply 7 error) (reply 7 error) (applied #f)))
                  (sys:close-connection! temporary)
                  (test:await 'prompt-wire-departure-releases-owned-state
                    (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
+                                (not (caddr (caadr (rpc head 'model-read (list view)))))
                                 (not (memv draft (rpc head 'buffers))))))))
              (test:check 'bad-hello-and-duplicate-name-preserve-the-owner
                (map (lambda (message)

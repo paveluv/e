@@ -297,16 +297,24 @@
         (actor actor "the author")
         (changes list "(model-id expected-revision references value) entries"))
   (define (commit! actor changes)
+    (transact! actor changes #f))
+
+  ;; Retirement can update structural neighbors in the same writer. The
+  ;; deletion marker is internal; ordinary commits still require real values.
+  (define (transact! actor changes retired)
     (mutate!
       (lambda ()
         (let* ([actor (own-actor actor)] [changes (own-changes changes)]
                [ids (map car changes)] [before (read-records ids)])
           (if (not (matches? before changes)) (values 'stale (datum:copy before))
               (let* ([definitions (map definition-of before)]
-                     [after (map (lambda (entry change) (replace-state entry actor (caddr change) (cadddr change))) before changes)]
+                     [after (map (lambda (entry change)
+                                   (and (not (equal? (car change) retired))
+                                     (replace-state entry actor (caddr change) (cadddr change)))) before changes)]
                      [available (for-all accepts? definitions before)])
                 (when available
-                  (unless (for-all accepts? definitions after) (error 'commit! "invalid model payload" changes)))
+                  (unless (for-all (lambda (definition entry) (or (not entry) (accepts? definition entry))) definitions after)
+                    (error 'commit! "invalid model payload" changes)))
                 (with-mutex (state-lock data)
                   (let ([current (map record-of ids)])
                     (cond
@@ -314,29 +322,20 @@
                       [(or (not available) (not (for-all (lambda (definition entry) (eq? definition (definition-of entry))) definitions before)))
                        (values 'unavailable (datum:copy current))]
                       [else
-                       (for-each (lambda (id entry) (hashtable-set! (state-records data) (cadr id) entry)) ids after)
+                       (for-each (lambda (id entry)
+                                   (if entry (hashtable-set! (state-records data) (cadr id) entry)
+                                     (hashtable-delete! (state-records data) (cadr id)))) ids after)
                        (let ([changed (filter values (map (lambda (id old new) (and (not (eq? old new)) id)) ids before after))])
                          (unless (null? changed) (changed! changed)))
                        (values 'applied (datum:copy after))])))))))))
 
-  (edoc "Retire non-authored model state against its revision; values are applied with #f, or stale/unavailable with the current envelope. References are not cascaded into destructive operations."
-        (actor actor "the author") (id model "the tagged model id") (revision integer "the expected revision"))
-  (define (retire! actor id revision)
-    (mutate!
-      (lambda ()
-        (own-actor actor)
-        (unless (natural? revision) (error 'retire! "expected a nonnegative revision" revision))
-        (let* ([id (datum:copy id)] [before (car (read-records (list id)))]
-               [definition (and before (definition-of before))]
-               [available (and before (accepts? definition before))])
-          (with-mutex (state-lock data)
-            (let ([current (record-of id)])
-              (cond
-                [(or (not current) (not (eq? current before)) (not (= revision (field current 'revision))))
-                 (values 'stale (datum:copy current))]
-                [(or (not available) (not (eq? definition (definition-of current))))
-                 (values 'unavailable (datum:copy current))]
-                [else (hashtable-delete! (state-records data) (cadr id)) (changed! (list id)) (values 'applied #f)])))))))
+  (edoc "Retire non-authored model state against its revision, optionally committing guarded neighbor changes atomically. Return applied with false, or stale/unavailable with the current target envelope. References are not cascaded into destructive operations."
+        (actor actor "the author") (id model "the tagged model id") (revision integer "the expected revision")
+        (changes (list-of list) "optional batch of ordinary guarded changes, excluding the retired target"))
+  (define (retire! actor id revision . changes)
+    (unless (<= (length changes) 1) (error 'retire! "expected one neighbor change batch"))
+    (let-values ([(status rows) (transact! actor (cons (list id revision '() #f) (if (pair? changes) (car changes) '())) id)])
+      (values status (car rows))))
 
   (edoc "The persistent model representation as (values next-id envelopes), including opaque unknown schemas."
         (returns any))

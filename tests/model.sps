@@ -103,9 +103,11 @@
               (length (filter (lambda (result) (eq? (car result) 'stale)) results))
               (get (model:snapshot first) 'revision)) '(1 3 2)))
     (test:check 'model-retirement-is-guarded-and-persistence-is-explicit
-      (list (car (retire second 0)) (retire second 1) (retire second 1)
+      (list (car (retire second 0))
+            (car (call-with-values (lambda () (model:retire! author second 1 (list (list first 0 '() '("stale neighbor"))))) list))
+            (retire second 1) (retire second 1)
             (map (lambda (entry) (get entry 'id)) (cadr (exported))))
-      '(stale (applied #f) (stale #f) ((model 1) (model 3) (model 7)))))
+      '(stale stale (applied #f) (stale #f) ((model 1) (model 3) (model 7)))))
 
   ;; Definition loss during validation cannot install a stale operation.
   ;; Concurrent inspection and mutation prove no predicate holds the writer.

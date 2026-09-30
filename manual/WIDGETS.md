@@ -480,6 +480,19 @@ validate the actual target and revision before committing an effect.
 
 ## Definitions and lifetime
 
+Views are session-persistent by default. Pass an optional resource-owner model
+after the initial state in `view:create!` to give a view that model's scope and
+persistence. This is separate from containment and from the head's mount lease.
+Forking preserves resource lifetimes and remaps internal owners along with the
+copied tree. An allocation or fork refuses if its resource owner disappears.
+
+After unmounting, `view:retire!` takes actor, view and expected model revision.
+It atomically removes the view from its parent, clears affected host focus and
+releases its child subtrees as unowned roots. Sources and command targets are
+borrowed and survive. Use this operation for views; `model:retire!` handles
+ordinary model state. A resource-owning service may retire its scoped views
+when its request or session ends.
+
 `widget:register!` takes a kind, schema version and a definition alist.
 The definition's `render` field is a procedure, `actions` is an alist of
 named procedures, `contexts` lists keymap contexts, `focus` is a boolean,

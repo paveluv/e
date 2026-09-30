@@ -32,7 +32,41 @@
   (store:reset! owner source '("later"))
   (check 'prompt-accepted-text-is-a-snapshot
     (get (value request) 'outcome) '(1 #("alpha!") ((origin model 999))))
-  (prompt-request:close! owner request)
+  (let* ([host (view:create! owner #f 'column 1 '() '())]
+         [target (view:create! owner (list 'buffer borrowed) 'entry 1 '() '((0 . 0) (0 . 0)))]
+         [root (view:create! owner request 'column 1 '() '() request)]
+         [child (view:create! owner (list 'buffer source) 'entry 1
+                  (list (list 'commands (list 'accepted target 'insert '()))) '((0 . 0) (0 . 0)) root)])
+    (view:arrange! owner (list (list root 0 (list (list 'entry child '(grow 1))) '())) '())
+    (let* ([copy (view:fork! owner root)] [copied-child (cadar (view:children (view:snapshot copy)))]
+           [owned (list root child copy copied-child)])
+      (check 'prompt-scoped-views-and-forks-retain-transient-resource-ownership
+        (list (map (lambda (id) (get (model:snapshot id) 'persistence)) owned)
+          (map (lambda (id) (get (model:snapshot id) 'scope)) owned)
+          (let-values ([(next states) (model:export)])
+            (not (exists (lambda (r) (member (get r 'id) owned)) states))))
+        (list '(transient transient transient transient) (list request root request copy) #t))
+      (view:arrange! owner
+        (list (list root 1 (list (list 'entry child '(grow 1)) (list 'borrowed target 'fit)) '())
+          (list host 0 (list (list 'prompt root '(grow 1))) '())) '())
+      (view:claim! owner host)
+      (view:publish! owner (list (list host 1 1 #f '() target)))
+      (check 'view-retirement-refuses-a-stale-guard-without-unlinking
+        (list (car (call-with-values (lambda () (view:retire! owner root 0)) list))
+          (view:parent (view:snapshot root)) (view:owner (view:snapshot target)))
+        (list 'stale host owner))
+      (prompt-request:close! owner request)
+      (check 'prompt-close-releases-scoped-views-but-keeps-borrowed-targets
+        (list (map model:snapshot owned) (and (view:snapshot target) #t)
+          (test:raises? (lambda () (view:create! owner #f 'label 1 '() '() request))))
+        '((#f #f #f #f) #t #t))
+      (check 'prompt-retirement-unlinks-the-live-host-and-releases-borrowed-children
+        (list (view:children (view:snapshot host)) (view:focus (view:snapshot host))
+          (view:parent (view:snapshot target)) (view:owner (view:snapshot target))
+          (car (call-with-values (lambda () (view:claim! other target)) list)))
+        '(() #f #f #f applied)))
+    (view:retire! owner target (get (model:snapshot target) 'revision))
+    (view:retire! owner host (get (model:snapshot host) 'revision)))
   (check 'prompt-close-forgets-identity-and-owned-text
     (list (model:snapshot request) (store:exists? source)
       (prompt-request:accept! owner request 0 0)) '(#f #f unavailable))
