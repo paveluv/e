@@ -503,6 +503,14 @@ is the source envelope. A renderer receives
 rows and cell widths without splitting grapheme clusters. These callbacks
 must be bounded and free of remote requests or domain mutations.
 
+For sources with separately published presentation data, optional `snapshot`
+receives `(id latest-source)` and returns an already acquired coherent source
+envelope, or false while none is ready. It retains the source identity and
+never advances beyond the mirror. Commands and shown frames use that exact
+basis. The editor uses this to pair VT text with its rendition, retaining the
+previous pair across a publication gap. Acquisition belongs to `service`;
+`snapshot`, painting and navigation do no remote reads.
+
 `measure` receives `(data descriptor axis cross-extent measure-child)` and
 returns `(minimum preferred)`. `layout` receives
 `(descriptor width height measure-child locate-anchor)` and returns

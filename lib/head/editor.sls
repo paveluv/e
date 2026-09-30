@@ -18,11 +18,11 @@
       (integer? (cdr p)) (exact? (cdr p)) (>= (cdr p) 0)))
   (define (points source d)
     (editor-state:points (text-control:mirror source) (text-control:revision source) d))
-  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations)))
+  (define-record-type mount (fields (mutable mode) (mutable facts) (mutable dimensions) (mutable goal) (mutable group) (mutable annotations) (mutable backend?) (mutable surface)))
   (define mounts (make-hashtable equal-hash equal?))
   (define (mounted id)
     (or (hashtable-ref mounts id #f)
-      (let ([m (make-mount #f '() #f #f #f #f)]) (hashtable-set! mounts id m) m)))
+      (let ([m (make-mount #f '() #f #f #f #f #f #f)]) (hashtable-set! mounts id m) m)))
   (define dragging #f)
   (define (release! id)
     (hashtable-delete! mounts id)
@@ -73,32 +73,63 @@
           (let ([p (vector-ref index i)])
             (loop (- i 1) (if (<= row (car (text:span-end (car p)))) (cons p out) out)))))))
 
+  (define (snapshot id source)
+    (let ([m (mounted id)])
+      (if (mount-backend? m)
+        (and (mount-surface m) (equal? (assq 'id source) (assq 'id (car (mount-surface m))))
+          (car (mount-surface m))) source)))
+  (define (acquire-surface! id mirror d allocation)
+    (let* ([m (mounted id)] [document (text-source:id mirror)]
+           [backend? (store:property document 'manages-viewport #f)]
+           [old (and (mount-surface m)
+                  (equal? (cdr (assq 'id (car (mount-surface m)))) (list 'buffer document)) (mount-surface m))])
+      (unless (eq? backend? (mount-backend? m)) (widget:repaint! id #t))
+      (mount-backend?-set! m backend?)
+      (if (not backend?) (mount-surface-set! m #f)
+        (let* ([revision (text-source:revision mirror)] [lines (text-source:lines mirror)]
+               [source (if (and old (= revision (text-control:revision (car old)))
+                             (eq? lines (text-control:lines (car old)))) (car old)
+                         (list (cons 'id (list 'buffer document)) (cons 'revision revision) (cons 'value lines)))]
+               [ps (points source d)] [top (if ps (car (caddr ps)) 0)]
+               [height (if allocation (cadddr (widget:frame-rect allocation)) 1)]
+               [grid (store:property document 'size '(1 1))]
+               [frame (render:prepare (and old (cdr old)) document lines revision
+                        (list (cons (max 0 (- top height)) (+ top (* 2 height)))) (car grid))])
+          ;; Text and rendition are separate publications. Keep the last
+          ;; coherent pair until both arrive; never flash unstyled new text.
+          (when (or (render:header frame) (not (store:property document 'alive #f)))
+            (unless (and old (eq? source (car old)) (eq? frame (cdr old)))
+              (mount-surface-set! m (cons source frame)) (widget:repaint! id #t)))))))
+
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
       (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref))
               (store:visible? head:ui-actor (cadr ref)))
-        (let-values ([(source d) (text-control:context id 'editor)])
-          ;; Idle views advance their logical anchors while the mirror still
-          ;; has the delta chain. Admission itself owns settlement; adoption
-          ;; callbacks must not manufacture a newer user interaction.
-          (when (and (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
-            (let ([ps (points source d)])
-              (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
-                         (append ps (list (cadddr (editor-state:state d))))))))
-          (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
-                 [name (store:property document 'mode #f)] [mode (and name (mode:find name))]
-                 [facts (cons (cons 'wrap (store:property document 'wrap 'default))
-                          (map (lambda (key) (cons key (store:property document key #f))) (remq 'wrap (mode:required-facts mode))))]
-                 [signature (list mode (and mode (mode:render mode)) (and mode (mode:row-styles mode)) (and mode (mode:styles mode))
-                              (text-layout:wrap-lines) (text-layout:scroll-margin))])
-            (unless (equal? (widget:focused id) id) (mount-group-set! m #f))
-            ;; Metadata acquisition is on the service path, never paint or motion.
-            (unless (and (equal? signature (mount-mode m)) (equal? facts (mount-facts m)))
-              (mount-mode-set! m signature) (mount-facts-set! m facts) (widget:repaint! id #t)))))))
+        (acquire-surface! id (text-source:lookup (cadr ref)) d frame)
+        (when (or (not (mount-backend? (mounted id))) (mount-surface (mounted id)))
+          (let-values ([(source d inputs) (widget:context id 'current)])
+            ;; Idle views advance their logical anchors while the mirror still
+            ;; has the delta chain. Admission itself owns settlement; adoption
+            ;; callbacks must not manufacture a newer user interaction.
+            (when (and (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
+              (let ([ps (points source d)])
+                (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
+                           (append ps (list (cadddr (editor-state:state d))))))))
+            (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
+                   [name (store:property document 'mode #f)] [mode (and name (mode:find name))]
+                   [facts (cons (cons 'wrap (store:property document 'wrap 'default))
+                            (map (lambda (key) (cons key (store:property document key #f))) (remq 'wrap (mode:required-facts mode))))]
+                   [signature (list mode (and mode (mode:render mode)) (and mode (mode:row-styles mode)) (and mode (mode:styles mode))
+                                (text-layout:wrap-lines) (text-layout:scroll-margin))])
+              (unless (equal? (widget:focused id) id) (mount-group-set! m #f))
+              ;; Metadata acquisition is on the service path, never paint or motion.
+              (unless (and (equal? signature (mount-mode m)) (equal? facts (mount-facts m)))
+                (mount-mode-set! m signature) (mount-facts-set! m facts) (widget:repaint! id #t))))))))
   (define (prepare id source inputs)
     (text-control:mirror source)
     (let* ([m (mounted id)] [lines (text-control:lines source)]
-           [frame (render:prepare #f #f lines (text-control:revision source) '())])
+           [frame (or (and (mount-surface m) (eq? source (car (mount-surface m))) (cdr (mount-surface m)))
+                    (render:prepare #f #f lines (text-control:revision source) '()))])
       (list id source frame (mode:source lines (mount-facts m)) (and (mount-mode m) (car (mount-mode m)))
         (annotations id source inputs)
         (if (mount-mode m) (list-ref (mount-mode m) 4) (text-layout:wrap-lines))
@@ -132,10 +163,12 @@
     (let* ([m (mounted (car data))] [dimensions (cons width height)]
            [g (project data d width height #f)] [source (cadr data)] [lines (text-control:lines source)]
            [top (caddr g)] [left (cadddr g)] [wrap (layout-width data d width)]
-           [frame (render:prepare (caddr data) #f lines (text-control:revision source)
-                    (list (cons (car top) (+ (car top) height))))]
+           [frame (if (render:header (caddr data)) (caddr data)
+                    (render:prepare (caddr data) #f lines (text-control:revision source)
+                      (list (cons (car top) (+ (car top) height)))))]
            [data (cons* (car data) source frame (cdddr data))] [cache (make-eqv-hashtable)])
-      (unless (equal? dimensions (mount-dimensions m)) (mount-goal-set! m #f))
+      (unless (equal? dimensions (mount-dimensions m))
+        (mount-goal-set! m #f) (when (mount-backend? m) (head:wake-main!)))
       (mount-dimensions-set! m dimensions)
       (cons data (append (cdr g) (list (if (not (cadr g)) '()
                                          (let loop ([y 0] [row (car top)] [segment (cdr top)] [out '()])
@@ -152,11 +185,13 @@
                                                              (let ([value (call-with-values (lambda () (row-presentation data row)) list)])
                                                                (hashtable-set! cache row value) value))) out))))))))))))
   (define (row-presentation data row)
-    (let* ([source (list-ref data 3)] [mode (list-ref data 4)] [line (vector-ref (mode:source-lines source) row)]
-           [replacement (and mode (mode:render mode))] [styler (and mode (mode:row-styles mode))])
-      (render:present (caddr data) row line
-        (and replacement (guard (ex [else #f]) (replacement source row line)))
-        (or (and styler (guard (ex [else #f]) (styler source row line))) ((mode:line-styles mode) line)))))
+    (let ([surface (render:row (caddr data) row)])
+      (if surface (values (car surface) (cadr surface))
+        (let* ([source (list-ref data 3)] [mode (list-ref data 4)] [line (vector-ref (mode:source-lines source) row)]
+               [replacement (and mode (mode:render mode))] [styler (and mode (mode:row-styles mode))])
+          (render:present (caddr data) row line
+            (and replacement (guard (ex [else #f]) (replacement source row line)))
+            (or (and styler (guard (ex [else #f]) (styler source row line))) ((mode:line-styles mode) line)))))))
   (define (render projection d width height range)
     (if (not (cadr projection)) (if (zero? (car range)) (list "[Selection history unavailable]") '())
       (map (lambda (row)
@@ -650,7 +685,7 @@
         (commands list "named command procedures"))
   (define (register! commands)
     (widget:register! 'editor 1
-      (list (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
+      (list (cons 'snapshot snapshot) (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts contexts)
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (append (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!)) commands))))

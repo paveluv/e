@@ -139,7 +139,7 @@
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
                         [(focus) (boolean? (cdr p))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy?) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy?) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -152,7 +152,7 @@
         (and (not (and input (exists (lambda (e) (and (equal? id (cadr e)) (eq? (cadr input) (caddr e))))
                                      (cadr (connection:snapshot (list id))))))
           (view:source d)))))
-  (define (source! n d)
+  (define (raw-source! n d)
     (let ([id (source-id (node-id n) d)])
       (cond
         [(not d) (values #f #f)]
@@ -170,6 +170,19 @@
          (unless (node-mirrored n)
            (node-mirrored-set! n (cons (cons #f (model:available? id)) (model:snapshot id))))
          (values (cdar (node-mirrored n)) (cdr (node-mirrored n)))])))
+
+  (define (source! n d)
+    (let-values ([(available? source) (raw-source! n d)])
+      (let ([snapshot (field (definition d) 'snapshot #f)])
+        (if (and available? snapshot source)
+          (let ([next (snapshot (node-id n) source)])
+            (unless (or (not next)
+                      (and (equal? (field next 'id #f) (field source 'id #f))
+                        (integer? (field next 'revision #f))
+                        (<= 0 (field next 'revision #f) (field source 'revision #f))))
+              (error 'source! "snapshot must retain source identity and an acquired revision" (node-id n)))
+            (values (and next #t) next))
+          (values available? source)))))
 
   (edoc "List available named actions of a mounted view, including a nested child."
         (id model "view id") (returns list) (effects internal))
@@ -513,8 +526,8 @@
     (let ([rows (list->vector (map (lambda (i) (make-vector (caddr clip) #f)) (iota (cadddr clip))))])
       (for-each (lambda (p)
                   (unless (and (list? p) (= (length p) 2) (rectangle? (car p))
-                            (or (symbol? (cadr p))
-                              (and (pair? (cadr p)) (list? (cadr p)) (for-all symbol? (cadr p)))))
+                            (or (symbol? (cadr p)) (string? (cadr p))
+                              (and (pair? (cadr p)) (list? (cadr p)) (for-all (lambda (face) (or (symbol? face) (string? face))) (cadr p)))))
                     (error 'prepare! "invalid decoration" p))
                   (let ([r (layout:intersect clip (layout:translate (car p) (car rect) (cadr rect)))])
                     (do ([y (cadr r) (+ y 1)]) ((= y (+ (cadr r) (cadddr r))))
