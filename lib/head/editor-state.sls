@@ -1,7 +1,7 @@
 ;; Logical editor state shared by nested and ordinary hosts; no geometry.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor-state)
-  (export annotations? create! points state)
+  (export annotations? create! points state word-range)
   (import (chezscheme) (prefix (foundation text) text:)
           (prefix (head text-source) text-source:) (prefix (state view) view:))
 
@@ -22,16 +22,27 @@
     (text-source:rebase (list-head (state d) 3)
       (text-source:changes mirror (or (view:basis d) revision) revision)))
 
-  (edoc "Create an unmounted editor view over a shared document. Caret, anchor, logical top and mark activity belong to the view. Options include wrap (#t, #f or default) and annotations (revision-bound logical ranges); no window is created."
+  (edoc "Create an unmounted editor view over a shared document. Options include wrap (#t, #f or default), read-only (a view preference) and annotations (revision-bound logical ranges); no window is created."
         (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (returns model))
   (define (create! actor document options)
     (unless (and (integer? document) (exact? document) (> document 0)
               (list? options) (for-all (lambda (p) (and (pair? p) (case (car p)
-                                                                    [(wrap) (memq (cdr p) '(default #t #f))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
-              (or (null? options) (and (<= (length options) 2) (not (assq (caar options) (cdr options))))))
+                                                                    [(wrap) (memq (cdr p) '(default #t #f))] [(read-only) (boolean? (cdr p))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
+              (let unique ([rest options]) (or (null? rest) (and (not (assq (caar rest) (cdr rest))) (unique (cdr rest))))))
       (error 'create! "invalid document or editor options"))
     (view:create! actor (list 'buffer document) 'editor 1
       (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f)))
+
+  (edoc "The word at or immediately before a character column, as (first . end), or false on punctuation or whitespace."
+        (line string "source line") (column integer "character column") (returns any))
+  (define (word-range line column)
+    (define (word? i)
+      (and (<= 0 i) (< i (string-length line))
+        (let ([c (string-ref line i)])
+          (not (or (char-whitespace? c) (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\, #\.)))))))
+    (let ([at (cond [(word? column) column] [(word? (- column 1)) (- column 1)] [else #f])])
+      (and at (cons (let back ([i at]) (if (word? (- i 1)) (back (- i 1)) i))
+                    (let next ([i at]) (if (word? i) (next (+ i 1)) i))))))
 
   ;; An annotation batch is (document revision ((span-datum face) ...)).
   ;; It contains logical coordinates and semantic faces, never terminal cells.

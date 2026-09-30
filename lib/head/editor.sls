@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row history! insert! move! page! paste! register! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -78,6 +78,13 @@
       (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref))
               (store:visible? head:ui-actor (cadr ref)))
         (let-values ([(source d) (text-control:context id 'editor)])
+          ;; Idle views advance their logical anchors while the mirror still
+          ;; has the delta chain. Admission itself owns settlement; adoption
+          ;; callbacks must not manufacture a newer user interaction.
+          (when (and (view:basis d) (not (= (view:basis d) (text-control:revision source))))
+            (let ([ps (points source d)])
+              (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
+                         (append ps (list (cadddr (editor-state:state d))))))))
           (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
                  [name (store:property document 'mode #f)] [mode (and name (mode:find name))]
                  [facts (cons (cons 'wrap (store:property document 'wrap 'default))
@@ -195,6 +202,31 @@
       (let* ([data (car projection)] [lines (text-control:lines (cadr data))])
         (text-layout:locate lines (caddr data) (layout-width data d width)
           (caddr projection) (cadddr projection) (caadr projection)))))
+
+  (edoc "Read a prepared editor display row for host gutters and decorations. Returns (line text rendition first-cell end-cell shown), or false after the source."
+        (frame any "editor frame") (row integer "display row") (returns any))
+  (define (frame-row frame row)
+    (let* ([g (widget:frame-data frame)] [data (car g)]
+           [entry (and (cadr g) (assv row (list-ref g 6)))])
+      (and entry (list (cadr entry) (vector-ref (text-control:lines (cadr data)) (cadr entry))
+                   (caddr data) (caddr entry) (cadddr entry) (list-ref entry 4)))))
+
+  (edoc "Map a logical position into a prepared editor's backend coordinates. The result may lie outside its clip."
+        (frame any "editor frame") (position position "logical source position") (returns pair))
+  (define (frame-position frame position)
+    (let* ([g (widget:frame-data frame)] [data (car g)])
+      (text-layout:locate (text-control:lines (cadr data)) (caddr data)
+        (layout-width data (widget:frame-descriptor frame) (caddr (widget:frame-rect frame)))
+        (caddr g) (cadddr g) position)))
+
+  (edoc "Map backend coordinates through a prepared editor's source and geometry, snapping to a complete grapheme."
+        (frame any "editor frame") (x integer "column") (y integer "row") (returns position))
+  (define (frame-hit frame x y)
+    (let* ([g (widget:frame-data frame)] [data (car g)] [lines (text-control:lines (cadr data))])
+      (snap lines (caddr data)
+        (text-layout:hit lines (caddr data)
+          (layout-width data (widget:frame-descriptor frame) (caddr (widget:frame-rect frame)))
+          (caddr g) (cadddr g) (max 0 x) (max 0 y)))))
 
   (define (geometry id source d reveal?)
     (let* ([f (widget:event-frame)]
@@ -353,12 +385,27 @@
     (unless (and (equal? (car selection) (cadr selection)) (equal? replacement '("")))
       (let* ([m (mounted id)] [old (text-control:basis-text source d)] [basis (or (view:basis d) (text-control:revision source))]
              [old-group (mount-group m)]
-             [join? (and typing? (continues? m source d 'typing))]
+             [join? (and typing? (continues? m source d 'typing) (< (list-ref old-group 3) 20))]
              [key (if join? (caddr old-group) (list 'editor head:ui-actor id (gensym->unique-string (gensym))))]
+             [removed (string:join (text:extract old (text-source:span selection)) "\n")]
+             [inserted (string:join replacement "\n")]
+             [count (if join? (+ 1 (list-ref old-group 3)) 1)]
+             [left (if join? (list-ref old-group 4) "")]
+             [before (if join? (list-ref old-group 5) "")]
+             [after (if join? (list-ref old-group 6) "")]
+             [erased (if (eq? typing? 'backward) (min (string-length left) (string-length removed)) 0)]
+             [left (string-append (substring left 0 (- (string-length left) erased)) inserted)]
+             [before (if (eq? typing? 'backward)
+                       (string-append (substring removed 0 (- (string-length removed) erased)) before) before)]
+             [after (if (eq? typing? 'backward) after (string-append after removed))]
+             [deleted (string-append before after)]
+             [label (cond [(string=? deleted "") (format "insert ~s" left)]
+                      [(string=? left "") (format "delete ~s" deleted)]
+                      [else (format "replace ~s with ~s" deleted left)])]
              [document (text-source:id (text-control:mirror source))]
              [reload? (and (not join?) (document:check! head:ui-actor document))])
         (mount-group-set! m #f)
-        (let ([settled? (text-control:submit! id source d old basis (text-source:span selection) replacement (list key "Edit text")
+        (let ([settled? (text-control:submit! id source d old basis (text-source:span selection) replacement (list key label (list 'labels (cons 'batch key)))
                           (list 'end)
                           (lambda (ps)
                             (let* ([mirror (text-control:mirror source)]
@@ -368,7 +415,7 @@
           (mount-goal-set! m #f)
           (when (and settled? typing? (text-control:current? id source d))
             (let ([now (interaction:snapshot id)])
-              (mount-group-set! m (list 'typing (typing-basis now) key))))
+              (mount-group-set! m (list 'typing (typing-basis now) key count left before after))))
           ;; Clipboard publication follows admission even when a callback has
           ;; closed the view or established a newer selection.
           (for-each (lambda (callback) (callback settled?)) accepted))
@@ -391,7 +438,7 @@
           (let loop ([start 0] [end 0] [out '()])
             (cond [(= end (string-length text)) (reverse (cons (substring text start end) out))]
               [(char=? (string-ref text end) #\newline) (loop (+ end 1) (+ end 1) (cons (substring text start end) out))]
-              [else (loop start (+ end 1) out)])) typing?))))
+              [else (loop start (+ end 1) out)])) (and typing? 'insert)))))
 
   (edoc "Replace an explicit range at an editor's declared text basis as one undo action, placing the caret after the replacement."
         (id model "editor view") (start position "first endpoint") (end position "last endpoint") (text string "replacement"))
@@ -517,7 +564,7 @@
     (let-values ([(source d) (text-control:context id 'editor)])
       (let* ([s (editor-state:state d)] [p (car s)] [old (text-control:basis-text source d)])
         (replace! id source d (if (and (cadddr s) (not (equal? p (cadr s)))) s
-                                (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") #f))))
+                                (list p (adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction))))
 
   (edoc "Move an editor's source journal and rebase its view without changing any other selection."
         (id model "editor view") (direction symbol "undo or redo") (scope any "undo actor scope"))
@@ -551,11 +598,13 @@
   (define (pointer-bindings frame x y)
     (let* ([g (widget:frame-data frame)] [data (car g)] [d (widget:frame-descriptor frame)] [ps (cadr g)])
       (if (not ps) '()
-        (let* ([lines (text-control:lines (cadr data))] [width (caddr (widget:frame-rect frame))]
-               [p (snap lines (caddr data) (text-layout:hit lines (caddr data) (layout-width data d width) (caddr g) (cadddr g) (max 0 x) (max 0 y)))]
+        (let* ([p (frame-hit frame x y)]
+               [word (editor-state:word-range (vector-ref (text-control:lines (cadr data)) (car p)) (cdr p))]
                [id (widget:frame-id frame)] [current (points (cadr data) (interaction:snapshot id))])
           (append (list (list '(click primary ()) (keymap:call select! id p p))
                     (list '(wheel up ()) (keymap:call scroll! id -3)) (list '(wheel down ()) (keymap:call scroll! id 3)))
+            (if word (list (list '(double-click primary ())
+                             (keymap:call select! id (cons (car p) (cdr word)) (cons (car p) (car word))))) '())
             (if current
               (list (list '(click primary (shift)) (keymap:call select! id p (cadr current)))
                 (list '(drag primary ()) (keymap:call select! id p (cadr current)))) '()))))))
@@ -570,8 +619,9 @@
          [else (and (eq? (caddr event) 'primary)
                  (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id)))
                  (let* ([extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
-                        [binding (assoc (if extend? '(click primary (shift)) '(click primary ()))
-                                   (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5)))])
+                        [bindings (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5))]
+                        [binding (or (and (not extend?) (= (length event) 7) (> (list-ref event 6) 1) (assoc '(double-click primary ()) bindings))
+                                   (assoc (if extend? '(click primary (shift)) '(click primary ())) bindings))])
                    (and binding (begin (keymap:run! (cadr binding))
                                   (when (eq? (cadr event) 'press) (set! dragging id) (widget:capture! id)) #t))))])]
       [else #f]))
@@ -593,7 +643,7 @@
         ("S-LEFT" left #t) ("S-RIGHT" right #t) ("S-UP" up #t) ("S-DOWN" down #t)))
     (keymap:bind-default! 'widget-editor "BACKSPACE" (keymap:call delete! widget:target 'backward))
     (keymap:bind-default! 'widget-editor "DELETE" (keymap:call delete! widget:target 'forward))
-    (keymap:bind-default! 'widget-editor "RET" (keymap:call insert! widget:target "\n"))
+    (keymap:bind-default! 'widget-editor "RET" (keymap:call paste! widget:target "\n"))
     (keymap:bind-default! 'widget-editor "C-@" (keymap:call set-mark! widget:target #t))
     (keymap:bind-default! 'widget-editor "C-g" (keymap:call set-mark! widget:target #f))
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)

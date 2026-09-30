@@ -43,6 +43,7 @@
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head echo) echo:)
+          (prefix (head editor) editor:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
@@ -88,9 +89,10 @@
         (styles (or vector #f) "the per-column styles")
         (edge (or (one-of wrap trunc) #f) "the continuation mark for the last column")
         (width integer "the row width in cells")
-        (bound integer "the first column past this row's content"))
+        (bound integer "the first column past this row's content")
+        (style-origin (list-of integer) "optional cell offset of the supplied style vector"))
   (define (display-editor-line! s shown span marks links left styles edge
-                                width bound)
+                                width bound . style-origin)
     ;; edge: #f, or the continuation mark for the last column -- 'wrap
     ;; (the line goes on below) or 'trunc (past the right edge).
     ;; bound: the first column past this row's content (a word-wrapped
@@ -98,7 +100,8 @@
     (define n (min (if (vector? s) (vector-length s) (string-length s)) bound))
     (define limit (+ left width (if edge -1 0)))
     (define (style-at col)
-      (if (and (vector? styles) (< col n) (< col (vector-length styles))) (vector-ref styles col) 'plain))
+      (let ([at (- col (if (null? style-origin) 0 (car style-origin)))])
+        (if (and (vector? styles) (< col n) (<= 0 at) (< at (vector-length styles))) (vector-ref styles at) 'plain)))
     (define (mark-style m)
       (if (pair? (cddr m)) (caddr m) 'mark))
     (define (covers? m col)
@@ -538,7 +541,7 @@
     ;; The ordinary-window boundary adapts logical source spans to the old
     ;; painter protocol. Providers themselves never see a window or buffer.
     (let* ([b (head:current-buffer)] [lines (head:window-text (head:current-window))])
-      (if (or (head:app-buffer? b) (not (vector? lines))) '()
+      (if (or (editor-frame (head:current-window)) (head:app-buffer? b) (not (vector? lines))) '()
         (apply append
           (map (lambda (p)
                  (let* ([s (text:datum->span (car p))] [start (text:span-start s)] [end (text:span-end s)])
@@ -702,11 +705,38 @@
            [col (max 0 (- x 1 (head:window-xoff w)
                           (if (eq? (head:window-scrollbar? w) 'left) 1 0)
                           (head:window-line-number-width w)))])
-      (if (< k sticky)
-        (let ([row (min k (- (render:line-count v) 1))]) (cons row (render:character frame row col)))
-        (text-layout:hit v frame (and (window-wrapped? w) (wrap-width w))
-          (cons (max sticky (head:window-top w)) (head:window-topseg w))
-          (head:window-left w) col (- k sticky)))))
+      (cond [(editor-frame w) => (lambda (f) (editor:frame-hit f col k))]
+        [else (if (< k sticky)
+                (let ([row (min k (- (render:line-count v) 1))]) (cons row (render:character frame row col)))
+                (text-layout:hit v frame (and (window-wrapped? w) (wrap-width w))
+                  (cons (max sticky (head:window-top w)) (head:window-topseg w))
+                  (head:window-left w) col (- k sticky)))])))
+
+  (define (editor-frame w)
+    (let* ([id (head:window-editor w)] [f (and id (widget:prepared id))])
+      (and f (pair? (widget:frame-data f)) f)))
+
+  (define (paint-editor! w f start height ranges)
+    (let* ([b (head:window-buffer w)] [current? (eq? w (head:current-window))]
+           [gutter (head:window-line-number-width w)]
+           [x (+ (head:window-xoff w) (if (eq? (head:window-scrollbar? w) 'left) 1 0))]
+           [width (head:window-content-width w)] [n (head:buffer-line-count b)])
+      (do ([y 0 (+ y 1)]) ((= y height))
+        (paint-scrollbar! w (+ start y) y height 0 (head:window-top w) n)
+        (let ([row (editor:frame-row f y)])
+          (paint-line-number! (+ start y) x gutter (and row (car row)) (and row (zero? (list-ref row 3))))
+          (if (not row)
+            (paint! (+ start y) (+ x gutter) '(empty) (lambda () (ansi! (fit "" width))))
+            (let* ([i (car row)] [line (cadr row)] [frame (caddr row)]
+                   [left (list-ref row 3)] [bound (list-ref row 4)] [shown (list-ref row 5)]
+                   [styles (widget:frame-cell-styles f y)]
+                   [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
+                   [links (cell-ranges frame i (text-hyperlinks b i line))]
+                   [edge (if (window-wrapped? w)
+                           (and (not (clean-wrap? w)) (< bound (render:width frame i (string-length line))) 'wrap)
+                           (and (> bound (+ left width)) 'trunc))])
+              (paint! (+ start y) (+ x gutter) (list 'editor shown left bound styles marks links edge width)
+                (lambda () (display-editor-line! shown shown #f marks links left styles edge width bound left)))))))))
 
   (edoc "Blank the terminal, its selection highlight included, and schedule the full repaint.")
   (define (erase-screen!)
@@ -832,14 +862,15 @@
       ;; a soft-wrapping window painting a long line as successive
       ;; slices (the same line at successive left offsets), others one
       ;; row per line.
-      (let loop ([k 0] [i (if (> sticky 0) 0 top)]
-                 [seg (if (> sticky 0) 0 (head:window-topseg w))])
-        (when (< k height)
-          (let ([row (+ start k)])
-            (paint-scrollbar! w row k height sticky top n)
-            (paint-line-number! row gutter-x gutter-width
-                                (and (< i n) i) (= seg 0))
-            (if (< i n)
+      (if (editor-frame w) (paint-editor! w (editor-frame w) start height ranges)
+        (let loop ([k 0] [i (if (> sticky 0) 0 top)]
+                   [seg (if (> sticky 0) 0 (head:window-topseg w))])
+          (when (< k height)
+            (let ([row (+ start k)])
+              (paint-scrollbar! w row k height sticky top n)
+              (paint-line-number! row gutter-x gutter-width
+                                  (and (< i n) i) (= seg 0))
+              (if (< i n)
                 (let* ([line (render:line-ref v i)]
                        [data (render:row frame i)]
                        [width (render:width frame i (string-length line))]
@@ -895,7 +926,7 @@
                 (begin
                   (paint! row content-x '(empty)
                           (lambda () (ansi! (fit "" content-width))))
-                  (loop (+ k 1) (+ i 1) 0))))))
+                  (loop (+ k 1) (+ i 1) 0)))))))
       ;; the window's number, then a hairline flush against it (U+258F,
       ;; the left one-eighth block: single width, in every monospace
       ;; font's block range) so the gap falls after the line, not before
@@ -1679,9 +1710,10 @@
     (let* ([entry (assq w (window-layout))] [sticky (head:buffer-sticky-lines (head:window-buffer w))]
            [frame (head:window-rendition w)]
            [x (+ (head:window-xoff w) (if (eq? (head:window-scrollbar? w) 'left) 1 0) (head:window-line-number-width w))]
-           [p (if (< prow sticky) (cons (- (render:column frame prow pcol) (head:window-left w)) (- prow sticky))
-                (text-layout:locate (head:window-text w) frame (and (window-wrapped? w) (wrap-width w))
-                  (cons (max sticky (head:window-top w)) (head:window-topseg w)) (head:window-left w) (cons prow pcol)))])
+           [p (cond [(editor-frame w) => (lambda (f) (editor:frame-position f (cons prow pcol)))]
+                [else (if (< prow sticky) (cons (- (render:column frame prow pcol) (head:window-left w)) (- prow sticky))
+                        (text-layout:locate (head:window-text w) frame (and (window-wrapped? w) (wrap-width w))
+                          (cons (max sticky (head:window-top w)) (head:window-topseg w)) (head:window-left w) (cons prow pcol)))])])
       (cons (+ 1 (cadr entry) sticky (cdr p)) (+ 1 x (car p)))))
 
   (edoc "Park the cursor in the echo area for a prompt or a running evaluation, else at point in the current window.")
@@ -1696,7 +1728,7 @@
     ;; rules take effect without a repaint.
     (let* ([cursor (echo-cursor-now)]
            [a (head:app-of (head:window-buffer (head:current-window)))]
-           [root (head:buffer-fact (head:current-buffer) 'widget-id #f)]
+           [root (head:window-widget (head:current-window))]
            [placement (and root (find (lambda (p) (equal? root (widget:frame-id (car p)))) (shadow-widgets (current-shadow))))]
            [widget-caret (and placement (widget:caret (car placement)))]
            [visible? (or cursor widget-caret (and (not root) (head:app-cursor-visible-in? (head:current-window))))])
@@ -1796,12 +1828,17 @@
                                      (head:window-line-number-width w)
                                      (head:buffer-sticky-lines (head:window-buffer w))))
                              (head:windows)))])
-        (for-each (lambda (entry) (scroll-window! (car entry) (caddr entry)))
+        (for-each (lambda (entry)
+                    (let* ([w (car entry)] [id (head:window-editor w)])
+                      (if (and id (guard (ex [else #f]) (widget:host id)))
+                        (begin (widget:set-active! id (eq? w (head:current-window)))
+                          (widget:prepare! id (if (window-wrapped? w) (wrap-width w) (head:window-content-width w)) (caddr entry)))
+                        (scroll-window! w (caddr entry)))))
                   layout)
         (begin-frame! view rows)
         (shadow-widgets-set! (current-shadow)
           (filter values (map (lambda (entry)
-                                (let* ([w (car entry)] [id (head:buffer-fact (head:window-buffer w) 'widget-id #f)]
+                                (let* ([w (car entry)] [id (head:window-widget w)]
                                        [frame (and id (widget:prepared id))])
                                   (and frame (list frame
                                                (+ (head:window-xoff w)

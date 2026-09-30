@@ -16,7 +16,7 @@
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (head dispatch) dispatch:)
-          (prefix (head edit) edit:)
+          (prefix (head edit) edit:) (prefix (head editor-state) editor-state:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
@@ -49,29 +49,12 @@
       (and (pair? gesture) (eq? (car gesture) w)
            (eq? (cdr gesture) (head:window-buffer w)))))
 
-  (define (word-char? c)
-    (not (or (char-whitespace? c)
-             (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\, #\.)))))
-
   (define (select-word!)
-    ;; Select the word point is on (or just after): mark at its start,
-    ;; point at its end.
-    (let* ([w (head:current-window)] [b (head:window-buffer w)]
-           [row (head:window-prow w)] [col (head:window-pcol w)]
-           [s (head:buffer-line b row)]
-           [n (string-length s)]
-           [on? (lambda (i)
-                  (and (>= i 0) (< i n) (word-char? (string-ref s i))))]
-           [at (cond [(on? col) col]
-                     [(on? (- col 1)) (- col 1)]
-                     [else #f])])
-      (when at
-        (head:buffer-mark-row-set! b row)
-        (head:buffer-mark-col-set! b (let back ([i at])
-                                       (if (on? (- i 1)) (back (- i 1)) i)))
-        (head:window-pcol-set! w (let fwd ([i at])
-                                   (if (on? i) (fwd (+ i 1)) i)))
-        (head:buffer-marked-set! b #t))))
+    (let* ([w (head:current-window)] [b (head:window-buffer w)] [row (head:window-prow w)]
+           [range (editor-state:word-range (head:buffer-line b row) (head:window-pcol w))])
+      (when range
+        (head:buffer-mark-row-set! b row) (head:buffer-mark-col-set! b (car range))
+        (head:window-pcol-set! w (cdr range)) (head:buffer-marked-set! b #t))))
 
   (define (arm-text-selection! double?)
     ;; the mark at point, inactive: dragging activates it, a motionless
@@ -98,7 +81,7 @@
 
   ;;; Presses, drags and releases -------------------------------------------------------
 
-  (define (mouse-press! x y button)
+  (define (mouse-press! x y button double?)
     ;; A normal-buffer press focuses its window and places point. An app text
     ;; press instead updates and invokes the app without stealing focus; only
     ;; an app status-bar press focuses that window. A text press also arms the
@@ -108,7 +91,7 @@
     ;; than the lowest) arms a resize drag instead.
     ;; The terminal's own Shift-selection highlight is not touched here
     ;; (erasing on every press flickers); C-l clears it.
-    (let ([double? (head:double-click? x y (real-time))])
+    (let ()
       (cond
         [(head:window-button-at (- x 1) (- y 1)) =>
          (lambda (control)
@@ -322,18 +305,18 @@
         (tell-app! (car target) "MOUSE-MOVE" target x y)
         (set! hover-window (car target)))))
 
-  (define (widget-mouse! c b x y)
+  (define (widget-mouse! c b x y double?)
     (let* ([motion? (not (zero? (bitwise-and b 32)))] [wheel? (not (zero? (bitwise-and b 64)))]
            [button (case (bitwise-and b 3) [(0) 'primary] [(1) 'middle] [(2) 'secondary] [else 'none])]
            [mods (filter values (map (lambda (p) (and (not (zero? (bitwise-and b (car p)))) (cdr p))) '((4 . shift) (8 . meta) (16 . control))))]
            [event (if wheel? (case (bitwise-and b 3) [(0) '(scroll 0 -3 cells)] [(1) '(scroll 0 3 cells)] [(2) '(scroll -3 0 cells)] [else '(scroll 3 0 cells)])
-                    (list 'pointer (cond [(char=? c #\m) 'release] [motion? 'move] [else 'press]) button mods))]
+                    (list 'pointer (cond [(char=? c #\m) 'release] [motion? 'move] [else 'press]) button mods (if double? 2 1)))]
            [result (parameterize ([head:app-event-focus (head:current-window)])
                      (widget:pointer! event (- x 1) (- y 1)))])
       (and result
         (begin
           (when (cadr result)
-            (let ([w (find (lambda (w) (equal? (car result) (head:buffer-fact (head:window-buffer w) 'widget-id #f))) (head:windows))])
+            (let ([w (find (lambda (w) (equal? (car result) (head:window-widget w))) (head:windows))])
               (when w (window:focus! w))))
           (if (and motion? (eq? button 'none)) 'ignore "MOUSE-HANDLED")))))
 
@@ -343,37 +326,39 @@
     ;; for the loop, so it settles nothing.  A context that must not
     ;; change editor focus passes handle? #f: the report is consumed
     ;; without being applied.
-    (set! last-position (and handle? (cons x y)))
-    ;; A new press replaces any preceding host gesture, including when a
-    ;; widget receives it. Motion and release instead belong to the original
-    ;; owner: entering a widget must not steal a divider or text drag.
-    (when (and handle? (char=? c #\M) (< (bitwise-and b 3) 3)
-               (zero? (bitwise-and b 96)))
-      (head:set-drag! #f))
-    (cond [(and handle?
-                (not (and (head:drag) (zero? (bitwise-and b 64))
-                          (or (char=? c #\m) (not (zero? (bitwise-and b 32))))))
-                (widget-mouse! c b x y)) => values]
-          [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
-                (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
-           (when handle? (mouse-move! x y))
-           'ignore]
-          [(not handle?) #f]
-          [(char=? c #\m)                         ; release
-           (mouse-release! x y b)
-           (head:set-drag! #f)
-           "MOUSE-HANDLED"]
-          [(= (bitwise-and b 64) 64)               ; wheel
-           (mouse-wheel! x y b (bitwise-and b 3)
-                         (= (bitwise-and b 8) 8)
-                         (= (bitwise-and b 4) 4))]
-          [(= (bitwise-and b 32) 32)               ; drag
-           (when (< (bitwise-and b 3) 3)
-             (mouse-drag! x y b))
-           "MOUSE-HANDLED"]
-          [(< (bitwise-and b 3) 3)                 ; a press
-           (mouse-press! x y b)]
-          [else "MOUSE-HANDLED"]))
+    (let ([double? (and handle? (char=? c #\M) (< (bitwise-and b 3) 3)
+                     (zero? (bitwise-and b 96)) (head:double-click? x y (real-time)))])
+      (set! last-position (and handle? (cons x y)))
+      ;; A new press replaces any preceding host gesture, including when a
+      ;; widget receives it. Motion and release instead belong to the original
+      ;; owner: entering a widget must not steal a divider or text drag.
+      (when (and handle? (char=? c #\M) (< (bitwise-and b 3) 3)
+              (zero? (bitwise-and b 96)))
+        (head:set-drag! #f))
+      (cond [(and handle?
+               (not (and (head:drag) (zero? (bitwise-and b 64))
+                         (or (char=? c #\m) (not (zero? (bitwise-and b 32))))))
+               (widget-mouse! c b x y double?)) => values]
+        [(and (char=? c #\M) (= (bitwise-and b 3) 3)      ; motion
+              (= (bitwise-and b 32) 32) (zero? (bitwise-and b 64)))
+         (when handle? (mouse-move! x y))
+         'ignore]
+        [(not handle?) #f]
+        [(char=? c #\m)                         ; release
+         (mouse-release! x y b)
+         (head:set-drag! #f)
+         "MOUSE-HANDLED"]
+        [(= (bitwise-and b 64) 64)               ; wheel
+         (mouse-wheel! x y b (bitwise-and b 3)
+                       (= (bitwise-and b 8) 8)
+                       (= (bitwise-and b 4) 4))]
+        [(= (bitwise-and b 32) 32)               ; drag
+         (when (< (bitwise-and b 3) 3)
+           (mouse-drag! x y b))
+         "MOUSE-HANDLED"]
+        [(< (bitwise-and b 3) 3)                 ; a press
+         (mouse-press! x y b double?)]
+        [else "MOUSE-HANDLED"])))
 
   (define (button-code button)
     (case button [(primary) 0] [(middle) 1] [(secondary) 2]
@@ -386,7 +371,7 @@
       (apply string-append (map (lambda (m) (case m [(control) "C-"] [(meta) "M-"] [(shift) "S-"] [else (error 'gesture-text "unknown modifier" m)])) (caddr gesture)))
       (case (car gesture)
         [(wheel) (string-append "Wheel " (symbol->string (cadr gesture)))]
-        [(click drag)
+        [(click double-click drag)
          (string-append (case (cadr gesture) [(primary) "Left"] [(middle) "Middle"] [(secondary) "Right"] [else (error 'gesture-text "unknown button" gesture)])
            " " (symbol->string (car gesture)))]
         [else (error 'gesture-text "unknown gesture" gesture)])))
@@ -419,7 +404,7 @@
                   (head:window-at (- x 1) (- y 1)
                     (lambda (entry)
                       (or (= (- y 1) (+ (cadr entry) (caddr entry)))
-                        (not (head:buffer-fact (head:window-buffer (car entry)) 'widget-id #f))))))
+                        (not (head:window-widget (car entry)))))))
               (append
                 (map (lambda (button) (list (list 'click button '()) (keymap:call click! x y button))) '(primary middle secondary))
                 (map (lambda (direction) (list (list 'wheel direction '()) (keymap:call scroll! x y direction))) '(up down left right))) '()))))))

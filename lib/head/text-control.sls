@@ -60,10 +60,12 @@
         (context any "journal grouping and witnesses") (positions list "desired result positions") (state procedure "portable state constructor"))
   (define (submit! id source d old basis span replacement context positions state)
     (unless (current? id source d) (refuse "The text view was closed or its source changed"))
+    (when (cond [(assq 'read-only (view:options d)) => cdr] [else #f]) (refuse "This text view is read-only"))
     (let ([m (mirror source)])
       (let-values ([(lines rev changes points committed)
                     (text-source:edit! head:ui-actor (list old (text-source:id m) basis) span replacement context positions)])
         (text-source:adopt! m basis lines rev changes)
+        (head:note-ui-edit! (text-source:id m) committed)
         (settle! id source d m rev points state))))
 
   (edoc "Apply source undo/redo and rebase a still-current view's logical positions through the same journal."
@@ -72,6 +74,7 @@
         (positions list "logical anchors") (state procedure "portable state constructor"))
   (define (history! id source d direction scope positions state)
     (unless (current? id source d) (refuse "The text view was closed or its source changed"))
+    (when (cond [(assq 'read-only (view:options d)) => cdr] [else #f]) (refuse "This text view is read-only"))
     (let* ([m (mirror source)] [basis (or (view:basis d) (revision source))])
       (let-values ([(status detail) (text-source:history! head:ui-actor (text-source:id m) direction scope)])
         (when (eq? status 'applied)

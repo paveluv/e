@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
-          frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
+          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
           host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! register! repaint! reveal! set-active! shown target unmount!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
@@ -552,6 +552,11 @@
             (loop (cdr parts) (+ char (caar parts)) (+ cell (cdar parts)))))
         styles)))
 
+  (edoc "Read an immutable prepared row of backend cell styles, or false outside the frame. Borrowed rows must not be mutated."
+        (frame any "widget frame") (row integer "row index") (returns any))
+  (define (frame-cell-styles frame row)
+    (and (<= 0 row) (< row (vector-length (frame-cells frame))) (vector-ref (frame-cells frame) row)))
+
   (edoc "The focused view's caret within this frame, in root backend coordinates, or #f when clipped or unavailable."
         (frame any "root frame") (returns any))
   (define (caret frame)
@@ -852,7 +857,7 @@
                     (or scroll? (and definition (assq 'scroll (field definition 'actions '())))))))))))))
 
   (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
-        (event list "(pointer phase button modifiers) or (scroll dx dy units)")
+        (event list "(pointer phase button modifiers [click-count]) or (scroll dx dy units)")
         (x integer "screen x, zero based") (y integer "screen y, zero based") (returns any))
   (define (pointer! event x y)
     (reconcile-input!)
@@ -896,7 +901,9 @@
                           (when target
                             (unless (parameterize ([pointer-event event])
                                       (send! (frame-id target)
-                                        (append event (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))) target))
+                                        (append (list-head event 4)
+                                          (list (- x (car (frame-rect target))) (- y (cadr (frame-rect target))))
+                                          (cddddr event)) target))
                               (loop (cdr ids))))))))))))
           (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'release) (eq? (caddr event) capture-button))
             (set! pointer-capture #f) (set! capture-button #f))

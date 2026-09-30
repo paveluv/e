@@ -185,7 +185,7 @@
          (cancel!)
          (echo:settle!)
          (void)]
-        [(head:buffer-fact (head:current-buffer) 'widget-id #f)
+        [(head:window-widget (head:current-window))
          => (lambda (root)
               (echo:settle!)
               (input! root (if (string=? event "PASTE") (list 'text (head:read-paste) 'paste)

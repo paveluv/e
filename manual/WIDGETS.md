@@ -786,8 +786,10 @@ outer host. Paste uses the text path alone. Chords advance one event at a
 time, and focus, definition or binding changes invalidate their pending
 suffix. Prompt readers use the same resolver.
 
-Pointer callbacks receive `(pointer phase button modifiers x y)` in their
-allocation's coordinates. `widget:event-frame` supplies the shown source
+Pointer callbacks receive `(pointer phase button modifiers x y [click-count])`
+in their allocation's coordinates. Backends can append a click count;
+omission means one press. The editor exposes word selection as a
+`double-click` binding. `widget:event-frame` supplies the shown source
 basis; `widget:capture!` keeps motion and release on that target outside its
 rectangle. Blur, removal and failed output cancel capture. The TUI decodes
 device button codes before routing. Wheel movement changes scroll anchors,
@@ -800,6 +802,8 @@ view over an existing store document. Mount it directly, compose it with
 other views, or pass its root to `window:show-widget!`. With `()` or
 `((wrap . default))`, wrapping follows the document's `wrap` fact, then
 `paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
+`((read-only . #t))` prevents edits and undo through this view without making
+the shared document read-only. Selection and copying remain available.
 Caret movement uses the same `paint:scroll-margin` as ordinary windows.
 The `text` output port exposes
 single-line sources, like Entry; multiline sources do not satisfy that
@@ -813,8 +817,10 @@ Ordinary document windows also retain a separate editor view for each
 document they visit. Switching away and back restores that window's selection;
 splitting creates an independent selection over the same text. The outer
 checkpoint retains view identities, so resume reuses their saved state.
-Painting uses the document's mode and the same text projection as ordinary
-windows. Mode metadata is acquired outside painting; warm navigation and
+Ordinary windows route keyboard input, mouse selection and body painting
+through these same editor widgets, while keeping the actual document as
+their buffer. Gutters, scrollbars and status bars belong to the outer host.
+Mode metadata is acquired outside painting; warm navigation and
 resizing use the shared mirror without requesting text or publishing geometry.
 
 The canonical commands take an explicit view, including `(model N)` at M-x:
@@ -826,8 +832,9 @@ The canonical commands take an explicit view, including `(model N)` at M-x:
   an allocation. Omitted `extend` follows mark activity.
 - `edit:set-mark! id active` starts selection at the caret or collapses it.
 - `edit:insert! id text` and `edit:delete! id direction` use the source journal;
-  deletion directions are `backward` and `forward`. Consecutive insertions at their unchanged resulting caret share
-  an undo group; movement or a source change ends the run.
+  deletion directions are `backward` and `forward`. Consecutive insertions and
+  corrections share a labeled undo group, bounded to twenty edits; movement
+  or a source change ends the run.
 - `edit:paste! id text` inserts multiline text as one undo action, separate
   from surrounding typing. Terminal paste also normalizes CR/LF line endings.
 - `edit:copy-region! id`, `edit:kill-region! id`, `edit:kill-line! id` and

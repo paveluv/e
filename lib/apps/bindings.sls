@@ -225,8 +225,13 @@
     ;; the context of an open prompt's content view, or #f
     (let ([body (prompt:content)]) (and body (prompt:content-context body))))
 
+  (define (buffer-root b)
+    (let ([w (find (lambda (w) (and w (eq? b (head:window-buffer w))))
+               (cons* (head:current-window) (head:previous-window) (head:windows)))])
+      (and w (head:window-widget w))))
+
   (define (contexts b key)
-    (let* ([root (head:buffer-fact b 'widget-id #f)] [outer (if root '(global) (append (mode:key-contexts b) '(global)))])
+    (let* ([root (buffer-root b)] [outer (if root '(global) (append (mode:key-contexts b) '(global)))])
       (if (not root) outer
         (let loop ([scopes (cadr (widget:key-scopes root key))] [out '()])
           (if (null? scopes) (append out outer)
@@ -243,7 +248,7 @@
   (define (describe-binding b context binding)
     ;; Reify the known receiver; never run arbitrary argument producers to
     ;; describe a key. The resulting Scheme call works outside key dispatch.
-    (let* ([root (head:buffer-fact b 'widget-id #f)]
+    (let* ([root (buffer-root b)]
            [scope (find (lambda (scope) (memq context (cadr scope)))
                     (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
       (trace (keymap:binding-action binding)
@@ -257,7 +262,7 @@
     ;; nearer context takes, and less the editing commands where the text
     ;; is read-only, in the width given
     (let ([width (max 40 width)] [read-only? (read-only-text? b)] [prompting? (prompt:active?)]
-          [widget? (head:buffer-fact b 'widget-id #f)])
+          [widget? (buffer-root b)])
       (let loop ([contexts (if prompting?
                                (append (if (prompt-context) (list (prompt-context)) '()) '(prompt global))
                                (contexts b ""))]
@@ -348,7 +353,7 @@
     ;; read-only, an open prompt with its content's context, and the width
     ;; it is laid out for, which a resize of the terminal changes; the width
     ;; comes last, so the rest compares on its own
-    (let ([root (head:buffer-fact b 'widget-id #f)])
+    (let ([root (buffer-root b)])
       (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
         (read-only-text? b) (prompt:active?) (prompt-context)
         (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)

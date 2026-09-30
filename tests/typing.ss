@@ -18,10 +18,12 @@
              (prefix (apps delta-log) delta-log:)
              (prefix (head dispatch) dispatch:)
              (prefix (head head) head:)
+             (prefix (head window) window:)
              (prefix (state store) store:))
 
      (define check test:check)
      (edit-init!)
+     (window:init!)
      (delta-log:init!)
      (define b (head:new-buffer! "typing"))
      (head:show-buffer! b)

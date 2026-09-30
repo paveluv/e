@@ -26,6 +26,19 @@
   (test:check 'editor-client-has-no-shadow-head-buffer
     (head-read b `(list (not (head:buffer-of-store-id ,source)) (car (view:state (interaction:snapshot ',right)))
                     (keymap:action-text edit:move!))) '(#t (1 . 7) "edit:move!"))
+  (test:check 'ordinary-editor-host-has-no-navigation-wire-cost
+    (head-read a
+      `(let* ([w (head:current-window)] [was (head:current-buffer)]
+              [b (head:adopt-store-buffer! ,source)]
+              [io (lambda () (call-with-input-file "/proc/self/io"
+                               (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
+                                                          (if (eq? k 'wchar:) v (loop)))))))])
+         (head:show-buffer! b)
+         (let* ([root (head:window-widget w)] [before (io)])
+           (do ([i 0 (+ i 1)]) ((= i 40))
+             (dispatch:input! root (list 'key (if (even? i) "DOWN" "UP")))
+             (widget:prepare! root (+ 12 (modulo i 3)) 3))
+           (let ([written (- (io) before)]) (head:show-buffer! was) written)))) 0)
   (head-read a `(begin (widget:unmount! ',left) #t))
   (head-read b `(begin (widget:unmount! ',right) #t)))
 
