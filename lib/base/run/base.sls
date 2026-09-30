@@ -29,6 +29,7 @@
           (prefix (service reference) reference:)
           (prefix (service review-preview) review-preview:)
           (prefix (service rewrite) rewrite:)
+          (prefix (service rewrite-source) rewrite-source:)
           (prefix (service sandbox) sandbox:)
           (prefix (service search-request) search-request:)
           (prefix (service session) session:)
@@ -48,7 +49,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -291,6 +292,8 @@
       [(conflict-source-settle) (control!) (arity 3) (apply conflict-source:settle! actor args)]
       [(review-preview-create) (control!) (arity 1) (apply review-preview:create! actor args)]
       [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
+      [(rewrite-source-toggle) (control!) (arity 2) (apply rewrite-source:toggle! actor args) #t]
+      [(rewrite-source-settle) (control!) (arity 3) (apply rewrite-source:settle! actor args)]
       [(rewrite-create) (control!) (arity 1) (rewrite:create! actor (car args))]
       [(rewrite-toggle) (control!) (arity 3) (apply rewrite:toggle! actor args)]
       [(rewrite-preview-draft) (control!) (arity 1) (rewrite:preview (car args))]

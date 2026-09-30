@@ -1,5 +1,6 @@
 (let ()
-  (import (prefix (service rewrite) rewrite:) (prefix (service review-preview) review-preview:) (prefix (state model) model:))
+  (import (prefix (service rewrite) rewrite:) (prefix (service rewrite-source) rewrite-source:)
+          (prefix (service review-preview) review-preview:) (prefix (state collection) collection:) (prefix (state model) model:))
   (define (get r k) (cdr (assq k r)))
   (define actor head:ui-actor)
   (define document (store:create! actor "independent rewrites" '("base")))
@@ -36,6 +37,23 @@
       '(applied ("baseB!") () (2)))
     (store:undo! actor document)
     (check 'rewrite-settlement-is-one-undo-step (lines) '("AbaseB!"))
+    (let* ([query (collection:create! actor b "" '() 'persistent)]
+           [token (model:subscribe! (list query) (lambda (notice) (void)))])
+      (define (meta) (get (collection:summary query) 'value))
+      (define (ready) (eq? (get (meta) 'status) 'ready))
+      (test:await 'rewrite-history ready)
+      (let* ([v (meta)] [generation (get v 'generation)] [basis (get v 'basis)]
+             [selection (list query generation (list document 2))])
+        (rewrite-source:toggle! actor selection basis)
+        (check 'history-selection-toggles-only-its-draft-and-refuses-stale-results
+          (list (disabled b) (disabled a) (test:raises? (lambda () (rewrite-source:toggle! actor selection basis)))) '(() () #t)))
+      (test:await 'rewrite-history-refresh ready)
+      (let ([v (meta)])
+        (store:edit! bot document (store:revision document) (text:make-span 0 7 0 7) '("?"))
+        (check 'history-source-change-refuses-stale-settlement
+          (test:raises? (lambda () (rewrite-source:settle! actor query (get v 'generation) (get v 'basis)))) #t))
+      (model:unsubscribe! token)
+      (model:retire! actor query (model:revision query)))
     (for-each (lambda (id) (rewrite:close! actor id (revision id))) (list a b))
     (check 'closing-rewrite-drafts-keeps-the-borrowed-source
-      (list (model:snapshot a) (model:snapshot b) (lines)) '(#f #f ("AbaseB!")))))
+      (list (model:snapshot a) (model:snapshot b) (lines)) '(#f #f ("AbaseB!?")))))

@@ -64,8 +64,8 @@
                        (collection:lookup (car selection) (cadr selection) (caddr selection) '()))]
                 [key (caddr selection)])
            (unless (and row (eq? (car row) 'ready) (pair? (list-ref row 4)) (list? key) (= (length key) 2)
-                     (if rewrite? (= (car key) (get v 'document))
-                       (and (equal? (get q 'source) (get r 'id)) (memv (car key) (get v 'scope)))))
+                     (equal? (get q 'source) (get r 'id))
+                     (if rewrite? (= (car key) (get v 'document)) (memv (car key) (get v 'scope))))
              (error 'review-preview "selection is pending or belongs to another draft")) key)]
         [rewrite? (list (get v 'document) #f)]
         [(pair? (get v 'scope)) (list (car (get v 'scope)) #f)]
