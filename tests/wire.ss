@@ -115,6 +115,8 @@
      (for-each (lambda (path) (mkdir path #o700)) (list root objects))
      (unless (zero? (system (format "cp -a lib ~a && cp -p e ~a" (quote-shell sources) (quote-shell root))))
        (error 'wire-test "cannot copy the installation"))
+     (mkdir (string-append root "/tools"))
+     (copy-text "tools/environment-worker.sps" (string-append root "/tools/environment-worker.sps"))
      (for-each seed-objects! '("base" "client"))
      ;; Every base of this installation loses closing notices through the
      ;; product's hook while the control file exists; the ordinary path runs
@@ -1523,6 +1525,26 @@
                    (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
                                 (not (caddr (caadr (rpc head 'model-read (list view)))))
                                 (not (memv draft (rpc head 'buffers))))))))
+             (let* ([temporary (connect)] [gate (string-append root "/environment-continue")])
+               (hello temporary '(head "environment owner")) (receive temporary)
+               (let* ([environment (rpc temporary 'environment-create
+                                     (list (cons 'directory root) '(roots) '(imports (chezscheme))) 'transient)]
+                      [job (rpc temporary 'environment-evaluate environment 1
+                             (format "(display \"ready\") (let wait () (unless (file-exists? ~s) (sleep (make-time 'time-duration 5000000 0)) (wait))) 42" gate))])
+                 (define (job-value)
+                   (cdr (assq 'value (caddr (caadr (rpc head 'model-read (list job)))))))
+                 (let ([output (cadr (cdr (assq 'output (job-value))))])
+                   (test:await 'environment-worker-streaming
+                     (lambda () (equal? (car (rpc head 'snapshot output)) '#("ready"))))
+                   (sys:close-connection! temporary)
+                   (write-text gate "continue")
+                   (test:await 'environment-finishes-after-detach
+                     (lambda () (eq? (cdr (assq 'status (job-value))) 'ok)))
+                   (test:check 'environment-wire-preserves-jobs-and-protects-service-models
+                     (list (cdr (assq 'result (job-value)))
+                       (list-head (exchange head `(request 7 model-retire ,environment 0)) 3)
+                       (rpc head 'environment-release job) (rpc head 'environment-close environment 1))
+                     '((value (42) "(42)") (reply 7 error) #t #t)))))
              (test:check 'bad-hello-and-duplicate-name-preserve-the-owner
                (map (lambda (message)
                       (let ([duplicate (connect)])

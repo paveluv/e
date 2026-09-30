@@ -5,7 +5,9 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (core worker) worker:) (prefix (test) test:))
+     (import (prefix (core worker) worker:) (prefix (service environment) environment:)
+       (prefix (state model) model:) (prefix (state store) store:) (prefix (foundation text) text:)
+       (prefix (sys sys) sys:) (prefix (test) test:))
      (define recipe
        (list (cons 'directory (current-directory)) '(roots) '(values (seed . 7))
          '(imports (chezscheme) (prefix (service resource) resource:))))
@@ -61,4 +63,5 @@
            (test:check 'running-worker-cancellation-reaps-without-affecting-other-groups
              (list (finish) (values-of (run b "seed"))) '(#t (7)))))
        (lambda () (worker:close! a) (worker:close! b)))
+     (include "tests/environment-service.sps")
      (test:finish! 'environment)))

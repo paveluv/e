@@ -1037,3 +1037,62 @@ Terminal clipboard requests and diagnostics are delivered on the service path,
 once per shared output source even with multiple views. Clipboard delivery uses
 the installed host capability and remains addressed to the controlling head.
 The base publishes process state and bell activity; head adapters choose glyphs.
+
+## Model evaluation environments
+
+`environment:create!` creates a base model from a portable recipe and an explicit
+`transient` or `persistent` recovery policy. It starts no process. For example:
+
+```scheme
+(environment:create! head:ui-actor
+  '((directory . "/home/me/project")
+    (roots "/home/me/src")
+    (imports (chezscheme) (prefix (service resource) resource:))
+    (values (seed . 10))
+    (resources (document buffer 42)))
+  'persistent)
+```
+
+The recipe declares imports, absolute library roots and working directory,
+copied initial values, and named borrowed buffer/model references. Ordinary
+Scheme import modifiers resolve conflicts. Editor implementation libraries
+are excluded from recipes except the resource bridge. This separates namespace
+and heap lifetime; it is not a security sandbox for hostile Scheme.
+
+Read the environment with `model:snapshots`. Its value holds the recipe,
+generation, status, catalogue revision/count and any reset notice.
+`environment:evaluate! actor environment generation source` returns a job model
+immediately. Jobs in one environment execute in submission order; different
+environments execute independently. Explicitly sharing the environment ID
+shares definitions and ordering. Opening or splitting a view starts no worker.
+
+The job contains its source, generation, status, structured diagnostic and
+result. `output` references ordinary read-only base text. `channels` records
+reverse-chronological `(channel row character)` run starts; channels are
+`stdout`, `stderr` and `compile`, in capture arrival order. Output is streamed in
+bounded chunks with pipe backpressure, without embedding a growing transcript
+in each job update. A result is `(value values preview)` or
+`(handle generation number preview)`; previews are bounded. A reset changes a
+retained handle to `(expired preview)`. A general live-object browser is not
+provided yet.
+
+Within a worker, `resource:read` returns a declared resource's `(revision value)`.
+`resource:edit!` edits declared text using an exact revision and a logical span;
+`resource:commit!` updates a declared data model using its revision. Effects
+are admitted in the base under the submitting actor and namespace generation.
+Read-only documents and service-owned models retain their ordinary protections.
+
+`environment:cancel!` removes a queued job without changing definitions.
+Cancelling a running job kills and reaps that environment's worker and resets
+its generation; queued jobs are marked reset too. Committed external effects
+remain. `environment:reset!` explicitly does the same namespace reset.
+`environment:release!` drops a completed job, its output and retained result.
+`environment:close!` releases an environment and all its owned jobs/output;
+declared borrowed resources survive.
+
+Detaching a head leaves accepted jobs running in the base. Restart restores
+persistent recipes, output and portable results, reports that bindings were
+reset, and lazily starts fresh workers. History is never replayed. Completion
+uses the last completed symbol catalogue: `environment:completion` returns
+pages of at most 256 names at an explicit generation/catalogue basis. Fetch
+pages outside painting and filter cached names locally while typing.
