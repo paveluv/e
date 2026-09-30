@@ -65,7 +65,7 @@
                  (let* ([state (anchors s d v)] [intent (session-intent s)]
                         [key (if (and intent (eq? (car intent) 'source-row)) (list 'source-row (caddr intent))
                                  (and state (if (view:basis d)
-                                              (car (if (and intent (eq? (car intent) 'caret)) (car state) (caddr state)))
+                                              (car (if (and intent (eq? (car intent) 'move)) (car state) (caddr state)))
                                               (list 'source-row (caar state)))))]
                         [rank (and key (range:locate query generation key))]
                         [at (cond [(and intent (eq? (car intent) 'start)) 0]
@@ -90,18 +90,21 @@
                            (interaction:set-state! head:ui-actor id (details v 'revision #f) (list a a a #f))))
                        (when intent
                          (session-intent-set! s #f)
-                         (let* ([f (fitted s (max 1 (car (session-dimensions s))))]
-                                [line (if (eq? (car intent) 'finish) (- (vector-length (fit-lines f)) 1) 0)]
-                                [at (cons line (if (eq? (car intent) 'finish) (string-length (vector-ref (fit-lines f) line)) 0))]
-                                [p (case (car intent) [(caret) (car state)] [(source-row) (source-anchor f (caddr intent))] [else (anchor f at)])]
-                                [top (if (eq? (car intent) 'finish)
-                                       (anchor f (text-layout:move (fit-lines f) (fit-frame f) (fit-width f) at
-                                                   (- 1 (max 1 (cdr (session-dimensions s)))) 0)) p)])
-                           (interaction:set-state! head:ui-actor id (details v 'revision #f)
-                             (cond [(eq? (car intent) 'caret) (list (car state) (cadr state) p (cadddr state))]
-                               [(eq? (car intent) 'source-row) (list p p p #f)]
-                               [(and state (caddr intent)) (list p (cadr state) top #t)] [else (list p p top #f)]))
-                           (widget:repaint! id #t))))))]
+                         (if (memq (car intent) '(move scroll))
+                           (let* ([d (interaction:snapshot id)] [size (session-dimensions s)]
+                                  [g (viewport id d (car size) (cdr size) (cons 0 (cdr size)))])
+                             (when (caddr g) (perform! id d s g (car intent) (caddr intent))))
+                           (let* ([f (fitted s (max 1 (car (session-dimensions s))))]
+                                  [line (if (eq? (car intent) 'finish) (- (vector-length (fit-lines f)) 1) 0)]
+                                  [at (cons line (if (eq? (car intent) 'finish) (string-length (vector-ref (fit-lines f) line)) 0))]
+                                  [p (case (car intent) [(source-row) (source-anchor f (caddr intent))] [else (anchor f at)])]
+                                  [top (if (eq? (car intent) 'finish)
+                                         (anchor f (text-layout:move (fit-lines f) (fit-frame f) (fit-width f) at
+                                                     (- 1 (max 1 (cdr (session-dimensions s)))) 0)) p)])
+                             (interaction:set-state! head:ui-actor id (details v 'revision #f)
+                               (cond [(eq? (car intent) 'source-row) (list p p p #f)]
+                                 [(and state (caddr intent)) (list p (cadr state) top #t)] [else (list p p top #f)]))
+                             (widget:repaint! id #t)))))))]
             [(eq? (get v 'status #f) 'unavailable)
              (unless (session-diagnostic s) (session-diagnostic-set! s "[Markdown source unavailable]") (widget:repaint! id #t))
              (when prior (session-display-set! s #f) (session-fitted-set! s #f) (widget:repaint! id #t))])
@@ -251,6 +254,56 @@
         (publish! id d s g (list a b (list-ref g 4)) (not (equal? a b)) #t fixed)
         (session-goal-set! s #f))))
 
+  (define (queue! id s kind arguments)
+    (session-intent-set! s (list kind (view:sequence (interaction:snapshot id)) arguments))
+    (head:wake-main!))
+  (define (distance f p next)
+    (text-layout:distance (fit-lines f) (fit-width f)
+      (cons (car p) (text-layout:segment (text-layout:breaks (vector-ref (fit-lines f) (car p)) (fit-width f)) (cdr p))) next))
+  (define (more? f delta)
+    (let ([display (fit-display f)])
+      (if (negative? delta) (> (cadr display) 0)
+        (< (+ (cadr display) (length (caddr display))) (get (car display) 'count 0)))))
+  ;; Consume only the acquired geometry. Remaining motion is a single local
+  ;; intent, fenced by the interaction sequence, rather than a blocked input loop.
+  (define (perform! id d s g kind arguments)
+    (let* ([f (cadr g)] [lines (fit-lines f)] [w (fit-width f)]
+           [mode (car arguments)] [delta (cadr arguments)] [marked? (caddr arguments)]
+           [p (if (eq? kind 'scroll) (list-ref g 4) (car (cadddr g)))])
+      (if (not p) (begin (queue! id s kind arguments) 0)
+        (let* ([row (car p)] [col (cdr p)]
+               [start (vector-ref (text-layout:breaks (vector-ref lines row) w)
+                        (text-layout:segment (text-layout:breaks (vector-ref lines row) w) col))]
+               [goal (or (cadddr arguments) (- (render:column (fit-frame f) row col) (render:column (fit-frame f) row start)))]
+               [remaining delta]
+               [next (case mode
+                       [(rows) (let ([next (text-layout:move lines (fit-frame f) w p delta goal)])
+                                 (set! remaining (- delta (distance f p next))) next)]
+                       [(home) (cons row 0)] [(end) (cons row (string-length (vector-ref lines row)))]
+                       [(characters)
+                        (let walk ([p p])
+                          (if (zero? remaining) p
+                            (let skip ([at p])
+                              (let ([next (text-layout:adjacent lines at (if (negative? delta) 'left 'right))])
+                                (cond [(equal? next at) p]
+                                  [(equal? (anchor f next) (anchor f p)) (skip next)]
+                                  [else (set! remaining (+ remaining (if (negative? delta) 1 -1))) (walk next)])))))])])
+          (if (eq? kind 'scroll)
+            (publish! id d s g (list (car (cadddr g)) (cadr (cadddr g)) next) (cadddr (caddr g)) #f)
+            (begin
+              (publish! id d s g (list next (if marked? (cadr (cadddr g)) next) (or (list-ref g 4) p)) marked? #t)
+              (session-goal-set! s (and (eq? mode 'rows) goal))))
+          (if (and (not (zero? remaining)) (more? f remaining))
+            (begin (queue! id s kind (list mode remaining marked? goal)) 0)
+            remaining)))))
+  (define (accumulate s d kind arguments)
+    (let ([pending (session-intent s)])
+      (if (and pending (= (cadr pending) (view:sequence d)) (eq? (car pending) kind)
+            (memq (car arguments) '(rows characters))
+            (eq? (car arguments) (caaddr pending)) (eq? (caddr arguments) (caddr (caddr pending))))
+        (list (car arguments) (+ (cadr arguments) (cadr (caddr pending))) (caddr arguments) (cadddr (caddr pending)))
+        arguments)))
+
   (edoc "Move a Markdown caret in the mounted geometry; only semantic character anchors are published."
         (id model "Markdown view") (direction (one-of up down left right home end start finish page-up page-down) "motion")
         (extend (list-of boolean) "optional selection extension"))
@@ -262,23 +315,13 @@
         (unless s (refuse "Markdown view is not mounted"))
         (session-intent-set! s (list direction (view:sequence d) (if (pair? extend) (car extend) (cadddr (view:state d))))) (head:wake-main!))
       (let-values ([(d s g) (geometry id)])
-        (if (not (car (cadddr g)))
-          (begin (session-intent-set! s (list 'caret (view:sequence d) #f)) (head:wake-main!))
-          (let* ([f (cadr g)] [lines (fit-lines f)] [p (car (cadddr g))] [row (car p)] [col (cdr p)]
-                 [w (list-ref g 5)] [n (string-length (vector-ref lines row))]
-                 [goal (or (session-goal s) (car (caret g d w (list-ref g 6))))]
-                 [next (case direction
-                         [(up down) (text-layout:move lines (fit-frame f) w p (if (eq? direction 'up) -1 1) goal)]
-                         [(page-up page-down) (text-layout:move lines (fit-frame f) w p (* (max 1 (list-ref g 6)) (if (eq? direction 'page-up) -1 1)) goal)]
-                         [(home) (cons row 0)] [(end) (cons row n)]
-                         [(left right)
-                          (let skip ([at p])
-                            (let ([next (text-layout:adjacent lines at direction)])
-                              (if (and (not (equal? next at)) (equal? (anchor f next) (anchor f p)))
-                                (skip next) next)))])]
-                 [marked? (if (pair? extend) (car extend) (cadddr (caddr g)))])
-            (publish! id d s g (list next (if marked? (cadr (cadddr g)) next) (list-ref g 4)) marked? #t)
-            (session-goal-set! s (and (memq direction '(up down)) goal)))))))
+        (let* ([mode (case direction [(up down page-up page-down) 'rows] [(left right) 'characters] [else direction])]
+               [delta (* (case direction [(up left page-up) -1] [(down right page-down) 1] [else 0])
+                        (if (memq direction '(page-up page-down)) (max 1 (list-ref g 6)) 1))]
+               [arguments (accumulate s d 'move
+                            (list mode delta (if (pair? extend) (car extend) (cadddr (caddr g))) (session-goal s)))])
+          (session-intent-set! s #f)
+          (perform! id d s g 'move arguments)))))
 
   (edoc "Reveal the semantic content nearest a source row; a later interaction cancels pending acquisition."
         (id model "Markdown view") (row integer "zero-based source row"))
@@ -293,12 +336,11 @@
   (edoc "Scroll Markdown by displayed rows, retaining caret and selection."
         (id model "Markdown view") (delta integer "positive down") (returns integer "unconsumed rows"))
   (define (scroll! id delta)
+    (unless (and (integer? delta) (exact? delta)) (error 'scroll! "expected an integer row count"))
     (let-values ([(d s g) (geometry id)])
-      (let* ([f (cadr g)] [lines (fit-lines f)] [top (list-ref g 4)] [w (list-ref g 5)]
-             [next (text-layout:move lines (fit-frame f) w top delta 0)]
-             [address (cons (car top) (text-layout:segment (text-layout:breaks (vector-ref lines (car top)) w) (cdr top)))])
-        (publish! id d s g (list (car (cadddr g)) (cadr (cadddr g)) next) (cadddr (caddr g)) #f)
-        (- delta (text-layout:distance lines w address next)))))
+      (let ([arguments (accumulate s d 'scroll (list 'rows delta #f 0))])
+        (session-intent-set! s #f)
+        (perform! id d s g 'scroll arguments))))
 
   (edoc "Set or clear the Markdown selection mark." (id model "Markdown view") (active boolean "mark activity"))
   (define (set-mark! id active)

@@ -168,4 +168,7 @@
     (retire! query)
     (test:await 'filesystem-owned-filter-released (lambda () (not (store:exists? buffer))))
     (test:check 'filesystem-query-disposal-releases-owned-source (model:snapshot source) #f))
-  (for-each (lambda (p) (model:unsubscribe! (cdr p))) demands))
+  (for-each (lambda (p) (model:unsubscribe! (cdr p))) demands)
+  ;; Cleanup above uses external deletion; later consumers must not inherit
+  ;; a cached inventory from the partial-creation fixture.
+  (filesystem:refresh! actor))
