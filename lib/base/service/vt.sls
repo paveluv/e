@@ -27,6 +27,7 @@
           (prefix (state actor) actor:)
           (prefix (state store) store:)
           (prefix (state surface) surface:)
+          (prefix (state view) view:)
           (prefix (sys activity) activity:)
           (prefix (sys glyph) glyph:)
           (prefix (sys sys) sys:))
@@ -1571,7 +1572,7 @@
                 (terminal-state-clipboard-set! state clipboard)
                 (terminal-state-clipboard-sequence-set! state
                   (+ 1 (terminal-state-clipboard-sequence state)))
-                (terminal-state-clipboard-target-set! state (terminal-state-controller state)))))))))
+                (terminal-state-clipboard-target-set! state (controller-actor state)))))))))
 
   (define (dispatch-osc! state)
     (let* ([text (control-text state)]
@@ -3377,9 +3378,9 @@
     (for-each
       (lambda (state)
         (let ([from (if (pair? source) (car source)
-                        (with-mutex (terminal-state-lock state) (terminal-state-controller state)))])
-          (actor:send! (terminal-state-owner state)
-            (list 'request from (terminal-state-buffer state) 'color-scheme scheme))))
+                        (with-mutex (terminal-state-lock state) (controller-actor state)))])
+          (when from (actor:send! (terminal-state-owner state)
+                       (list 'request from (terminal-state-buffer state) 'color-scheme scheme)))))
       (instances)))
 
   (define (set-scheme! state scheme)
@@ -3388,9 +3389,37 @@
       (when (and scheme (memv 2031 (terminal-state-extra-modes state)))
         (write-bytes! state (string->utf8 (color-scheme-report scheme))))))
 
+  ;; The remaining window adapter has no view witness. Once terminal hosts
+  ;; migrate, remove that one legacy form; widget input always carries one.
+  (define (view-witness? witness)
+    (and (list? witness) (= (length witness) 2)
+      (list? (car witness)) (= (length (car witness)) 2)
+      (eq? (caar witness) 'model) (integer? (cadar witness)) (exact? (cadar witness)) (> (cadar witness) 0)
+      (integer? (cadr witness)) (exact? (cadr witness)) (>= (cadr witness) 0)))
+  (define (lease-valid? state lease)
+    (and lease
+      (or (not (cadr lease))
+        (let ([d (view:snapshot (cadr lease))])
+          (and d (eq? (view:kind d) 'terminal) (= (view:schema d) 1)
+            (equal? (view:source d) (list 'buffer (terminal-state-buffer state)))
+            (equal? (view:owner d) (car lease)) (= (view:generation d) (caddr lease)))))))
+  (define (sender-lease state from data)
+    (let* ([witness (fact data 'view #f)]
+           [lease (if witness (cons from witness) (list from #f #f))])
+      (and (lease-valid? state lease) lease)))
+  (define (controller-actor state)
+    (let ([lease (terminal-state-controller state)])
+      (if (lease-valid? state lease) (car lease)
+        (begin (terminal-state-controller-set! state #f) #f))))
+  (define (resize-data? data)
+    (or (size? data)
+      (and (list? data) (for-all pair? data) (size? (fact data 'size #f))
+        (view-witness? (fact data 'view #f)))))
+
   (define (input-data? data event)
     (and (list? data) (for-all (lambda (entry) (and (pair? entry) (symbol? (car entry)))) data)
          (size? (fact data 'size #f))
+         (or (not (assq 'view data)) (view-witness? (fact data 'view #f)))
          (memq (fact data 'color-scheme #f) '(dark light #f))
          (or (not (member event '("PASTE" "TEXT")))
              (string? (fact data (if (string=? event "PASTE") 'paste 'text) #f)))
@@ -3406,7 +3435,7 @@
          (let ([what (cadddr message)] [data (list-ref message 4)])
            (case (car message)
              [(input) (and (string? what) (input-data? data what))]
-             [(request) (case what [(resize) (size? data)] [(close) (null? data)]
+             [(request) (case what [(resize) (resize-data? data)] [(close) (null? data)]
                           [(color-scheme) (memq data '(dark light #f))] [else #f])]
              [else #f]))))
 
@@ -3439,24 +3468,29 @@
                 (when (terminal-state-alive state)
                   (case (car message)
                     [(request)
-                     (when (equal? from (terminal-state-controller state))
+                     (when (equal? from (controller-actor state))
                        (case what
-                         [(resize) (resize-screen! state (car data) (cadr data))]
+                         [(resize)
+                          (let* ([legacy? (size? data)] [size (if legacy? data (fact data 'size #f))]
+                                 [lease (sender-lease state from (if legacy? '() data))])
+                            (when (and lease (equal? lease (terminal-state-controller state)))
+                              (resize-screen! state (car size) (cadr size))))]
                          [(color-scheme) (set-scheme! state data)]))]
                     [(input)
-                     (let* ([mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
+                     (let* ([lease (sender-lease state from data)]
+                            [mouse? (member what mouse-events)] [cell (fact data 'cell #f)]
                             [frame (terminal-state-rendered state)]
                             [y (and mouse? cell frame (+ 1 (- (car cell) (frame-top frame))))])
                        ;; A pointer addresses the published grid, not an arbitrary
                        ;; scrollback row or a newer frame the sender has not seen.
-                       (when (or (not mouse?)
-                                 (and (terminal-state-mouse state) y
-                                      (equal? (fact data 'revision #f) (terminal-state-revision state))
-                                      (equal? (fact data 'generation #f) (terminal-state-generation state))
-                                      (<= 1 y (car (frame-size frame)))
-                                      (< (cdr cell) (cadr (frame-size frame)))))
+                       (when (and lease (or (not mouse?)
+                                          (and (terminal-state-mouse state) y
+                                            (equal? (fact data 'revision #f) (terminal-state-revision state))
+                                            (equal? (fact data 'generation #f) (terminal-state-generation state))
+                                            (<= 1 y (car (frame-size frame)))
+                                            (< (cdr cell) (cadr (frame-size frame))))))
                          (unless (member what '("FOCUS" "BLUR"))
-                           (terminal-state-controller-set! state from)
+                           (terminal-state-controller-set! state lease)
                            (let ([size (fact data 'size #f)])
                              (resize-screen! state (car size) (cadr size)))
                            (set-scheme! state (fact data 'color-scheme #f)))
@@ -3698,7 +3732,7 @@
                                       (read-only . #t) (disposable . #t) (mode . "terminal") (directory . ,directory)
                                       (wrap . #f) (scrollbar . #f) (manages-viewport . #t))))
             (set! state (blank-terminal-state owner id process rows cols #t))
-            (terminal-state-controller-set! state (datum:copy from))
+            (terminal-state-controller-set! state (list (datum:copy from) #f #f))
             (terminal-state-scheme-set! state (if (pair? scheme) (car scheme) (unbox default-scheme)))
             (kernel:call-with-runtime-registrations
               (lambda ()

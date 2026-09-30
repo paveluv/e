@@ -9,7 +9,7 @@
   '(begin
      (import (prefix (sys sys) sys:) (prefix (service vt) vt:) (prefix (service git) git:)
              (prefix (head head) head:) (prefix (head paint) paint:) (prefix (head render) render:)
-             (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:)
+             (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:) (prefix (state view) view:)
              (prefix (core kernel) kernel:) (prefix (foundation text) text:)
              (prefix (sys activity) activity:)
              (prefix (test) test:))
@@ -384,6 +384,45 @@
            (test:await 'main-screen-restored (lambda () (published? "live1")))
            (check 'alternate-output-preserves-main-history-and-releases-mouse-capture
              (and (has? "history0") (member "MOUSE-CLICK" (cdr (store:property id 'capture))) #t))
+           ;; One PTY, two views in one head and another head. The latest
+           ;; admitted input owns geometry; ownership generations fence input
+           ;; queued by a released mount even after the same actor reclaims it.
+           (let* ([a (view:create! first (list 'buffer id) 'terminal 1 '() '())]
+                  [b (view:create! first (list 'buffer id) 'terminal 1 '() '())]
+                  [c (view:create! second (list 'buffer id) 'terminal 1 '() '())]
+                  [sizes (test:recorder)] [token #f])
+             (define (witness v) (list v (view:generation (view:snapshot v))))
+             (define (input who witness size)
+               (actor:send! owner (list 'input who id "TEXT"
+                                    (list (cons 'text "") (cons 'view witness) (cons 'size size)))))
+             (define (resize who witness size)
+               (actor:send! owner (list 'request who id 'resize
+                                    (list (cons 'view witness) (cons 'size size)))))
+             (define (sized size)
+               (test:await 'view-controller-size (lambda () (equal? (store:property id 'size) size))))
+             (for-each (lambda (v) (view:claim! (if (equal? v c) second first) v)) (list a b c))
+             (set! token (store:subscribe! id
+                           (lambda (event)
+                             (when (and (eq? (car event) 'property) (eq? (caddr event) 'size))
+                               (sizes (store:property id 'size))))))
+             (input first (witness a) '(7 31)) (sized '(7 31))
+             (resize first (witness b) '(2 12))
+             (offer first '(2 12))
+             (resize first (witness a) '(6 30)) (sized '(6 30))
+             (input first (witness b) '(8 32)) (sized '(8 32))
+             (let ([old (witness b)])
+               (view:release! first b (cadr old))
+               (view:claim! first b)
+               (input first old '(2 12))
+               (resize first (witness b) '(2 12))
+               (input second (witness c) '(9 33)) (sized '(9 33)))
+             (test:check 'view-generation-fences-input-and-same-head-resize
+               (sizes) '((7 31) (6 30) (8 32) (9 33)))
+             (for-each (lambda (v) (view:release! (if (equal? v c) second first) v
+                                     (view:generation (view:snapshot v)))) (list a b c))
+             (store:unsubscribe! token)
+             (test:check 'release-keeps-the-process-and-last-grid
+               (list (store:property id 'alive) (store:property id 'size)) '(#t (9 33))))
            (send second "size\n" '(5 30))
            (wait-stage 'size)
            (offer first '(3 24))
