@@ -38,7 +38,17 @@
                  [result
                   (collection:make-result '((block "Block" datum)) n
                     (lambda (i) (let ([b (vector-ref blocks i)]) (list (cadr b) (list (cons 'block b)) '())))
-                    (lambda (key) (hashtable-ref positions key #f))
+                    (lambda (key)
+                      (if (and (list? key) (= (length key) 2) (eq? (car key) 'source-row)
+                            (integer? (cadr key)) (>= (cadr key) 0))
+                        ;; Source positions name the block containing that row;
+                        ;; the returned row still carries its canonical key.
+                        (let seek ([lo 0] [hi n])
+                          (if (= lo hi) (and (> n 0) (max 0 (- lo 1)))
+                            (let ([mid (div (+ lo hi) 2)])
+                              (if (<= (cadr (vector-ref blocks mid)) (cadr key))
+                                (seek (+ mid 1) hi) (seek lo mid)))))
+                        (hashtable-ref positions key #f)))
                     (lambda (at direction offset)
                       (and (> n 0) (max 0 (min (- n 1) (+ at (if (eq? direction 'forward) offset (- offset)))))))
                     (list '(sortable) (cons 'details (list (cons 'document id) (cons 'revision revision)))))])

@@ -301,11 +301,6 @@
                          "http://one.example and https://two.example"))
             '("http://one.example" "https://two.example"))
 
-     (check 'valid-hyperlink
-            (paint:valid-hyperlink? '(0 5 "http://x") 10) #t)
-     (check 'invalid-hyperlink-range
-            (paint:valid-hyperlink? '(5 3 "http://x") 10) #f)
-
      ;; -- complete synchronized frames ----------------------------------
 
      (define (sync-events text)

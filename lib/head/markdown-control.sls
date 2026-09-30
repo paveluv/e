@@ -1,27 +1,41 @@
 ;; Read-only semantic Markdown, independently fitted by each mounted view.
 (import (only (foundation edoc) elibrary))
 (elibrary (head markdown-control)
-  (export copy! create-view! follow! move! register! scroll! select! set-mark!)
+  (export copy! create-view! follow! locate! move! register! scroll! select! set-mark! source! width-limit)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation text) text:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head markdown-layout) markdown-layout:) (prefix (head range) range:)
           (prefix (head render) render:) (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:) (prefix (head widget) widget:)
+          (prefix (service log) log:)
           (prefix (service markup-source) markup-source:) (prefix (state view) view:))
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
   (define (block row)
-    (let ([cell (assq 'block (caddr row))]) (and cell (eq? (cadr cell) 'ready) (caddr cell))))
+    (let ([cell (assq 'block (caddr row))])
+      (if (and cell (eq? (cadr cell) 'ready)) (caddr cell)
+        (let ([message "[Markdown block unavailable; C-c v opens source]"])
+          (list 'line (cadr row) (list message (list (list 0 (string-length message) 'ghost)) '()))))))
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define-record-type session
-    (fields query token (mutable display) (mutable fitted) (mutable dimensions) (mutable goal) (mutable intent) (mutable hover)))
+    (fields query token (mutable display) (mutable fitted) (mutable dimensions) (mutable goal) (mutable intent) (mutable hover) (mutable copy) (mutable diagnostic)))
+  (define-record-type copying
+    (fields token generation sequence width anchors (mutable ordinal) (mutable chunks)))
   (define sessions (make-hashtable equal-hash equal?))
+  (define deferred (make-hashtable equal-hash equal?))
   (define copy-text! #f)
   (define dragging #f)
+
+  (edoc "Maximum terminal reading width for Markdown presentations." (value integer))
+  (define width-limit (make-parameter 80 (lambda (n)
+                                           (unless (and (fixnum? n) (>= n 20)) (error 'width-limit "expected at least 20 columns")) n)))
+  (define (cancel-copy! s)
+    (when (session-copy s) (range:release! (copying-token (session-copy s))) (session-copy-set! s #f)))
   (define (release! id)
+    (hashtable-delete! deferred id)
     (when (equal? dragging id) (set! dragging #f))
     (let ([s (hashtable-ref sessions id #f)])
-      (when s (range:release! (session-token s)) (hashtable-delete! sessions id))))
+      (when s (cancel-copy! s) (range:release! (session-token s)) (hashtable-delete! sessions id))))
   (define (metadata s) (get (range:summary (session-query s)) 'value '()))
   (define (details v k fallback) (get (get v 'details '()) k fallback))
   (define (anchors s d v)
@@ -39,8 +53,8 @@
            [old (hashtable-ref sessions id #f)])
       (when (and old (not (equal? query (session-query old)))) (release! id) (set! old #f))
       (when query
-        (let* ([s (or old (let ([s (make-session query (range:acquire! query (lambda () (widget:repaint! id #t))) #f #f '(1 . 1) #f #f #f)])
-                            (hashtable-set! sessions id s) s))]
+        (let* ([s (or old (let ([s (make-session query (range:acquire! query (lambda () (widget:repaint! id #t))) #f #f '(1 . 1) #f (hashtable-ref deferred id #f) #f #f #f)])
+                            (hashtable-delete! deferred id) (hashtable-set! sessions id s) s))]
                [v (metadata s)] [generation (get v 'generation 0)] [prior (session-display s)])
           (when (and (session-intent s) (not (= (cadr (session-intent s)) (view:sequence d))))
             (session-intent-set! s #f))
@@ -49,7 +63,10 @@
                  (unless (and prior (= (details (car prior) 'revision -1) (details v 'revision -2)))
                    (text-source:open! head:ui-actor (details v 'document #f) (or (view:basis d) (details v 'revision 0))))
                  (let* ([state (anchors s d v)] [intent (session-intent s)]
-                        [key (and state (car (if (and intent (eq? (car intent) 'caret)) (car state) (caddr state))))]
+                        [key (if (and intent (eq? (car intent) 'source-row)) (list 'source-row (caddr intent))
+                                 (and state (if (view:basis d)
+                                              (car (if (and intent (eq? (car intent) 'caret)) (car state) (caddr state)))
+                                              (list 'source-row (caar state)))))]
                         [rank (and key (range:locate query generation key))]
                         [at (cond [(and intent (eq? (car intent) 'start)) 0]
                               [(and intent (eq? (car intent) 'finish)) (max 0 (- (get v 'count 0) 1))]
@@ -58,65 +75,76 @@
                         [start (max 0 (- (or at 0) (div count 2)))]
                         [page (and at (range:read query generation start count '(block)))])
                    (range:request! (session-token s) generation start (if at count 0) '(block) (if key (list key) '()))
+                   (when (and page (eq? (car page) 'unavailable) (not (session-diagnostic s)))
+                     (session-diagnostic-set! s "[Markdown range unavailable; C-c v opens source]") (widget:repaint! id #t))
                    (when (and page (eq? (car page) 'ready))
+                     (when (session-diagnostic s) (session-diagnostic-set! s #f) (widget:repaint! id #t))
                      (when (and state (view:basis d) (not (equal? (view:basis d) (details v 'revision #f))))
                        (interaction:set-state! head:ui-actor id (details v 'revision #f) state))
-                     (when (not (view:basis d))
-                       (let* ([first (and (pair? (list-ref page 4)) (car (list-ref page 4)))]
-                              [block (and first (block first))]
-                              [a (if block (list (cadr block) (cadr block) (if (eq? (car block) 'table) 1 0) 0) '(0 0 0 0))])
-                         (interaction:set-state! head:ui-actor id (details v 'revision #f) (list a a a #f))))
                      (let ([next (list v start (list-ref page 4))])
                        (unless (equal? prior next)
                          (session-display-set! s next) (session-fitted-set! s #f) (widget:repaint! id #t))
+                       (unless (view:basis d)
+                         (let* ([f (fitted s (max 1 (car (session-dimensions s))))]
+                                [a (source-anchor f (caar state))])
+                           (interaction:set-state! head:ui-actor id (details v 'revision #f) (list a a a #f))))
                        (when intent
                          (session-intent-set! s #f)
                          (let* ([f (fitted s (max 1 (car (session-dimensions s))))]
                                 [line (if (eq? (car intent) 'finish) (- (vector-length (fit-lines f)) 1) 0)]
                                 [at (cons line (if (eq? (car intent) 'finish) (string-length (vector-ref (fit-lines f) line)) 0))]
-                                [p (if (eq? (car intent) 'caret) (car state) (anchor f at))]
+                                [p (case (car intent) [(caret) (car state)] [(source-row) (source-anchor f (caddr intent))] [else (anchor f at)])]
                                 [top (if (eq? (car intent) 'finish)
                                        (anchor f (text-layout:move (fit-lines f) (fit-frame f) (fit-width f) at
                                                    (- 1 (max 1 (cdr (session-dimensions s)))) 0)) p)])
                            (interaction:set-state! head:ui-actor id (details v 'revision #f)
-                             (if (eq? (car intent) 'caret) (list (car state) (cadr state) p (cadddr state)) (list p p top #f)))
+                             (cond [(eq? (car intent) 'caret) (list (car state) (cadr state) p (cadddr state))]
+                               [(eq? (car intent) 'source-row) (list p p p #f)]
+                               [(and state (caddr intent)) (list p (cadr state) top #t)] [else (list p p top #f)]))
                            (widget:repaint! id #t))))))]
             [(eq? (get v 'status #f) 'unavailable)
-             (when prior (session-display-set! s #f) (session-fitted-set! s #f) (widget:repaint! id #t))])))))
+             (unless (session-diagnostic s) (session-diagnostic-set! s "[Markdown source unavailable]") (widget:repaint! id #t))
+             (when prior (session-display-set! s #f) (session-fitted-set! s #f) (widget:repaint! id #t))])
+          (when (session-copy s) (service-copy! id s))))))
 
   (edoc "Create an unmounted Markdown view over a borrowed document, with independent selection and scrolling. The base shares interpretation; each head fits its own width."
-        (actor actor "creator") (document integer "source document") (returns model) (public))
-  (define (create-view! actor document)
-    (let ([query (markup-source:create! actor document)])
-      (view:create! actor query 'markdown 1 '((name . "<markdown>")) '((0 0 0 0) (0 0 0 0) (0 0 0 0) #f) query)))
+        (actor actor "creator") (document integer "source document")
+        (origin (list-of integer) "optional initial source row") (returns model) (public))
+  (define (create-view! actor document . origin)
+    (unless (and (<= (length origin) 1) (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) origin))
+      (error 'create-view! "expected at most one source row"))
+    (let* ([query (markup-source:create! actor document)] [row (if (pair? origin) (car origin) 0)] [a (list row row 0 0)])
+      (view:create! actor query 'markdown 1 '((name . "<markdown>")) (list a a a #f) query)))
 
   ;; A fitted page owns immutable text, character styles, links and semantic
   ;; anchors. Only this head cache contains terminal widths or rendered rows.
   (define-record-type fit (fields display width lines faces links anchors positions frame))
   (define (fitted s width)
-    (let* ([display (session-display s)] [old (session-fitted s)])
+    (let* ([width (min width (width-limit))] [display (session-display s)] [old (session-fitted s)])
       (and display
         (if (and old (= width (fit-width old)) (eq? display (fit-display old))) old
-          (let ([lines '()] [faces '()] [links '()] [anchors '()])
-            (for-each
-              (lambda (row)
-                (let-values ([(ls fs us rs ps) (markdown-layout:render (list (block row)) width)])
-                  (set! lines (append (reverse ls) lines)) (set! faces (append (reverse fs) faces))
-                  (set! links (append (reverse us) links))
-                  (set! anchors (append (reverse (map (lambda (v) (vector-map (lambda (p) (cons (cadr row) p)) v)) ps)) anchors))))
-              (caddr display))
-            (let* ([lines (list->vector (if (null? lines) '("") (reverse lines)))]
-                   [faces (list->vector (if (null? faces) '(#()) (reverse faces)))]
-                   [links (list->vector (if (null? links) '(()) (reverse links)))]
-                   [anchors (list->vector (if (null? anchors) '(#((0 0 0 0))) (reverse anchors)))]
-                   [positions (make-hashtable equal-hash equal?)]
-                   [f (make-fit display width lines faces links anchors positions (render:prepare #f #f lines 0 '()))])
-              (do ([row 0 (+ row 1)]) ((= row (vector-length anchors)))
-                (let ([v (vector-ref anchors row)])
-                  (do ([col 0 (+ col 1)]) ((= col (vector-length v)))
-                    (unless (hashtable-contains? positions (vector-ref v col))
-                      (hashtable-set! positions (vector-ref v col) (cons row col))))))
-              (session-fitted-set! s f) f))))))
+          (let ([f (fit-page display width)]) (session-fitted-set! s f) f)))))
+  (define (fit-page display width)
+    (let ([lines '()] [faces '()] [links '()] [anchors '()])
+      (for-each
+        (lambda (row)
+          (let-values ([(ls fs us rs ps) (markdown-layout:render (list (block row)) width)])
+            (set! lines (append (reverse ls) lines)) (set! faces (append (reverse fs) faces))
+            (set! links (append (reverse us) links))
+            (set! anchors (append (reverse (map (lambda (v) (vector-map (lambda (p) (cons (cadr row) p)) v)) ps)) anchors))))
+        (caddr display))
+      (let* ([lines (list->vector (if (null? lines) '("") (reverse lines)))]
+             [faces (list->vector (if (null? faces) '(#()) (reverse faces)))]
+             [links (list->vector (if (null? links) '(()) (reverse links)))]
+             [anchors (list->vector (if (null? anchors) '(#((0 0 0 0))) (reverse anchors)))]
+             [positions (make-hashtable equal-hash equal?)]
+             [f (make-fit display width lines faces links anchors positions (render:prepare #f #f lines 0 '()))])
+        (do ([row 0 (+ row 1)]) ((= row (vector-length anchors)))
+            (let ([v (vector-ref anchors row)])
+              (do ([col 0 (+ col 1)]) ((= col (vector-length v)))
+                  (unless (hashtable-contains? positions (vector-ref v col))
+                    (hashtable-set! positions (vector-ref v col) (cons row col))))))
+        f)))
   (define (position f a)
     (or (hashtable-ref (fit-positions f) a #f)
       ;; A source edit may shorten a semantic field. Clamp within that same
@@ -129,14 +157,30 @@
                 (when (and (equal? (list-head a 3) (list-head p 3)) (< (abs (- (cadddr a) (cadddr p))) distance))
                   (set! best (hashtable-ref (fit-positions f) p #f)) (set! distance (abs (- (cadddr a) (cadddr p)))))) row)) (fit-anchors f)) best)))
   (define (anchor f p) (vector-ref (vector-ref (fit-anchors f) (car p)) (cdr p)))
+  (define (source-anchor f row)
+    (let ([best (anchor f '(0 . 0))] [distance +inf.0])
+      (vector-for-each (lambda (line)
+                         (vector-for-each (lambda (p)
+                                            (when (< (abs (- row (cadr p))) distance)
+                                              (set! best p) (set! distance (abs (- row (cadr p)))))) line)) (fit-anchors f)) best))
+  (define (last-point f)
+    (let ([row (- (vector-length (fit-lines f)) 1)]) (cons row (string-length (vector-ref (fit-lines f) row)))))
+  (define (selection-points g)
+    (let ([f (cadr g)] [state (caddr g)])
+      (and state (cadddr state)
+        (let ([points (map (lambda (a p)
+                             (or p (cond [(< (car a) (car (anchor f '(0 . 0)))) '(0 . 0)]
+                                     [(> (car a) (car (anchor f (last-point f)))) (last-point f)] [else #f])))
+                        (list-head state 2) (list-head (cadddr g) 2))])
+          (and (for-all values points) points)))))
   (define (prepare id source inputs) id)
   (define (viewport id d width height range)
-    (let* ([s (hashtable-ref sessions id #f)] [width (max 1 width)] [f (and s (fitted s width))]
-           [state (and f (anchors s d (car (fit-display f))))]
+    (let* ([s (hashtable-ref sessions id #f)] [width (min (width-limit) (max 1 width))] [f (and s (fitted s width))]
+           [state (and f (not (session-diagnostic s)) (anchors s d (car (fit-display f))))]
            [points (and state (map (lambda (a) (position f a)) (list-head state 3)))]
            [top (and points (caddr points))])
       (when s (session-dimensions-set! s (cons width height)))
-      (list id f state points top width height)))
+      (list id f state points top width height (and s (session-diagnostic s)))))
   (define (rows g range)
     (let ([f (cadr g)] [top (list-ref g 4)] [width (list-ref g 5)])
       (if (not top) '()
@@ -148,27 +192,28 @@
               (loop (if next? row (+ row 1)) (if next? (+ segment 1) 0) (+ y 1)
                 (if (< y (car range)) out (cons (list y row start end) out)))))))))
   (define (render g d width height range)
-    (if (not (list-ref g 4)) (if (zero? (car range)) (list (if (cadr g) "[Source anchor unavailable]" "")) '())
+    (if (not (list-ref g 4)) (if (zero? (car range)) (list (or (list-ref g 7) (and (cadr g) "[Source anchor unavailable]") "")) '())
       (map (lambda (r) (substring (vector-ref (fit-lines (cadr g)) (cadr r)) (caddr r) (cadddr r))) (rows g range))))
   (define (decorate g d width height range)
-    (let* ([f (cadr g)] [points (cadddr g)] [state (caddr g)]
-           [s (hashtable-ref sessions (car g) #f)] [hover (and s (session-hover s))])
-      (apply append
-        (map (lambda (r)
-               (let* ([y (car r)] [row (cadr r)] [start (caddr r)] [end (cadddr r)]
-                      [line (vector-ref (fit-lines f) row)] [styles (vector-ref (fit-faces f) row)]
-                      [selection (and state (cadddr state) (car points) (cadr points) (text-source:span points))])
-                 (let loop ([i start] [out '()])
-                   (if (= i end) (reverse out)
-                     (let* ([face (if (and selection (not (text:position<? (cons row i) (text:span-start selection)))
-                                           (text:position<? (cons row i) (text:span-end selection))) 'selection
-                                    (if (and hover (eq? (car hover) f) (= (cadr hover) row)
-                                          (<= (caaddr hover) i (- (cadr (caddr hover)) 1)))
-                                      '(md-link hover) (vector-ref styles i)))]
-                            [x (- (render:column (fit-frame f) row i) (render:column (fit-frame f) row start))]
-                            [w (- (render:column (fit-frame f) row (+ i 1)) (render:column (fit-frame f) row i))])
-                       (loop (+ i 1) (if (or (zero? w) (eq? face 'plain)) out (cons (list (list x y w 1) face) out))))))))
-          (rows g range)))))
+    (if (not (list-ref g 4)) (list (list (list 0 0 width 1) 'ghost))
+      (let* ([f (cadr g)] [points (cadddr g)] [state (caddr g)]
+             [s (hashtable-ref sessions (car g) #f)] [hover (and s (session-hover s))])
+        (apply append
+          (map (lambda (r)
+                 (let* ([y (car r)] [row (cadr r)] [start (caddr r)] [end (cadddr r)]
+                        [line (vector-ref (fit-lines f) row)] [styles (vector-ref (fit-faces f) row)]
+                        [selection (let ([points (selection-points g)]) (and points (text-source:span points)))])
+                   (let loop ([i start] [out '()])
+                     (if (= i end) (reverse out)
+                       (let* ([face (if (and selection (not (text:position<? (cons row i) (text:span-start selection)))
+                                          (text:position<? (cons row i) (text:span-end selection))) 'selection
+                                      (if (and hover (eq? (car hover) f) (= (cadr hover) row)
+                                            (<= (caaddr hover) i (- (cadr (caddr hover)) 1)))
+                                        '(md-link hover) (vector-ref styles i)))]
+                              [x (- (render:column (fit-frame f) row i) (render:column (fit-frame f) row start))]
+                              [w (- (render:column (fit-frame f) row (+ i 1)) (render:column (fit-frame f) row i))])
+                         (loop (+ i 1) (if (or (zero? w) (eq? face 'plain)) out (cons (list (list x y w 1) face) out))))))))
+            (rows g range))))))
   (define (caret g d width height)
     (and (list-ref g 4) (car (cadddr g))
       (let* ([f (cadr g)] [top (list-ref g 4)] [w (list-ref g 5)])
@@ -183,7 +228,7 @@
                   (= (get (get source 'value '()) 'generation -1) (get (car (fit-display (cadr g))) 'generation -2)))
           (refuse "The displayed Markdown basis changed"))
         (values d s g))))
-  (define (publish! id d s g points marked? reveal?)
+  (define (publish! id d s g points marked? reveal? . fixed)
     (let* ([f (cadr g)] [w (list-ref g 5)] [top (caddr points)])
       (when reveal?
         (let-values ([(p address left) (text-layout:scroll (fit-lines f) (fit-frame f) w w (list-ref g 6) 0
@@ -192,7 +237,7 @@
           (set! top (text-layout:anchor (fit-lines f) w address))))
       (interaction:set-state! head:ui-actor id (details (car (fit-display f)) 'revision #f)
         (list (if (car points) (anchor f (car points)) (car (caddr g)))
-          (if (cadr points) (anchor f (cadr points)) (cadr (caddr g))) (anchor f top) marked?))))
+          (if (pair? fixed) (car fixed) (if (cadr points) (anchor f (cadr points)) (cadr (caddr g)))) (anchor f top) marked?))))
 
   (edoc "Select logical Markdown anchors (block-source-row source-row field character), independent of terminal wrapping."
         (id model "Markdown view") (caret list "active anchor") (fixed list "selection anchor"))
@@ -202,8 +247,8 @@
       (error 'select! "expected semantic Markdown anchors"))
     (let-values ([(d s g) (geometry id)])
       (let ([a (position (cadr g) caret)] [b (position (cadr g) fixed)])
-        (unless (and a b) (refuse "Markdown selection is outside the acquired page"))
-        (publish! id d s g (list a b (list-ref g 4)) (not (equal? a b)) #t)
+        (unless a (refuse "Markdown caret is outside the acquired page"))
+        (publish! id d s g (list a b (list-ref g 4)) (not (equal? a b)) #t fixed)
         (session-goal-set! s #f))))
 
   (edoc "Move a Markdown caret in the mounted geometry; only semantic character anchors are published."
@@ -215,10 +260,10 @@
     (if (memq direction '(start finish))
       (let* ([s (hashtable-ref sessions id #f)] [d (interaction:snapshot id)])
         (unless s (refuse "Markdown view is not mounted"))
-        (session-intent-set! s (list direction (view:sequence d))) (head:wake-main!))
+        (session-intent-set! s (list direction (view:sequence d) (if (pair? extend) (car extend) (cadddr (view:state d))))) (head:wake-main!))
       (let-values ([(d s g) (geometry id)])
         (if (not (car (cadddr g)))
-          (begin (session-intent-set! s (list 'caret (view:sequence d))) (head:wake-main!))
+          (begin (session-intent-set! s (list 'caret (view:sequence d) #f)) (head:wake-main!))
           (let* ([f (cadr g)] [lines (fit-lines f)] [p (car (cadddr g))] [row (car p)] [col (cdr p)]
                  [w (list-ref g 5)] [n (string-length (vector-ref lines row))]
                  [goal (or (session-goal s) (car (caret g d w (list-ref g 6))))]
@@ -234,6 +279,16 @@
                  [marked? (if (pair? extend) (car extend) (cadddr (caddr g)))])
             (publish! id d s g (list next (if marked? (cadr (cadddr g)) next) (list-ref g 4)) marked? #t)
             (session-goal-set! s (and (memq direction '(up down)) goal)))))))
+
+  (edoc "Reveal the semantic content nearest a source row; a later interaction cancels pending acquisition."
+        (id model "Markdown view") (row integer "zero-based source row"))
+  (define (locate! id row)
+    (unless (and (integer? row) (exact? row) (>= row 0)) (error 'locate! "expected a source row"))
+    (let* ([s (hashtable-ref sessions id #f)] [d (interaction:snapshot id)])
+      (widget:host id)
+      (unless d (refuse "Markdown view is not mounted"))
+      (let ([intent (list 'source-row (view:sequence d) row)])
+        (if s (session-intent-set! s intent) (hashtable-set! deferred id intent))) (head:wake-main!)))
 
   (edoc "Scroll Markdown by displayed rows, retaining caret and selection."
         (id model "Markdown view") (delta integer "positive down") (returns integer "unconsumed rows"))
@@ -252,12 +307,59 @@
       (unless (car (cadddr g)) (refuse "Markdown caret is outside the acquired page"))
       (publish! id d s g (list (car (cadddr g)) (car (cadddr g)) (list-ref g 4)) active #f)))
 
-  (edoc "Copy the selected displayed Markdown text at its acquired basis. Source markup is unchanged."
+  (edoc "Copy selected displayed Markdown text. Off-page selections acquire bounded pages asynchronously; changed source or selection cancels the copy. Source markup is unchanged."
         (id model "Markdown view"))
   (define (copy! id)
     (let-values ([(d s g) (geometry id)])
-      (unless (and (cadddr (caddr g)) (cadr (cadddr g))) (refuse "No Markdown selection"))
-      (copy-text! (text:to-string (list->vector (text:extract (fit-lines (cadr g)) (text-source:span (cadddr g)))) #f))))
+      (unless (cadddr (caddr g)) (refuse "No Markdown selection"))
+      (cancel-copy! s)
+      (if (and (car (cadddr g)) (cadr (cadddr g)))
+        (copy-text! (text:to-string (list->vector (text:extract (fit-lines (cadr g)) (text-source:span (cadddr g)))) #f))
+        (begin
+          (session-copy-set! s
+            (make-copying (range:acquire! (session-query s) (lambda () (head:wake-main!)))
+              (get (car (fit-display (cadr g))) 'generation 0) (view:sequence d) (fit-width (cadr g))
+              (list-sort (lambda (a b) (< (car a) (car b))) (list-head (caddr g) 2)) #f '()))
+          (head:wake-main!)))))
+  (define (service-copy! id s)
+    (let* ([job (session-copy s)] [v (metadata s)] [query (session-query s)]
+           [generation (copying-generation job)] [ends (copying-anchors job)])
+      (if (or (not (= (get v 'generation -1) generation))
+              (not (= (copying-sequence job) (view:sequence (interaction:snapshot id)))))
+        (cancel-copy! s)
+        (guard (ex [else (cancel-copy! s) (log:add! 'markdown-control:service-copy! (kernel:condition-text ex))])
+          (let* ([ranks (map (lambda (a) (range:locate query generation (car a))) ends)]
+                 [ready? (for-all (lambda (r) (eq? (car r) 'ready)) ranks)]
+                 [ordinals (and ready? (map (lambda (r) (list-ref r 3)) ranks))]
+                 [at (or (copying-ordinal job) (and ordinals (car ordinals)))]
+                 [count (if (and at ordinals (cadr ordinals)) (min 16 (+ 1 (- (cadr ordinals) at))) 0)])
+            (when (and ready? (not (for-all values ordinals))) (refuse "Markdown selection no longer exists"))
+            (range:request! (copying-token job) generation (or at 0) count '(block) (map car ends))
+            (when (> count 0)
+              (let ([page (range:read query generation at count '(block))])
+                (case (car page)
+                  [(unavailable) (refuse "Markdown selection is unavailable")]
+                  [(ready)
+                   (let* ([f (fit-page (list v at (list-ref page 4)) (copying-width job))]
+                          [first (if (= at (car ordinals)) (position f (car ends)) '(0 . 0))]
+                          [last (if (> (+ at count) (cadr ordinals)) (position f (cadr ends)) (last-point f))])
+                     (unless (and first last) (refuse "Markdown selection anchor is unavailable"))
+                     (copying-chunks-set! job (cons (text:to-string (list->vector (text:extract (fit-lines f) (text:make-span (car first) (cdr first) (car last) (cdr last)))) #f)
+                                                (copying-chunks job)))
+                     (if (> (+ at count) (cadr ordinals))
+                       (let ([text (text:to-string (list->vector (reverse (copying-chunks job))) #f)])
+                         (cancel-copy! s) (copy-text! text))
+                       (begin (copying-ordinal-set! job (+ at count)) (head:wake-main!))))]))))))))
+
+  (edoc "Ask the host to open the underlying source document at the shown source row. Pass document, revision and logical text position to open-source."
+        (id model "Markdown view"))
+  (define (source! id)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let* ([v (get source 'value '())] [document (details v 'document #f)])
+        (unless (and document (= (view:sequence d) (view:sequence (interaction:snapshot id))))
+          (refuse "The Markdown source basis is unavailable"))
+        (widget:invoke! id 'open-source document (or (view:basis d) (details v 'revision #f))
+          (cons (cadar (view:state d)) 0)))))
   (define (link-at f p)
     (and p (find (lambda (link) (<= (car link) (cdr p) (- (cadr link) 1))) (vector-ref (fit-links f) (car p)))))
 
@@ -317,7 +419,7 @@
       (list (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) '(contexts . (widget-markdown))
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
-        (cons 'actions (list (cons 'scroll scroll!) (cons 'move move!) (cons 'select select!) (cons 'copy copy!) (cons 'follow follow!)))))
+        (cons 'actions (list (cons 'scroll scroll!) (cons 'move move!) (cons 'select select!) (cons 'copy copy!) (cons 'follow follow!) (cons 'source source!)))))
     (for-each (lambda (binding) (keymap:bind-default! 'widget-markdown (car binding) (keymap:call move! widget:target (cadr binding))))
       '(("UP" up) ("DOWN" down) ("LEFT" left) ("RIGHT" right) ("HOME" home) ("END" end)
         ("C-p" up) ("C-n" down) ("C-b" left) ("C-f" right) ("C-a" home) ("C-e" end)
@@ -328,4 +430,5 @@
     (keymap:bind-default! 'widget-markdown "C-@" (keymap:call set-mark! widget:target #t))
     (keymap:bind-default! 'widget-markdown "C-g" (keymap:call set-mark! widget:target #f))
     (keymap:bind-default! 'widget-markdown "RET" (keymap:call follow! widget:target))
+    (keymap:bind-default! 'widget-markdown "C-c v" (keymap:call source! widget:target))
     (keymap:bind-default! 'widget-markdown "M-w" (keymap:call copy! widget:target))))

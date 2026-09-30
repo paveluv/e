@@ -36,7 +36,7 @@
     buffer-mark-row-set! buffer-marked buffer-marked-set!
     buffer-mode-auto buffer-modified
     buffer-modified-at buffer-modified-set! buffer-name
-    buffer-name-set! buffer-named buffer-narrowest-width
+    buffer-name-set! buffer-named
     buffer-of-store-id buffer-placements buffer-point
     buffer-read-only buffer-read-only-set! buffer-rendition
     buffer-revision buffer-revision-set! buffer-selectable?
@@ -3484,18 +3484,6 @@
     (max 1 (- (window-width w)
               (if (window-scrollbar? w) 1 0)
               (window-line-number-width w))))
-
-  (edoc "The smallest content width among the windows showing a buffer, or #f."
-        (b buffer "the buffer")
-        (returns (or integer #f)))
-  (define (buffer-narrowest-width b)
-    ;; The smallest content width among the windows showing b, or #f
-    ;; -- what a rendering shared by every window must fit.
-    (let ([ws (filter (lambda (w) (eq? (window-buffer w) b)) the-windows)])
-      (and (pair? ws)
-           (fold-left (lambda (m w) (min m (window-content-width w)))
-                      (window-content-width (car ws))
-                      (cdr ws)))))
 
   (edoc "The text grid, (rows . columns), of the preferred window showing a buffer, the focused one first, or #f."
         (b buffer "the buffer")

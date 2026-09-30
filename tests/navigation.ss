@@ -11,8 +11,6 @@
              (prefix (head head) head:)
              (prefix (foundation text) text:)
              (prefix (head mode) mode:)
-             (prefix (modes md-mode) md-mode:)
-             (prefix (apps markdown) markdown:)
              (prefix (head paint) paint:) (prefix (test) test:))
 
      (define check test:check)
@@ -107,51 +105,6 @@
      (check 'callback-failure-does-not-poison-next-update observations (list b))
 
      (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))
-     (md-mode:init!)
-     (markdown:init!)
-     (for-each
-       (lambda (local?)
-         (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "navigation.md")])
-           (head:buffer-lines-set! source '#("# Alpha" "" "# Middle" "" "# Omega"))
-           (head:with-buffer source (mode:choose! "markdown"))
-           (head:show-buffer! source)
-           (head:goto! '(2 . 1))
-           (let ([entered #f] [once #t])
-             (head:set-repaint-hook!
-               (lambda ()
-                 (paint:invalidate-screen-cache!)
-                 (when once
-                   (set! once #f)
-                   (set! entered (list (head:buffer-store-id (head:current-buffer))
-                                       (head:buffer-line (head:current-buffer) (car (head:point)))))
-                   (head:store-edit! source (text:make-span 0 0 0 0) '("# Before" "" ""))
-                   (head:before-frame!))))
-             (markdown:view!)
-             (check 'toggle-callback-sees-ready-view entered '(#f "Middle"))
-             (check 'source-to-view-follows-callback-edit (head:point) '(4 . 0))
-             (check 'source-to-view-keeps-content (head:buffer-line (head:current-buffer) (car (head:point))) "Middle"))
-           (let ([entered #f] [once #t])
-             (head:set-repaint-hook!
-               (lambda ()
-                 (paint:invalidate-screen-cache!)
-                 (when once
-                   (set! once #f)
-                   (set! entered (list (eq? (head:current-buffer) source) (head:point)))
-                   (head:store-edit! source (text:make-span 0 0 0 0) '("# Later" "" ""))
-                   (head:before-frame!))))
-             (markdown:edit!)
-             (check 'toggle-callback-sees-ready-source entered '(#t (4 . 0)))
-             (check 'view-to-source-follows-callback-edit (head:point) '(6 . 0))
-             (check 'view-to-source-keeps-content (head:buffer-line source (car (head:point))) "# Middle"))
-           (let ([once #t])
-             (head:set-repaint-hook!
-               (lambda ()
-                 (when once (set! once #f) (head:show-buffer! c) (head:goto! '(1 . 2)))))
-             (markdown:view!)
-             (check 'toggle-keeps-callback-navigation (eq? (head:current-buffer) c) #t)
-             (check 'toggle-keeps-callback-position (head:point) '(1 . 2)))
-           (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))))
-       '(#f #t))
      ;; Ordinary source positions remain characters; a vertical goal is in
      ;; cells, survives short rows and wide-glyph interiors, and is also the
      ;; column used by paging into rows outside the current rendition demand.

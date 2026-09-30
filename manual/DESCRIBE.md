@@ -10,7 +10,7 @@ meanings.
 Describe opens a read-only `<describe>` view in a new tile below the current
 window, or reuses a window already showing it. Focus remains in the requesting
 window. Each page has an independent read-only Markdown source, visible
-to the requesting head, and a local rendered companion. New page names are
+to the requesting head, and a widget presentation. New page names are
 suffixed when needed, so several subjects can remain open together.
 The selected name survives module reload, and pages update dynamically.
 If the described value is a command, the page lists its current global keys;
@@ -20,8 +20,8 @@ visible page on redraw. `C-h k` uses the same behavior for `<help>`.
 `C-c v` in the view shows its Markdown source, which remains read-only.
 Killing the view keeps the source; pass its document ID to `describe:show!`
 to reopen or change that page.
-Killing the source also closes its view. Renaming either buffer preserves
-their relationship. A name with no documentation leaves the previous page
+Killing the source leaves its presentation unavailable. Source names do not
+determine page identity. A name with no documentation leaves the previous page
 alone; if a displayed entry is later removed, the page reports its absence
 and resumes displaying it when the documentation returns.
 

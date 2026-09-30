@@ -26,6 +26,7 @@
 
 
      (define check test:check)
+     (define copied #f)
 
      (define (render lines)
        (let-values ([(text styles links rows) (markdown:render lines)])
@@ -159,7 +160,6 @@
 
      ;; A nested pair shares one base query, but neither geometry nor selection.
      (let ()
-       (define copied #f)
        (define actor head:ui-actor)
        (define source (store:create! actor "Markdown widget" '("# Hello" "" "|one|two|" "|---|---|" "|words here|many more words here|")))
        (define a (markdown:create-view! actor source))
@@ -197,6 +197,22 @@
        (let ([before (model:revision query)])
          (pump!) (pump!) (pump!)
          (check 'markdown-unchanged-frames-do-not-republish-query (model:revision query) before))
+       (parameterize ([store:log-retention 1])
+         (do ([revision 1 (+ revision 1)]) ((= revision 3))
+           (store:edit! actor source revision (text:make-span 0 0 0 0) '("x") #f)))
+       (test:await 'markdown-expired-anchors (lambda () (pump!) (contains? "Source anchor")))
+       (check 'markdown-expired-history-refuses-source-position
+         (test:raises? (lambda () (control:source! a))) #t)
+       (markdown:move! a 'start #f)
+       (test:await 'markdown-explicit-recovery (lambda () (pump!) (equal? 3 (view:basis (interaction:snapshot a)))))
+       (check 'markdown-explicit-start-recovers-expired-anchors (car (state a)) '(0 0 0 0))
+       (store:reset! actor source (list "```" (make-string 70000 #\x) "```"))
+       (test:await 'markdown-oversized-source
+         (lambda () (pump!)
+           (equal? 4 (cdr (assq 'revision (cdr (assq 'details (cdr (assq 'value (collection:summary query))))))))))
+       (markdown:move! a 'start #f)
+       (test:await 'markdown-oversized-block-marker (lambda () (pump!) (contains? "Markdown block")))
+       (check 'markdown-oversized-block-does-not-enter-layout (contains? "Markdown block") #t)
        (widget:prepare! root 0 0)
        (widget:unmount! root)
        (check 'markdown-hidden-view-releases-range-demand (model:demanded? query) #f)
@@ -227,11 +243,11 @@
        (markdown:move! child 'finish)
        (test:await 'markdown-last-page (lambda () (pump!) (= (caar (state)) 198)))
        (check 'markdown-end-acquires-last-page (caar (state)) 198)
-       (markdown:move! child 'start)
+       (markdown:move! child 'start #f)
        (interaction:set-state! actor child 0 (append (list-head (state) 3) '(#t)))
        (pump!)
        (check 'markdown-later-interaction-cancels-pending-motion (caar (state)) 198)
-       (markdown:move! child 'start)
+       (markdown:move! child 'start #f)
        (test:await 'markdown-return-to-first-page (lambda () (pump!) (= (caar (state)) 0)))
        (widget:pointer! '(pointer press primary ()) 2 0)
        (check 'markdown-link-uses-explicit-document-and-host opened (list source "target0.md"))
@@ -242,6 +258,18 @@
        (widget:pointer! '(pointer release primary ()) 6 0)
        (check 'markdown-pointer-drag-keeps-fixed-anchor (list (car (state)) (cadr (state)) (cadddr (state)))
          '((0 0 0 6) (0 0 0 0) #t))
+       (markdown:move! child 'finish #t)
+       (test:await 'markdown-extended-last-page (lambda () (pump!) (= (caar (state)) 198)))
+       (set! copied #f)
+       (markdown:copy! child)
+       (test:await 'markdown-copy-pages (lambda () (pump!) copied))
+       (check 'markdown-copy-selection-across-pages copied
+         (string:join (map (lambda (i) (format "Link ~a" i)) (iota 100)) "\n\n"))
+       (set! copied #f)
+       (markdown:copy! child)
+       (markdown:set-mark! child #f)
+       (pump!)
+       (check 'markdown-copy-cancelled-by-new-selection copied #f)
        (widget:unmount! root)
        (store:delete! actor source))
 

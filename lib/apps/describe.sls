@@ -8,20 +8,24 @@
   (export (rename (describe-at-point! at-point!)) fetch-data! init! (rename (describe-input! input!))
           (rename (describe-key! key!)) (rename (describe! show!)) (rename (describe this)))
   (import (chezscheme)
-          (prefix (only (apps markdown) companion companion!) markdown:)
+          (prefix (apps markdown) markdown:)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
+          (prefix (head catalogue-host) catalogue-host:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head style) style:)
+          (prefix (head widget) widget:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service reference) reference:)
-          (prefix (state store) store:))
+          (prefix (state store) store:)
+          (prefix (state view) view:))
 
   ;;; Fetching --------------------------------------------------------------------
 
@@ -39,28 +43,21 @@
 
   ;;; Display -------------------------------------------------------------------
 
-  (define refreshed '())
+  (define refreshed (make-hashtable equal-hash equal?))
   (define definition-generation 0)
   (define (invalidate-pages!) (set! definition-generation (+ definition-generation 1)))
-  (define (refresh-describe!)
-    ;; This outer-host adapter disappears with the Markdown widget. Keep
-    ;; refresh demand local: ordinary frames must not serialize the namespace
-    ;; or publish every visible page over the wire again.
-    (let ([context (delay (list (keymap:generation) (doc:entries) definition-generation))] [next '()])
-      (for-each
-        (lambda (w)
-          (let* ([b (head:window-buffer w)]
-                 [source (if (head:buffer-store-id b) b (head:buffer-fact b 'markdown-input #f))]
-                 [id (and (head:buffer? source) (head:buffer-store-id source))]
-                 [name (and id (head:buffer-fact source 'reference-query #f))])
-            (when (and name (not (assv id next)))
-              (let* ([basis (cons (store:revision id) (force context))] [old (assv id refreshed)])
-                (unless (and old (equal? (cdr old) basis))
-                  (when (reference:select! head:ui-actor id (car basis) name (keymap:command-keys name))
-                    (head:sync-foreign-edits! id)))
-                (set! next (cons (cons id (cons (store:revision id) (force context))) next))))))
-        (head:windows))
-      (set! refreshed next)))
+  (define (refresh-page! id frame)
+    (when frame
+      (let-values ([(source d inputs) (widget:context id 'current)])
+        (let ([context (list (keymap:generation) (doc:entries) definition-generation)])
+          (unless (equal? context (hashtable-ref refreshed id #f))
+            (hashtable-set! refreshed id context)
+            (let ([page (reference:page head:ui-actor (cadr (view:source d)))])
+              (when page (reference:select! head:ui-actor (car page) (cadr page) (caddr page) (keymap:command-keys (caddr page))))))))))
+  (define (create-page! document commands)
+    (let* ([page (view:create! head:ui-actor (list 'buffer document) 'describe 1 '() '())]
+           [body (markdown:create! head:ui-actor document commands)])
+      (view:arrange! head:ui-actor (list (list page 0 (list (list 'body body '(grow 1))) '())) '()) page))
 
   (define (top-level-name value)
     ;; the symbol the top level binds to a value, so a procedure written
@@ -82,17 +79,13 @@
                    (and page (reference:select! head:ui-actor (car page) (cadr page)
                                name (keymap:command-keys name)))))])
       (if (not id)
-          (edit:set-message! (format "No documentation for ~a" name))
-          (head:call-with-display-update
-            (lambda ()
-              (head:sync-foreign-edits! id)
-              (let ([source (head:adopt-store-buffer! id)])
-                (when source
-                  (let ([b (markdown:companion! source "*describe*")])
-                    (head:with-buffer b (head:goto! '(0 . 0)))
-                    (if (window:pop-up-or-reuse! b)
-                        (edit:set-message! "")
-                        (edit:set-message! (format "~a: see ~a" name (head:buffer-name b))))))))))
+        (edit:set-message! (format "No documentation for ~a" name))
+        (begin
+          (head:adopt-store-buffer! id)
+          (let* ([root (window:tool! "describe" (lambda (commands) (create-page! id commands)) (format "describe:~a" id))]
+                 [b (catalogue-host:resolve! root)])
+            (if (window:pop-up-or-reuse! b) (edit:set-message! "")
+              (edit:set-message! (format "~a: see ~a" name (head:buffer-name b)))))))
       id))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
@@ -250,14 +243,16 @@
       (unless (window:pop-up-or-reuse! b)
         (edit:set-message! "The <help> buffer could not be displayed"))))
 
-  (edoc "Install the describe commands: the page refresh hook, the describe entries of the extension API and the C-h f and C-h k bindings." (public))
+  (edoc "Register Describe's visible-page service, documentation and C-h f/C-h k commands." (public))
   (define (init!)
     ;; Rebind a head callback; selection itself belongs to the store page.
     (kernel:add-after-reload-hook! (lambda (name) (invalidate-pages!)))
     (log:subscribe! (lambda (entry presentation)
                       (when (memq (log:component entry) '(reference:run-fetch! reference:begin-fetch!))
                         (invalidate-pages!))))
-    (head:add-pre-redraw-hook! refresh-describe!)
+    (widget:register! 'describe 1
+      (append (layout:container 'y)
+        (list (cons 'service refresh-page!) (cons 'release (lambda (id) (hashtable-delete! refreshed id))))))
     (keymap:bind-default! "C-h k" describe-key!)
     (doc:register!
       '(((describe:show!) (("procedure" . "(describe:show! name [page])")) "document id or #f"
@@ -275,10 +270,10 @@
          "Override an editor face using a style expression accepted by `style:compile`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
         ((markdown:view!) (("procedure" . "(markdown:view! [buffer])")) "void"
          ("(apps markdown)") markdown "Markdown viewing" #f
-         "Show a local, read-only companion of a markdown source buffer. Markup strips into faces, paragraphs join, tables align, and fenced code frames. Source text and history stay intact; `C-c v` switches this window between source and view.")
-        ((markdown:edit!) (("procedure" . "(markdown:edit! [buffer])")) "void"
+         "Show an independently fitted widget over a Markdown source document. Markup strips into faces, paragraphs join, tables align, and fenced code frames. Source text and history stay intact; `C-c v` switches this window between source and view.")
+        ((markdown:edit!) (("procedure" . "(markdown:edit! view)")) "void"
          ("(apps markdown)") markdown "Markdown viewing" #f
-         "Return from a markdown companion to its live source at the matching row, preserving the source's text, mode, read-only state, and undo history.")
+         "Ask a Markdown widget's explicit host to return to its source at the matching row, preserving source text and undo history.")
         ((markdown:view-max-width)
          (("parameter" . "(markdown:view-max-width [columns])"))
          "integer" ("(apps markdown)") markdown "Markdown viewing" #f

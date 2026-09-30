@@ -8,7 +8,7 @@
 ;; headlessly against a string port.  Above it, the window painter
 ;; composes a window from the head's records: soft-wrap geometry,
 ;; gutters and scrollbars, the status line, the highlighter and
-;; hyperlinker and status-hint registries, and the screen cache that
+;; status-hint registries, hyperlinks and the screen cache that
 ;; repaints only rows whose key changed; a buffer's mode-driven
 ;; presentation comes from the mode registry.  On top, the frame
 ;; driver: the screen's size, the viewport logic that keeps point
@@ -17,7 +17,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head paint)
-  (export add-buffer-status-hint! add-highlighter! add-hyperlinker! add-status-hint! ansi!
+  (export add-buffer-status-hint! add-highlighter! add-status-hint! ansi!
           begin-frame! buffer-line-hyperlinks buffer-wrap-setting clean-wrap? column-at-cell
           compute-breaks compute-echo-spans cursor-in-echo detect-hyperlinks
           display-echo-log-row! display-editor-line! echo-append! echo-box-border echo-box-width
@@ -29,7 +29,7 @@
           region-span reset-cursor-style! rows-before screen-cols
           screen-live? screen-rows (rename (text-layout:scroll-margin scroll-margin)) scroll-window! set-buffer-viewports! set-conflicts-action! set-screen-cols! set-screen-live! set-screen-rows!
           show-message! show-prompt-message! terminal-size! update-echo-geometry!
-          valid-hyperlink? view-overflows? visual-bell!
+          view-overflows? visual-bell!
           window-layout window-position window-screen-position window-wrapped? (rename (text-layout:wrap-lines wrap-lines))
           wrap-width)
   (import (rnrs)
@@ -298,15 +298,6 @@
                                         (substring text start end))
                                   links))))))))))
 
-  (edoc "Whether a value is a well-formed (start end url [id]) link inside a line of a given length."
-        (link any "the value to check")
-        (line-length integer "the line's length")
-        (returns boolean))
-  (define (valid-hyperlink? link line-length)
-    (and (list? link) (<= 3 (length link) 4)
-         (integer? (car link)) (integer? (cadr link))
-         (<= 0 (car link)) (< (car link) (cadr link))
-         (<= (cadr link) line-length) (string? (caddr link))))
   ;;; Frame composition ------------------------------------------------------------
 
   ;; The screen model: painted rows are cached by a key describing
@@ -584,27 +575,6 @@
                                                       (if face (face range) 'hover))))))))))))
           '())))
 
-  ;; Hyperlinkers produce (start end URI [id]) ranges for one buffer line.
-  ;; They are deliberately separate from visual highlighters: links carry a
-  ;; payload, participate in hit testing, and are also exposed to an upstream
-  ;; terminal through OSC 8. Newer providers take precedence on overlap.
-  (define hyperlinkers (kernel:make-registry))
-
-  (edoc "Register a source of hyperlinks beside URL detection: (proc buffer row line) gives (start end url [id]) ranges."
-        (proc procedure "the hyperlinker"))
-  (define (add-hyperlinker! proc)
-    (kernel:registry-add! hyperlinkers proc))
-
-  (define (text-hyperlinks buffer row line)
-    (fold-left
-      (lambda (links proc)
-        (append
-          (filter (lambda (link)
-                    (valid-hyperlink? link (string-length line)))
-                  (guard (ex [else '()]) (proc buffer row line)))
-          links))
-      (detect-hyperlinks line) (kernel:registry-items hyperlinkers)))
-
   (edoc "The hyperlinks of a buffer row as source character ranges, on or off screen."
         (buffer buffer "the buffer")
         (row integer "the row")
@@ -623,7 +593,7 @@
                    (cons (render:character frame row (car range))
                          (cons (render:character frame row (cadr range)) (cddr range))))
                  (caddr data)) '())
-        (text-hyperlinks buffer row text))))
+        (detect-hyperlinks text))))
 
   (define (cell-ranges frame row ranges)
     (map (lambda (range)
@@ -893,7 +863,7 @@
                                              (render:column frame i (cdr span) #t)))]
                        [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
                        [links (append (if data (caddr data) '())
-                                      (cell-ranges frame i (text-hyperlinks b i line)))])
+                                      (cell-ranges frame i (detect-hyperlinks line)))])
                   (let-values ([(shown row-styles)
                                 (if data (values (car data) (cadr data))
                                     (render:present frame i line replacement

@@ -408,11 +408,18 @@
                             (shape (head:layout-split-first node)) (shape (head:layout-split-second node)))))
                 (head:window-index (head:current-window)) (head:copy-text)
                 (map (lambda (w)
-                       (let ([b (head:window-buffer w)])
-                         (list (or (head:buffer-store-id b) (head:buffer-name b))
-                               (head:buffer-line b (head:window-prow w)) (head:window-pcol w)
-                               (and (head:buffer-store-id b) (head:buffer-line b (head:window-top w)))
-                               (head:window-wrap w)))) (head:windows)))))
+                       (let* ([b (head:window-buffer w)] [root (head:buffer-fact b 'widget-id #f)]
+                              [body (and root (guard (ex [else #f]) (widget:descendant root 'app 'text)))]
+                              [state (and body (view:state (interaction:snapshot body)))]
+                              [query (and body (view:source (interaction:snapshot body)))]
+                              [source (and query (cdr (assq 'document (cdr (assq 'details (cdr (assq 'value (collection:summary query))))))))])
+                         (if source
+                           (list (head:buffer-name b) (store:line source (cadar state)) (cadddr (car state))
+                             (store:line source (cadr (caddr state))) (head:window-wrap w))
+                           (list (or (head:buffer-store-id b) (head:buffer-name b))
+                             (head:buffer-line b (head:window-prow w)) (head:window-pcol w)
+                             (and (head:buffer-store-id b) (head:buffer-line b (head:window-top w)))
+                             (head:window-wrap w))))) (head:windows)))))
      (define (occurrences text part)
        (let loop ([from 0] [count 0])
          (cond [(string:search text part from (string-length text))
@@ -2574,7 +2581,7 @@
                           (string-set! (doc:description entry) 0 #\Y)
                           (list (head:buffer-fact source 'audience #f)
                                 (head:buffer-read-only source)
-                                (not (head:buffer-store-id (markdown:companion source)))
+                                (not (head:buffer-store-id (head:find-tool-buffer (format "*describe:~a*" receiver))))
                                 (doc:description entry)
                                 (and (member "Original head documentation" (vector->list (head:buffer-lines source))) #t)))))
                    '(((head "screen A")) #t #t "Original head documentation" #t))
@@ -2737,10 +2744,8 @@
                             (window:split-right!) (window:focus-next!)
                             (let ([source (head:adopt-store-buffer! ,source)])
                               (head:with-buffer source (mode:choose! "markdown"))
-                              (head:show-buffer! (markdown:companion! source "<resume view>")))
-                            (head:goto! (cons (let find ([row 0])
-                                                (if (string=? (head:buffer-line (head:current-buffer) row) "After table")
-                                                    row (find (+ row 1)))) 2))
+                              (head:show-buffer! source) (head:goto! '(4 . 0))
+                              (markdown:view!))
                             (window:focus-next!) (window:set-wrap! #f) (window:split-below!)
                             ;; the user's tree is the root split's first subtree;
                             ;; the root itself holds the pop-up
@@ -2757,6 +2762,7 @@
                             (let ([other (head:window-numbered 3)])
                               (head:window-prow-set! other 50) (head:window-pcol-set! other 4)
                               (head:window-top-set! other 45)) #t))
+                       (head-wait 'markdown-before-loss again (lambda () (head-sees? again "After table")))
                        (let ([before (screen-state again)])
                          ;; Completion opens the pop-up window. A wake
                          ;; in that modal loop must not checkpoint its chrome.
@@ -2781,7 +2787,8 @@
                          (let ([truth (map (lambda (id) (rpc head 'snapshot id)) (list plain source))]
                                [resumed (start-head "screen A" 52)])
                            (head-wait 'screen-resumes-at-new-width resumed (lambda () (head-sees? resumed "resume 025")))
-                           (test:check 'abrupt-reattach-rebuilds-layout-and-local-source-anchors
+                           (head-wait 'markdown-after-loss resumed (lambda () (head-sees? resumed "After table")))
+                           (test:check 'abrupt-reattach-rebuilds-layout-and-source-anchors
                              (list (screen-state resumed)
                                    (map (lambda (id) (rpc head 'snapshot id)) (list plain source)))
                              (list before truth))
@@ -2798,12 +2805,12 @@
                            (rpc head 'delete source)
                            (let ([fallback (start-head "screen A")])
                              (head-wait 'missing-input-fallback fallback (lambda () (head-sees? fallback "shared text B")))
-                             (test:check 'missing-or-hidden-inputs-fall-back-without-disturbing-another-screen
+                             (test:check 'missing-documents-fall-back-and-unavailable-widget-keeps-its-identity
                                (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
                                                                (remq (head:popup) (head:windows))))
                                      (head-read b '(list (length (remq (head:popup) (head:windows)))
                                                          (head:buffer-store-id (head:current-buffer)) (head:copy-text))))
-                               (list (make-list 3 id) (list 1 terminal-id "screen B kill")))
+                               (list (list id id #f) (list 1 terminal-id "screen B kill")))
                              ;; A screen saved before the pop-up numbered its
                              ;; ordinary window 0. It resumes renumbered beside
                              ;; the pop-up, which keeps 0.

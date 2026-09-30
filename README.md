@@ -243,7 +243,7 @@ immediately.
   formatters, and dynamic log views.
 - [Describe](manual/DESCRIBE.md): live reference pages, key discovery, corpus
   installation, structured queries, and module-published documentation.
-- [Markdown viewing](manual/MARKDOWN.md): the rendered companion of a
+- [Markdown viewing](manual/MARKDOWN.md): independent widget presentations of a
   Markdown buffer, links, tables, and the viewer API.
 - [Configuration](manual/CONFIGURATION.md): startup options and head names,
   `config.e` and `base-config.e`, reload semantics, precedence, and common

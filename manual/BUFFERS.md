@@ -21,7 +21,8 @@ name another head's buffer holds, `*copy*<2>`, is the store's business and
 drops too, so every head shows `[copy]`; only when a head already shows a
 buffer under that label does the suffix stay, as `[copy<2>]`. Describe's
 private `*describe*` source belongs to the base, while its rendered
-`<describe>` companion belongs to the head. Shared names
+`<describe>` window slot belongs to the head; its widget view state lives in
+the base. Shared names
 are unique across the store, including buffers hidden from this head;
 collisions receive `<2>`, `<3>`, and so on, as in `notes<2>`. Local names
 keep their brackets when renamed; duplicate labels become `<name 2>`,
