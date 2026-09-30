@@ -21,6 +21,7 @@
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
           (prefix (service git-source) git-source:)
+          (prefix (service inspection) inspection:)
           (prefix (service journal-source) journal-source:)
           (prefix (service log) log:)
           (prefix (service markup-source) markup-source:)
@@ -49,7 +50,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "conflict-review" "conflict-source" "git" "git-source" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "conflict-review" "conflict-source" "git" "git-source" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -295,6 +296,9 @@
        (unless (<= 1 (length args) 2) (error 'wire "expected draft and optional owning view"))
        (apply review-preview:create! actor args)]
       [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
+      [(inspection-create) (control!) (arity 0) (inspection:create! actor)]
+      [(inspection-publish) (control!) (arity 6) (apply inspection:publish! actor args)]
+      [(inspection-close) (control!) (arity 1) (apply inspection:close! actor args) #t]
       [(rewrite-source-toggle) (control!) (arity 2) (apply rewrite-source:toggle! actor args) #t]
       [(rewrite-source-settle) (control!) (arity 3) (apply rewrite-source:settle! actor args)]
       [(rewrite-create) (control!) (arity 1) (rewrite:create! actor (car args))]

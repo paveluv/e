@@ -213,6 +213,18 @@ provided an activation command; an obsolete result refuses.
 
 ## Forwarding and inspection
 
+`widget:inspect` takes a mounted root and a traversal limit (at most 256).
+It returns portable containment, source, command and port declarations plus
+acquired connections, with an explicit truncation flag. It reads local
+metadata without executing actions or fetching source payloads.
+
+`inspection:create!` creates a base-owned, attachment-specific listing.
+`inspection:publish!` accepts revision-checked portable rows only while the
+listing is demanded, with limits of 2048 rows and 256 KiB. Inspect its subject,
+definition basis, rows and attachment through `model:snapshot`. A departing
+producer leaves the listing marked unavailable; a new attachment cannot
+silently adopt it as its own live facts.
+
 `widget:invoke!` and `widget:act!` are exported syntax, with private runtime
 dispatchers. An `elibrary` registers their call sites while compiling its
 procedure definitions. Ordinary app and control commands remain procedures:

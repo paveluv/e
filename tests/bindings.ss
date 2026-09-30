@@ -300,4 +300,5 @@
            (when (eq? placement 'split) (window:focus! w) (window:delete!))))
        '(popup split))
 
+     (include "tests/inspection.sps")
      (test:finish! 'bindings)))

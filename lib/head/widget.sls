@@ -3,8 +3,8 @@
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
-          host init! input! invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
-  (import (chezscheme)
+          host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
+  (import (except (chezscheme) inspect)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
           (prefix (foundation datum) datum:)
@@ -289,6 +289,29 @@
             (list (list id path (view:kind d)
                     (map (lambda (c) (let ([target (command-target c)]) (append c (list (car target) (and (cdr target) #t))))) cs))))
           (if d (apply append (map (lambda (child) (walk (cadr child) (append path (list (car child))))) (view:children d))) '())))))
+
+  (edoc "Inspect a mounted subtree using only acquired descriptors and connection metadata. Return (views connections truncated?): view rows are (id path kind schema source commands ports available?), and connections are the acquired typed edges touching those views or sources. No source payloads, callbacks, geometry or remote reads are included. The limit bounds traversal; an oversized composition explicitly reports truncation."
+        (id model "mounted subtree") (limit integer "maximum views, 1 through 256") (returns list) (effects internal) (public))
+  (define (inspect id limit)
+    (unless (and (fixnum? limit) (<= 1 limit 256)) (error 'inspect "expected a limit from 1 through 256"))
+    (let ([mount (node-root (mounted id))] [out '()] [count 0] [truncated? #f])
+      (define (walk id path)
+        (if (>= count limit) (set! truncated? #t)
+          (let* ([d (read-view id)] [entry (definition d)])
+            (set! count (+ count 1))
+            (when d
+              (set! out (cons (list id path (view:kind d) (view:schema d) (view:source d)
+                                (descriptor:commands d) (or (port:describe (list 'view (view:kind d) (view:schema d))) '())
+                                (and entry #t)) out))
+              (let loop ([children (view:children d)])
+                (unless (null? children)
+                  (if (>= count limit) (set! truncated? #t)
+                    (begin (walk (cadar children) (append path (list (caar children)))) (loop (cdr children))))))))))
+      (walk id '())
+      (let* ([rows (reverse out)] [ids (append (map car rows) (filter values (map (lambda (r) (list-ref r 4)) rows)))]
+             [bundle (mount-bundle mount)]
+             [edges (if bundle (filter (lambda (e) (or (member (cadr e) ids) (member (car (cadddr e)) ids))) (cadr bundle)) '())])
+        (list rows (list-head edges (min 1024 (length edges))) (or truncated? (> (length edges) 1024))))))
 
   (edoc "Invoke an explicit command target with its fixed arguments followed by control-supplied arguments."
         (id model "control") (command symbol "binding name") (arguments (list-of any) "additional arguments") (returns any))
