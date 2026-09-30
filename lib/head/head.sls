@@ -26,7 +26,7 @@
     app-event-button app-event-focus app-event-position
     app-facts app-following? app-handle-event!
     app-manages-window-viewport? app-of app-refresh!
-    app-refresh-error app-refresh-error-set! app-status app?
+    app-refresh-error app-refresh-error-set! app?
     before-frame! buffer buffer-append! buffer-base
     buffer-base-set! buffer-conflicted buffer-fact
     buffer-fact-set! buffer-facts-set! buffer-file
@@ -54,8 +54,8 @@
     defer-frame! depart! detach-app! dispatch-app-event!
     divider-at dividers double-click? drag edit-basis
     find-tool-buffer finish-frame! fit-layout! flush-ui-audit!
-    follow-app! forget-buffer! frame-presented! fresh-buffer!
-    (rename (window-full-capture? full-capture?)) goto!
+    forget-buffer! frame-presented! fresh-buffer!
+    goto!
     hide-popup! host-color-scheme in-main-pump input-live?
     interrupted? last-command layout layout-leaves
     layout-min-height layout-min-width layout-node!
@@ -73,7 +73,7 @@
     quitting? read-key-event read-paste read-rendition
     refresh-renditions! refresh-visible-views! register-app!
     register-resume! register-view! registered-apps
-    replace-layout-window! request-app-size! request-frame-at!
+    replace-layout-window! request-frame-at!
     resize-popup! resume! resume-source! root run-deferred!
     run-on-main! run-shutdown-hooks! scrollbar
     scrollbar-position set-adopt-hook! set-after-key!
@@ -82,7 +82,7 @@
     set-app-status-position! set-buffer-status! set-buffers!
     set-copy-text! set-current! set-current-keys! set-departure!
     set-directory-opener! set-dividers! set-drag!
-    set-editor-state-reader! set-file-opener! set-frame-hook! set-full-capture!
+    set-editor-state-reader! set-file-opener! set-frame-hook!
     set-last-command! set-layout-root! set-mouse-handler!
     set-mouse-position! set-pending-paste! set-point-mover! set-quit-command!
     set-repaint-hook! set-review-viewer! set-root!
@@ -202,9 +202,7 @@
         (wrap (or boolean (one-of default)) "whether long lines wrap here")
         (line-numbers (or boolean (one-of default)) "whether an edit buffer shows line numbers here")
         (goal (or pair #f) "the vertical-motion goal, (column . context) while the context holds")
-        (following? boolean "whether it follows its shared app")
         (view any "a local app's presentation of its rows, or #f")
-        (full-capture? boolean "whether every key goes to the app")
         (status-actions list "the painted status-line controls")
         (document-views list "retained document/widget identities; no copied interaction state"))
   (define-record-type (window %make-window window?)
@@ -236,13 +234,8 @@
       ;; the goal column of vertical motion, with the navigation context
       ;; that set it: the goal survives exactly as long as the context
       (mutable goal)
-      ;; Following a shared app is a window preference, never a store fact.
-      (mutable following?)
       ;; Optional local-app presentation; rows retain their shared identity.
       (mutable view)
-      ;; Input preference and painted status controls belong to this view,
-      ;; never to the shared process. Only the preference is checkpointed.
-      (mutable full-capture?)
       (mutable status-actions)
       (mutable document-views)))
 
@@ -630,17 +623,9 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
-               size xoff width wrap 'default #f #t #f #f '() '())])
+               size xoff width wrap 'default #f #f '() '())])
       (window-buffer-set! w (placed-buffer! w buffer the-windows))
       (ensure-window-document-view! w) (when window-mounter (window-mounter w)) w))
-
-  (edoc "Say whether a window sends every key to its app, and repaint."
-        (w window "the window")
-        (full? boolean "whether to capture everything"))
-  (define (set-full-capture! w full?)
-    (unless (boolean? full?) (error 'set-full-capture! "expected a boolean" full?))
-    (window-full-capture?-set! w full?)
-    (request-repaint!))
 
   (edoc "The live window numbered n, or #f."
         (n integer "the number")
@@ -734,7 +719,6 @@
   (define (goto! p)
     ;; Point belongs to the selected window, for apps and text alike.
     (let ([w the-current])
-      (follow-app! w #f)
       (unless (point-mover w (cons (max 0 (car p)) (max 0 (cdr p))))
         (window-prow-set! w (max 0 (min (car p) (- (render:line-count (buffer-text (window-buffer w))) 1))))
         (window-pcol-set! w (max 0 (min (cdr p) (string-length (render:line-ref (window-text w) (window-prow w)))))))))
@@ -1996,7 +1980,7 @@
       (car (clamp-text-position text
              (fold-left text:rebase-position (cons row col) deltas))))
     (let* ([following (if (app-live? facts)
-                          (filter (lambda (w) (and (eq? (window-buffer w) b) (not (window-document-view w)) (window-following? w))) the-windows)
+                          (filter (lambda (w) (and (eq? (window-buffer w) b) (not (window-document-view w)) (app-following? w))) the-windows)
                           '())]
            [ranges
             (fold-left
@@ -2028,9 +2012,7 @@
         ;; update or viewport refill must not invalidate the whole screen.
         (unless (equal? (render:header old) (render:header next))
           (bump-buffer-revision! b)))
-      (let ([header (render:header next)])
-        (when (and header (caddr header))
-          (for-each (lambda (w) (follow-rendition! w next header facts)) following)))))
+    ))
 
   (define (refresh-buffer-rendition! b)
     (let ([facts (app-facts b)])
@@ -2803,7 +2785,7 @@
 
   ;;; Named screen resume ------------------------------------------------------
 
-  ;; A checkpoint is (screen 5 selected-number layout buffers).
+  ;; A checkpoint is (screen 6 selected-number layout buffers).
   ;; Version 1 had no capture preference; restore those windows with partial
   ;; capture. Version 2 kept line numbers per buffer; a window restored from
   ;; it follows the default. Splits retain their ordinary orientation/weights;
@@ -2916,12 +2898,11 @@
             (let capture ([node (layout-split-first the-root)])
               (if (window? node)
                   (list 'window (window-index node) (cdr (assq (window-buffer node) slots))
-                    (window-topseg node) (window-left node) (window-wrap node) (window-following? node)
-                    (window-full-capture? node) (window-line-numbers node) (window-document-views node))
+                    (window-topseg node) (window-left node) (window-wrap node) (window-line-numbers node) (window-document-views node))
                   (list 'split (layout-split-orientation node)
                     (layout-split-first-weight node) (layout-split-second-weight node)
                     (capture (layout-split-first node)) (capture (layout-split-second node)))))]
-           [state (list 'screen 5 (window-index the-current) layout (map capture-buffer the-buffers))])
+           [state (list 'screen 6 (window-index the-current) layout (map capture-buffer the-buffers))])
       (when (publication:changed? checkpoint-writer state)
         (let ([now (current-time 'time-monotonic)]
               [due (and checkpoint-queued-at (add-duration checkpoint-queued-at checkpoint-interval))])
@@ -2991,7 +2972,7 @@
   (define (restore-screen! state)
     (apply
       (lambda (tag version selected layout entries)
-        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4 5)))
+        (unless (and (eq? tag 'screen) (memv version '(1 2 3 4 5 6)))
           (error 'resume! "unsupported screen checkpoint"))
         (let* ([fallback (window-buffer the-current)]
                ;; before version 3 a buffer entry carried its line numbers second
@@ -3022,10 +3003,10 @@
                   (case (car node)
                     [(window)
                      (apply
-                       (lambda (tag index slot topseg left wrap following? full? numbers editors)
+                       (lambda (tag index slot topseg left wrap numbers editors)
                          (unless (and (for-all natural? (list index slot topseg left))
                                       (< slot (vector-length buffers)) (not (memv index indices))
-                                      (boolean? following?) (boolean? full?) (memq numbers '(default #t #f))
+                                      (memq numbers '(default #t #f))
                                       (editor-references? editors)
                                       (let ([used (apply append (map (lambda (p) (map cdr (cdr p))) editor-placements))])
                                         (let loop ([entries editors] [seen used])
@@ -3035,12 +3016,13 @@
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (let ([w (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                                    0 topseg left 0 0 1 0 80 wrap numbers #f following? #f full? '() '())])
+                                    0 topseg left 0 0 1 0 80 wrap numbers #f #f '() '())])
                            (set! editor-placements (cons (cons w editors) editor-placements)) w))
-                       (cond [(= version 1) (append node '(#f default ()))]
-                             [(= version 2) (append node '(default ()))]
-                             [(< version 5) (append node '(()))]
-                             [else node]))]
+                       (if (= version 6) node
+                         (let ([old (cond [(= version 1) (append node '(#f default ()))]
+                                      [(= version 2) (append node '(default ()))]
+                                      [(< version 5) (append node '(()))] [else node])])
+                           (append (list-head old 6) (list-tail old 8)))))]
                     [(split)
                      (apply
                        (lambda (tag orientation first-weight second-weight first second)
@@ -3281,100 +3263,21 @@
         (value (or window #f)))
   (define app-event-focus (make-thread-parameter #f))
 
-  (define (captures? rule event)
-    (or (eq? rule 'all)
-        (and (pair? rule)
-             (if (eq? (car rule) 'except) (not (member event (cdr rule)))
-                 (and (member event rule) #t)))))
-
   (edoc "Whether a window follows a live shared app whose surface has a header."
         (w window "the window")
         (returns boolean))
   (define (app-following? w)
     (and (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
-           (if (and d (eq? (view:kind d) 'terminal)) (cadr (terminal-state:state d)) (window-following? w)))
+           (and d (eq? (view:kind d) 'terminal) (cadr (terminal-state:state d))))
          (app-live? (app-facts (window-buffer w)))
          (let ([header (render:header (buffer-rendition (window-buffer w)))])
            (and header (caddr header) #t))))
 
-  (edoc "Say whether a window follows its shared app's cursor and viewport."
-        (w window "the window")
-        (following? boolean "whether to follow"))
-  (define (follow-app! w following?)
-    (unless (boolean? following?) (error 'follow-app! "expected a boolean" following?))
-    (window-following?-set! w following?)
-    (void))
-
-  (define (follow-rendition! w frame header facts)
-    (let* ([b (window-buffer w)] [cursor (caddr header)] [row (car cursor)] [cell (cadr cursor)])
-      (window-prow-set! w row)
-      (window-pcol-set! w
-        (min (render:character frame row cell) (string-length (render:line-ref (buffer-text b) row))))
-      (when (app-fact facts 'manages-viewport #f)
-        ;; A managed grid occupies the transcript's tail. Smaller windows
-        ;; clip it around the cursor; ordinary apps keep normal scrolling.
-        (let* ([count (line-count b)] [height (max 1 (window-size w))]
-               [start (max 0 (- count (car (cadddr header))))])
-          (window-top-set! w
-            (max start (- row height -1)
-                 (min (window-top w) row (max start (- count height)))))
-          (window-topseg-set! w 0)
-          (window-left-set! w
-            (max 0 (- cell (window-content-width w) -1)
-                 (min (window-left w) cell (max 0 (- (cadr (cadddr header)) (window-content-width w))))))))))
-
-  (edoc "A shared app's status text from its facts, or #f."
-        (b buffer "the buffer")
-        (returns (or string #f)))
-  (define (app-status b)
-    (let ([facts (app-facts b)])
-      (and facts (app-fact facts 'status #f))))
-
-  (define last-app-size #f)
-
-  (edoc "Offer the focused shared app its window's text grid size, once per endpoint, window and grid.")
-  (define (request-app-size!)
-    ;; One offer per focused endpoint/window/grid. The producer decides which
-    ;; head owns sizing. Install the receipt before delivery can reenter.
-    (let* ([w the-current] [b (window-buffer w)] [facts (app-facts b)]
-           [next (and (not (window-widget w)) (app-live? facts)
-                      (list (app-fact facts 'app #f) (buffer-store-id b) w
-                            (max 1 (window-size w)) (window-content-width w)))])
-      (unless (equal? next last-app-size)
-        (set! last-app-size next)
-        (when next
-          (unless (actor:send! (car next)
-                    (list 'request ui-actor (cadr next) 'resize (cdddr next)))
-            (when (eq? last-app-size next) (set! last-app-size #f)))))))
-
-  (edoc "Give the selected window's app an event: a local handler's result, else the shared app's capture decision."
-        (event string "the event")
-        (returns any))
+  (edoc "Deliver an event to the current legacy local app, preserving its focus decision. Widget hosts use recursive routing."
+        (event string "normalized event") (returns any))
   (define (dispatch-app-event! event)
-    ;; Local handlers retain their result (including mouse focus decisions).
-    ;; Shared capture is decided here, before sending an owned message.
-    (when (string=? event "FOCUS") (set! last-app-size #f))
-    (let* ([w the-current] [b (window-buffer w)] [a (app-of b)]
-           [handler (and a (app-handle-event! a))])
-      (if a (and handler (handler event))
-          (let ([facts (app-facts b)])
-            (and (not (window-widget w)) (app-live? facts)
-                 (captures? (app-fact facts 'capture #f) event)
-                 (let* ([frame (buffer-rendition b)] [header (render:header frame)]
-                        [point (or (app-event-buffer-position) (cons (window-prow w) (window-pcol w)))]
-                        [data (list (cons 'point point)
-                                    (cons 'cell (cons (car point) (render:column frame (car point) (cdr point))))
-                                    (cons 'viewport (app-event-position)) (cons 'button (app-event-button))
-                                    (list 'size (max 1 (window-size w)) (window-content-width w))
-                                    (cons 'color-scheme (host-color-scheme))
-                                    (cons 'revision (buffer-store-rev b))
-                                    (cons 'generation (and header (car header))))])
-                   ;; Focus reports are notifications, not a request to stop
-                   ;; inspecting scrollback. Actual captured input resumes it.
-                   (unless (member event '("FOCUS" "BLUR")) (follow-app! w #t))
-                   (actor:send! (app-fact facts 'app #f)
-                     (list 'input ui-actor (buffer-store-id b) event
-                           (if (string=? event "PASTE") (cons (cons 'paste (read-paste)) data) data)))))))))
+    (let ([app (app-of (current-buffer))])
+      (and app (cond [(app-handle-event! app) => (lambda (handler) (handler event))] [else #f]))))
 
   (edoc "Remove a buffer's app registration, keeping its text as an ordinary read-only buffer."
         (b buffer "the app buffer"))
@@ -3866,7 +3769,6 @@
         (let* ([id (window-document-view w)] [d (and id (interaction:snapshot id))])
           (when d (interaction:release! ui-actor id (view:generation d))))
         (window-buffer-set! w b)
-        (window-following?-set! w #t)
         (window-prow-raw-set! w (buffer-spot-row b))
         (window-pcol-raw-set! w (buffer-spot-col b))
         (window-top-raw-set! w (buffer-spot-top b))
@@ -4081,9 +3983,6 @@
                     ;; Surface events are wakeups. The head prepares current
                     ;; demanded rows on its pump, never on a publisher thread.
                     (surface:subscribe! #f (lambda (event) (wake-main!)))
-                    (actor:subscribe!
-                      (lambda (events)
-                        (run-on-main! (lambda () (set! last-app-size #f)))))
                     identity)))))))))
 
   ;;; The seat's first state ---------------------------------------------------------

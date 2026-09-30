@@ -315,7 +315,6 @@
                             (head:make-layout-split orientation w current first second)
                             (head:make-layout-split orientation current w first second))])
              (head:window-line-numbers-set! w (head:window-line-numbers current))
-             (head:set-full-capture! w (head:full-capture? current))
              (head:replace-layout-window! current node)
              w))))
 

@@ -31,26 +31,22 @@
   (define (set-prompt-opener! open)
     (set! prompt-opener open))
 
-  (define (run-key-action! action capture)
+  (define (run-key-action! action)
     ;; Run a resolved binding's action and remember it as the last
     ;; command (an error still counts); an unbound key, or a context
     ;; action leaking into the global map, is reported and remembered
     ;; as no command at all.  A call's producers run at the press, its
     ;; other arguments stand as given.
     (cond [(procedure? action)
-           (unless (and capture (eq? action (cadr capture)))
-             (unless (widget:target) (head:follow-app! (head:current-window) #f)))
            (dynamic-wind void action
              (lambda () (head:set-last-command! action)))]
           [(keymap:call-action? action)
            ;; a call built with keymap:call: the producers run at the press
-           (unless (widget:target) (head:follow-app! (head:current-window) #f))
            (dynamic-wind void
              (lambda () (keymap:run! action))
              (lambda () (head:set-last-command! action)))]
           [(keymap:prefill-action? action)
            ;; a pre-filled M-x built with keymap:prefill
-           (unless (widget:target) (head:follow-app! (head:current-window) #f))
            (dynamic-wind void
              (lambda ()
                (let ([name (keymap:prefill-name action)])
@@ -73,7 +69,7 @@
                                    (and hit
                                      (begin
                                        (head:set-current-keys! (list key))
-                                       (run-key-action! (keymap:binding-action (cdr hit)) #f)
+                                       (run-key-action! (keymap:binding-action (cdr hit)))
                                        #t))))))
 
   ;; One chord for this pump, shared by ordinary dispatch and prompt readers.
@@ -113,18 +109,17 @@
 
   (define (dispatch-sequence! first)
     (let* ([w (head:current-window)] [buffer (head:window-buffer w)] [contexts (mode:key-contexts buffer)]
-           [capture (exists keymap:context-capture contexts)]
            [result (resolve! (list w buffer contexts) (list (list 'editor (append contexts '(global)) #f)) first)]
            [status (car result)] [sequence (list-ref result 3)])
       (case status
         [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) (echo:set-pending! '())]
         [(command)
-         (head:set-current-keys! sequence) (run-key-action! (caddr result) capture)]
+         (head:set-current-keys! sequence) (run-key-action! (caddr result))]
         [(unhandled)
          (let ([hit (and (tty:key-event-character first)
                       (or (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts)
                         (keymap:resolved-binding 'global '("SELF-INSERT"))))])
-           (if hit (begin (head:set-current-keys! sequence) (run-key-action! (keymap:binding-action (cdr hit)) capture))
+           (if hit (begin (head:set-current-keys! sequence) (run-key-action! (keymap:binding-action (cdr hit))))
              (begin (head:set-last-command! #f) (echo:set-text! (format "~a is undefined" (keymap:sequence-text sequence))))))]
         [else (head:set-last-command! #f) (echo:set-text! "Key sequence cancelled")])) )
 
@@ -144,9 +139,9 @@
                                         [(prefix) (echo:set-text! (string-append (keymap:sequence-text sequence) "-")) #t]
                                         [(command)
                                          (head:set-current-keys! sequence)
-                                         (if (eq? receiver 'editor) (run-key-action! (caddr reply) #f)
+                                         (if (eq? receiver 'editor) (run-key-action! (caddr reply))
                                            (parameterize ([widget:target receiver])
-                                             (if (symbol? (caddr reply)) (widget:act! receiver (caddr reply)) (run-key-action! (caddr reply) #f)))) #t]
+                                             (if (symbol? (caddr reply)) (widget:act! receiver (caddr reply)) (run-key-action! (caddr reply))))) #t]
                                         [(cancelled invalid) (echo:set-text! "Key sequence cancelled") #t]
                                         [else
                                          (or (widget:input! root event) (eq? (car reply) 'blocked))]))]
@@ -154,20 +149,16 @@
 
   (define (context-claims? event)
     ;; Whether the current buffer's mode context binds event, starts a
-    ;; binding with it, or leaves it to e in partial capture. Such a key belongs
-    ;; to the keymaps even inside a capturing app: the app's handler
-    ;; sees only the keys its context leaves unbound, so a terminal
-    ;; cannot swallow its capture control or a reserved editor prefix.
+    ;; binding with it. Legacy local app handlers see only keys their mode
+    ;; contexts leave unbound. Widget capture uses its recursive route.
     (let ([contexts (mode:key-contexts (head:window-buffer (head:current-window)))])
       (and (pair? contexts)
-           (let ([sequence (list event)] [capture (exists keymap:context-capture contexts)])
+           (let ([sequence (list event)])
              (or (exists (lambda (context) (keymap:resolved-binding context sequence)) contexts)
                  (exists (lambda (context) (keymap:binding-prefix? context sequence)) contexts)
                  ;; a context binding SELF-INSERT claims every character
                  (and (tty:key-event-character event)
-                      (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts))
-                 (and capture (not (head:full-capture? (head:current-window)))
-                      (member event (cddr capture)))))
+                      (exists (lambda (context) (keymap:resolved-binding context '("SELF-INSERT"))) contexts))))
            #t)))
 
   (edoc "Dispatch one key from the pump: the current buffer's app has first refusal of keys its mode context leaves unbound, the rest go through the keymaps; eof quits."

@@ -498,20 +498,7 @@
                   (if value (append (reverse (spaced value)) out) out))))))
 
   (define (app-status-values w active?)
-    (let* ([b (head:window-buffer w)] [root (head:window-widget w)] [status (head:app-status b)]
-           [context (mode:key-context b)] [capture (and context (keymap:context-capture context))])
-      (cond [root (widget:status root active?)]
-            [(or (not status) (string=? status "")) '()]
-            [capture
-             ;; Insert the window's control beside the producer's first status
-             ;; token (▶, ■, ♪ for terminals), before any diagnostic suffix;
-             ;; the toggle's key is the keys listing's to tell, not the bar's
-             (let ([end (or (string:search status " " 0 (string-length status)) (string-length status))]
-                   [toggle (cadr capture)])
-               (list (cons (string-append " " (substring status 0 end) " ") #f)
-                     (cons (if (head:full-capture? w) "●" "◐") toggle)
-                     (cons (string:tail status end) #f)))]
-            [else (list (cons (string-append " " status) #f))])))
+    (let ([id (head:window-widget w)]) (if id (widget:status id active?) '())))
 
   (define (status-actions prefix spans visible-cells)
     ;; Hints already carry style spans. A procedure in the style slot makes
@@ -1802,8 +1789,7 @@
       (for-each (lambda (entry) (decide-scrollbar! (car entry) (caddr entry))) layout)
       (unless (equal? widths (map (lambda (entry) (head:window-content-width (car entry))) layout))
         (head:refresh-visible-views!)))
-    (window-layout)
-    (head:request-app-size!))
+    (window-layout))
 
   (define (paint-frame!)
     ;; Delivery may reenter and change the layout. Prepare and paint the

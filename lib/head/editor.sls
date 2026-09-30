@@ -144,7 +144,7 @@
 
   (define (contexts id d)
     (let ([signature (mount-mode (mounted id))])
-      (append (mode:key-contexts (and signature (car signature)) #f) '(widget-editor))))
+      (append (mode:key-contexts (and signature (car signature))) '(widget-editor))))
   (define (snap lines frame p)
     (let* ([row (min (car p) (- (vector-length lines) 1))]
            [col (min (cdr p) (string-length (vector-ref lines row)))])

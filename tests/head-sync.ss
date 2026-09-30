@@ -450,7 +450,7 @@
              (list (cadr state)
                (exists (lambda (entry)
                          (exists (lambda (p) (or (integer? (car p)) (pair? (car p)))) (caddr entry))) (list-ref state 4)))
-             '(5 #f)))
+             '(6 #f)))
          (head:set-layout-root! one)
          (check 'closed-placement-releases-ownership
            (list (view:owner (view:snapshot second)) (and (interaction:snapshot first) #t)) '(#f #t))))
@@ -475,7 +475,6 @@
              (head:buffer-spot-col-set! b 4)
              (head:buffer-spot-top-set! b 1)
              (head:set-copy-text! (string-copy "saved kill"))
-             (head:set-full-capture! w #t)
              (head:checkpoint!)
              (case kind
                [(missing-provider)
@@ -499,9 +498,8 @@
                (check (list 'resume-from-saved-revision kind)
                  (list (head:resume!)
                        (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:copy-text)
-                       (head:full-capture? (head:current-window))
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
-                 (list #t expected #t "as the base has it" #t #t)))))
+                 (list #t expected #t "as the base has it" #t)))))
          '(edit reset expired missing-provider)
          '(((3 . 4) (2 . 0) (3 . 2) (2 . 3) (2 . 0))
            ((0 . 1) (0 . 0) (0 . 1) (0 . 1) (0 . 0))

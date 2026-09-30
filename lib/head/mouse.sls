@@ -242,7 +242,6 @@
       (lambda (entry)
         (let ([old (head:current-window)] [w (car entry)])
           (head:set-current! w)
-          (head:follow-app! w #f)
           (if (and meta? (memv dir '(0 1)))
               (dispatch:global-key! (if (= dir 0) "M-S-UP" "M-S-DOWN"))
               (unless (parameterize ([head:app-event-focus old])

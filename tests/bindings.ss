@@ -185,18 +185,6 @@
      (head:show-buffer! other)
      (head:before-frame!)
      (check 'the-listing-follows-the-active-window (list (line-at 0) (contains? (line-at 1) "F9")) '("keys-other keys" #t))
-     ;; a capturing context counts for an app buffer only, and lists what it takes
-     (define captured (head:register-view! (head:new-local-buffer! "captured") void))
-     (mode:register! "keys-cap" '() '() (lambda (line) #f))
-     (mode:choose! "keys-cap" captured)
-     (keymap:set-context-capture! 'keys-cap "C-]" beginning-of-line! '("C-x" "M-x"))
-     (head:show-buffer! captured)
-     (head:before-frame!)
-     (check 'a-capturing-context-says-what-it-takes
-       (let ([at (index-of "other keys")])
-         (list (and at #t) (contains? (line-at at) "to the app") (exists (lambda (i) (contains? (line-at i) "C-x and M-x")) (map (lambda (k) (+ at k)) (iota 4)))))
-       '(#t #t #t))
-
      ;; the shown pop-up is selectable, read-only, and gives focus back when hidden
      (check 'the-shown-pop-up-can-be-selected-and-is-read-only
        (list (window:focus! popup) (eq? (head:current-window) popup) (guard (ex [else 'refused]) (insert-text! "x"))

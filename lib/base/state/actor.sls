@@ -222,8 +222,8 @@
     (with-mutex protocol-lock (map (lambda (entry) (vector-ref entry 0)) pending-asks)))
 
   (define (checkpoint-entries state)
-    ;; the buffer entries of a version 4 or 5 screen checkpoint, else none
-    (if (and (list? state) (= (length state) 5) (eq? (car state) 'screen) (memv (cadr state) '(4 5))
+    ;; The shared buffer-entry shape of screen checkpoints 4 through 6.
+    (if (and (list? state) (= (length state) 5) (eq? (car state) 'screen) (memv (cadr state) '(4 5 6))
              (list? (list-ref state 4)) (for-all pair? (list-ref state 4)))
         (list-ref state 4)
         '()))
