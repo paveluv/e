@@ -72,6 +72,25 @@
   (undo! a)
   (check 'editor-inactive-host-ends-the-typing-group (store:line source 2) "ABE")
   (undo! a)
+  (let* ([other (head:new-buffer! "grouped editor")]
+         [other-id (head:buffer-store-id other)] [batch #f])
+    (call-as-one-edit! "Mixed edits"
+      (lambda ()
+        (set! batch (current-batch))
+        (insert! a "G")
+        (head:with-buffer other (insert-text! "x"))
+        (call-as-one-edit! "Nested label"
+          (lambda () (insert! a "H") (head:with-buffer other (insert-text! "y"))))))
+    (check 'one-edit-scope-covers-nested-and-current-window-commands
+      (list (cadar (store:undo-labels source)) (cadar (store:undo-labels other-id))
+        (for-all (lambda (row) (equal? batch (cdr (assq 'batch (caddr row)))))
+          (append (list-head (store:log source) 2) (store:log other-id))) (current-batch))
+      '("Mixed edits" "Mixed edits" #t #f))
+    (insert! a "I") (undo! a)
+    (check 'group-exit-ends-widget-typing (store:line source 2) "ABGH")
+    (undo! a) (store:undo! actor other-id)
+    (check 'mixed-group-undo-restores-each-document
+      (list (store:line source 2) (store:line other-id 0)) '("AB" "")))
   (select! b '(3 . 4) '(3 . 0))
   (insert! b "new\nline\n")
   (check 'editor-multiline-paste-preserves-trailing-line

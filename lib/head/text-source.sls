@@ -1,15 +1,52 @@
 ;; Immutable text mirrors and declared edit intent, independent of a host.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-source)
-  (export adopt! basis-text changes edit! forget! history!
+  (export adopt! basis-text call-grouped! changes current-batch edit! forget! history!
           (rename (source-id id) (source-lines lines)) lookup make observe! open! project-positions rebase
           (rename (source-revision revision)) snapshot span)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation text) text:)
+  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:) (prefix (foundation text) text:)
           (prefix (service log) log:) (prefix (state store) store:))
 
   (define limit 256)
   (define mirrors (make-eqv-hashtable))
   (define observers (kernel:make-registry))
+
+  ;; Grouping is command policy, shared by every text control and host.
+  ;; The store still owns admission, attribution and undo history.
+  (define group (make-parameter #f))
+  (define-record-type edit-group (fields actor batch label labels))
+
+  (edoc "The active command's batch for this actor, or false outside a group."
+        (actor actor "editing actor") (returns (or list #f)))
+  (define (current-batch actor)
+    (and (group) (equal? actor (edit-group-actor (group))) (edit-group-batch (group))))
+
+  (edoc "Run text submissions as one undo step per document. Nested groups for the same actor retain the outer label and batch; a false label retains each document's first accepted edit label."
+        (actor actor "editing actor") (label (or string #f) "undo label") (thunk thunk "commands") (returns any))
+  (define (call-grouped! actor label thunk)
+    (unless (or (not label) (string? label)) (error 'call-grouped! "expected a label or false" label))
+    (if (current-batch actor) (thunk)
+      (parameterize ([group (make-edit-group actor
+                              (list actor (gensym->unique-string (gensym "batch"))) label (make-eqv-hashtable))])
+        (thunk))))
+
+  (define (grouped-context actor id context proc)
+    (let ([batch (current-batch actor)])
+      (if (not batch) (proc context)
+        (let* ([context (property:edit-context context)] [labels (edit-group-labels (group))]
+               [existing (hashtable-ref labels id #f)]
+               ;; Reserve a label before callbacks can submit another edit.
+               ;; A refused attempt cannot name a later successful action.
+               [entry (or existing (cons (or (edit-group-label (group)) (and context (cadr context))) #f))])
+          (unless existing (hashtable-set! labels id entry))
+          (guard (ex [else (when (and (not existing) (not (cdr entry))) (hashtable-delete! labels id)) (raise ex)])
+            (call-with-values
+              (lambda ()
+                (proc (cons* batch (car entry)
+                        (cons (cons 'labels (cons (cons 'batch batch)
+                                              (filter (lambda (p) (not (eq? (car p) 'batch))) (property:context-labels context))))
+                          (if context (filter (lambda (p) (not (eq? (car p) 'labels))) (cddr context)) '())))))
+              (lambda result (set-cdr! entry #t) (apply values result))))))))
 
   (edoc "An adopted text source, shared by all its head projections. Local sources have no store identity; neither kind contains selection or geometry."
         (id (or integer #f) "store identity") (lines any "immutable text")
@@ -134,19 +171,21 @@
         (actor actor "editing actor") (basis list "(old-text document-id revision)") (span any "replaced span")
         (replacement list "replacement lines") (context any "store edit context") (positions list "desired logical result positions"))
   (define (edit! actor basis span replacement context positions)
-    (let-values ([(status info) (store:edit-with-snapshot! actor (cadr basis) (caddr basis) span replacement context 'any)])
-      (unless (eq? status 'applied)
-        (let ([reason (case info
-                        [(read-only) "the buffer is read-only"] [(property-changed) "the buffer's reviewed facts changed"]
-                        [(revision-changed) "the reviewed text changed"] [(overlap) "another edit overlaps this change"]
-                        [else "the edit's revision is no longer available"])])
-          (log:add! 'text-source:edit! (format "edit refused in document ~a: ~a" (cadr basis) reason))
-          (refuse (format "Edit not applied: ~a" reason))))
-      (let* ([committed (car info)] [changes (caddr info)] [backwards (reverse changes)]
-             [actual (caddar backwards)] [before (map caddr (reverse (cdr backwards)))])
-        (let-values ([(text revision after) (store:snapshot-since (cadr basis) committed)])
-          (values text revision (and after (append changes after))
-            (if after (project-positions (car basis) span replacement actual before (map caddr after) positions) '()) committed)))))
+    (grouped-context actor (cadr basis) context
+      (lambda (context)
+        (let-values ([(status info) (store:edit-with-snapshot! actor (cadr basis) (caddr basis) span replacement context 'any)])
+          (unless (eq? status 'applied)
+            (let ([reason (case info
+                            [(read-only) "the buffer is read-only"] [(property-changed) "the buffer's reviewed facts changed"]
+                            [(revision-changed) "the reviewed text changed"] [(overlap) "another edit overlaps this change"]
+                            [else "the edit's revision is no longer available"])])
+              (log:add! 'text-source:edit! (format "edit refused in document ~a: ~a" (cadr basis) reason))
+              (refuse (format "Edit not applied: ~a" reason))))
+          (let* ([committed (car info)] [changes (caddr info)] [backwards (reverse changes)]
+                 [actual (caddar backwards)] [before (map caddr (reverse (cdr backwards)))])
+            (let-values ([(text revision after) (store:snapshot-since (cadr basis) committed)])
+              (values text revision (and after (append changes after))
+                (if after (project-positions (car basis) span replacement actual before (map caddr after) positions) '()) committed)))))))
 
   (edoc "Undo or redo a document through its attributed journal without consulting a window. Presentation adoption follows separately; only a service failure maps to blocked."
         (actor actor "editing actor") (id integer "document") (direction (one-of undo redo) "step") (scope any "mine, all or actor"))

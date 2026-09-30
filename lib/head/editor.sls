@@ -290,6 +290,7 @@
 
   (define (typing-basis d)
     (list (view:generation d) (view:sequence d) (view:basis d)
+      (text-source:current-batch head:ui-actor)
       (let loop ([d d])
         (if (view:parent d) (loop (interaction:snapshot (view:parent d)))
           (list (view:generation d) (view:sequence d))))))

@@ -66,6 +66,7 @@
           (prefix (head style) style:)
           (prefix (head table) table:)
           (prefix (head text-layout) text-layout:)
+          (prefix (head text-source) text-source:)
           (prefix (head window) window:)
           (prefix (service document) document:)
           (prefix (service file) file:)
@@ -216,16 +217,12 @@
   ;; and redo report the label.  An entry is (label key batch): the key
   ;; the store groups the buffer's edits under, one undo step, and the
   ;; batch their delta log entries carry; the store owns the history
-  ;; itself.  Inside a call-as-one-edit! group, the box holds (label .
-  ;; buffer-entries): one entry per buffer the group touches, labeled with
-  ;; the group's label (or, lacking one, that buffer's first edit's).
-  (define edit-group (make-parameter #f))
+  ;; itself. Explicit command groups are owned by text-source.
   (define pending-edit (make-parameter #f))
 
   ;; The batch label every edit carries: one per outermost group, so a
   ;; command's edits across buffers share it; one per fresh entry
   ;; otherwise, chained typing sharing its entry's.
-  (define edit-batch (make-parameter #f))
   (define (mint-batch!)
     (list head:ui-actor (gensym->unique-string (gensym "batch"))))
 
@@ -283,24 +280,17 @@
           (thunk)
           (begin
             (unless (continuing-edit) (check-disk-before-edit!))
-            (let* ([group (edit-group)]
-                   [group-hit (and group (assq b (cdr (unbox group))))]
-                   [previous (or (and group-hit (cdr group-hit))
-                                 (and (not group) (continuing-edit) (hashtable-ref latest-edits b #f)))]
-                   [label (cond [group-hit (car previous)]
-                                [group (or (car (unbox group)) label)]
-                                [else label])]
+            (let* ([group (current-batch)]
+                   [previous (and (not group) (continuing-edit) (hashtable-ref latest-edits b #f))]
                    [entry (or previous
                               (list label (list 'head-edit head:ui-actor (head:buffer-store-rev b))
-                                    (or (edit-batch) (mint-batch!))))]
+                                    (or (current-batch) (mint-batch!))))]
                    [committed? #f]
                    [commit!
                     (lambda ()
                       (unless committed?
                         (set-car! entry label)
                         (hashtable-set! latest-edits b entry)
-                        (when (and group (not group-hit))
-                          (set-box! group (cons (car (unbox group)) (cons (cons b entry) (cdr (unbox group))))))
                         (set! committed? #t)))])
               (let ([result (parameterize ([pending-edit (list b entry label commit! (caddr entry))])
                               (thunk))])
@@ -316,7 +306,7 @@
 
   (edoc "The batch label of the edits in the current one-edit group, the (actor token) pair they share in the delta log, unique across head reattachments, or #f outside a group."
         (returns (or list #f)))
-  (define (current-batch) (edit-batch))
+  (define (current-batch) (text-source:current-batch head:ui-actor))
 
   (edoc "Bundle every edit the thunk makes into one labeled undo step per buffer it touches; nested groups defer to the outermost."
         (label (or string #f) "the undo label")
@@ -326,11 +316,10 @@
     ;; Bundle every edit thunk makes into one labeled undo step per
     ;; buffer it touches -- and none for buffers it does not edit.
     ;; Nested groups defer to the outermost.
-    (if (edit-group)
-        (thunk)
-        (dynamic-wind void
-          (lambda () (parameterize ([edit-group (box (cons label '()))] [edit-batch (mint-batch!)]) (thunk)))
-          reload-if-due!)))
+    (if (current-batch) (thunk)
+      (dynamic-wind void
+        (lambda () (text-source:call-grouped! head:ui-actor label thunk))
+        reload-if-due!)))
 
   (define (check-undo-scope scope)
     (unless (memq scope '(mine all))
