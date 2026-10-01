@@ -9,8 +9,9 @@
   (edoc "Expand or collapse an exact displayed commit." (actor actor "connection attribution") (selection row-selection "shown row") (basis datum "shown result"))
   (define (expand! actor selection basis) (client:request 'git-expand selection basis))
 
-  (edoc "Create an independent patch query and document; return (query document)." (actor actor "connection attribution") (returns list))
-  (define (create-patch! actor) (client:request 'git-patch))
+  (edoc "Create an independent patch query and document; return (query document)." (actor actor "connection attribution")
+    (owner (list-of model) "optional owning view") (returns list))
+  (define (create-patch! actor . owner) (apply client:request 'git-patch owner))
 
   (edoc "Select a displayed file into an explicit patch query." (actor actor "connection attribution") (query row-source "patch query") (selection row-selection "shown row") (basis datum "shown result"))
   (define (select-patch! actor query selection basis) (client:request 'git-select-patch query selection basis))

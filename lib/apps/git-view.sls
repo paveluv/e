@@ -14,8 +14,9 @@
   (edoc "Create an unmounted Git browser with a history table and an independent read-only patch editor. Enter or click a commit to expand its files, then select a file to inspect its patch. No window is created."
         (path file "path inside the repository") (returns model) (public))
   (define (create! path)
-    (let* ([query (git-source:create! head:ui-actor path)] [patch (git-source:create-patch! head:ui-actor)]
+    (let* ([query (git-source:create! head:ui-actor path)]
            [root (view:create! head:ui-actor query 'git-history 1 '() '() query)]
+           [patch (git-source:create-patch! head:ui-actor root)]
            [table (table:create! head:ui-actor query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
            [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '())]
            [label (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '())]
@@ -26,7 +27,7 @@
                      '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch))]
            [d (view:snapshot table)])
       (view:arrange! head:ui-actor
-        (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'patch preview '(grow 1))) '())
+        (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'patch preview '(grow 1))) (list (cons 'owned (list (car patch)))))
           (list heading 0 (list (list 'label label '(grow 1)) (list 'refresh refresh 'fit)) '((spacing . normal)))
           (list table 1 (view:children d) (cons (list 'commands (list 'activate root 'choose '())) (view:options d)))
           (list preview 0 (list (list 'text editor '(grow 1))) '())) '()) root))

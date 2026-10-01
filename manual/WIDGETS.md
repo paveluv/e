@@ -94,6 +94,12 @@ lifecycle. Borrowed sources remain shared. Base services register copy and
 release procedures with `view:register-resource-kind!`; copy preparation must
 provide rollback for output allocated before the guarded model transaction.
 
+For a private collection query, pass its owning view after the owned resource
+list to `collection:create!`. Its base provider registers source copying with
+`collection:register-copy!`; ordinary borrowed queries remain shared. Git uses
+this path so a fork has its own patch request and output while sharing history.
+Retiring that fork releases only its private preview.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown

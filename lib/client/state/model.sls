@@ -122,8 +122,8 @@
   (define (ids . kinds) (apply client:request 'model-ids kinds))
 
   (edoc "Query compact (reference kind) metadata for live models in allocation order, without requesting payloads. Retired models are absent; unknown kinds remain inspectable."
-        (returns list) (effects remote))
-  (define (metadata) (client:request 'model-metadata))
+        (ids (list-of list) "optional list of references, preserving supplied order") (returns list) (effects remote))
+  (define (metadata . ids) (apply client:request 'model-metadata ids))
 
   (edoc "Create base-owned non-authored model state, attributed to this connection."
         (actor actor "attribution is supplied by the connection") (kind symbol "the registered kind") (schema integer "its version")

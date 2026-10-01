@@ -186,7 +186,7 @@
       [(filesystem-refresh) (control!) (arity 0) (filesystem:refresh! actor) #t]
       [(filesystem-complete) (control!) (arity 2) (apply filesystem:complete! actor args)]
       [(collection-create) (control!)
-       (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
+       (unless (<= 4 (length args) 6) (error 'wire "collection-create expects optional resources and owning view"))
        (apply collection:create! actor args)]
       [(collection-configure) (control!) (arity 3) (call-with-values (lambda () (apply collection:configure! actor args)) list)]
       [(collection-summary) (arity 1) (collection:summary (car args))]
@@ -196,7 +196,7 @@
       [(collection-seek) (arity 5) (apply collection:seek args)]
       [(collection-fetch) (arity 1) (collection:fetch (car args))]
       [(model-ids) (apply model:ids args)]
-      [(model-metadata) (arity 0) (model:metadata)]
+      [(model-metadata) (unless (<= (length args) 1) (error 'wire "expected optional model references")) (apply model:metadata args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
       [(model-create) (control!) (arity 6) (generic-kind! (car args)) (apply model:create! actor args)]
       [(model-commit) (control!) (arity 1) (for-each (lambda (change) (generic-model! (car change))) (car args))
@@ -432,7 +432,7 @@
       [(journal-source) (control!) (arity 1) (journal-source:create! actor (car args))]
       [(git-source) (control!) (arity 1) (git-source:create! actor (car args))]
       [(git-expand) (control!) (arity 2) (apply git-source:expand! actor args) #t]
-      [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
+      [(git-patch) (control!) (unless (<= (length args) 1) (error 'wire "expected optional owning view")) (apply git-source:create-patch! actor args)]
       [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args) #t]
       [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args)) #t]
       [(search-create) (control!) (head!) (arity 2) (apply search-request:create! actor args)]
