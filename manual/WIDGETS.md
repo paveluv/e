@@ -205,6 +205,10 @@ or `(drag primary ())` for gestures, and `keymap:call` with public commands
 and explicit targets for actions. The callback must only inspect local,
 bounded presentation state: no input dispatch, RPC, focus changes or model
 updates. Reuse this same binding lookup in the widget's gesture handler.
+An empty result also prevents automatic keyboard focus on a click there:
+blank padding, missing rows and disabled controls retain the previous
+focused child. The outer host can still receive focus. Controls without
+this callback retain focus-on-click throughout their allocation.
 Press/release ownership, cancellation and dragging remain input behavior;
 reading a binding never starts a gesture.
 

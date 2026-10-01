@@ -89,6 +89,12 @@
      (let ([before (chosen)])
        (press! "DOWN")
        (check 'finder-arrows-work-before-any-pointer-event (list (not (equal? before (chosen))) (equal? (widget:focused host) entry)) '(#t #t)))
+     (let ([caret (widget:caret (draw!))] [selected (chosen)])
+       (define click (widget:pointer! '(pointer press primary ()) 150 15))
+       (widget:pointer! '(pointer release primary ()) 150 15)
+       (check 'finder-blank-click-keeps-filter-caret-and-selection
+         (list click (equal? (widget:focused host) entry) (widget:caret (draw!)) (chosen))
+         (list (list host #t) #t caret selected)))
      (filter! (string-append root "/ needle"))
      (check 'finder-shares-base-hierarchy-and-safe-labels
        (list (length (keys)) (visible? "[5 matches]") (visible? " ∧ needle")) '(8 #t #t))

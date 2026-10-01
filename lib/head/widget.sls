@@ -1048,7 +1048,7 @@
                       (append out (filter (lambda (b) (not (assoc (car b) out))) bindings))
                       (or scroll? (and definition (assq 'scroll (field definition 'actions '()))))))))))))))
 
-  (edoc "Route normalized pointer/scroll input through shown frames. Return (root focus-host?) when consumed, or #f outside widgets."
+  (edoc "Route normalized pointer/scroll input through shown frames. Empty declared pointer hit areas preserve logical focus. Return (root focus-host?) when consumed, or #f outside widgets."
         (event list "(pointer phase button modifiers [click-count]) or (scroll dx dy units)")
         (x integer "screen x, zero based") (y integer "screen y, zero based") (returns any))
   (define (pointer! event x y)
@@ -1077,7 +1077,12 @@
       (and root
         (begin
           (when (and f (live-frame? f))
-            (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f))
+            (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f)
+                    ;; A focusable control may allocate more space than its
+                    ;; interactive content. Reuse its declared hit area.
+                    (let ([bindings (field (frame-definition f) 'pointer-bindings #f)])
+                      (or (not bindings)
+                        (pair? (bindings f (- x (car (frame-rect f))) (- y (cadr (frame-rect f))))))))
               (parameterize ([event-frame f]) (focus! (frame-id root) (frame-id f))))
             (unless
               (let ([scope (or (modal root) root)])
