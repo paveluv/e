@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
   (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
-          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles
+          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles generation
           host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
   (import (except (chezscheme) inspect)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
@@ -22,6 +22,10 @@
           (prefix (sys glyph) glyph:))
 
   (define definitions (kernel:make-registry car))
+  (define definition-generation 0)
+
+  (edoc "The head's widget definition generation; changes invalidate local inspection caches." (returns integer))
+  (define (generation) definition-generation)
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
   (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable bundle)))
@@ -279,16 +283,20 @@
           (let-values ([(available? source) (source! n d)]) available?)))))
 
   (edoc "Inspect all named command connections in a mounted composition from local descriptors and definitions. Rows are (view child-path kind bindings); bindings are (name target action fixed-arguments procedure-or-false available?). Include unavailable targets without invoking callbacks, reading payloads remotely or moving focus."
-        (id model "composition root or subtree") (returns list) (effects internal))
-  (define (command-bindings id)
+        (id model "composition root or subtree") (limit (list-of integer) "optional traversal limit, default 256") (returns list) (effects internal))
+  (define (command-bindings id . limit)
     (mounted id)
-    (let walk ([id id] [path '()])
-      (let* ([d (read-view id)] [cs (if d (descriptor:commands d) '())])
-        (append
-          (if (null? cs) '()
-            (list (list id path (view:kind d)
-                    (map (lambda (c) (let ([target (command-target c)]) (append c (list (car target) (and (cdr target) #t))))) cs))))
-          (if d (apply append (map (lambda (child) (walk (cadr child) (append path (list (car child))))) (view:children d))) '())))))
+    (unless (and (<= (length limit) 1) (for-all (lambda (n) (and (fixnum? n) (<= 1 n 256))) limit)) (error 'command-bindings "invalid traversal limit"))
+    (let ([left (if (null? limit) 256 (car limit))])
+      (let walk ([id id] [path '()])
+        (if (zero? left) '()
+          (begin (set! left (- left 1))
+            (let* ([d (read-view id)] [cs (if d (descriptor:commands d) '())])
+              (append
+                (if (null? cs) '()
+                  (list (list id path (view:kind d)
+                          (map (lambda (c) (let ([target (command-target c)]) (append c (list (car target) (and (cdr target) #t))))) cs))))
+                (if d (apply append (map (lambda (child) (walk (cadr child) (append path (list (car child))))) (view:children d))) '()))))))))
 
   (edoc "Inspect a mounted subtree using only acquired descriptors and connection metadata. Return (views connections truncated?): view rows are (id path kind schema source commands ports available?), and connections are the acquired typed edges touching those views or sources. No source payloads, callbacks, geometry or remote reads are included. The limit bounds traversal; an oversized composition explicitly reports truncation."
         (id model "mounted subtree") (limit integer "maximum views, 1 through 256") (returns list) (effects internal) (public))
@@ -302,7 +310,7 @@
             (when d
               (set! out (cons (list id path (view:kind d) (view:schema d) (view:source d)
                                 (descriptor:commands d) (or (port:describe (list 'view (view:kind d) (view:schema d))) '())
-                                (and entry #t)) out))
+                                (and entry (let-values ([(available? source) (raw-source! (mounted id) d)]) available?))) out))
               (let loop ([children (view:children d)])
                 (unless (null? children)
                   (if (>= count limit) (set! truncated? #t)
@@ -1196,6 +1204,7 @@
     (head:add-pre-redraw-hook! pump!)
     (kernel:registry-observe! definitions
       (lambda (removed added)
+        (set! definition-generation (+ definition-generation 1))
         (when (and pointer-capture
                 (or (not (live-frame? pointer-capture))
                   (exists (lambda (command)

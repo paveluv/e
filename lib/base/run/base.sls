@@ -296,7 +296,7 @@
        (unless (<= 1 (length args) 2) (error 'wire "expected draft and optional owning view"))
        (apply review-preview:create! actor args)]
       [(review-preview-close) (control!) (arity 1) (apply review-preview:close! actor args) #t]
-      [(inspection-create) (control!) (arity 0) (inspection:create! actor)]
+      [(inspection-create) (control!) (arity 2) (apply inspection:create! actor args)]
       [(inspection-publish) (control!) (arity 6) (apply inspection:publish! actor args)]
       [(inspection-close) (control!) (arity 1) (apply inspection:close! actor args) #t]
       [(rewrite-source-toggle) (control!) (arity 2) (apply rewrite-source:toggle! actor args) #t]

@@ -108,7 +108,7 @@
       (head:set-window-buffer! w (widget-buffer! id))
       (let* ([b (head:window-buffer w)] [actual (buffer-widget b)] [d (interaction:snapshot actual)])
         (when (and d (eq? (view:kind d) 'window-tool))
-          (when (and origin (not (equal? origin actual)))
+          (unless (equal? origin actual)
             (interaction:set-state! head:ui-actor actual #f (list (cons 'origin origin))))
           (widget:set-active! actual (eq? w (head:current-window)))
           (widget:prepare! actual (head:window-content-width w) (head:window-size w)))
@@ -153,9 +153,11 @@
         (id model "window-tool view"))
   (define (return! id)
     (let* ([w (tool-window id)] [d (interaction:snapshot id)] [p (assq 'origin (view:state d))]
-           [b (or (and p (catalogue-host:resolve! (cdr p)))
+           [origin (and p (cdr p) (catalogue-host:resolve! (cdr p)))]
+           [b (or origin
                 (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
-      (when b (head:with-window w (head:show-buffer! b)))))
+      (if (and (head:popup? w) (not origin)) (head:hide-popup!)
+        (when b (head:with-window w (head:show-buffer! b))))))
 
   (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view is mounted for the caller's action and can be shown or forked. Hidden mounts are released at the next frame."
         (name string "tool name without brackets") (build procedure "commands -> app view")

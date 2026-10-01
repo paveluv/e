@@ -79,5 +79,8 @@
     (search-control:init!)
     (widget:register! 'search-host 1
       (append (layout:container 'y) (list (cons 'actions (list (cons 'finished finish!))))))
-    (dispatch:register-input-root! route)
+    (dispatch:register-input-root! route
+      (lambda (ordinary)
+        (and (visible? current) (or (eq? (head:current-window) (head:popup)) (head:window-editor (head:current-window)))
+          (display-root current))))
     (head:add-pre-redraw-hook! refresh!)))

@@ -218,12 +218,29 @@ It returns portable containment, source, command and port declarations plus
 acquired connections, with an explicit truncation flag. It reads local
 metadata without executing actions or fetching source payloads.
 
-`inspection:create!` creates a base-owned, attachment-specific listing.
-`inspection:publish!` accepts revision-checked portable rows only while the
-listing is demanded, with limits of 2048 rows and 256 KiB. Inspect its subject,
-definition basis, rows and attachment through `model:snapshot`. A departing
-producer leaves the listing marked unavailable; a new attachment cannot
-silently adopt it as its own live facts.
+`inspection:create! actor subject section-names` creates a base-owned,
+attachment-specific listing and returns its ID and named section sources.
+`inspection:publish!` accepts changed sections against the header revision
+only while demanded, with limits of 2048 rows and 256 KiB across all sections.
+Omitted or equal sections produce no notification. Inspect the subject,
+definition basis and section references through `model:snapshot`. A departing
+producer leaves the snapshot unavailable; reattaching cannot silently adopt it.
+
+`bindings:create! commands root` creates an unmounted inspector with explicit
+host commands and an inspected mounted root (or false for global keys).
+`bindings:inspect!` changes that subject. The composition lists mouse and
+keyboard bindings, full forwarding chains, widget commands, containment,
+sources, ports and connections. Its ordinary scroll viewport retains logical
+row anchors through reflow. `bindings:page!` pages up or down; pointer selection
+and `bindings:copy!` use stable row/field/character anchors at the shown basis.
+Selection belongs to each listing view. `bindings:show!` and `bindings:open!`
+provide the default window placement and active-window following.
+
+Live facts are acquired only while an inspector is mounted. Mouse changes
+publish only the mouse section, reusing cached keyboard traces. Hovering over
+the inspector itself freezes that section, so reading and scrolling do not
+replace the inspected subject. Layout reads acquired snapshots and performs
+no inspection RPC. Listings explicitly report unavailable or truncated data.
 
 `widget:invoke!` and `widget:act!` are exported syntax, with private runtime
 dispatchers. An `elibrary` registers their call sites while compiling its

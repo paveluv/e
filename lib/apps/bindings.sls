@@ -1,565 +1,236 @@
-;; bindings.sls -- inspect mouse, keyboard and widget command bindings.
-;; C-x TAB opens <bindings> in the pop-up and pages an existing listing.
-;; Mouse bindings follow the pointer; keyboard and widget commands follow
-;; the active window. Each binding shows its public API and documentation.
-
+;; Live facts are captured in the head; the base owns the inspected listing.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps bindings)
-  (export hide! init! open! page-up! return! show!)
-  (import (rnrs)
-          (only (chezscheme) format iota list-head make-weak-eq-hashtable quotient void)
-          (prefix (foundation edoc) edoc:)
-          (prefix (foundation string) string:)
-          (prefix (head head) head:)
-          (prefix (head keymap) keymap:)
-          (prefix (head mode) mode:)
-          (prefix (head mouse) mouse:)
-          (prefix (head paint) paint:)
-          (prefix (head widget) widget:)
-          (prefix (head window) window:)
+  (export copy! create! hide! init! inspect! open! page! page-up! select! show!)
+  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (head binding-list) listing:)
+          (prefix (head dispatch) dispatch:) (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
+          (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head mode) mode:)
+          (prefix (head mouse) mouse:) (prefix (head widget) widget:) (prefix (head window) window:)
+          (prefix (service inspection) inspection:) (prefix (state model) model:) (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
+  (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
+  (define sessions (make-hashtable equal-hash equal?))
+  (define instances (make-hashtable equal-hash equal?))
+  (define-record-type session (fields (mutable subject) (mutable basis) (mutable pointer) (mutable parts)))
+  (define (release! id)
+    (let ([query (hashtable-ref instances id #f)])
+      (hashtable-delete! instances id)
+      (unless (member query (vector->list (hashtable-values instances))) (hashtable-delete! sessions query))))
+  (define (subject root) (list root '(global) #f (if root (format "~s" root) "Global keys")))
+  (define (session! id value)
+    (or (hashtable-ref sessions id #f)
+      (let ([s (make-session (get value 'subject (subject #f)) #f '() '())]) (hashtable-set! sessions id s) s)))
+  (define (over? id)
+    (let ([point (mouse:position)])
+      (define (inside? frame x y)
+        (let ([r (widget:frame-clip frame)])
+          (or (and (equal? id (widget:frame-id frame))
+                (<= (car r) x) (< x (+ (car r) (caddr r))) (<= (cadr r) y) (< y (+ (cadr r) (cadddr r))))
+            (exists (lambda (f) (inside? f x y)) (widget:frame-children frame)))))
+      (and point (exists (lambda (p) (inside? (car p) (- (car point) 1 (cadr p)) (- (cdr point) 1 (caddr p)))) (widget:shown)))))
+  (define (request! id target)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let ([s (session! (view:source d) (get source 'value '()))])
+        (unless (equal? target (session-subject s))
+          (session-subject-set! s target) (session-basis-set! s #f)
+          (interaction:set-state! head:ui-actor (widget:descendant id 'viewport) #f #f)))))
 
-  (define view #f) ; the <bindings> buffer while it is shown
-  (define over '()) ; ((window . buffer) ...) what a window showed before the listing took it
-  (define listed #f) ; (buffer contexts read-only?) the listing describes
-  (define swept? #f) ; whether the listings an older checkpoint restored have been dropped
-  (define keyboard-cache #f)
-  (define commands-cache #f)
-  (define listed-pointer '()) ; the last inspected target, retained while browsing this help
-  (define symbolic-spans (make-weak-eq-hashtable)) ; rendered text -> unresolved character spans
+  (edoc "Select an explicit mounted composition for this inspector. Selection changes the saved inspection subject when its next bounded snapshot is published. No current-window lookup or action evaluation occurs."
+        (receiver id (view bindings)) (id model "inspector view") (root model "mounted composition"))
+  (define (inspect! id root)
+    (widget:inspect root 1) (request! id (subject root)))
+  (define (service! id frame)
+    (define (mouse-row? r) (let ([key (car r)]) (or (eq? key 'mouse) (and (pair? key) (eq? (car key) 'mouse)))))
+    (let-values ([(source d inputs) (widget:context id)])
+      (let* ([v (get source 'value '())] [query (view:source d)] [s (session! query v)] [target (session-subject s)] [root (car target)])
+        (hashtable-set! instances id query)
+        (when (and (equal? (get v 'owner #f) head:ui-actor) (not (eq? (get v 'status #f) 'unavailable))
+                (not (exists (lambda (other) (and (< (cadr other) (cadr id)) (equal? query (hashtable-ref instances other #f))))
+                       (vector->list (hashtable-keys instances)))))
+          (let* ([pointer (if (exists (lambda (other) (and (equal? query (hashtable-ref instances other #f)) (over? other)))
+                                (vector->list (hashtable-keys instances))) (session-pointer s) (mouse:bindings))]
+                 [available? (or (not root) (interaction:snapshot root))]
+                 [basis (if available? (listing:basis root (cadr target) (caddr target) pointer) (list 'unavailable root))]
+                 [full-basis (cons target basis)])
+            (unless (equal? full-basis (session-basis s))
+              (let* ([capture (if available? (listing:capture basis pointer)
+                                '(((unavailable "[Inspected view unavailable]" () "" "" ())) #f))]
+                     [parts (list (cons 'mouse (filter mouse-row? (car capture))) (cons 'listing (remp mouse-row? (car capture))))]
+                     [changes (filter (lambda (p) (not (equal? p (assq (car p) (session-parts s))))) parts)]
+                     [status (inspection:publish! head:ui-actor (view:source d) (get source 'revision 0)
+                               target (+ (keymap:generation) (widget:generation)) changes (cadr capture))])
+                (when (memq status '(applied unchanged))
+                  (session-basis-set! s full-basis) (session-pointer-set! s pointer) (session-parts-set! s parts)))))))))
 
-  ;; Preserve semantic marks while fitting text into columns. Plain strings
-  ;; remain the display/cache keys; buffer facts publish the final row marks.
-  (define (spans text) (hashtable-ref symbolic-spans text '()))
-  (define (marked text ranges)
-    (unless (null? ranges) (hashtable-set! symbolic-spans text ranges))
-    text)
-  (define (join . parts)
-    (let loop ([parts parts] [offset 0] [ranges '()] [out '()])
-      (if (null? parts) (marked (apply string-append (reverse out)) (apply append (reverse ranges)))
-        (loop (cdr parts) (+ offset (string-length (car parts)))
-          (cons (map (lambda (r) (cons (+ offset (car r)) (+ offset (cdr r)))) (spans (car parts))) ranges)
-          (cons (car parts) out)))))
-  (define (slice text start end)
-    (marked (substring text start end)
-      (map (lambda (r) (cons (- (max start (car r)) start) (- (min end (cdr r)) start)))
-        (filter (lambda (r) (and (< (car r) end) (> (cdr r) start))) (spans text)))))
+  (define-record-type presentation (fields value revision cache))
+  (define dragging #f)
+  (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
+  (define (fitted data width)
+    (let* ([width (max 1 width)] [cache (presentation-cache data)] [old (hashtable-ref cache width #f)])
+      (or old
+        (let* ([v (presentation-value data)] [status (get v 'status 'unavailable)]
+               [rows (append
+                       (if (eq? status 'unavailable) '((unavailable "[Producing attachment unavailable]" () "" "" ())) '())
+                       (get v 'rows '())
+                       (if (get v 'truncated? #f) '((truncated "[Inspection truncated; inspect a smaller subtree]" () "" "" ())) '()))]
+               [result (listing:fit rows width)])
+          (when (>= (hashtable-size cache) 4) (hashtable-clear! cache))
+          (hashtable-set! cache width result) result))))
+  (define (page-rows data width range)
+    (let* ([rows (fitted data width)] [start (min (car range) (vector-length rows))]
+           [end (min (vector-length rows) (+ start (cdr range)))])
+      (map (lambda (i) (cons i (vector-ref rows i))) (map (lambda (i) (+ start i)) (iota (- end start))))))
+  (define (render data d width height range)
+    (map (lambda (r) (caddr r)) (page-rows data width range)))
+  (define (selected data d width)
+    (let ([s (view:state d)] [f (fitted data width)])
+      (and (equal? (view:basis d) (presentation-revision data)) (list? s) (= (length s) 2)
+        (let ([a (listing:position f (car s))] [b (listing:position f (cadr s))])
+          (and a b (if (text:position<? a b) (list a b) (list b a)))))))
+  (define (decorate data d width height range)
+    (let ([selection (selected data d width)])
+      (append (apply append
+                (map (lambda (r)
+                       (let ([text (caddr r)] [spans (cadddr r)] [heading? (list-ref r 4)])
+                         (if heading? (list (list (list 0 (car r) (glyph:cells text) 1) (if (and (> (string-length text) 0) (char=? (string-ref text 0) #\[)) 'ghost 'bold)))
+                           (map (lambda (span)
+                                  (let ([a (glyph:cells (substring text 0 (car span)))] [b (glyph:cells (substring text 0 (cdr span)))])
+                                    (list (list a (car r) (- b a) 1) 'italic))) spans)))) (page-rows data width range)))
+        (if (not selection) '()
+          (apply append (map (lambda (r)
+                               (let* ([i (car r)] [s (caddr r)] [a (car selection)] [b (cadr selection)]
+                                      [left (if (= i (car a)) (cdr a) 0)] [right (if (= i (car b)) (cdr b) (string-length s))])
+                                 (if (and (<= (car a) i (car b)) (< left right))
+                                   (let ([x (glyph:cells (substring s 0 left))] [end (glyph:cells (substring s 0 right))])
+                                     (list (list (list x i (- end x) 1) 'selection))) '())))
+                          (page-rows data width range)))))))
 
-  (define (stale-listing? b)
-    ;; a <bindings> or <bindings 2> local buffer that is not the view: one an older
-    ;; checkpoint brought back as text
-    (let ([name (head:buffer-name b)])
-      (and (not (eq? b view)) (not (head:buffer-store-id b))
-           (string:prefix? "<bindings" name) (string:suffix? ">" name))))
+  (edoc "Select characters in a displayed inspection section. Logical anchors retain row identity through wrapping; a changed source refuses the old pointer action."
+        (id model "listing view") (caret list "active row, field and character") (fixed list "fixed anchor") (basis integer "displayed section revision"))
+  (define (select! id caret fixed basis)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let ([frame (widget:prepared id)])
+        (unless (and frame (= basis (get source 'revision -1))
+                  (for-all (lambda (p) (listing:position (fitted (widget:frame-data frame) (caddr (widget:frame-rect frame))) p)) (list caret fixed)))
+          (refuse "The displayed inspection selection changed"))
+        (interaction:set-state! head:ui-actor id basis (list caret fixed)))))
 
-  (define (sweep!)
-    ;; the listings an older checkpoint restored go; the view is made fresh
-    (for-each (lambda (b) (when (stale-listing? b) (head:forget-buffer! b))) (head:buffers))
-    (set! swept? #t))
+  (edoc "Copy the selected displayed inspection text at its current source basis." (id model "listing view"))
+  (define (copy! id)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let* ([frame (widget:prepared id)] [data (and frame (widget:frame-data frame))]
+             [width (and frame (caddr (widget:frame-rect frame)))] [span (and data (selected data d width))])
+        (unless (and span (= (get source 'revision -1) (presentation-revision data))) (refuse "No current inspection selection"))
+        (edit:copy-text! (text:to-string
+                           (list->vector (text:extract (vector-map cadr (fitted data width)) (text:make-span (caar span) (cdar span) (caadr span) (cdadr span)))) #f)))))
+  (define (pointer-bindings frame x y)
+    (let* ([data (widget:frame-data frame)] [rows (fitted data (caddr (widget:frame-rect frame)))]
+           [d (widget:frame-descriptor frame)] [s (view:state d)])
+      (if (not (<= 0 y (- (vector-length rows) 1))) '()
+        (let* ([r (vector-ref rows y)] [column (let scan ([cs (glyph:clusters (cadr r))] [i 0] [cells 0])
+                                                 (if (or (null? cs) (> (+ cells (cdar cs)) x)) i (scan (cdr cs) (+ i (caar cs)) (+ cells (cdar cs)))))]
+               [p (vector-ref (list-ref r 4) column)]
+               [fixed (if (and (equal? (view:basis d) (presentation-revision data)) (list? s) (= (length s) 2)) (cadr s) p)]
+               [id (widget:frame-id frame)] [basis (presentation-revision data)])
+          (list (list '(click primary ()) (keymap:call select! id p p basis))
+            (list '(click primary (shift)) (keymap:call select! id p fixed basis))
+            (list '(drag primary ()) (keymap:call select! id p fixed basis)))))))
+  (define (event! id source d event)
+    (and (pair? event) (eq? (car event) 'pointer)
+      (cond [(and (eq? (cadr event) 'release) (equal? dragging id)) (set! dragging #f) #t]
+        [(and (eq? (caddr event) 'primary) (or (eq? (cadr event) 'press) (and (eq? (cadr event) 'move) (equal? dragging id))))
+         (let* ([extend? (or (eq? (cadr event) 'move) (memq 'shift (cadddr event)))]
+                [bindings (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5))]
+                [binding (assoc (if extend? '(click primary (shift)) '(click primary ())) bindings)])
+           (and binding (begin (keymap:run! (cadr binding)) (set! dragging id) (widget:capture! id) #t)))]
+        [else #f])))
 
-  ;;; The rows ------------------------------------------------------------------------
+  (edoc "Create an unmounted inspector for an explicit mounted subject, or false for global keys. The composition has a standard scroll viewport and per-width layout; only demanded views capture live facts."
+        (commands list "explicit host commands") (root (or model #f) "mounted subject") (returns model) (public))
+  (define (create! commands root)
+    (let* ([created (inspection:create! head:ui-actor (subject root) '(mouse listing))] [source (car created)]
+           [app (view:create! head:ui-actor source 'bindings 1 (list (cons 'commands commands)) '() source)]
+           [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f app)]
+           [content (view:create! head:ui-actor #f 'column 1 '() '() app)]
+           [status (view:create! head:ui-actor source 'binding-list 1 '() '() app)]
+           [parts (map (lambda (p) (list (car p) (view:create! head:ui-actor (cdr p) 'binding-list 1 '() '() app) 'fit)) (cadr created))])
+      (view:arrange! head:ui-actor
+        (list (list app 0 (list (list 'status status 'fit) (list 'viewport scroll '(grow 1))) (list (cons 'commands commands)))
+          (list scroll 0 (list (list 'content content '(grow 1))) '()) (list content 0 parts '())) '()) app))
 
-  (define (action-procedure action)
-    ;; the procedure a key action runs, or #f
-    (cond [(procedure? action) action]
-          [(keymap:call-action? action) (keymap:call-action-procedure action)]
-          [(keymap:prefill-action? action) (keymap:prefill-action-procedure action)]
-          [else #f]))
+  (edoc "Page this inspector by its shown viewport. Passing an endpoint wraps to the other end."
+        (receiver id (view bindings)) (id model "inspector view") (direction (one-of up down) "page direction"))
+  (define (page! id direction)
+    (unless (memq direction '(up down)) (error 'page! "expected up or down"))
+    (let* ([scroll (widget:descendant id 'viewport)] [f (widget:prepared scroll)])
+      (when f (let* ([delta (* (if (eq? direction 'up) -1 1) (max 1 (cadddr (widget:frame-rect f))))]
+                     [left (widget:act! scroll 'scroll delta)])
+                (when (= left delta) (widget:act! scroll 'scroll (if (positive? delta) -1000000000 1000000000)))))))
 
-  (define (edits? action)
-    ;; whether the command declares (edits): refused where the text is read-only
-    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
-      (and (pair? sigs)
-           (exists (lambda (f) (and (pair? f) (eq? (car f) 'edits))) (edoc:signature-flags (car sigs))))))
-
-  (define (summary-of action)
-    ;; what the procedure a key action runs does, from its documentation
-    (let* ([proc (action-procedure action)] [sigs (and proc (edoc:edoc-of proc))])
-      (if (pair? sigs) (edoc:signature-summary (car sigs)) "")))
-
-  (define (trace action . substitutions)
-    (map (lambda (row)
-           (list (join (if (= (car row) 0) "" (string-append (make-string (* 2 (min 8 (car row))) #\space) "→ "))
-                   (marked (cadr row) (list-ref row 4)) (if (cadddr row) (string-append " [" (cadddr row) "]") ""))
-             (if (caddr row) (summary-of (caddr row)) "")))
-      (apply keymap:action-trace action substitutions)))
-
-  (define (shadowed? sequence nearer)
-    ;; whether a nearer context binds the sequence, or a prefix of it, so
-    ;; the key never reaches this binding
-    (exists (lambda (context)
-              (exists (lambda (n) (keymap:resolved-binding context (list-head sequence n)))
-                      (map (lambda (i) (+ i 1)) (iota (length sequence)))))
-            nearer))
-
-  (define (context-groups context nearer read-only? keep describe)
-    ;; keep, when given, admits a binding: the commands allowed in a
-    ;; prompt for the global section while one is open
-    ;; (keys command description) for a context's bindings that work here:
-    ;; not shadowed by a nearer context, and not editing where the text is
-    ;; read-only; the keys running one command together, groups by their
-    ;; first key; a lambda shows as the anonymous command it is, a name
-    ;; being owed
-    (define (add key command description groups)
-      (let ([hit (find (lambda (g) (equal? (cadr g) command)) groups)])
-        (if hit
-            (map (lambda (g) (if (eq? g hit) (cons (cons key (car g)) (cdr g)) g)) groups)
-            (cons (list (list key) command description) groups))))
-    (let loop ([owned (keymap:context-bindings context)] [groups '()])
-      (if (null? owned)
-          (list-sort (lambda (a b) (string<? (car (car a)) (car (car b))))
-                     (map (lambda (g) (cons (list-sort string<? (car g)) (cdr g))) groups))
-          (let* ([b (cdr (car owned))] [action (keymap:binding-action b)]
-                 [command (and action (if describe (describe b) (trace action)))])
-            (loop (cdr owned)
-                  (if (and command
-                           (not (shadowed? (keymap:binding-sequence b) nearer))
-                           (not (and read-only? (edits? action)))
-                           (or (not keep) (keep b)))
-                      (add (keymap:sequence-text (keymap:binding-sequence b)) command (summary-of action) groups)
-                      groups))))))
-
-  ;;; The text -------------------------------------------------------------------------
-
-  (define (cells s) (glyph:cells s))
-
-  (define (pad s width)
-    (if (>= (cells s) width) s (join s (make-string (- width (cells s)) #\space))))
-
-  (define (wrap text width)
-    ;; the text as lines of at most width cells, broken at spaces, a word
-    ;; wider than the column broken where the column ends
-    (define (chop word)
-      ;; a word as pieces the column holds
-      (let loop ([word word] [out '()])
-        (if (<= (cells word) width)
-            (reverse (cons word out))
-            (let cut ([n (string-length word)])
-              (if (or (<= n 1) (<= (cells (substring word 0 n)) width))
-                  (loop (slice word n (string-length word)) (cons (slice word 0 n) out))
-                  (cut (- n 1)))))))
-    (let loop ([words (apply append (map chop (filter (lambda (w) (> (string-length w) 0)) (split-words text))))]
-               [line ""] [out '()])
-      (cond
-        [(null? words) (reverse (if (string=? line "") out (cons line out)))]
-        [(string=? line "") (loop (cdr words) (car words) out)]
-        [(<= (+ (cells line) 1 (cells (car words))) width)
-         (loop (cdr words) (join line " " (car words)) out)]
-        [else (loop words "" (cons line out))])))
-
-  (define (split-words s)
-    (let loop ([i 0] [start 0] [out '()])
-      (cond
-        [(= i (string-length s)) (reverse (cons (slice s start i) out))]
-        [(char=? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (slice s start i) out))]
-        [else (loop (+ i 1) start out)])))
-
-  (define (bracket keys i)
-    ;; the margin of a group's row i: a line down the keys sharing the
-    ;; command, from the middle of the first key's row to the middle of the
-    ;; last's; nothing beside a lone key or a description running on
-    (let ([last (- (length keys) 1)])
-      (cond [(< last 1) "  "]
-            [(= i 0) " ╷"]
-            [(< i last) " │"]
-            [(= i last) " ╵"]
-            [else "  "])))
-
-  (define (section title groups width)
-    ;; a heading, then each group's keys down the first column beside its
-    ;; command, a long call wrapped at its spaces, and its description
-    ;; wrapped in the last column, the keys of a group joined by a line in
-    ;; the margin
-    (define (steps group)
-      (if (string? (cadr group)) (list (cdr group)) (cadr group)))
-    (define (step-lines step command-width text-width)
-      (let* ([command (wrap (car step) command-width)] [text (wrap (cadr step) text-width)]
-             [height (max (length command) (length text) 1)])
-        (map (lambda (i) (cons (if (< i (length command)) (list-ref command i) "")
-                           (if (< i (length text)) (list-ref text i) ""))) (iota height))))
-    (if (null? groups)
-        '()
-        (let* ([key-width (apply max (map (lambda (g) (apply max (map cells (car g)))) groups))]
-               ;; the key column takes what its widest key needs; of what is
-               ;; left, the margin and separators apart, the command column
-               ;; takes what its widest command needs while the description
-               ;; keeps twenty-four cells, and shrinks to eight cells before
-               ;; the description shrinks below that
-               [room (- width key-width 6)]
-               [command-width (min (apply max (apply append (map (lambda (g) (map (lambda (s) (cells (car s))) (steps g))) groups))) (max 8 (- room 24)))]
-               [text-width (max 8 (- room command-width))])
-          (cons title
-                (apply append
-                  (map (lambda (g)
-                         (let* ([keys (car g)]
-                                [lines (apply append (map (lambda (s) (step-lines s command-width text-width)) (steps g)))]
-                                [height (max (length keys) (length lines) 1)])
-                           (let loop ([i 0] [out '()])
-                             (if (= i height) (reverse out)
-                                 (loop (+ i 1)
-                                       (cons (join
-                                               (bracket keys i) (pad (if (< i (length keys)) (list-ref keys i) "") key-width) "  "
-                                               (pad (if (< i (length lines)) (car (list-ref lines i)) "") command-width) "  "
-                                               (if (< i (length lines)) (cdr (list-ref lines i)) ""))
-                                             out))))))
-                       groups))))))
-
-  (define (read-only-text? b)
-    ;; whether an editing command is refused in the buffer: an app's, or one
-    ;; read-only outright; a guard deciding per edit does not count
-    (or (head:app-buffer? b)
-        (let ([guard (head:buffer-read-only b)]) (and guard (not (procedure? guard))))))
-
-  (define (buffer-root b)
-    (let ([w (find (lambda (w) (and w (eq? b (head:window-buffer w))))
-               (cons* (head:current-window) (head:previous-window) (head:windows)))])
-      (and w (head:window-widget w))))
-
-  (define (contexts b key)
-    (let* ([root (buffer-root b)] [outer (if root '(global) (append (mode:key-contexts b) '(global)))])
-      (if (not root) outer
-        (let loop ([scopes (cadr (widget:key-scopes root key))] [out '()])
-          (if (null? scopes) (append out outer)
-            (let ([out (append out (filter (lambda (c) (not (memq c out))) (cadar scopes)))])
-              (if (caddar scopes) out (loop (cdr scopes) out))))))))
-
-  (define (reachable? b context binding)
-    (let* ([sequence (keymap:binding-sequence binding)] [path (contexts b (car sequence))])
-      (let loop ([path path] [nearer '()])
-        (and (pair? path)
-          (if (eq? (car path) context) (not (shadowed? sequence nearer))
-            (loop (cdr path) (cons (car path) nearer)))))))
-
-  (define (describe-binding b context binding)
-    ;; Reify the known receiver; never run arbitrary argument producers to
-    ;; describe a key. The resulting Scheme call works outside key dispatch.
-    (let* ([root (buffer-root b)]
-           [scope (find (lambda (scope) (memq context (cadr scope)))
-                    (cadr (widget:key-scopes root (car (keymap:binding-sequence binding)))))])
-      (trace (keymap:binding-action binding)
-        (if scope (list (cons widget:target (car scope))) '()))))
-
-  (define (listing b width)
-    (let ([width (max 40 width)] [read-only? (read-only-text? b)] [widget? (buffer-root b)])
-      (let loop ([contexts (contexts b "")] [nearer '()] [out '()])
-        (if (null? contexts) (apply append (reverse out))
-          (let ([context (car contexts)])
-            (loop (cdr contexts) (cons context nearer)
-              (cons (section (if (eq? context 'global) "Global keys" (format "~a keys" context))
-                      (if widget?
-                        (context-groups context '() (and (eq? context 'global) read-only?)
-                          (lambda (binding) (reachable? b context binding))
-                          (lambda (binding) (describe-binding b context binding)))
-                        (context-groups context nearer read-only? #f #f)) width) out)))))))
-
-  (define (heading? line)
-    ;; a section title: a line that is not a row, rows starting with two spaces
-    (and (> (string-length line) 0) (not (char=? (string-ref line 0) #\space))))
-
-  (define (styles line)
-    ;; the section titles in bold, the grouping line in the margin faint
-    (let ([v (make-vector (string-length line) (if (heading? line) 'bold 'plain))])
-      (when (and (> (string-length line) 1) (memv (string-ref line 1) '(#\╷ #\│ #\╵)))
-        (vector-set! v 1 'chrome))
-      v))
-
-  (define (row-styles source row line)
-    (let* ([rows (or (mode:source-fact source 'symbolic-spans #f) '#())]
-           [ranges (if (< row (vector-length rows)) (vector-ref rows row) '())])
-      (and (pair? ranges)
-        (let ([v (styles line)])
-          (for-each (lambda (r)
-                      (do ([i (car r) (+ i 1)]) ((>= i (min (cdr r) (vector-length v))))
-                        (vector-set! v i 'italic))) ranges)
-          v))))
-
-  ;;; The buffer in the pop-up ------------------------------------------------------------
-
-  (define (view-windows)
-    ;; the windows showing the listing, the pop-up first when it does
-    (let ([ws (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows))])
-      (if (memq (head:popup) ws) (cons (head:popup) (remq (head:popup) ws)) ws)))
-
-  (define (showing?) (and view (memq view (head:buffers)) (pair? (view-windows)) #t))
-
-  (define (describable? w)
-    ;; a window the listing can describe: one showing something other than
-    ;; the listing, the pop-up only while it shows
-    (and w (not (eq? (head:window-buffer w) view))
-         (not (and (head:popup? w) (= (head:popup-rows) 0)))))
-
-  (define (subject)
-    ;; the buffer whose keys the listing describes: the current window's,
-    ;; unless it shows the listing; the pop-up's then is the buffer the
-    ;; listing took over there, an app's say, since the user is in that app;
-    ;; else the buffer of the window selected before; none otherwise
-    (let* ([w (head:current-window)] [p (head:previous-window)]
-           [taken (and (head:popup? w) (assq w over))]
-           [under (and taken (memq (cdr taken) (head:buffers)) (cdr taken))])
-      (cond [(describable? w) (head:window-buffer w)]
-            [under under]
-            [(describable? p) (head:window-buffer p)]
-            [else #f])))
-
-  (define (listing-width)
-    ;; the narrowest window showing the listing, a cell short of its edge so
-    ;; no line wraps; the screen's width before any shows it, or while the
-    ;; windows are not yet tiled and report no width to speak of
-    (let* ([ws (view-windows)]
-           [narrowest (if (null? ws) 0 (apply min (map head:window-content-width ws)))])
-      ;; the screen's width less the listing's scrollbar column
-      (- (if (> narrowest 40) narrowest (- (paint:screen-cols) 1)) 1)))
-
-  (define (pointer-bindings)
-    (let ([at (mouse:position)])
-      (if (and at (head:window-at (- (car at) 1) (- (cdr at) 1)
-                    (lambda (entry) (eq? (head:window-buffer (car entry)) view))))
-          listed-pointer
-          (mouse:bindings))))
-
-  (define (situation b pointer)
-    ;; what the listing depends on: the buffer, its contexts, its text being
-    ;; read-only, an open prompt with its content's context, and the width
-    ;; it is laid out for, which a resize of the terminal changes; the width
-    ;; comes last, so the rest compares on its own
-    (let ([root (buffer-root b)])
-      (list b (list (contexts b "") (keymap:generation) (and root (cadr (widget:key-scopes root ""))))
-        (read-only-text? b)
-        (map (lambda (binding) (list (car binding) (action-basis (cadr binding)))) pointer)
-        (if root (widget:command-bindings root) '())
-        (listing-width))))
-
-  (define (action-basis action)
-    (if (keymap:call-action? action)
-      (cons (keymap:call-action-procedure action) (map action-basis (keymap:call-action-arguments action))) action))
-
-  (define (command-template procedure arguments)
-    ;; Fixed arguments are expressions; remaining formal names are supplied
-    ;; by the invoking control, not invented values or a runnable nullary call.
-    (define (formal name)
-      (let ([text (string-copy (symbol->string name))]) (marked text (list (cons 0 (string-length text))))))
-    (let* ([text (keymap:action-text (keymap:call (apply procedure arguments)))]
-           [sigs (edoc:edoc-of procedure)] [sig (and sigs (find (lambda (s) (eq? (edoc:signature-kind s) 'procedure)) sigs))]
-           [remaining (if sig
-                        (let skip ([f (edoc:signature-formals sig)] [n (length arguments)])
-                          (if (and (> n 0) (pair? f)) (skip (cdr f) (- n 1)) f)) 'arguments)]
-           [tail (let spell ([f remaining])
-                   (cond [(null? f) ""] [(pair? f) (join " " (formal (car f)) (spell (cdr f)))]
-                     [else (join " . " (formal f))]))])
-      (join (substring text 0 (- (string-length text) 1)) tail ")")))
-
-  (define (command-sections bindings width)
-    (let ([basis (list bindings width)])
-      (unless (and commands-cache (equal? (car commands-cache) basis))
-        (set! commands-cache
-          (cons basis
-            (if (null? bindings) '()
-              (cons "Widget commands"
-                (apply append
-                  (map (lambda (row)
-                         (section
-                           (format "~a (~a): ~a"
-                             (if (null? (cadr row)) "root" (string:join (map symbol->string (cadr row)) "/"))
-                             (caddr row) (edoc:type-spelling 'model (car row)))
-                           (map (lambda (binding)
-                                  (let* ([proc (list-ref binding 4)]
-                                         [public? (and proc (not (string=? (keymap:action-text proc) "anonymous command")))])
-                                    (list (list (symbol->string (car binding)))
-                                      (if public? (command-template proc (cons (cadr binding) (cadddr binding)))
-                                        (command-template (keymap:call-action-procedure (keymap:call widget:act!))
-                                          (cons* (cadr binding) (caddr binding) (cadddr binding))))
-                                      (string-append (if (list-ref binding 5) "" "Unavailable target. ")
-                                        (if proc (summary-of proc) "Target action is not registered."))))) (cadddr row)) width)) bindings)))))))
-      (cdr commands-cache)))
-
-  (define (fill! b pointer now)
-    ;; the listing for a buffer into the view: from the top for a new
-    ;; keyboard context; keep the reader's place through pointer or width changes
-    (let* ([width (listing-width)]
-           [same? (and listed (equal? (list-head listed 3) (list-head now 3)))]
-           [keyboard-key (append (list-head now 3) (list (list-ref now 4) width))]
-           [keyboard (if (and keyboard-cache (equal? (car keyboard-cache) keyboard-key)) (cdr keyboard-cache) (listing b width))]
-           [lines (append (section "Mouse bindings"
-                            (map (lambda (binding)
-                                   (list (list (mouse:gesture-text (car binding))) (trace (cadr binding)) "")) pointer) width)
-                    keyboard (command-sections (list-ref now 4) width))]
-           [lines (if (null? lines) (list "no bindings") lines)])
-      (set! keyboard-cache (cons keyboard-key keyboard))
-      (set! listed now)
-      (set! listed-pointer pointer)
-      (head:view-replace! view lines (list (cons 'symbolic-spans (list->vector (map spans lines)))))
-      (unless same?
-        (for-each (lambda (w)
-                    (head:window-top-set! w 0) (head:window-topseg-set! w 0)
-                    (head:window-prow-set! w 0) (head:window-pcol-set! w 0))
-                  (view-windows)))))
-
-  (define (refresh! b)
-    (let* ([pointer (pointer-bindings)] [now (situation b pointer)])
-      (and (not (equal? listed now))
-           (begin (fill! b pointer now) #t))))
-
-  (define (ensure-view!)
-    ;; the <bindings> buffer, made fresh when none is live
-    (unless (and view (memq view (head:buffers)))
-      (sweep!)
-      (set! view (head:new-local-buffer! "bindings"))
-      ;; transient: a checkpoint keeps no listing, so a restart brings none back
-      (head:buffer-fact-set! view 'resume-kind 'bindings)
-      ;; long, and read by position: a scrollbar on the configured side
-      (head:buffer-fact-set! view 'scrollbar #t)
-      (head:set-buffer-status! view status)
-      (head:register-view! view void)
-      (mode:choose! "bindings" view)))
-
-  (define (drop-view!)
-    (when (and view (memq view (head:buffers))) (head:forget-buffer! view))
-    (set! view #f)
-    (set! keyboard-cache #f)
-    (set! commands-cache #f)
-    (set! listed-pointer '())
-    (set! listed #f))
-
+  ;; The default placement is the only part that knows about windows.
+  (define default-root #f)
+  (define (active-app)
+    (and default-root
+      (exists (lambda (w) (and (equal? (head:window-widget w) default-root) (or (not (head:popup? w)) (> (head:popup-rows) 0)))) (head:windows))
+      (interaction:snapshot default-root) (widget:descendant default-root 'app)))
+  (define (default-subject)
+    (let* ([w (head:current-window)] [root (dispatch:input-root)] [b (head:window-buffer w)])
+      (and (not (and default-root (equal? (head:window-widget w) default-root)))
+        (list root (if root '(global) (append (mode:key-contexts b) '(global)))
+          (and (or (head:app-buffer? b) (head:buffer-read-only b)) #t) (head:buffer-name b)))))
   (define (follow!)
-    ;; the listing keeps to the active window's buffer and its mode; the view
-    ;; goes once no window shows it, the pop-up cleared by its ↓ say
-    (unless swept? (sweep!))
-    (when (and view (memq view (head:buffers)))
-      (if (null? (view-windows))
-          (drop-view!)
-          (let ([b (subject)])
-            (when (and b (not (eq? b view))) (refresh! b))))))
+    (let ([app (active-app)])
+      (when app (let ([target (default-subject)]) (when target (request! app target))))))
+  (define (ensure! target)
+    (set! default-root (window:tool! "bindings" (lambda (commands) (create! commands (and target (car target))))))
+    (when target (request! (widget:descendant default-root 'app) target)) default-root)
 
-  ;;; Pages -----------------------------------------------------------------------
-
-  (define page-cache (make-weak-eq-hashtable)) ; window -> (key . starts), the last computation
-
-  (define (page-rows w)
-    ;; the text rows a window shows: the pop-up's count before it is tiled
-    (max 1 (if (head:popup? w) (head:popup-rows) (head:window-size w))))
-
-  (define (page-starts w)
-    ;; the lines starting each page of the listing in a window, counted in
-    ;; the window's visual rows so a wrapped line takes what it takes; kept
-    ;; per window until the text, the rows, the wrapping or the width change
-    (let* ([lines (head:buffer-lines view)] [rows (page-rows w)]
-           [wrapped? (and (> (head:window-width w) 1) (paint:window-wrapped? w))]
-           [key (list rows wrapped? (head:window-content-width w))]
-           [hit (hashtable-ref page-cache w #f)])
-      (if (and hit (eq? (caar hit) lines) (equal? (cdar hit) key))
-          (cdr hit)
-          (let ([starts
-                 (let loop ([i 0] [used 0] [starts '()])
-                   (cond
-                     [(= i (vector-length lines)) (reverse (if (null? starts) '(0) starts))]
-                     [else
-                      (let ([take (if wrapped? (paint:line-segments w (vector-ref lines i)) 1)])
-                        (if (or (= used 0) (<= (+ used take) rows))
-                            (loop (+ i 1) (+ used take) (if (= used 0) (cons i starts) starts))
-                            (loop i 0 starts)))]))])
-            (hashtable-set! page-cache w (cons (cons lines key) starts))
-            starts))))
-
-  (define (page-index w starts)
-    ;; the page a window is on: the one holding the line at the middle of
-    ;; the window's rows, so the painter's margins, which shift the top a
-    ;; few rows at either end of the text, leave the page as it was paged to
-    (let* ([lines (head:buffer-lines view)] [n (vector-length lines)]
-           [rows (page-rows w)]
-           [wrapped? (and (> (head:window-width w) 1) (paint:window-wrapped? w))]
-           [mid (let walk ([i (max 0 (min (head:window-top w) (- n 1)))] [used 0])
-                  (let ([take (if wrapped? (paint:line-segments w (vector-ref lines i)) 1)])
-                    (if (or (>= (+ i 1) n) (> (+ used take) (quotient rows 2)))
-                        i
-                        (walk (+ i 1) (+ used take)))))])
-      (let loop ([starts starts] [i 0] [found 0])
-        (cond [(null? starts) found]
-              [(<= (car starts) mid) (loop (cdr starts) (+ i 1) i)]
-              [else found]))))
-
-  (define (page! direction)
-    ;; the listing a page further where it shows, the pop-up first: down,
-    ;; from the top again past the end; up, from the last page again past
-    ;; the top; the pages as the status bar counts them, and point in the
-    ;; middle of the page, where the painter's scroll margin leaves the top
-    ;; where it was put
-    (let* ([w (car (view-windows))] [starts (page-starts w)]
-           [i (mod (+ (page-index w starts) direction) (length starts))]
-           [top (list-ref starts i)]
-           [end (if (< (+ i 1) (length starts)) (- (list-ref starts (+ i 1)) 1) (- (vector-length (head:buffer-lines view)) 1))])
-      (head:window-top-set! w top)
-      (head:window-prow-set! w (min end (+ top (quotient (page-rows w) 2))))
-      (head:window-pcol-set! w 0)))
-
-  (define (page-down!) (page! 1))
-
-  (define (status b w)
-    ;; the bar of a window showing the listing, after the buffer's name the
-    ;; painter puts first: the page the window is on of how many; the paging
-    ;; keys are in the listing itself, never in a message or a bar
-    (let ([starts (page-starts w)])
-      (format "page ~a of ~a" (+ 1 (page-index w starts)) (length starts))))
-
-  (edoc "Inspect mouse, keyboard and widget command bindings in <bindings>, with their public APIs and documentation. Open beside a focused pop-up, otherwise in the pop-up. Mouse bindings follow the pointer; keyboard and widget commands follow the active window. If already shown, page down, wrapping to the top past the end.")
+  (edoc "Show mouse, keyboard, command and composition bindings in the default pop-up. An already visible inspector pages down."
+        (returns model))
   (define (show!)
-    (cond
-      [(showing?)
-       ;; the situation changed under the listing, a prompt opened say: it
-       ;; refills; unchanged, or with nothing else to describe, it pages
-       (let ([b (subject)])
-         (unless (and b (not (eq? b view)) (refresh! b)) (page-down!)))]
-      [else
-       (let ([b (or (subject) (head:window-buffer (head:current-window)))])
-         (ensure-view!)
-         (if (head:popup? (head:current-window))
-           (when (window:pop-up-or-reuse! view) (refresh! b))
-           (begin
-             (remember-over! (head:popup))
-             (head:set-window-buffer! (head:popup) view)
-             (refresh! b)
-             (head:show-popup! (head:popup-default-rows)))))]))
+    (let ([app (active-app)] [target (default-subject)])
+      (if app (begin (when target (request! app target)) (page! app 'down) default-root)
+        (let ([root (ensure! target)])
+          (if (head:popup? (head:current-window)) (window:pop-up-or-reuse! (widget:host root))
+            (begin (window:show-widget! (head:popup) root) (head:show-popup! (head:popup-default-rows)))) root))))
 
-  (define (remember-over! w)
-    ;; what a window shows before the listing takes it, for bindings:return!
-    (unless (eq? (head:window-buffer w) view)
-      (set! over (cons (cons w (head:window-buffer w)) (remp (lambda (e) (eq? (car e) w)) over)))))
+  (edoc "Page the visible default inspector up, or show it when hidden.")
+  (define (page-up!) (let ([app (active-app)]) (if app (page! app 'up) (show!))))
 
-  (edoc "Page the bindings listing up where it shows, from the last page again past the top; not shown, show it as C-x TAB does.")
-  (define (page-up!)
-    (if (showing?) (page! -1) (show!)))
-
-  (edoc "Show the bindings listing in the current window as the read-only buffer <bindings>, for the buffer the window shows now; the listing follows the active window from then on, and C-x TAB and C-x S-TAB page it there." (public))
+  (edoc "Show the inspector in the current window, following its captured subject until another window becomes active." (returns model) (public))
   (define (open!)
-    (let ([b (head:current-buffer)])
-      (ensure-view!)
-      (remember-over! (head:current-window))
-      (head:show-buffer! view)
-      (unless (eq? b view) (refresh! b))))
+    (let* ([target (default-subject)] [root (ensure! target)]) (window:show-widget! (head:current-window) root) root))
 
-  (edoc "Put the listing away from the current window and show what the window showed before it, the pop-up hiding when it showed nothing else; ESC and C-g in <bindings>.")
-  (define (return!)
-    (let* ([w (head:current-window)] [back (cond [(assq w over) => cdr] [else #f])])
-      (unless (and view (eq? (head:window-buffer w) view)) (error 'bindings:return! "the current window shows no bindings listing"))
-      (set! over (remp (lambda (e) (eq? (car e) w)) over))
-      (cond
-        [(and (head:popup? w) (or (not back) (not (memq back (head:buffers))) (eq? back (head:window-buffer (head:popup)))))
-         (hide!)]
-        [(and back (memq back (head:buffers))) (head:set-window-buffer! w back)]
-        [else (hide!)])
-      (when (and view (null? (filter (lambda (w) (eq? (head:window-buffer w) view)) (head:windows)))) (drop-view!))))
-
-  (edoc "Put the bindings listing away: the pop-up shows its placeholder again and hides, and a window showing the listing shows another buffer.")
+  (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening." (public))
   (define (hide!)
-    (when (and view (eq? (head:window-buffer (head:popup)) view)) (head:hide-popup!))
-    (set! over '())
-    (drop-view!))
+    (when default-root
+      (for-each (lambda (w)
+                  (when (equal? (head:window-widget w) default-root)
+                    (if (head:popup? w) (head:hide-popup!) (window:return! default-root)))) (head:windows))))
 
-  (edoc "Install the binding inspector: its mode, C-x TAB and C-x S-TAB showing or paging the listing, the listing following the active window before every frame, and its exclusion from checkpoints." (public))
+  (edoc "Register the Bindings composition and commands; hidden inspectors do no capture or trace work." (public))
   (define (init!)
-    (mode:register! "bindings" '() '() styles #f row-styles '(symbolic-spans))
-    (head:register-resume! 'bindings (lambda (b positions) (values #f positions)) (lambda args #f))
-    (keymap:bind-default! "C-x TAB" show!)
-    (keymap:bind-default! "C-x S-TAB" page-up!)
-    (keymap:bind-default! 'bindings "ESC" return!)
-    (keymap:bind-default! 'bindings "C-g" return!)
+    (let ([b (head:find-tool-buffer "*bindings*")]) (when b (set! default-root (head:buffer-fact b 'widget-id #f))))
+    (widget:register! 'bindings 1
+      (append (layout:container 'y) (list '(contexts . (widget-bindings)) (cons 'service service!) (cons 'release release!)
+                                      (cons 'actions (list (cons 'inspect inspect!) (cons 'page page!))))))
+    (widget:register! 'binding-list 1
+      (list (cons 'prepare (lambda (id source inputs)
+                             (make-presentation (if (eq? (get source 'kind #f) 'inspection-rows)
+                                                  (list (cons 'rows (get source 'value '())) '(status . ready))
+                                                  (get source 'value '())) (get source 'revision 0) (make-eqv-hashtable))))
+        (cons 'render render) (cons 'decorate decorate) '(focus . #t) '(contexts . (widget-binding-list))
+        (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
+        (cons 'release (lambda (id) (when (equal? id dragging) (set! dragging #f))))
+        (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) (let ([n (vector-length (fitted data cross))]) (list (min 1 n) n)) '(1 40))))
+        (cons 'anchor (lambda (data at width) (listing:anchor (fitted data width) at)))
+        (cons 'locate (lambda (data anchor width) (listing:locate (fitted data width) anchor)))))
+    (keymap:bind-default! "C-x TAB" show!) (keymap:bind-default! "C-x S-TAB" page-up!)
+    (keymap:bind-default! 'widget-binding-list "M-w" (keymap:call copy! widget:target))
+    (for-each (lambda (p) (keymap:bind-default! 'widget-bindings (car p) (keymap:call page! widget:target (cadr p))))
+      '(("PAGEUP" up) ("PAGEDOWN" down) ("M-v" up) ("C-v" down)))
+    (for-each (lambda (p) (keymap:bind-default! 'widget-bindings (car p)
+                            (keymap:call widget:act! (keymap:call widget:descendant widget:target 'viewport) 'scroll (cadr p))))
+      '(("UP" -1) ("DOWN" 1) ("C-p" -1) ("C-n" 1) ("HOME" -1000000000) ("END" 1000000000)))
+    (for-each (lambda (key) (keymap:bind-default! 'widget-bindings key (keymap:call widget:invoke! widget:target 'return))) '("ESC" "C-g"))
     (head:add-pre-redraw-hook! follow!)))
