@@ -180,6 +180,16 @@
            (list (list id (view:generation (interaction:snapshot id)))))
          (widget:pump!))
        (widget:mount! id 'path-presentation) (show)
+       (let ([directory (list '(status . ready) (cons 'input-filter (path "")) '(details (missing . #f)))])
+         (check 'new-component-is-italic-from-its-first-unconfirmed-frame
+           (map (lambda (case) (context! (cadr case)) (entry:set-text! id (car case)) (show))
+             (list (list (path "") directory) (list (path "A") directory) (list (path "A") pending)
+               (list (path "A") (list '(status . ready) (cons 'input-filter (path "A"))
+                                  (list 'details (cons 'missing (cons start (+ start 1))))))
+               (list (path "A") (list '(status . ready) (cons 'input-filter (path "A")) '(details (missing . #f))))
+               (list (format "~s" (path "with space/A"))
+                 (list '(status . ready) (cons 'input-filter (format "~s" (path "with space/"))) '(details (missing . #f))))))
+           '("" "A" "A" "A" "" "A")))
        (check 'missing-path-style-survives-stale-and-pending-query-results
          (map (lambda (case)
                 (context! (cadr case)) (entry:set-text! id (car case)) (show))
@@ -188,8 +198,9 @@
              (list (path "miss extra") pending) (list (path "miss\"name extra") pending)
              (list "/elsewhere/miss" pending)
              (list sample (list '(status . ready) (cons 'input-filter sample) '(details (missing . #f))))
+             (list (string-append sample " extra") pending) (list (path "") pending)
              (list (path "missing-again") pending)))
-         '("missing-more" "missing-more/" "miss" "miss" "miss\"name" "" "" ""))
+         '("missing-more" "missing-more/" "miss" "miss" "miss\"name" "elsewhere/miss" "" "" "" "missing-again"))
        (let* ([quoted (format "~s" (path "missing space"))]
               [ready (list '(status . ready) (cons 'input-filter quoted)
                        (list 'details (cons 'missing (cons (+ start 1) (- (string-length quoted) 1)))))]

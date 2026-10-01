@@ -3,6 +3,7 @@
 (elibrary (apps finder)
   (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
   (import (chezscheme) (prefix (core kernel) kernel:)
+          (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
           (prefix (head catalogue-host) catalogue-host:) (prefix (head edit) edit:)
           (prefix (head entry) entry:) (prefix (head head) head:)
@@ -202,12 +203,22 @@
        (let ([home (file:expand "~")]) (list (string-append home (substring text 1 (string-length text))) (+ caret (- (string-length home) 1))))]
       [(string:prefix? "\"" text) (list (string:insert text 1 "/") (if (positive? caret) (+ caret 1) caret))]
       [else (list (string-append "/" text) (+ caret 1))]))
+  (define (unconfirmed-start text context)
+    (and (eq? (get context 'status #f) 'ready)
+      (let* ([missing (get (get context 'details '()) 'missing #f)] [basis (get context 'input-filter "")]
+             [current (path-filter:parse text "")] [checked (path-filter:parse basis "")])
+        (and (pair? current) (pair? checked)
+          (not (and (not missing)
+                 (or (string=? (car current) (car checked))
+                   (string:prefix? (if (string:suffix? "/" (car current)) (car current) (string-append (car current) "/"))
+                     (car checked)))))
+          ;; Only complete unchanged components retain their confirmation.
+          ;; An edited component is tentative before its first query result.
+          (let ([common (string-length (string:common-prefix (list text basis)))])
+            (let loop ([at (if missing (min common (car missing)) common)])
+              (if (or (zero? at) (char=? (string-ref text (- at 1)) #\/)) at (loop (- at 1)))))))))
   (define (project-filter text context)
-    ;; Keep the last diagnosis within the same known path prefix while the
-    ;; base checks an edited tail. Only the first token can carry it.
-    (let* ([missing (get (get context 'details '()) 'missing #f)] [basis (get context 'input-filter "")]
-           [start (and missing (<= (car missing) (string-length basis))
-                    (string:prefix? (substring basis 0 (car missing)) text) (car missing))])
+    (let ([start (unconfirmed-start text context)])
       (let loop ([parts (glyph:clusters text)] [at 0] [quoted? #f] [escape? #f] [token-start? #t] [first? #t] [out '()])
         (if (null? parts) (reverse out)
           (let* ([end (+ at (caar parts))] [s (substring text at end)] [c (string-ref text at)]

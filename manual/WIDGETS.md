@@ -760,9 +760,12 @@ Finder uses it for conjunction separators and italic missing path components;
 the source still contains ordinary spaces. Its `context` input is connected
 to the collection's `summary` output, without polling or copying result rows.
 The formatter may retain bounded presentation knowledge, but performs no I/O
-or model mutation. Finder keeps the last known missing-tail styling while a
-query is pending, limited to the first token under the same known path prefix;
-a fresh result replaces it. Existence checks remain in the base.
+or model mutation. Finder keeps confirmed directory components normal and
+renders an edited path component and its descendants in italic immediately,
+including the first character of a new name. This tentative styling lasts
+until the base confirms that the path exists; a missing tail stays italic.
+Only the first filter token carries path styling. Existence checks remain
+in the base.
 An independent `(policy name schema)` option selects a logical text-edit
 normalizer registered with `edit:register-policy!`. It receives proposed line
 strings and logical result positions, returning both normalized values.
