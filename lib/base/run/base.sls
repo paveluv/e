@@ -696,7 +696,7 @@
           ;; #t is one coalesced watch wakeup; all other work is owned bytes.
           ;; Count includes an in-flight write. A stalled peer cannot retain
           ;; unlimited store versions, tiny mail envelopes or encoded replies.
-          (let* ([frame (if (memq message '(#t models)) message (wire:encode message))]
+          (let* ([frame (if (or (bytevector? message) (memq message '(#t models))) message (wire:encode message))]
                  [size (if (bytevector? frame) (bytevector-length frame) 0)])
             (unless (with-mutex out-lock
                       (and (not closed?) (< queued-count 256)
@@ -872,41 +872,41 @@
                         (when (and session (policy:revoked? session)) (error 'wire "the session is revoked"))
                         (when (peer-leaving? peer) (error 'wire "this head has already left"))
                         (post!
-                          (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
+                          (guard (ex [else (wire:encode (list 'reply (cadr message) 'error (kernel:condition-text ex)))])
                             (unless (if maintenance?
                                         (memq (caddr message) '(status prepare-restart restart cancel-review))
                                         (not (memq (caddr message) '(prepare-restart restart))))
                               (error 'wire "operation is not available on this connection" (caddr message)))
-                            (list 'reply (cadr message) 'ok
-                              (case (caddr message)
-                                [(model-watch)
-                                 (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
-                                 (models-watch! (cadddr message))]
-                                [(model-unwatch)
-                                 (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
-                                 (let ([ids (cadddr message)])
-                                   (check-model-ids ids)
-                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
-                                   (models-demand!))
-                                 #t]
-                                [(status)
-                                 (unless (= (length message) 3) (error 'wire "status takes no arguments"))
-                                 (status (with-mutex peer-lock (participants)))]
-                                [(leaving prepare-close shutdown prepare-restart restart cancel-review)
-                                 (control-call peer control? (caddr message) (cdddr message))]
-                                [(watch watch-head)
-                                 (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
-                                 (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
-                                [(catalogue-attach)
-                                 (unless (and control? (= (length message) 3) (eq? (car (policy:session-actor session)) 'head))
-                                   (error 'wire "catalogue-attach requires an all-buffer head"))
-                                 (parameterize ([kernel:registering-module owner]) (catalogue:attach! (policy:session-actor session)))]
-                                [else
-                                 ;; Capture only the id, not the entire request.
-                                 ;; An answer may precede the ticket reply.
-                                 (let ([id (cadr message)])
-                                   (request session control? (caddr message) (cdddr message)
-                                     (lambda (answer) (post! (list 'event (list 'answer id answer))))))]))))
+                            (wire:encode (list 'reply (cadr message) 'ok
+                                           (case (caddr message)
+                                             [(model-watch)
+                                              (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
+                                              (models-watch! (cadddr message))]
+                                             [(model-unwatch)
+                                              (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
+                                              (let ([ids (cadddr message)])
+                                                (check-model-ids ids)
+                                                (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
+                                                (models-demand!))
+                                              #t]
+                                             [(status)
+                                              (unless (= (length message) 3) (error 'wire "status takes no arguments"))
+                                              (status (with-mutex peer-lock (participants)))]
+                                             [(leaving prepare-close shutdown prepare-restart restart cancel-review)
+                                              (control-call peer control? (caddr message) (cdddr message))]
+                                             [(watch watch-head)
+                                              (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
+                                              (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
+                                             [(catalogue-attach)
+                                              (unless (and control? (= (length message) 3) (eq? (car (policy:session-actor session)) 'head))
+                                                (error 'wire "catalogue-attach requires an all-buffer head"))
+                                              (parameterize ([kernel:registering-module owner]) (catalogue:attach! (policy:session-actor session)))]
+                                             [else
+                                              ;; Capture only the id, not the entire request.
+                                              ;; An answer may precede the ticket reply.
+                                              (let ([id (cadr message)])
+                                                (request session control? (caddr message) (cdddr message)
+                                                  (lambda (answer) (post! (list 'event (list 'answer id answer))))))])))))
                         (loop)))))))))
         (lambda ()
           (close!)
