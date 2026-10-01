@@ -428,7 +428,7 @@
       [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
       [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args) #t]
       [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args)) #t]
-      [(search-create) (control!) (head!) (arity 1) (search-request:create! actor (car args))]
+      [(search-create) (control!) (head!) (arity 2) (apply search-request:create! actor args)]
       [(search-configure) (control!) (head!) (arity 3) (apply search-request:configure! actor args)]
       [(search-close) (control!) (head!) (arity 1) (search-request:close! actor (car args)) #t]
       [(reference-signatures) (arity 0) (reference:signatures)]

@@ -1537,9 +1537,9 @@
              (let* ([temporary (connect)] [document (car (rpc head 'buffers))])
                (hello temporary '(head "search owner")) (receive temporary)
                (let* ([target (rpc temporary 'view-create (list 'buffer document) 'editor 1 '() '((0 . 0) (0 . 0) (0 . 0) #f))]
-                      [request (map cons '(target document basis sequence start needle fold? visible)
-                                 (list target document 0 0 '(0 . 0) "hello" #f '(0 0 0 7)))]
-                      [id (rpc temporary 'search-create request)])
+                      [request (map cons '(target document basis sequence start needle fold? visible direction summary? overlap?)
+                                 (list target document 0 0 '(0 . 0) "hello" #f '(0 0 0 7) 'next #f #t))]
+                      [id (rpc temporary 'search-create request #t)])
                  (test:check 'search-wire-owner-and-generation-fences
                    (list (rpc head 'search-configure id 0 request)
                      (rpc temporary 'search-configure id 0 request)

@@ -10,48 +10,30 @@
       (mutable source) (mutable range) (mutable prepared) (mutable options)
       (mutable matches) (mutable index) (mutable candidates) (mutable page)
       (mutable note) (mutable preview) (mutable undo) (mutable preview-text)
-      (mutable searcher) (mutable maker) (mutable needle) (mutable hit) (mutable basis)))
+      (mutable basis)))
 
   (edoc "Create a head-local completion session. The optional text transformer applies only to completion edits; text ownership and submission remain with the host."
-        (primary any "primary source; its track procedure may supply a live search")
+        (primary any "primary source")
         (transform (or procedure #f) "text and character caret -> (text . caret)"))
   (define (create primary transform)
-    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f #f #f #f #f #f #f))
+    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f #f #f))
   (define (basis source) (and (completion:source? source) ((completion:source-basis source))))
 
   (edoc "Read a prepared session as (generation text caret candidates note page-sequence source preview). False candidates means the list is hidden. This never invokes a provider."
         (s any "completion session") (returns list))
   (define (snapshot s)
     (list (state-generation s) (state-text s) (state-position s) (state-candidates s)
-      (if (and (string=? (state-note s) "") (state-hit s))
-        (cond [(car (state-hit s)) (format " [~a of ~a]" (car (state-hit s)) (cdr (state-hit s)))]
-          [(> (string-length (or (state-needle s) "")) 0) " [no match]"] [else ""])
-        (state-note s))
+      (state-note s)
       (state-page s) (state-source s) (state-preview s)))
 
   (define (end-preview! s)
     (when (state-undo s) (guard (ex [else (void)]) ((state-undo s))))
     (state-preview-set! s #f) (state-undo-set! s #f) (state-preview-text-set! s #f))
-  (define (end-search! s accepted?)
-    (when (state-searcher s) (guard (ex [else (void)]) ((completion:searcher-done (state-searcher s)) accepted?)))
-    (state-searcher-set! s #f) (state-maker-set! s #f) (state-needle-set! s #f) (state-hit-set! s #f))
-  (define (track! s text position)
-    (let* ([primary (state-primary s)]
-           [wanted (and (completion:source? primary) (completion:source-track primary)
-                     (guard (ex [else #f]) ((completion:source-track primary) text position)))])
-      (cond
-        [(not wanted) (end-search! s #f)]
-        [else
-         (unless (and (state-searcher s) (eq? (car wanted) (state-maker s)))
-           (end-search! s #f) (state-maker-set! s (car wanted)) (state-searcher-set! s ((car wanted))))
-         (unless (equal? (cdr wanted) (state-needle s))
-           (state-needle-set! s (cdr wanted))
-           (state-hit-set! s ((completion:searcher-find (state-searcher s)) (cdr wanted))))])))
 
-  (edoc "Close reversible candidate and search previews. Only acceptance keeps a live search's chosen position; repeated cleanup is harmless."
+  (edoc "Close reversible candidate previews and release the source."
         (s any "completion session") (accepted? boolean "whether input was accepted"))
   (define (finish! s accepted?)
-    (end-preview! s) (end-search! s accepted?)
+    (end-preview! s)
     (when (completion:source? (state-primary s)) ((completion:source-release (state-primary s)))))
 
   (define (value candidate)
@@ -78,7 +60,6 @@
   (define (refresh! s text position)
     (unless (and (<= 0 position (string-length text)) (exact? position) (integer? position))
       (error 'refresh! "invalid completion caret" position))
-    (track! s text position)
     (when (and (state-preview s) (not (equal? text (state-preview-text s)))) (end-preview! s))
     (unless (and (string=? text (state-text s)) (= position (state-position s))
               (equal? (state-basis s) (basis (state-primary s))))
@@ -129,8 +110,6 @@
     (state-generation-set! s (+ 1 (state-generation s)))
     (let ([text (state-text s)] [position (state-position s)])
       (cond
-        [(state-searcher s)
-         (state-hit-set! s ((if backwards? (completion:searcher-previous (state-searcher s)) (completion:searcher-next (state-searcher s)))))]
         [(not source) (void)]
         [(completion:source? source)
          (let-values ([(start end options candidates) ((completion:source-lookup source) text position)])

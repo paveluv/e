@@ -1249,9 +1249,17 @@ buffer and terminal-capture arguments have table presentations. Empty hint
 columns are omitted. Selecting a file inserts its literal; it does not open it.
 
 `prompt:completion-context request` reads prepared head data without querying
-the provider. A completion source may provide a seventh `context` callback to
+the provider. A completion source may provide a sixth `context` callback to
 `completion:make-source`; it receives text and caret and returns an alist with
 an exact `type` and any explicit argument context its presentation needs.
 Factories do not perform matching. Normalization, generation fencing and
 literal insertion remain with the existing completion session. Typing within
 one type reuses its composition; painting makes no completion requests.
+
+A presentation may register a `complete` action taking `backwards?`. Returning
+true handles Tab; false allows ordinary normalization. The needle presentation
+uses this to navigate a private read-only editor through `search-control:`.
+Its query has no redundant input draft; the typed needle input carries text.
+First-hit annotations arrive before the optional cancellable count. Closing
+the prompt releases its views and search demand without restoring or modifying
+the original editor.

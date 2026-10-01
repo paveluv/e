@@ -54,11 +54,12 @@ to the replacement's entries. An unwanted occurrence can be omitted from the
 rewrite preview and the draft settled, or the whole replacement undone.
 
 The text to find is a `needle`: while you type it at M-x, its matches
-highlight in the current buffer as a search would, the prompt notes `[1 of
-3]`, and Tab visits the next occurrence, Shift-Tab the previous, inserting
-nothing. Point previews the occurrence's start; leaving the argument or
-accepting or cancelling the prompt restores the original point and selection,
-carried across any intervening edits. Matches refresh when the buffer changes.
+highlight in a separate read-only editor above the prompt. Its status shows
+`[1 of 3]`; Tab visits the next occurrence and Shift-Tab the previous, inserting
+nothing. The original editor's point and selection stay unchanged. Leaving
+the argument or closing the prompt releases the preview. Matches refresh
+when the document changes; counting runs in cancellable base work after the
+first hit is available.
 `search:count` takes a needle too. Matching and highlighting are exact.
 
 `search:replace!` is scoped by the selection or the scope forms:

@@ -148,7 +148,7 @@
         (lambda (config origin)
           (completion:make-source
             (lambda (text caret) (values 0 (string-length text) '("alpha") '("alpha" "beta")))
-            #f "choice" #f (lambda () #f) void
+            #f "choice" (lambda () #f) void
             (lambda (text caret) (list (cons 'type (if (string=? text "other") '(one-of alpha gamma) type))))))))
     (check 'exact-completion-type-claims-conflict-across-module-owners
       (test:raises? (lambda () (parameterize ([kernel:registering-module 'completion-type-conflict]) (prompt:register-presentation! type factory)))) #t)

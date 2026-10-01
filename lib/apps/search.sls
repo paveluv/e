@@ -1,19 +1,19 @@
-;; Search commands and the temporary M-x needle preview adapter.
+;; Search commands and an independent needle-completion composition.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (apps search)
   (export count (rename (search-fold-case fold-case)) (rename (search! incremental!)) init!
-          replace!)
+          preview-next! replace!)
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
-          (prefix (head completion) completion:)
-          (prefix (head edit) edit:)
-          (prefix (head head) head:)
-          (prefix (head keymap) keymap:)
-          (head literal)
-          (prefix (head paint) paint:)
-          (prefix (head search-host) search-host:))
+          (prefix (head edit) edit:) (prefix (head editor) editor:) (prefix (head editor-state) editor-state:)
+          (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:) (head literal)
+          (prefix (head prompt) prompt:) (prefix (head search-control) search-control:)
+          (prefix (head search-host) search-host:)
+          (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:) (prefix (state model) model:) (prefix (state view) view:))
 
   ;; Configuration: whether the incremental search folds case the
   ;; smart way, as Emacs does -- matching ignores case only while the
@@ -24,84 +24,44 @@
         (value boolean))
   (define search-fold-case (make-parameter #t))
 
-  ;; M-x's typed needle preview moves to the type-selected widget path in W6f.
-  (define preview-highlights #f)
-  (define (search-highlights) (if preview-highlights (preview-highlights) '()))
-  (define (goto-match! match) (head:goto! match))
-
-  (define (matches-of b needle)
-    ;; every match of needle in b as (row . col), in order and without
-    ;; overlaps, exactly as the replace commands find them
-    (let ([m (string-length needle)])
-      (let rows ([row 0] [acc '()])
-        (if (= row (head:buffer-line-count b))
-            (reverse acc)
-            (let ([s (head:buffer-line b row)])
-              (let cols ([from 0] [acc acc])
-                (let ([hit (string:search s needle from (string-length s))])
-                  (if hit
-                      (cols (+ hit m) (cons (cons row hit) acc))
-                      (rows (+ row 1) acc)))))))))
-
-  (define (make-searcher)
-    ;; The needle type's live search for the prompt: the needle's matches
-    ;; highlight through the search highlighter, the current one on top,
-    ;; point previews a match without changing the command's input region.
-    ;; Anchors and cached matches follow the adopted source's revision.
-    (let* ([window (head:current-window)] [b (head:current-buffer)]
-           [origin (head:point)] [basis (caddr (head:edit-basis b))]
-           [needle #f] [hits '()] [at #f])
-      (define (first-at position)
-        (let loop ([rest hits] [i 0])
-          (cond [(null? rest) (and (pair? hits) 0)]
-                [(not (text:position<? (car rest) position)) i]
-                [else (loop (cdr rest) (+ i 1))])))
-      (define (refresh! s)
-        (let-values ([(lines revision changes) (head:snapshot-since b basis)])
-          (when (or (not (equal? s needle)) (not (= revision basis)))
-            (let ([chosen (and at (list-ref hits at))]
-                  [deltas (if changes (map caddr changes) '())])
-              (set! origin (fold-left text:rebase-position origin deltas))
-              (set! hits (if (or (not s) (string=? s "")) '() (matches-of b s)))
-              (set! at (first-at (if (and chosen (equal? s needle))
-                                   (fold-left text:rebase-position chosen deltas) origin)))
-              (set! needle s)
-              (set! basis revision)))))
-      (define (show!)
-        (when (and at (memq window (head:windows)) (eq? (head:window-buffer window) b))
-          (head:with-window window (goto-match! (list-ref hits at))))
-        (cons (and at (+ at 1)) (length hits)))
-      (define (move step)
-        (refresh! needle)
-        (when (pair? hits) (set! at (mod (+ at step) (length hits))))
-        (show!))
-      (set! preview-highlights
-        (lambda ()
-          (refresh! needle)
-          (if (not (eq? b (head:current-buffer))) '()
-              (let ([n (if needle (string-length needle) 0)])
-                (append (if at (let ([p (list-ref hits at)]) (list (list (car p) (cdr p) (+ (cdr p) n) 'match-point))) '())
-                        (map (lambda (p) (list (car p) (cdr p) (+ (cdr p) n) 'match)) hits))))))
-      (completion:make-searcher
-        (lambda (s)
-          (refresh! s)
-          (show!))
-        (lambda () (move 1))
-        (lambda () (move -1))
-        (lambda (accepted?)
-          (refresh! needle)
-          (set! preview-highlights #f)
-          (when (and (memq window (head:windows)) (eq? (head:window-buffer window) b))
-            (head:with-window window (head:goto! origin)))))))
-
-  ;; The needle type: a string argument that searches while it is typed.
-  ;; At M-x the prompt highlights the needle's matches in the current
-  ;; buffer as a search would and Tab visits them in turn, completing
-  ;; nothing. Ending the preview restores the command's original point.
   (edoc-type needle "text to find in the current buffer, within one line; typed at M-x, its matches highlight and Tab visits them in turn"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
-    (search make-searcher)
     (within string))
+
+  (define (get r k) (cond [(assq k r) => cdr] [else #f]))
+  (define (make-preview request context commands)
+    (let* ([argument (get context 'argument)] [document (get argument 'document)] [origin (get argument 'editor)])
+      (if (not (and document origin)) (prompt:create-choices! request commands 'columns request)
+        (let-values ([(source d) (text-control:context origin 'editor 'current)])
+          (let* ([points (editor-state:points (text-control:mirror source) (text-control:revision source) d)]
+                 [root (view:create! head:ui-actor request 'needle-preview 1 '()
+                         (list (text-control:revision source) (if points (car points) '(0 . 0))) request)]
+                 [editor (editor:create-view! head:ui-actor document '((read-only . #t)) root)]
+                 [choices (prompt:create-choices! request commands 'columns root)])
+            (view:arrange! head:ui-actor (list (list root 0 (list (list 'choices choices 'fit) (list 'editor editor '(grow 1))) '())) '()) root)))))
+  (define (preview-service! id frame)
+    (let* ([d (interaction:snapshot id)] [request (view:source d)]
+           [record (model:snapshot request)] [argument (get (prompt:completion-context request) 'argument)])
+      (when (and record (eq? (get (get record 'value) 'status) 'editing))
+        (unless (assq 'search (view:children d))
+          (let ([editor (widget:descendant id 'editor)])
+            (let-values ([(source editor-d) (text-control:context editor 'editor 'current)])
+              (let ([points (text-source:rebase (list (cadr (view:state d)))
+                              (text-source:changes (text-control:mirror source) (car (view:state d)) (text-control:revision source)))])
+                (when points (editor:move! editor (car points)))))
+            (let ([search (search-control:create-preview! editor 'exact '() id)])
+              (widget:arrange! (list (list id (get (model:snapshot id) 'revision)
+                                       (append (view:children d) (list (list 'search search 'fit))) (view:options d)))))))
+        (search-control:set-needle! (widget:descendant id 'search)
+          (if (and (get argument 'literal?) (string? (get argument 'token))) (get argument 'token) "")))))
+
+  (edoc "Visit the next or previous match in a prompt's independent needle preview. Return false for a nonliteral argument so ordinary symbol completion can proceed."
+        (receiver id (view needle-preview)) (id model "needle presentation") (backwards? boolean "previous match") (returns boolean))
+  (define (preview-next! id backwards?)
+    (let* ([d (interaction:snapshot id)] [argument (get (prompt:completion-context (view:source d)) 'argument)])
+      (and (get argument 'literal?)
+        (begin (preview-service! id #f)
+          (search-control:repeat! (widget:descendant id 'search) (if backwards? 'previous 'next)) #t))))
 
   (edoc "Start incremental search in the current editor through the ordinary event pump. C-s repeats, M-c toggles case, Return accepts and C-g returns to the safely rebased origin.")
   (define (search!) (search-host:open! (if (search-fold-case) 'smart 'exact)))
@@ -175,9 +135,14 @@
         (format "(search:replace! ~s ~s)" from to)
         (lambda () (edit:rewrite-regions! basis (occurrences r))))))
 
-  (edoc "Install the search composition, the temporary typed-needle preview and default C-s/M-% bindings." (public))
+  (edoc "Install search, its scoped needle-completion presentation and default C-s/M-% bindings." (public))
   (define (init!)
     (search-host:init!)
-    (paint:add-highlighter! search-highlights)
+    (prompt:register-presentation! 'needle make-preview)
+    (widget:register! 'needle-preview 1
+      (append (remp (lambda (p) (eq? (car p) 'measure)) (layout:container 'y))
+        (list (cons 'service preview-service!) (cons 'actions (list (cons 'complete preview-next!)))
+          (cons 'measure (lambda (data d axis cross child)
+                           (if (eq? axis 'y) '(0 6) '(0 1)))))))
     (keymap:bind-default! "C-s" search!)
     (keymap:bind-default! "M-%" (keymap:prefill replace!))))

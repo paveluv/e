@@ -304,7 +304,7 @@
      (wait-for! 'the-session-gives-the-window-back
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; A needle argument searches as it is typed: the note counts the
-     ;; matches, Tab visits the next without inserting, and C-g restores point.
+     ;; matches in a separate editor; Tab navigates without moving the source.
      (evaluate '(let ([b (head:new-buffer! "needles")])
                   (head:show-buffer! b)
                   (edit:insert-text! "alpha beta alpha\ngamma alpha")
@@ -316,6 +316,11 @@
      (send! "\t")
      (wait-for! 'tab-visits-the-next-match
                 (lambda () (find-cell "[2 of 3]")) 5000)
+     (check 'needle-preview-leaves-original-caret-alone
+       (equal? (evaluate '(head:point)) '(0 . 0)))
+     (send! "\x1b;[Z")
+     (wait-for! 'shift-tab-visits-the-previous-match
+       (lambda () (find-cell "[1 of 3]")) 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
