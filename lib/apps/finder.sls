@@ -203,16 +203,28 @@
       [(string:prefix? "\"" text) (list (string:insert text 1 "/") (if (positive? caret) (+ caret 1) caret))]
       [else (list (string-append "/" text) (+ caret 1))]))
   (define (project-filter text context)
-    (let ([missing (and (equal? text (get context 'input-filter #f)) (get (get context 'details '()) 'missing #f))])
-      (let loop ([parts (glyph:clusters text)] [at 0] [quoted? #f] [escape? #f] [out '()])
+    ;; Keep the last diagnosis within the same known path prefix while the
+    ;; base checks an edited tail. Only the first token can carry it.
+    (let* ([missing (get (get context 'details '()) 'missing #f)] [basis (get context 'input-filter "")]
+           [start (and missing (<= (car missing) (string-length basis))
+                    (string:prefix? (substring basis 0 (car missing)) text) (car missing))])
+      (let loop ([parts (glyph:clusters text)] [at 0] [quoted? #f] [escape? #f] [token-start? #t] [first? #t] [out '()])
         (if (null? parts) (reverse out)
           (let* ([end (+ at (caar parts))] [s (substring text at end)] [c (string-ref text at)]
-                 [separator? (and (char=? c #\space) (not quoted?))])
+                 [separator? (and (char=? c #\space) (not quoted?))]
+                 [closing? (and (char=? c #\") quoted? (not escape?))]
+                 [boundary? (or (and (char-whitespace? c) (not quoted?)) closing?)]
+                 [first? (and first? (not boundary?))])
             (loop (cdr parts) end
-              (if (and (char=? c #\") (not escape?)) (not quoted?) quoted?)
-              (and quoted? (char=? c #\\) (not escape?))
+              (if (and (char=? c #\") (not escape?) (or quoted? token-start?)) (not quoted?) quoted?)
+              (and quoted? (char=? c #\\) (not escape?)) boundary? first?
               (cons (list (if separator? " ∧ " (escaped s))
-                      (if (and missing (< at (cdr missing)) (> end (car missing))) '(italic) '())) out)))))))
+                      (if (and start first? (> end start)) '(italic) '())) out)))))))
+  (define (filter-projector)
+    (let ([known '()])
+      (lambda (text context)
+        (when (memq (get context 'status #f) '(ready unavailable)) (set! known context))
+        (project-filter text known))))
   (define (name-cell cell cells attrs)
     (if (not (eq? (car cell) 'ready)) '("")
       (let* ([raw (cadr cell)] [name (escaped raw)]
@@ -262,7 +274,7 @@
         (cons 'render (lambda (s d w h r) (if (zero? (car r)) (list (glyph:fit s w)) '())))
         (cons 'measure (lambda (s d axis cross child) (if (eq? axis 'y) '(1 1) (list 0 (glyph:cells s)))))
         (cons 'decorate (lambda (s d w h r) (if (zero? (car r)) (list (list (list 0 0 (min w (glyph:cells s)) 1) 'ghost)) '())))))
-    (entry:register-presentation! 'finder 1 project-filter)
+    (entry:register-presentation! 'finder 1 filter-projector)
     (edit:register-policy! 'rooted-path 1
       (lambda (lines positions)
         (let* ([text (vector-ref lines 0)] [results (map (lambda (p) (normalize-path text (cdr p))) positions)])

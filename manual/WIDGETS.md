@@ -750,13 +750,19 @@ undoable edit. With a revision it refuses any intervening source edit,
 including endpoint insertions. This is the safe application boundary for an
 asynchronous completion proposal.
 
-An entry's `(presentation name schema)` option selects a pure formatter
-registered with `entry:register-presentation!`. The formatter receives raw
+An entry's `(presentation name schema)` option selects a factory
+registered with `entry:register-presentation!`. The zero-argument factory
+creates a formatter for that view and text source; it is discarded on
+unmount, source replacement or definition reload. The formatter receives raw
 text and its `context` input and returns one `(display roles)` pair per source
 grapheme. Rendering, caret, selection and pointer hits use the same mapping.
 Finder uses it for conjunction separators and italic missing path components;
 the source still contains ordinary spaces. Its `context` input is connected
 to the collection's `summary` output, without polling or copying result rows.
+The formatter may retain bounded presentation knowledge, but performs no I/O
+or model mutation. Finder keeps the last known missing-tail styling while a
+query is pending, limited to the first token under the same known path prefix;
+a fresh result replaces it. Existence checks remain in the base.
 An independent `(policy name schema)` option selects a logical text-edit
 normalizer registered with `edit:register-policy!`. It receives proposed line
 strings and logical result positions, returning both normalized values.
