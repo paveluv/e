@@ -45,6 +45,21 @@
         (check 'git-patch-is-read-only-and-captures-the-selected-path
           (list (store:property document 'read-only) (store:line document 0))
           (list #t (format "~a  ~a" (cadadr (car files)) (caddr (cadr (car files))))))
+        (let* ([fork (view:fork! head:ui-actor a)] [copy-query (query (child fork 'patch))]
+               [copy-document (cadr (query (child (child fork 'patch) 'text)))]
+               [before (store:revision document)])
+          (widget:mount! fork 'git-fork)
+          (choose! fork expanded (car files))
+          (rows copy-query)
+          (check 'git-forks-own-their-patch-query-and-output
+            (list (equal? (query fork) qa) (not (equal? copy-query qp)) (not (= copy-document document))
+              (= before (store:revision document)) (store:line copy-document 0))
+            (list #t #t #t #t (store:line document 0)))
+          (widget:unmount! fork)
+          (view:retire! head:ui-actor fork (model:revision fork))
+          (test:await 'git-private-output-released (lambda () (not (store:exists? copy-document))))
+          (check 'git-retirement-keeps-borrowed-history-and-other-preview
+            (list (model:snapshot copy-query) (and (model:snapshot qa) #t) (store:exists? document)) '(#f #t #t)))
         (let ([last (car (reverse files))])
           (do ([i 0 (+ i 1)]) ((= i 6)) (choose! a expanded (if (even? i) (car files) last)))
           (rows qp)

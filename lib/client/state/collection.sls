@@ -13,7 +13,7 @@
   (edoc "Create a shared filter/sort recipe over an indexed source. Scoped model subscriptions, including mounted tables, retain its prepared work; an unobserved recipe stays idle."
         (actor actor "connection supplies attribution") (source row-source "row provider") (filter string "provider filter")
         (sort list "compound keys") (persistence (one-of transient persistent) "restart policy")
-        (resources (list-of list) "optional owned references; requires persistent query") (returns list) (public))
+        (resources (list-of list) "optional owned references, then optional owning view; owned resources require persistence") (returns list) (public))
   (define (create! actor source filter sort persistence . resources)
     (apply client:request 'collection-create source filter sort persistence resources))
 

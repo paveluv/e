@@ -208,18 +208,10 @@
          (("procedure" . "(mode:add-extension! mode extension)")) "void"
          ("(head mode)") mode "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
-        ((head:register-app!)
-         (("procedure" . "(head:register-app! key-or-buffer refresh! [handle-event!])"))
-         "buffer" ("(head head)") head "App buffers" #f
-         "Create or update a local, read-only head app by stable string key, or attach it to an existing local buffer. Labels are suffixed on collision; renaming keeps the tool identity. The refresh procedure renders current state; an optional event handler receives canonical key, click, and wheel events and returns true when it consumes one. From `MOUSE-CLICK`, `keep-focus` preserves the previously focused window, while `ignore-click` also restores the app's previous point. A view is an app without a handler.")
         ((head:set-app-cursor-visible!)
          (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
          ("(head head)") head "App buffers" #f
          "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
-        ((head:detach-app!)
-         (("procedure" . "(head:detach-app! buffer)")) "buffer"
-         ("(head head)") head "App buffers" #f
-         "Turn an app into an ordinary read-only buffer, preserving its current contents while removing refresh, its event handler, and app presentation.")
         ((head:set-app-presentation!)
          (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
          "buffer" ("(head head)") head "App buffers" #f

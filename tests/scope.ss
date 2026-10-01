@@ -106,7 +106,7 @@
      (window:toggle-line-numbers!)
      (check 'toggle-line-numbers-flips-it (head:window-line-numbers here) #f)
      (window:set-line-numbers! 'default)
-     (define app (head:register-app! "scope-app" void))
+     (define app (head:register-widget-host! (head:new-local-buffer! "scope-app") void void))
      (head:show-buffer! app)
      (check 'an-app-buffer-refuses-the-window-toggles
        (list (guard (ex [(kernel:refusal? ex) 'refused]) (window:toggle-wrap!))

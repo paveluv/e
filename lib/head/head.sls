@@ -17,7 +17,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
   (export add-buffer! add-buffer-kill-hook!
-    add-buffer-placement-hook! add-color-scheme-hook! add-local-buffer-hook!
+    add-buffer-placement-hook! add-color-scheme-hook!
     add-pre-redraw-hook! add-publication-hook!
     add-shutdown-hook! adopt-store! adopt-store-buffer!
     after-key! app-buffer app-buffer? app-cursor-style
@@ -51,11 +51,10 @@
     clamp-buffer-positions! content-revision copy-buffer
     copy-text current-buffer current-keys
     (rename (current current-window)) default-directory
-    defer-frame! depart! detach-app! dispatch-app-event!
+    defer-frame! depart! dispatch-app-event!
     divider-at dividers double-click? drag edit-basis
     find-tool-buffer finish-frame! fit-layout! flush-ui-audit!
-    forget-buffer! frame-presented! fresh-buffer!
-    goto!
+    forget-buffer! frame-presented!     goto!
     hide-popup! host-color-scheme in-main-pump input-live?
     interrupted? last-command layout layout-leaves
     layout-min-height layout-min-width layout-node!
@@ -71,9 +70,8 @@
     popup-buttons popup-default-rows popup-limit popup-rows
     popup? prepare-quit previous-window quit! quit-command!
     quitting? read-key-event read-paste read-rendition
-    refresh-renditions! refresh-visible-views! register-app!
-    register-resume! register-view! registered-apps
-    replace-layout-window! request-frame-at!
+    refresh-renditions! refresh-visible-views! register-resume! register-widget-host! registered-apps
+    replace-layout-window! replace-widget-frame! request-frame-at!
     resize-popup! resume! resume-source! root run-deferred!
     run-on-main! run-shutdown-hooks! scrollbar
     scrollbar-position set-adopt-hook! set-after-key!
@@ -89,9 +87,8 @@
     set-window-buffer! set-window-mounter! set-windows! show-buffer! show-popup!
     snapshot-since start-input-reader! store-edit!
     store-history! store-reset!
-    sync-foreign-edits! tile! tool-buffer! transfer-split!
-    typed-text ui-actor view-buffer? view-replace!
-    view-review!  wait-for-frame! wake-main!
+    sync-foreign-edits! tile! transfer-split!
+    typed-text ui-actor     view-review!  wait-for-frame! wake-main!
     weighted-first window window-at window-auto-scrollbar-set!
     window-buffer window-buffer-set! window-button-at
     window-buttons window-buttons-width window-content-width
@@ -202,7 +199,6 @@
         (wrap (or boolean (one-of default)) "whether long lines wrap here")
         (line-numbers (or boolean (one-of default)) "whether an edit buffer shows line numbers here")
         (goal (or pair #f) "the vertical-motion goal, (column . context) while the context holds")
-        (view any "a local app's presentation of its rows, or #f")
         (status-actions list "the painted status-line controls")
         (document-views list "retained document/widget identities; no copied interaction state"))
   (define-record-type (window %make-window window?)
@@ -234,16 +230,13 @@
       ;; the goal column of vertical motion, with the navigation context
       ;; that set it: the goal survives exactly as long as the context
       (mutable goal)
-      ;; Optional local-app presentation; rows retain their shared identity.
-      (mutable view)
       (mutable status-actions)
       (mutable document-views)))
 
-  (define-record-type view (fields owner source lines frame))
 
   ;; The outer host retains identities, never another copy of an editor's
-  ;; selection. Raw window coordinates serve only the remaining local apps
-  ;; and process surfaces until those consumers become widgets.
+  ;; selection. Raw window coordinates serve the outer frame adapter and
+  ;; legacy local text until the default window manager becomes a widget.
 
   (edoc "The editor view retained for this window's current shared document, or false for a legacy app. Reading it performs no acquisition."
         (w window "outer placement") (returns (or model #f)))
@@ -429,19 +422,7 @@
     (let ([w (buffer-editor-window b)])
       (if w (update-window-editor! w 1 (cons (buffer-mark-row b) col)) (buffer-mark-col-raw-set! b col))))
 
-  (edoc "A window's app view while it is still the one its buffer would build, else #f, dropping the stale one."
-        (w window "the window")
-        (returns (or (record view) #f))
-        (effects internal))
-  (define (window-view-current w)
-    (let ([v (window-view w)] [b (window-buffer w)])
-      (and v
-           (if (and (eq? (view-owner v) (app-of b))
-                    (eq? (view-source v) (buffer-text b))
-                    (not (buffer-selectable? b))) v
-               (begin (window-view-set! w #f) #f)))))
-
-  (edoc "The lines a window shows: its local app view's, else its buffer's."
+  (edoc "The lines in the window's document or prepared widget frame."
         (w window "the window")
         (returns vector) (effects internal))
   (define (window-lines w)
@@ -450,19 +431,17 @@
   (edoc "The window's line source, possibly deferred; read it with render:line-ref and render:line-count."
         (w window "the window") (returns any))
   (define (window-text w)
-    (let ([v (window-view-current w)])
-      (if v (view-lines v) (buffer-text (window-buffer w)))))
+    (buffer-text (window-buffer w)))
 
   (edoc "One displayed line, without formatting the rest of the window's app."
         (w window "the window") (row integer "the row") (returns string))
   (define (window-line w row) (render:line-ref (window-text w) row))
 
-  (edoc "The cell projection of what a window shows: its view's frame, else its buffer's rendition."
+  (edoc "The cell projection of the window's document or prepared widget frame."
         (w window "the window")
         (returns (or (record frame) #f)))
   (define (window-rendition w)
-    (let ([v (window-view-current w)])
-      (if v (view-frame v) (buffer-rendition (window-buffer w)))))
+    (buffer-rendition (window-buffer w)))
 
   (edoc "A split of the layout into two children, stacked or side by side, sharing the space by weight."
         (orientation (one-of below right) "how the children are arranged")
@@ -572,10 +551,7 @@
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
   (define (set-buffers! bs)
-    (let ([old the-buffers])
-      (set! the-buffers bs)
-      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b bs))) old))
-      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b old))) bs))))
+    (set! the-buffers bs))
 
   (edoc "Every live window, in layout order, as a fresh list."
         (returns (list-of window)))
@@ -627,7 +603,7 @@
   (define (make-window buffer top topseg left prow pcol size xoff width wrap)
     ;; a window is born numbered; the layout it joins decides the rest
     (let ([w (%make-window (free-window-index) buffer top topseg left prow pcol
-               size xoff width wrap 'default #f #f '() '())])
+               size xoff width wrap 'default #f '() '())])
       (window-buffer-set! w (placed-buffer! w buffer the-windows))
       (ensure-window-document-view! w) (when window-mounter (window-mounter w)) w))
 
@@ -1680,8 +1656,6 @@
                              (and (buffer-modified b) (not (buffer-modified-at b))))
                      (note-local-modification! b))
                    (when name (buffer-name-raw-set! b name))
-                   (when (or name (exists (lambda (p) (memq (car p) '(file mode modified modified-at conflicts read-only app widget-id internal))) updates))
-                     (notify-local-buffer! b))
                    #t))))))
 
   (edoc "The current truth of a buffer for save and discard decisions, shared text not yet adopted here included: (values text revision facts)."
@@ -1891,8 +1865,7 @@
       ;; Mark this legacy projection adopted before notifying other readers.
       (when (buffer-store-id b) (buffer-store-rev-set! b revision))
       (text-source:adopt! (buffer-source b) basis text revision changes)
-      (bump-buffer-revision! b)
-      (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b))))
+      (bump-buffer-revision! b)))
 
   (edoc "The adopted text, revision and exact changes since a basis. This legacy presentation adapter never fetches."
         (b buffer "the buffer") (basis (or integer #f) "earlier revision"))
@@ -2216,7 +2189,6 @@
           (reserve-store-name! (buffer-name b))
           (buffer-name-set! b (buffer-name b)))
       (set! the-buffers (append the-buffers (list b))))
-    (notify-local-buffer! b)
     b)
 
   (edoc "The live local tool buffer with a key, or #f."
@@ -2231,26 +2203,6 @@
                  (and (not (buffer-store-id b))
                       (equal? (buffer-fact b 'tool-key #f) key)))
                the-buffers)))
-
-  (edoc "A named tool buffer, emptied for rebuilding; the same name reuses its own local buffer."
-        (name string "the tool's name")
-        (returns buffer))
-  (define (fresh-buffer! name)
-    ;; A named snapshot-style tool buffer, emptied for rebuilding. Live tools
-    ;; use register-view! instead.  The stable tool key reuses its own local
-    ;; buffer, never an ordinary buffer with the same label.
-    (let ([b (tool-buffer! name)])
-      (buffer-read-only-set! b #f)
-      (buffer-lines-set! b (vector ""))
-      (buffer-modified-set! b #f)
-      (for-each (lambda (w)
-                  (when (eq? (window-buffer w) b)
-                    (window-top-set! w 0)
-                    (window-topseg-set! w 0)
-                    (window-prow-set! w 0)
-                    (window-pcol-set! w 0)))
-                the-windows)
-      b))
 
   (edoc "Append lines to a buffer, transcript style: a fresh buffer's single empty line is replaced, and point follows to the last line in every window showing it."
         (b buffer "the buffer to extend")
@@ -2276,18 +2228,6 @@
                       (window-prow-set! w last)
                       (window-pcol-set! w 0)))
                   the-windows))))
-
-  (edoc "The local tool buffer with a stable key, created disposable when there is none."
-        (key string "the tool key")
-        (returns buffer))
-  (define (tool-buffer! key)
-    (unless (and (string? key) (> (string-length key) 0))
-      (error 'tool-buffer! "expected a nonempty string key" key))
-    (or (find-tool-buffer key)
-        (let ([b (new-local-buffer! key)])
-          (buffer-fact-set! b 'tool-key key)
-          (buffer-fact-set! b 'disposable #t)
-          (add-buffer! b))))
 
   (edoc "Advance a buffer's repaint counter."
         (b buffer "the buffer"))
@@ -2908,7 +2848,7 @@
                            (error 'resume! "invalid window checkpoint"))
                          (set! indices (cons index indices))
                          (let ([w (%make-window (remap index) (or (vector-ref (vector-ref buffers slot) 0) fallback)
-                                    0 topseg left 0 0 1 0 80 wrap numbers #f #f '() '())])
+                                    0 topseg left 0 0 1 0 80 wrap numbers #f '() '())])
                            (set! editor-placements (cons (cons w editors) editor-placements)) w))
                        (if (= version 6) node
                          (let ([old (cond [(= version 1) (append node '(#f default ()))]
@@ -3031,18 +2971,6 @@
 
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
-  (define local-buffer-hook-registry (kernel:make-registry))
-
-  (edoc "Observe legacy local-buffer membership and logical metadata changes on the head pump. Generated app text, cursor and layout changes are excluded; the callback must not wait for the base."
-        (proc procedure "(callback buffer present?)"))
-  (define (add-local-buffer-hook! proc)
-    (unless (procedure? proc) (error 'add-local-buffer-hook! "expected a procedure"))
-    (kernel:registry-add! local-buffer-hook-registry proc))
-
-  (define (notify-local-buffer! b)
-    (unless (buffer-store-id b)
-      (for-each (lambda (proc) (proc b (and (memq b the-buffers) #t)))
-        (kernel:registry-items local-buffer-hook-registry))))
 
   (edoc "Register a hook run with a buffer when this head forgets it."
         (proc procedure "(hook buffer)"))
@@ -3169,56 +3097,19 @@
     (let ([app (app-of (current-buffer))])
       (and app (cond [(app-handle-event! app) => (lambda (handler) (handler event))] [else #f]))))
 
-  (edoc "Remove a buffer's app registration, keeping its text as an ordinary read-only buffer."
-        (b buffer "the app buffer"))
-  (define (detach-app! b)
-    ;; Preserve the app's current buffer contents while removing its
-    ;; dynamic refresh and event handler.  Its presentation facts stay
-    ;; with the buffer but apply only while an app owns it (see the
-    ;; readers below), so it behaves like an ordinary read-only buffer
-    ;; until a re-registration takes it back.
-    (let ([a (app-of b)])
-      (when a
-        (kernel:registry-remove! app-registry
-                                 (lambda (x) (eq? (app-buffer x) b))))
-      (buffer-read-only-set! b #t)
-      b))
-
-  (edoc "Register a local app on a buffer, or on a new tool buffer with a name: refresh! rebuilds it, and a handler, when given, takes its events."
-        (target (or buffer string) "the buffer, or a tool name")
-        (refresh! thunk "the rebuild")
-        (handler procedure "(handle event)")
-        (returns buffer))
-  (define register-app!
-    (case-lambda
-      [(target refresh!) (register-app-on! target refresh! #f)]
-      [(target refresh! handler)
-       (unless (procedure? handler)
-         (error 'register-app! "event handler must be a procedure" handler))
-       (register-app-on! target refresh! handler)]))
-  (define (register-app-on! target refresh! handler)
-    ;; Validate before allocating a buffer or changing registrations.
-    (unless (procedure? refresh!)
-      (error 'register-app! "refresh must be a procedure" refresh!))
-    (let* ([b (if (buffer? target)
-                  (begin
-                    (when (buffer-store-id target)
-                      (error 'register-app! "head apps require a local buffer" target))
-                    target)
-                  (tool-buffer! target))]
-           [a (make-app b refresh! handler
-                        #f 'default)])
-      (buffer-read-only-set! b #t)
-      ;; the buffer is an app's for good: a re-registration (a module
-      ;; reloading) takes back the same tool, and its local facts stay.
-      (buffer-fact-set! b 'app #t)
-      (buffer-fact-set! b 'disposable #t)
-      (add-buffer! b)
-      ;; Re-registration in one init replaces rather than duplicates refreshes.
-      (kernel:registry-remove! app-registry
-                               (lambda (x) (eq? (app-buffer x) b)))
-      (kernel:registry-add! app-registry a)
-      b))
+  (edoc "Register the default window host's local presentation bridge. Extensions define widgets instead; their models, input and layout are independent of this outer buffer."
+        (b buffer "existing local host buffer") (refresh! thunk "prepare its widget frame")
+        (handler procedure "focus/blur callback") (returns buffer))
+  (define (register-widget-host! b refresh! handler)
+    (unless (and (buffer? b) (not (buffer-store-id b)) (procedure? refresh!) (procedure? handler))
+      (error 'register-widget-host! "expected a local buffer and host callbacks"))
+    (buffer-read-only-set! b #t)
+    (buffer-fact-set! b 'app #t)
+    (buffer-fact-set! b 'disposable #t)
+    (add-buffer! b)
+    (kernel:registry-remove! app-registry (lambda (a) (eq? (app-buffer a) b)))
+    (kernel:registry-add! app-registry (make-app b refresh! handler #f 'default))
+    b)
 
   (edoc "Say whether an app buffer shows the cursor: a boolean, or a procedure deciding per frame."
         (b buffer "the app buffer")
@@ -3466,19 +3357,6 @@
       [(right) (+ (window-xoff w) (window-width w) -1)]
       [else #f]))
 
-  (edoc "Register a local view: an app without an event handler."
-        (target (or buffer string) "the buffer, or a tool name")
-        (refresh! thunk "the rebuild")
-        (returns buffer))
-  (define (register-view! target refresh!)
-    (register-app! target refresh!))
-
-  (edoc "Whether a buffer is an app or view buffer."
-        (b buffer "the buffer")
-        (returns boolean))
-  (define (view-buffer? b)
-    (app-buffer? b))
-
   (edoc "Rebuild every registered app shown in a window, reporting a failed refresh in its buffer.")
   (define (refresh-visible-views!)
     (for-each (lambda (a)
@@ -3497,82 +3375,19 @@
               (filter (lambda (a) (memq (app-buffer a) the-buffers))
                       (registered-apps))))
 
-  (edoc "Adopt a local view's rendering as one state: its lines, optional facts, numeric placements and per-window presentations."
-        (b buffer "the local view buffer")
-        (lines any "a line list, vector, or render:defer source for a non-selectable app")
-        (options (list-of any) "facts, then placements, then (window . lines) presentations"))
-  (define (view-replace! b lines . options)
-    ;; Adopt a local rendering, optional facts, and numeric placements as
-    ;; one state before repaint callbacks can reenter.  Unplaced anchors
-    ;; keep their coordinates, clamped into the new text.  A top placement
-    ;; uses the key (top . window), or spot-top for the saved viewport.
-    ;; Optional (window . lines) presentations keep the same logical rows.
-    ;; They belong to non-selectable local apps: columns are display positions,
-    ;; while the shared text remains independent of any window's width.
-    (unless (and (buffer? b) (not (buffer-store-id b)))
-      (error 'view-replace! "expected a local buffer" b))
-    (unless (<= (length options) 3)
-      (error 'view-replace! "expected facts, position placements and window presentations" options))
-    (let* ([new (if (render:deferred? lines) lines (text:normalize lines))]
-           [facts (store:validate-properties (if (pair? options) (car options) '()))]
-           [placements (if (>= (length options) 2) (cadr options) '())]
-           [presentations (if (= (length options) 3) (caddr options) '())]
-           [views
-            (begin
-              (unless (and (list? presentations)
-                           (or (null? presentations)
-                               (and (app-of b)
-                                    (not (app-fact facts 'selectable (buffer-fact b 'selectable #t))))))
-                (error 'view-replace! "window presentations require a non-selectable local app" presentations))
-              (let validate ([rest presentations] [seen '()])
-                (if (null? rest) '()
-                    (let ([entry (car rest)])
-                      (unless (and (pair? entry) (memq (car entry) the-windows)
-                                   (eq? (window-buffer (car entry)) b) (not (memq (car entry) seen)))
-                        (error 'view-replace! "invalid presentation window" entry))
-                      (let ([text (if (render:deferred? (cdr entry)) (cdr entry) (text:normalize (cdr entry)))])
-                        (unless (= (render:line-count text) (render:line-count new))
-                          (error 'view-replace! "presentation must preserve the shared rows" entry))
-                        (cons (cons (car entry) text) (validate (cdr rest) (cons (car entry) seen))))))))]
-           [views-changed? #f]
-           [text-changed? (not (equal? (buffer-text b) new))]
-           [facts-changed?
-            (exists (lambda (entry)
-                      (or (not (hashtable-contains? (buffer-local-facts b) (car entry)))
-                          (not (equal? (buffer-fact b (car entry) #f) (cdr entry)))))
-                    facts)])
-      (check-placements! b placements)
-      (unless (for-all (lambda (entry) (text:position? (cdr entry))) placements)
-        (error 'view-replace! "expected numeric position placements" placements))
-      (when (and (render:deferred? new)
-                 (or (not (app-of b)) (app-fact facts 'selectable (buffer-selectable? b))))
-        (error 'view-replace! "deferred text requires a non-selectable local app"))
-      (when text-changed? (adopt-local! b new #f))
-      (buffer-facts-set! b facts)
-      (when (pair? views) (buffer-marked-raw-set! b #f))
-      (apply-placements! b placements)
-      (for-each
-        (lambda (w)
-          (when (eq? (window-buffer w) b)
-            (let* ([old (window-view w)] [entry (assq w views)]
-                   [same? (and old entry (equal? (view-lines old) (cdr entry)))]
-                   [text (and entry (if same? (view-lines old) (cdr entry)))])
-              (unless (or same? (and (not old) (not entry))) (set! views-changed? #t))
-              (window-view-set! w
-                (and text
-                     (let ([height (max 1 (window-size w))] [point (window-prow w)] [top (window-top w)])
-                       (make-view (app-of b) (buffer-text b) text
-                         (render:prepare (and old (view-frame old)) #f text 0
-                           (list (cons 0 (buffer-sticky-lines b)) (cons top (+ top height))
-                                 (cons (- point height -1) (+ point height)))))))))))
-        the-windows)
-      (clamp-buffer-positions! b)
-      (when (and facts-changed? (not text-changed?)) (bump-buffer-revision! b))
-      ;; Styles can change even when rendered text is equal.  Invalidate
-      ;; cached rows for either change, and never write older state after
-      ;; the callback returns: it may have adopted a newer rendering.
-      (when (or text-changed? facts-changed? views-changed?) (request-repaint!))))
-
+  (edoc "Install a prepared widget frame in its default outer window. Logical text, selection and scrolling remain in the widget; this buffer holds only the current frame."
+        (b buffer "registered host") (w window "displaying window") (lines list "prepared display rows"))
+  (define (replace-widget-frame! b w lines)
+    (unless (and (app-of b) (not (buffer-store-id b)) (eq? b (window-buffer w)))
+      (error 'replace-widget-frame! "expected the widget's window placement"))
+    (let ([new (text:normalize lines)])
+      (call-with-display-update
+        (lambda ()
+          (let ([changed? (not (equal? (buffer-text b) new))])
+            (when changed? (adopt-local! b new #f))
+            (apply-placements! b (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))
+            (clamp-buffer-positions! b)
+            (when changed? (request-repaint!)))))))
 
   (edoc "The buffer with a name, or #f."
         (name string "the name")
@@ -3601,7 +3416,6 @@
     (ensure-buffer-visible! b)
     (let ([old (window-buffer w)])
       (unless (eq? old b)
-        (window-view-set! w #f)
         (window-status-actions-set! w '())
         (unless (window-editor w)
           (buffer-spot-row-set! old (window-prow w))
@@ -3700,7 +3514,6 @@
       (call-with-display-update
         (lambda ()
           (set! the-buffers (remq b the-buffers))
-          (notify-local-buffer! b)
           (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
           (let ([fallback (or (find (lambda (b) (and (buffer-visible? b) (not (hashtable-ref (buffer-local-facts b) 'internal #f)))) the-buffers)

@@ -251,11 +251,14 @@
     (datum:copy (car (read-records (list id)))))
 
   (edoc "Live models as (reference kind) rows in allocation order, without copying their payloads. Retired models are absent; unknown kinds remain inspectable."
-        (returns list))
-  (define (metadata)
+        (ids (list-of list) "optional list of references, preserving supplied order") (returns list))
+  (define (metadata . ids)
+    (unless (and (<= (length ids) 1) (or (null? ids) (and (list? (car ids)) (for-all reference? (car ids)))))
+      (error 'metadata "expected optional model references"))
     (with-mutex (state-lock data)
-      (map (lambda (n) (list (list 'model n) (field (hashtable-ref (state-records data) n #f) 'kind)))
-        (list-sort < (vector->list (hashtable-keys (state-records data)))))))
+      (filter values (map (lambda (n) (let ([r (hashtable-ref (state-records data) n #f)])
+                                        (and r (list (list 'model n) (field r 'kind)))))
+                       (if (pair? ids) (map cadr (car ids)) (list-sort < (vector->list (hashtable-keys (state-records data)))))))))
 
   (edoc "Read a record's revision without copying its payload; #f denotes an absent record. Capture a snapshot when that revision changes."
         (id model "tagged model ID") (returns (or integer #f)))

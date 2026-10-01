@@ -237,7 +237,7 @@
   (head-read a `(begin (store:delete! head:ui-actor ,origin) (head:sync-foreign-edits!) #t)))
 
 ;; Names are fetched once per shared environment, not while typing or painting.
-(head-read a '(let ([failures (kernel:load-modules! '("environment" "namespace"))])
+(head-read a '(let ([failures (kernel:load-modules! '("environment" "namespace" "catalogue-host"))])
                 (unless (null? failures) (raise (cdar failures))) #t))
 (let* ([env (head-read a
               `(environment:create! head:ui-actor
@@ -269,50 +269,6 @@
   (head-read a `(begin ((completion:source-release wire-model-source))
                        ((completion:source-release wire-model-source2))
                        (environment:close! head:ui-actor ',env 1) #t)))
-
-;; Exercise the real head bridge and connection-owned cleanup without another
-;; terminal process. The provider sees raw local metadata, never fitted text.
-;; Load before compiling expressions that refer to the newly imported names.
-(for-each
-  (lambda (screen)
-    (head-read screen
-      '(let ([failures (kernel:load-modules! '("catalogue-host"))])
-         (unless (null? failures)
-           (error 'catalogue-host-load (format "~s" (map (lambda (p) (cons (car p) (kernel:condition-text (cdr p)))) failures)))) #t)))
-  (list a b))
-(let* ([source (head-read a '(catalogue-host:create-source! 'transient))]
-       [ref (head-read a '(let ([b (head:register-view! "catalogue-wire" void)]) (catalogue-host:reference b)))]
-       [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)]
-       [temporary (connect)])
-  (define (count query)
-    (let ([v (cdr (assq 'value (rpc head 'collection-summary query)))])
-      (and (eq? (cdr (assq 'status v)) 'ready) (cdr (assq 'count v)))))
-  (define (retire id)
-    (let* ([packet (rpc head 'model-read (list id))] [r (caddar (cadr packet))])
-      (rpc head 'model-retire id (cdr (assq 'revision r)))))
-  (rpc head 'model-watch (list query))
-  (test:await 'catalogue-wire-local (lambda () (equal? (count query) 1)))
-  (test:check 'catalogue-wire-cannot-resolve-another-heads-token
-    (head-read b `(catalogue-host:resolve! ',ref)) #f)
-  (head-read a `(begin (head:forget-buffer! (catalogue-host:resolve! ',ref)) #t))
-  (test:await 'catalogue-wire-removal (lambda () (equal? (count query) 0)))
-  (hello temporary '(head "catalogue-wire"))
-  (receive temporary)
-  (let* ([token (rpc temporary 'catalogue-attach)]
-         [source (rpc temporary 'catalogue-source "/home" 'transient)]
-         [query (rpc head 'collection-create source "catalogue-wire" '() 'transient)])
-    (rpc temporary 'model-watch (list query))
-    (rpc temporary 'catalogue-contribute token '((1 ((name . "catalogue-wire") (version . 0)))))
-    (test:await 'catalogue-wire-contributed (lambda () (equal? (count query) 1)))
-    (sys:close-connection! temporary)
-    (test:await 'last-disconnected-reader-cancels-collection (lambda () (not (count query))))
-    (rpc head 'model-watch (list query))
-    (test:await 'catalogue-wire-detached (lambda () (equal? (count query) 0)))
-    (test:check 'catalogue-wire-detach-retires-contribution (count query) 0)
-    (rpc head 'model-unwatch (list query))
-    (for-each retire (list query source)))
-  (rpc head 'model-unwatch (list query))
-  (for-each retire (list query source)))
 
 ;; The same prepared-range transport serves filesystem queries. No extra head
 ;; or process is needed to exercise client dispatch and metadata enrichment.

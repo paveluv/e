@@ -2409,22 +2409,6 @@
                    (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
                    (rpc head 'delete target))
 
-                 (let ([path (string-append root "/local-output.txt")])
-                   (test:check 'attached-local-output-saves-through-base-without-a-shadow-document
-                     (let* ([before (rpc head 'buffers)]
-                            [saved (head-read a
-                                     `(let ([b (head:new-local-buffer! "local output")] [previous (head:current-buffer)])
-                                        (dynamic-wind
-                                          (lambda () (head:show-buffer! b)
-                                            (head:store-reset! b '#("detached output") '((modified . #t))))
-                                          (lambda ()
-                                            (let ([saved? (edit:save-file! ,path)])
-                                              (list saved? (head:buffer-store-id b) (head:buffer-file b)
-                                                    (head:buffer-base b) (head:buffer-modified b))))
-                                          (lambda () (head:show-buffer! previous) (head:forget-buffer! b)))))])
-                       (list saved (equal? before (rpc head 'buffers)) (call-with-input-file path get-string-all)))
-                     (list (list #t #f path "detached output\n" #f) #t "detached output\n")))
-
                  (let ([path (string-append root "/saved.txt")])
                    (write-text path "shared text B\n")
                    (head-read a

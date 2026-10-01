@@ -141,7 +141,7 @@
                   `(begin
                      (paint:input-delay ,budget)
                      (window:delete-others!)
-                     (let ([b (head:fresh-buffer! "scroll-burst")])
+                     (let ([b (head:new-local-buffer! "scroll-burst")])
                        (head:buffer-lines-set! b
                          (list->vector (map (lambda (i) (format "~a ~a" i (make-string 90 #\x))) (iota 100))))
                        (head:show-buffer! b))

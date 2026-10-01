@@ -24,7 +24,7 @@
   (define (create! actor source kind schema options state . scope)
     (apply client:request 'view-create source kind schema options state scope))
 
-  (edoc "Retire an unmounted view against its revision, atomically detaching it and releasing its child subtrees, then releasing explicitly owned resources. Borrowed sources and command targets survive. Return status and current target envelope."
+  (edoc "Retire an unowned view or this head's mounted view against its revision, atomically detaching it and releasing its child subtrees, then releasing explicitly owned resources. Another head's mount refuses. Borrowed sources and command targets survive. Return status and current target envelope."
         (actor actor "connection attribution") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision) (apply values (client:request 'view-retire id revision)))
 

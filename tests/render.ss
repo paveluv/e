@@ -289,7 +289,7 @@
          (list (string:search output uri 0 (string-length output)) (caddr (header))))
        '(#f (0 1 #t)))
 
-     (let ([other (head:tool-buffer! "projection-resize")])
+     (let ([other (head:new-local-buffer! "projection-resize")])
        (head:set-layout-root!
          (head:make-layout-split 'below w
            (head:make-window other 0 0 0 0 2 12 80 80 'default) 1 1))
@@ -373,33 +373,6 @@
            (scrollback . "one\r\ntwo\r\nthree\r\nfour")
            (alternate . "one\r\ntwo\r\nthree\x1b;[?1049hALT")))
        '((clusters . #t) (decorated . #t) (scrollback . #t) (alternate . #t)))
-     ;; Ten million logical rows cost only viewport work, including initial
-     ;; adoption, a distant jump, ordinary scrolling and a header update.
-     (head:set-repaint-hook! void)
-     (let* ([view (head:register-app! "large-table" void)] [calls 0]
-            [text (render:defer 10000000
-                    (lambda (i)
-                      (set! calls (+ calls 1))
-                      (when (> calls 2000) (error 'large-table "eager whole-table read"))
-                      "界row"))])
-       (head:set-app-selectable! view #f)
-       (head:set-app-presentation! view 1 'auto #f)
-       (head:show-buffer! view)
-       (head:view-replace! view text)
-       (head:goto! '(9999990 . 0))
-       (head:refresh-renditions!)
-       (painted)
-       (edit:page! -1 2)
-       (edit:move-vertical! -1)
-       (paint:buffer-line-hyperlinks view 9999990)
-       (head:view-replace! view (render:prefix text '("Header")) '() '()
-         (list (cons (head:current-window) text)))
-       (painted)
-       (test:check 'large-table-work-is-bounded-by-visible-rows
-         (list (head:buffer-line-count view) (head:buffer-line view 0)
-           (head:window-line (head:current-window) 9999990) (< calls 2000))
-         '(10000000 "Header" "界row" #t))
-       (head:forget-buffer! view))
      (test:check 'linear-allocation-collapses-gaps-and-shares-remainders
        (map (lambda (c) (apply layout:linear c))
          '((9 1 ((1 2 fit) (1 3 (grow 1)) (1 3 (grow 2))))

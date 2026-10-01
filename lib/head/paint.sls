@@ -901,7 +901,7 @@
                 (format "~a~a~a  "
                         number
                         (cond [(head:buffer-conflicted b) "!!"]
-                          [(head:view-buffer? b) "[]"]
+                          [(head:app-buffer? b) "[]"]
                           [(head:buffer-read-only b) "%%"]
                           [(head:buffer-modified b) "**"]
                           [else "--"])

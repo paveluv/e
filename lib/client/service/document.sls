@@ -1,6 +1,6 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service document)
-  (export acquire! check! reload! reread! save! save-output!)
+  (export acquire! check! reload! reread! save!)
   (import (chezscheme) (prefix (core client) client:))
 
   (edoc "Acquire a file or directory in the base without choosing its destination. Returns (directory path) or (buffer id admitted? path diagnostic); disk contents stay in the base."
@@ -20,14 +20,6 @@
   (define (save! actor id path adoption)
     (unless (equal? actor (client:identity)) (error 'save! "actor differs from connection identity"))
     (client:request 'document-save id path adoption))
-
-  (edoc "Save detached legacy local output through the base; a saved receipt includes facts for guarded local adoption. No shared shadow document is created."
-        (actor actor "connection supplies attribution") (path string "canonical target")
-        (text vector "local lines") (facts list "coherent local facts")
-        (adoption list "(reviewed-first-line detected-mode-name-or-false)") (returns list))
-  (define (save-output! actor path text facts adoption)
-    (unless (equal? actor (client:identity)) (error 'save-output! "actor differs from connection identity"))
-    (client:request 'document-save-output path text facts adoption))
 
   (edoc "Reload a document's file at the base as an undoable merge, guarded against concurrent edits and retargeting; return status and detail. Disk contents remain in the base."
         (actor actor "connection supplies attribution") (id integer "buffer identity"))

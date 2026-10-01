@@ -28,7 +28,7 @@
   (define (create! commands . shared)
     (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
     (let* ([query (if (pair? shared) (car shared)
-                    (car (catalogue:create-query! head:ui-actor (catalogue-host:create-source! 'persistent))))]
+                    (car (catalogue:create-query! head:ui-actor (catalogue:create-source! head:ui-actor (file:expand "~/") 'persistent))))]
            [r (collection:summary query)]
            [filter (and r (find (lambda (ref) (eq? (car ref) 'buffer)) (get (get r 'value '()) 'owned '())))])
       (unless filter (error 'create! "expected a catalogue query with an editable filter" query))
@@ -70,7 +70,7 @@
       (unless (eq? (caddr row) 'live) (archive! row 'restore))
       (widget:invoke! id 'open (car row))))
 
-  (edoc "Trash a selected live shared document, delete disposable output, or retire an attachment-local app; stale versions refuse. Every displaying window gets the ordinary fallback."
+  (edoc "Trash a selected live shared document, delete disposable output, or retire a named root view; stale versions refuse. Every displaying window gets the ordinary fallback."
         (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (kill! id selection basis)
     (let* ([row (selected-row id selection basis)] [ref (car row)])
@@ -110,8 +110,10 @@
     (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
            [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (head:current-buffer)) direction)]
            [b (and ref (catalogue-host:resolve! ref))])
-      (when b
-        (if (equal? (head:buffer-fact b 'tool-key #f) "*buffet*") (open!) (head:show-buffer! b)))))
+      (when ref
+        (cond [(not b) (window:open-document! host ref)]
+          [(equal? (head:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
+          [else (head:show-buffer! b)]))))
 
   (edoc "Switch to the next live document in Buffet's unfiltered compound order, wrapping at the end.")
   (define (next!) (switch! 'next))

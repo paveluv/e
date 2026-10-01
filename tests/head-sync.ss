@@ -206,7 +206,7 @@
      (head:buffer-name-set! rival "claimed")
      (check 'shared-construction-and-rename-adopt-store-claims
             (list (head:buffer-name named) (head:buffer-name rival)) '("claimed<2>" "claimed<3>"))
-     (define rename-tool (head:tool-buffer! "shared-rename"))
+     (define rename-tool (let ([b (head:new-local-buffer! "shared-rename")]) (head:buffer-fact-set! b 'tool-key "shared-rename") (head:add-buffer! b)))
      (head:buffer-name-set! named "<shared-rename>")
      (check 'accepted-shared-name-displaces-local-label
             (list (head:buffer-name named) (head:buffer-name rename-tool)
@@ -303,12 +303,12 @@
      (define private
        (store:create! head:ui-actor "<private>" '("seed")
                       (list (cons 'audience (list other)) '(wrap . #f))))
-     (define local-tool (head:tool-buffer! "private"))
+     (define local-tool (let ([b (head:new-local-buffer! "private")]) (head:buffer-fact-set! b 'tool-key "private") (head:add-buffer! b)))
      (head:before-frame!)
      (check 'private-creation-is-invisible
             (list (head:buffer-of-store-id private) (head:adopt-store-buffer! private)
                   (head:buffer-name local-tool)) '(#f #f "<private>"))
-     (define renaming-tool (head:tool-buffer! "private-renamed"))
+     (define renaming-tool (let ([b (head:new-local-buffer! "private-renamed")]) (head:buffer-fact-set! b 'tool-key "private-renamed") (head:add-buffer! b)))
      (store:rename! bot private "<private-renamed>")
      (head:before-frame!)
      (check 'hidden-rename-does-not-reserve-local-labels

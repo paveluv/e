@@ -27,6 +27,9 @@
      (define (help-rows) (apply append (map (lambda (p) (get (model:snapshot (cdr p)) 'value)) (get (get (help-record) 'value) 'parts))))
      (define (help-text)
        (string:join (map (lambda (r) (string-append (or (cadr r) "") " " (string:join (caddr r) " ") " " (cadddr r) " " (list-ref r 4))) (help-rows)) "\n"))
+     (define (await-help! name predicate)
+       (test:await name (lambda () (head:before-frame!) (predicate (help-text)))))
+     (define (contains? text needle) (and (string:search text needle 0 (string-length text)) #t))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
      (define (root) (head:buffer-fact (head:current-buffer) 'widget-id #f))
      (define (app) (child (root) 'app))
@@ -84,6 +87,7 @@
        (exists (lambda (b) (equal? filter-id (head:buffer-store-id b))) (head:buffers)) #f)
      (let ([focus (widget:focused (root))])
        (press! "C-x" "TAB")
+       (await-help! 'initial-binding-list (lambda (text) (contains? text "Composition")))
        (let ([text (help-text)])
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
            (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
@@ -132,7 +136,7 @@
          (test:check 'listed-buffet-call-works-in-eval-outside-key-dispatch
            (list (string:prefix? "(table:move! (widget:descendant (model " text) (not (equal? (caddr before) (caddr (selection))))) '(#t #t)))
        (widget:focus! (root) (child (child (table) 'body) 'rows))
-       (head:before-frame!)
+       (await-help! 'focused-binding-list (lambda (text) (not (contains? text "widget-entry keys"))))
        (let ([text (help-text)])
          (test:check 'keys-follows-widget-focus
            (and (string:search text "buffet keys" 0 (string-length text))
@@ -152,17 +156,20 @@
          (head:before-frame!))
        (bindings:show!)
        (replace! 'unregistered-action)
+       (await-help! 'rewired-binding-list (lambda (text) (contains? text "unregistered-action")))
        (test:check 'keys-shows-rewired-unavailable-command-template
          (let ([text (help-text)])
            (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
              '("Unavailable target." "widget:act!" "unregistered-action"))) #t)
        (replace! (caddr activate))
+       (await-help! 'restored-binding-list (lambda (text) (not (contains? text "unregistered-action"))))
        (test:check 'keys-updates-restored-command
          (let ([text (help-text)])
            (not (string:search text "unregistered-action" 0 (string-length text)))) #t)
        (bindings:hide!) (settle!))
      (let ([focus (widget:focused (root))] [selected (selection)] [sort (get (get (collection:summary (query)) 'value) 'sort)])
        (head:set-mouse-position! '(2 . 2)) (bindings:show!) (settle!) (head:before-frame!)
+       (await-help! 'heading-pointer-binding (lambda (text) (contains? text "table:toggle-sort!")))
        (let* ([lines (help-rows)]
               [header (cadr (assoc '(click primary ()) (mouse:bindings)))])
          (head:before-frame!)
@@ -172,6 +179,7 @@
              (caddr (selection)) (get (get (collection:summary (query)) 'value) 'sort) (widget:focused (root)))
            (list "Mouse bindings" #t table:toggle-sort! 'modified (caddr selected) sort focus))
          (head:set-mouse-position! '(2 . 3)) (head:before-frame!)
+         (await-help! 'row-pointer-binding (lambda (text) (not (equal? lines (help-rows)))))
          (let* ([bindings (mouse:bindings)] [row (cadr (assoc '(click primary ()) bindings))])
            (test:check 'hover-changes-mouse-section-and-includes-wheel
              (list (not (equal? lines (help-rows))) (keymap:call-action-procedure row)
@@ -179,6 +187,8 @@
                (widget:focused (root)))
              (list #t table:choose! #t focus)))
          (head:set-mouse-position! '(1000 . 1000)) (head:before-frame!)
+         (await-help! 'empty-pointer-binding
+           (lambda (text) (not (exists (lambda (r) (and (pair? (car r)) (eq? (caar r) 'mouse))) (help-rows)))))
          (test:check 'leaving-shown-target-clears-mouse-section
            (exists (lambda (r) (and (pair? (car r)) (eq? (caar r) 'mouse))) (help-rows)) #f))
        (head:set-mouse-position! #f) (bindings:hide!) (settle!))
@@ -219,14 +229,19 @@
      (press! "C-x" "D")
      (test:check 'permanent-archive-delete (store:exists? (head:buffer-store-id b)) #f)
      (settle!)
-     (let ([local (head:register-view! "buffet-local" void)])
+     (let* ([picker (head:current-buffer)]
+            [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>")) '())]
+            [local (window:show-widget! (head:current-window) id)])
+       (head:show-buffer! picker) (head:before-frame!)
        (select! local)
        (let ([old (selection)] [basis (get (state) 'basis)])
+         (view:arrange! head:ui-actor (list (list id (model:revision id) '() '((name . "<buffet-local-renamed>")))) '())
          (head:buffer-name-set! local "<buffet-local-renamed>")
-         (test:check 'local-version-fences-retirement
+         (test:check 'view-generation-fences-retirement
            (test:raises? (lambda () (buffet:kill! (app) old basis))) #t))
        (select! local) (press! "C-k")
-       (test:check 'table-activation-retires-local-buffer (memq local (head:buffers)) #f)
+       (test:check 'table-activation-retires-view-and-placement
+         (list (model:snapshot id) (memq local (head:buffers))) '(#f #f))
        (settle!))
      (let* ([w (head:current-window)] [picker (head:current-buffer)]
             [other (window:split-right!)] [fork (head:buffer-fact (head:window-buffer other) 'widget-id #f)]
@@ -267,7 +282,7 @@
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.
      (define independent (buffet:create! '()))
-     (let ([transient (catalogue-host:create-source! 'transient)])
+     (let ([transient (catalogue:create-source! head:ui-actor "/home" 'transient)])
        (test:check 'transient-owner-cannot-orphan-a-persistent-filter
          (test:raises? (lambda () (catalogue:create-query! head:ui-actor transient))) #t)
        (model:retire! head:ui-actor transient (get (model:snapshot transient) 'revision)))

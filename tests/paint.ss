@@ -327,8 +327,8 @@
      ;; Apps may project source coordinates or replace generated details
      ;; with operation text. A stale fact must not leave a partial marker
      ;; or invalid substring bounds when that standard header is replaced.
-     (let ([view (head:register-view! (head:new-local-buffer! "status projection") void)])
-       (head:view-replace! view '("generated"))
+     (let ([view (head:register-widget-host! (head:new-local-buffer! "status projection") void void)])
+       (head:buffer-lines-set! view '("generated"))
        (head:buffer-fact-set! view 'conflicts 1)
        (head:set-window-buffer! (head:current-window) view)
        (check 'app-status-projection-keeps-default-coordinates-and-operation-text-coherent
@@ -349,7 +349,7 @@
               '("3 of 5" ""))
          '((#t #t) (#f #t)))
        (head:set-app-status-position! view #f)
-       (head:view-replace! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
+       (head:buffer-lines-set! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
        (check 'hidden-cursor-still-follows-keyboard-selection
          (map (lambda (visible?)
                 (head:set-app-cursor-visible! view visible?)

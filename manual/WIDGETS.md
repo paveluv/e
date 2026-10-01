@@ -94,6 +94,12 @@ lifecycle. Borrowed sources remain shared. Base services register copy and
 release procedures with `view:register-resource-kind!`; copy preparation must
 provide rollback for output allocated before the guarded model transaction.
 
+For a private collection query, pass its owning view after the owned resource
+list to `collection:create!`. Its base provider registers source copying with
+`collection:register-copy!`; ordinary borrowed queries remain shared. Git uses
+this path so a fork has its own patch request and output while sharing history.
+Retiring that fork releases only its private preview.
+
 Section rows remain scrollable but cannot be selected or activated. Up/Down,
 Home/End and Page Up/Down use the provider's selectable index; a large run of
 sections never makes the head walk the result. Page movement uses the shown
@@ -310,7 +316,7 @@ remains the extension author's responsibility.
 
 ## Buffer catalogue
 
-Create a head's source with `(catalogue-host:create-source! 'transient)`, then use
+Create a head's source with `(catalogue:create-source! actor home 'transient)`, then use
 `collection:create!` and `table:create!` as for other collections. Shared
 documents, Backups and Trash come from one subscribed base inventory.
 Case-insensitive filters search names and file paths, including `~/` spelling.
@@ -318,7 +324,10 @@ Compound sorts apply to live rows; archives follow in separate newest-first
 sections. The sortable columns are `modified`, `flags`, `name`, `lines`,
 `mode` and `file`. Timestamps are raw nanoseconds, flags are `buffer-flag`
 enumerations, and paths keep their absolute identity. Format them in the head.
-Generated apps and widgets have no Lines value.
+Widgets have no Lines value. Named root views are listed directly from base
+state; nested children are excluded. A root's `name` option supplies its label
+and its optional `audience` option restricts visibility, as for documents.
+The default window host names its roots and limits tools to their head.
 
 For an editable shared filter, use a persistent source and
 `(catalogue:create-query! actor source)`, which returns `(query filter-reference)`.
@@ -331,14 +340,13 @@ persistent query so restart cannot leave saved resources without their owner.
 switching, without fetching archive rows or maintaining a head-side comparator.
 
 Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
-for widget hosts, and `(local actor attachment token)` for remaining local
-buffers. `catalogue-host:reference` obtains a listed buffer's key;
-`catalogue-host:resolve!` resolves it in the owning head, adopting shared text as
-needed. Foreign or retired local tokens return false. A retained widget view
-can be mounted with `window:show-widget!`. Local metadata is sent in bounded,
-coalesced batches; repaint, hover and generated rows are never contributions.
-Disconnect removes the attachment's contribution. Persistent source recipes
-rebuild their inventory, not opaque local objects, after restart.
+for named root views. Hidden views retain their identity across detach and
+restart. Retiring a view removes its entry while preserving borrowed sources.
+`catalogue-host:reference` and `catalogue-host:resolve!` are default window
+placement adapters; a retained view without a placement can be mounted with
+`window:show-widget!`. There is no head contribution stream or local-token
+database. Model notifications update only affected catalogue metadata;
+selection, repaint and generated text never republish rows.
 
 `store:metadata` reads a coherent `(epoch ((id metadata-or-false) ...))`
 without copying text or history; an optional list restricts it to those IDs.

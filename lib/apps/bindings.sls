@@ -2,24 +2,53 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps bindings)
   (export capture-key! copy! create! hide! init! inspect! key! open! page! page-up! press! select! show!)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (head binding-list) listing:)
+  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core work-queue) work-queue:)
+          (prefix (foundation text) text:) (prefix (head binding-list) listing:)
           (prefix (head dispatch) dispatch:) (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head mode) mode:)
           (prefix (head mouse) mouse:) (prefix (head widget) widget:) (prefix (head window) window:)
-          (prefix (service inspection) inspection:) (prefix (state model) model:) (prefix (state view) view:)
+          (prefix (service inspection) inspection:) (prefix (service log) log:)
+          (prefix (state model) model:) (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
   (define sessions (make-hashtable equal-hash equal?))
   (define instances (make-hashtable equal-hash equal?))
-  (define-record-type session (fields (mutable subject) (mutable basis) (mutable pointer) (mutable parts)))
+  (define-record-type session (fields (mutable subject) (mutable basis) (mutable pointer) (mutable published) (mutable alive?)))
+  (define publications (work-queue:create))
   (define (release! id)
     (let ([query (hashtable-ref instances id #f)])
       (hashtable-delete! instances id)
-      (unless (member query (vector->list (hashtable-values instances))) (hashtable-delete! sessions query))))
+      (unless (member query (vector->list (hashtable-values instances)))
+        (let ([s (hashtable-ref sessions query #f)]) (when s (session-alive?-set! s #f)))
+        (hashtable-delete! sessions query))))
   (define (subject root) (list root '(global) #f (if root (format "~s" root) "Global keys")))
   (define (session! id value)
     (or (hashtable-ref sessions id #f)
-      (let ([s (make-session (get value 'subject (subject #f)) #f '() '())]) (hashtable-set! sessions id s) s)))
+      (let ([s (make-session (get value 'subject (subject #f)) #f '() '() #t)]) (hashtable-set! sessions id s) s)))
+
+  (define (publish! query revision s basis target definitions parts truncated?)
+    ;; Capture head facts on the pump; only portable publications cross to
+    ;; the worker. Compare against the last accepted result there, so a
+    ;; superseded intermediate hover cannot lose a section's newer value.
+    (define (invalidate! ex)
+      (head:run-on-main!
+        (lambda ()
+          (when (and (session-alive? s) (equal? basis (session-basis s)))
+            (session-basis-set! s #f)
+            (when ex (log:add! 'bindings:publish! (kernel:condition-text ex)))))))
+    (work-queue:submit! publications query (lambda () (session-alive? s))
+      (lambda (checkpoint)
+        (let retry ([revision revision])
+          (checkpoint)
+          (let* ([changes (filter (lambda (p) (not (equal? p (assq (car p) (session-published s))))) parts)]
+                 [status (inspection:publish! head:ui-actor query revision target definitions changes truncated?)])
+            (case status
+              [(applied unchanged) (session-published-set! s parts)]
+              [(hidden) (invalidate! #f)]
+              [(stale)
+               (let ([r (caddar (cadr (model:snapshots (list query))))])
+                 (when r (retry (get r 'revision 0))))]))))
+      invalidate!))
   (define (over? id)
     (let ([point (mouse:position)])
       (define (inside? frame x y)
@@ -55,12 +84,10 @@
             (unless (equal? full-basis (session-basis s))
               (let* ([capture (if available? (apply listing:capture basis pointer (list-tail target 4))
                                 '(((unavailable "[Inspected view unavailable]" () "" "" ())) #f))]
-                     [parts (list (cons 'mouse (filter mouse-row? (car capture))) (cons 'listing (remp mouse-row? (car capture))))]
-                     [changes (filter (lambda (p) (not (equal? p (assq (car p) (session-parts s))))) parts)]
-                     [status (inspection:publish! head:ui-actor (view:source d) (get source 'revision 0)
-                               target (+ (keymap:generation) (widget:generation)) changes (cadr capture))])
-                (when (memq status '(applied unchanged))
-                  (session-basis-set! s full-basis) (session-pointer-set! s pointer) (session-parts-set! s parts)))))))))
+                     [parts (list (cons 'mouse (filter mouse-row? (car capture))) (cons 'listing (remp mouse-row? (car capture))))])
+                (session-basis-set! s full-basis) (session-pointer-set! s pointer)
+                (publish! query (get source 'revision 0) s full-basis target
+                  (+ (keymap:generation) (widget:generation)) parts (cadr capture)))))))))
 
   (define-record-type presentation (fields value revision cache))
   (define dragging #f)

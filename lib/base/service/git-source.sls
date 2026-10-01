@@ -25,23 +25,35 @@
   (define patch-facts '((read-only . #t) (disposable . #t) (internal . #t) (mode . "git:diff") (mode-auto . #f)))
   (define columns '((commit "Commit" string) (date "Date" integer) (author "Author" string) (subject "Subject / file" string)
                     (path "Path" string) (status "Change" symbol)))
-  (define (query! actor path commit file document)
+  (define (query! actor path commit file document . owner)
     (let* ([refs (if document (list (list 'buffer document)) '())]
            [source (model:create! actor 'git-source 1 'session 'persistent refs
                      (map cons '(path commit file document refresh) (list path commit file document 0)))])
-      (collection:create! actor source "" '() 'persistent (cons source refs))))
+      (guard (ex [else (model:retire! actor source 0) (raise ex)])
+        (apply collection:create! actor source "" '() 'persistent (cons source refs) owner))))
 
   (edoc "Create a lazy Git history collection for a path. The newest twenty commits are listed; expanding a commit fetches only its changed files. Repository discovery and processes run in base work."
         (actor actor "creator") (path file "path inside a repository") (returns row-source))
   (define (create! actor path) (query! actor (file:expand path) #f #f #f))
 
   (edoc "Create an independent unselected patch query and read-only document; return (query document). Selecting a file changes this request, never another browser's preview."
-        (actor actor "creator") (returns list))
-  (define (create-patch! actor)
+        (actor actor "creator") (owner (list-of model) "optional owning view") (returns list))
+  (define (create-patch! actor . owner)
     (let ([document (store:publish! producer (gensym->unique-string (gensym "git-patch")) "<git-patch>"
                       '("No patch selected") (cons '(git-request . #f) patch-facts) #f)])
       (guard (ex [else (store:delete! producer document) (raise ex)])
-        (list (query! actor "" #f #f document) document))))
+        (list (apply query! actor "" #f #f document owner) document))))
+  (define (copy-source! actor source)
+    (let* ([v (get source 'value)] [old-document (get v 'document)])
+      (unless old-document (error 'copy-source! "history queries are borrowed, not private previews"))
+      (let ([document (store:publish! producer (gensym->unique-string (gensym "git-patch")) "<git-patch>"
+                        '("[Loading patch]") (cons (cons 'git-request (stamp v)) patch-facts) #f)])
+        (guard (ex [else (store:delete! producer document) (raise ex)])
+          (let ([copy (model:create! actor 'git-source 1 'session 'persistent (list (list 'buffer document))
+                        (map (lambda (p) (if (eq? (car p) 'document) (cons 'document document) p)) v))])
+            (values (list (cons (get source 'id) copy) (cons (list 'buffer old-document) (list 'buffer document)))
+              (lambda () (model:retire! actor copy 0) (when (store:exists? document) (store:delete! producer document)))))))))
+  (define copying (collection:register-copy! 'git-source 1 copy-source!))
   (define (source query)
     (let* ([r (collection:summary query)] [s (and r (model:snapshot (get (get r 'value) 'source)))])
       (unless (and s (eq? (get s 'kind) 'git-source)) (error 'git-source "expected a Git query" query)) s))

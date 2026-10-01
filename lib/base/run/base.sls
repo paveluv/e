@@ -159,8 +159,6 @@
        (unless (<= 5 (length args) 6) (error 'wire "view-create expects optional resource owner"))
        (apply view:create! actor args)]
       [(view-retire) (control!) (arity 2)
-       (let ([d (view:snapshot (car args))])
-         (when (and d (view:owner d)) (error 'wire "unmount a view before retiring it")))
        (call-with-values (lambda () (apply view:retire! actor args)) list)]
       [(view-read) (arity 1) (view:snapshot (car args))]
       [(view-tree) (arity 1) (view:tree (car args))]
@@ -179,14 +177,13 @@
       [(catalogue-source) (control!) (head!) (arity 2) (apply catalogue:create-source! actor args)]
       [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
       [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
-      [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
       [(filesystem-source) (control!) (arity 3) (apply filesystem:create-source! actor args)]
       [(filesystem-query) (control!) (arity 2) (apply filesystem:create-query! actor args)]
       [(filesystem-configure) (control!) (arity 3) (call-with-values (lambda () (apply filesystem:configure! actor args)) list)]
       [(filesystem-refresh) (control!) (arity 0) (filesystem:refresh! actor) #t]
       [(filesystem-complete) (control!) (arity 2) (apply filesystem:complete! actor args)]
       [(collection-create) (control!)
-       (unless (<= 4 (length args) 5) (error 'wire "collection-create expects four or five arguments"))
+       (unless (<= 4 (length args) 6) (error 'wire "collection-create expects optional resources and owning view"))
        (apply collection:create! actor args)]
       [(collection-configure) (control!) (arity 3) (call-with-values (lambda () (apply collection:configure! actor args)) list)]
       [(collection-summary) (arity 1) (collection:summary (car args))]
@@ -196,7 +193,7 @@
       [(collection-seek) (arity 5) (apply collection:seek args)]
       [(collection-fetch) (arity 1) (collection:fetch (car args))]
       [(model-ids) (apply model:ids args)]
-      [(model-metadata) (arity 0) (model:metadata)]
+      [(model-metadata) (unless (<= (length args) 1) (error 'wire "expected optional model references")) (apply model:metadata args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
       [(model-create) (control!) (arity 6) (generic-kind! (car args)) (apply model:create! actor args)]
       [(model-commit) (control!) (arity 1) (for-each (lambda (change) (generic-model! (car change))) (car args))
@@ -350,8 +347,6 @@
        (apply document:acquire! actor args)]
       [(document-save)
        (control!) (arity 3) (apply document:save! actor args)]
-      [(document-save-output)
-       (control!) (arity 4) (apply document:save-output! actor args)]
       [(document-reload document-reread document-check)
        (control!) (arity 1)
        (case operation
@@ -432,7 +427,7 @@
       [(journal-source) (control!) (arity 1) (journal-source:create! actor (car args))]
       [(git-source) (control!) (arity 1) (git-source:create! actor (car args))]
       [(git-expand) (control!) (arity 2) (apply git-source:expand! actor args) #t]
-      [(git-patch) (control!) (arity 0) (git-source:create-patch! actor)]
+      [(git-patch) (control!) (unless (<= (length args) 1) (error 'wire "expected optional owning view")) (apply git-source:create-patch! actor args)]
       [(git-select-patch) (control!) (arity 3) (apply git-source:select-patch! actor args) #t]
       [(git-refresh) (control!) (arity 1) (git-source:refresh! actor (car args)) #t]
       [(search-create) (control!) (head!) (arity 2) (apply search-request:create! actor args)]
@@ -696,7 +691,7 @@
           ;; #t is one coalesced watch wakeup; all other work is owned bytes.
           ;; Count includes an in-flight write. A stalled peer cannot retain
           ;; unlimited store versions, tiny mail envelopes or encoded replies.
-          (let* ([frame (if (memq message '(#t models)) message (wire:encode message))]
+          (let* ([frame (if (or (bytevector? message) (memq message '(#t models))) message (wire:encode message))]
                  [size (if (bytevector? frame) (bytevector-length frame) 0)])
             (unless (with-mutex out-lock
                       (and (not closed?) (< queued-count 256)
@@ -872,41 +867,37 @@
                         (when (and session (policy:revoked? session)) (error 'wire "the session is revoked"))
                         (when (peer-leaving? peer) (error 'wire "this head has already left"))
                         (post!
-                          (guard (ex [else (list 'reply (cadr message) 'error (kernel:condition-text ex))])
+                          (guard (ex [else (wire:encode (list 'reply (cadr message) 'error (kernel:condition-text ex)))])
                             (unless (if maintenance?
                                         (memq (caddr message) '(status prepare-restart restart cancel-review))
                                         (not (memq (caddr message) '(prepare-restart restart))))
                               (error 'wire "operation is not available on this connection" (caddr message)))
-                            (list 'reply (cadr message) 'ok
-                              (case (caddr message)
-                                [(model-watch)
-                                 (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
-                                 (models-watch! (cadddr message))]
-                                [(model-unwatch)
-                                 (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
-                                 (let ([ids (cadddr message)])
-                                   (check-model-ids ids)
-                                   (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
-                                   (models-demand!))
-                                 #t]
-                                [(status)
-                                 (unless (= (length message) 3) (error 'wire "status takes no arguments"))
-                                 (status (with-mutex peer-lock (participants)))]
-                                [(leaving prepare-close shutdown prepare-restart restart cancel-review)
-                                 (control-call peer control? (caddr message) (cdddr message))]
-                                [(watch watch-head)
-                                 (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
-                                 (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
-                                [(catalogue-attach)
-                                 (unless (and control? (= (length message) 3) (eq? (car (policy:session-actor session)) 'head))
-                                   (error 'wire "catalogue-attach requires an all-buffer head"))
-                                 (parameterize ([kernel:registering-module owner]) (catalogue:attach! (policy:session-actor session)))]
-                                [else
-                                 ;; Capture only the id, not the entire request.
-                                 ;; An answer may precede the ticket reply.
-                                 (let ([id (cadr message)])
-                                   (request session control? (caddr message) (cdddr message)
-                                     (lambda (answer) (post! (list 'event (list 'answer id answer))))))]))))
+                            (wire:encode (list 'reply (cadr message) 'ok
+                                           (case (caddr message)
+                                             [(model-watch)
+                                              (unless (= (length message) 4) (error 'wire "model-watch expects ids"))
+                                              (models-watch! (cadddr message))]
+                                             [(model-unwatch)
+                                              (unless (= (length message) 4) (error 'wire "model-unwatch expects ids"))
+                                              (let ([ids (cadddr message)])
+                                                (check-model-ids ids)
+                                                (with-mutex out-lock (for-each (lambda (id) (hashtable-delete! model-ids (cadr id))) ids))
+                                                (models-demand!))
+                                              #t]
+                                             [(status)
+                                              (unless (= (length message) 3) (error 'wire "status takes no arguments"))
+                                              (status (with-mutex peer-lock (participants)))]
+                                             [(leaving prepare-close shutdown prepare-restart restart cancel-review)
+                                              (control-call peer control? (caddr message) (cdddr message))]
+                                             [(watch watch-head)
+                                              (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
+                                              (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
+                                             [else
+                                              ;; Capture only the id, not the entire request.
+                                              ;; An answer may precede the ticket reply.
+                                              (let ([id (cadr message)])
+                                                (request session control? (caddr message) (cdddr message)
+                                                  (lambda (answer) (post! (list 'event (list 'answer id answer))))))])))))
                         (loop)))))))))
         (lambda ()
           (close!)
