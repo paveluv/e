@@ -69,7 +69,7 @@
     (and old next
          (let merge ([rest next] [out old])
            (cond [(null? rest) out]
-             [(assv (caar rest) out)
+             [(assoc (caar rest) out)
               => (lambda (entry)
                    (merge (cdr rest)
                      (cons (cons (car entry)

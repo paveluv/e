@@ -36,7 +36,7 @@
   (define (annotation-index source batch)
     (let* ([mirror (text-control:mirror source)] [lines (text-control:lines source)])
       (unless (editor-state:annotations? batch) (error 'editor "invalid annotations" batch))
-      (let* ([changes (and (pair? batch) (= (car batch) (text-source:id mirror))
+      (let* ([changes (and (pair? batch) (equal? (car batch) (text-source:id mirror))
                         (text-source:changes mirror (cadr batch) (text-control:revision source)))]
              [ranges (if (not changes) '()
                        (filter values
@@ -98,14 +98,14 @@
     (let* ([m (mounted id)] [document (text-source:id mirror)]
            [backend? (or (store:property document 'manages-viewport #f) (and (surface:snapshot document) #t))]
            [old (and (mount-surface m)
-                  (equal? (cdr (assq 'id (car (mount-surface m)))) (list 'buffer document)) (mount-surface m))])
+                  (equal? (cdr (assq 'id (car (mount-surface m)))) document) (mount-surface m))])
       (unless (eq? backend? (mount-backend? m)) (widget:repaint! id #t))
       (mount-backend?-set! m backend?)
       (if (not backend?) (mount-surface-set! m #f)
         (let* ([revision (text-source:revision mirror)] [lines (text-source:lines mirror)]
                [source (if (and old (= revision (text-control:revision (car old)))
                              (eq? lines (text-control:lines (car old)))) (car old)
-                         (list (cons 'id (list 'buffer document)) (cons 'revision revision) (cons 'value lines)))]
+                         (list (cons 'id document) (cons 'revision revision) (cons 'value lines)))]
                [ps (points source d)] [top (if ps (car (caddr ps)) 0)]
                [height (if allocation (cadddr (widget:frame-rect allocation)) 1)]
                [grid (store:property document 'size '(1 1))]
@@ -119,9 +119,9 @@
 
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
-      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref))
-              (store:visible? head:ui-actor (cadr ref)))
-        (acquire-surface! id (text-source:lookup (cadr ref)) d frame)
+      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup ref)
+              (store:visible? head:ui-actor ref))
+        (acquire-surface! id (text-source:lookup ref) d frame)
         (when (or (not (mount-backend? (mounted id))) (mount-surface (mounted id)))
           (let-values ([(source d inputs) (widget:context id 'current)])
             (refresh-effects! id source)
@@ -362,7 +362,7 @@
 
   (define (current-source source)
     (let ([m (text-control:mirror source)])
-      (list (cons 'id (list 'buffer (text-source:id m))) (cons 'revision (text-source:revision m)) (cons 'value (text-source:lines m)))))
+      (list (cons 'id (text-source:id m)) (cons 'revision (text-source:revision m)) (cons 'value (text-source:lines m)))))
 
   (edoc "Borrow an explicit editor's immutable text basis for a later bulk rewrite, without remote reads."
         (id model "editor view") (returns list "(lines document-id revision)"))

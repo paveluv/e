@@ -38,7 +38,7 @@
      (include "tests/conflict-review.sps")
      (include "tests/change-preview.sps")
      (define b (head:new-buffer! "log-me"))
-     (head:show-buffer! b)
+     (head:show-buffer-mirror! b)
      (head:goto! '(0 . 0))
      (define id (head:buffer-store-id b))
      (insert-text! "a")
@@ -49,7 +49,7 @@
      (check 'the-log-lists-the-buffers-entries-newest-first (map car (delta-log:log)) '(3 2 1))
      (check 'a-selector-narrows-the-log (map car (delta-log:log '((count . 1)))) '(3))
      (check 'a-local-buffer-has-no-log
-       (guard (ex [else 'refused]) (head:with-buffer (head:new-local-buffer! "loose") (delta-log:log)))
+       (guard (ex [else 'refused]) (head:with-buffer-mirror (head:new-local-buffer! "loose") (delta-log:log)))
        'refused)
 
      ;; the revision type completes from the log, each entry hinted with its
@@ -57,16 +57,16 @@
      (check 'a-revision-completes-from-the-log-with-a-hint
        (let ([offered (edoc:type-completions 'revision "")])
          (list (map car offered)
-               (and (string:search (cdr (car offered)) "+\"c\"" 0 (string-length (cdr (car offered)))) #t)))
+               (and (string:search (caddr (car offered)) "+\"c\"" 0 (string-length (caddr (car offered)))) #t)))
        '((3 2 1) #t))
      (check 'a-batch-completes-once-per-batch-with-its-count
        (let ([offered (edoc:type-completions 'batch "")])
-         (list (length offered) (and (string:search (cdr (car offered)) "Edits by" 0 (string-length (cdr (car offered)))) #t)))
+         (list (length offered) (and (string:search (caddr (car offered)) "Edits by" 0 (string-length (caddr (car offered)))) #t)))
        '(3 #t))
 
      ;; Replacement rebasing and grouping are independent of the browser.
      (define d (head:new-buffer! "replace-me"))
-     (head:show-buffer! d)
+     (head:show-buffer-mirror! d)
      (head:goto! '(0 . 0))
      (insert-text! "one old two old\nthree\nold four old five")
      (head:goto! '(0 . 9))
@@ -86,7 +86,7 @@
      ;; another actor's edit landing after the first occurrence's edit moves
      ;; the remaining occurrences, which are still replaced where they are
      (define e (head:new-buffer! "replace-under"))
-     (head:show-buffer! e)
+     (head:show-buffer-mirror! e)
      (head:goto! '(0 . 0))
      (insert-text! "old and old and old")
      (define fired #f)

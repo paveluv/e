@@ -16,7 +16,7 @@
   (define (query id) (view:source (interaction:snapshot id)))
   (define (kind id) (get (view:options (interaction:snapshot id)) 'review #f))
   (define (current-document)
-    (or (head:buffer-store-id (head:current-buffer)) (error 'delta-log "current buffer has no shared document")))
+    (or (head:buffer-store-id (head:current-buffer-mirror)) (error 'delta-log "current buffer has no shared document")))
   (define (selector v)
     (if (or (null? v) (and (pair? v) (pair? (car v)) (memq (caar v) '(count actor batch since until state))))
       v (list (cons 'batch (edoc:type-value 'batch v)))))
@@ -41,8 +41,7 @@
     (let* ([d (interaction:snapshot id)] [request (model:snapshot (view:source d))]
            [argument (get (prompt:completion-context (view:source d)) 'argument '())]
            [type (get (view:options d) 'type #f)]
-           [value (or (get argument 'value #f)
-                    (let ([token (get argument 'token #f)]) (and (get argument 'literal? #f) (string? token) (string->number token))))]
+           [value (get argument 'value #f)]
            [selection (and (eq? type (get argument 'type #f)) (integer? value) (exact? value) (> value 0) (list type value))])
       (when (and request (eq? (get (get request 'value '()) 'status #f) 'editing))
         (unless (equal? selection (car (view:state d)))
@@ -58,24 +57,21 @@
 
   (edoc-type revision "a retained revision of the current document"
     (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
-    (complete (lambda (partial) (guard (ex [else '()]) (map (lambda (e) (cons (car e) (hint e))) (store:log (current-document))))))
-    (write number->string))
+    (complete (lambda (partial) (guard (ex [else '()]) (map (lambda (e) (list (car e) #f (hint e))) (store:log (current-document)))))))
   (edoc-type batch "the batch label of edits made together in the current document"
     (predicate pair?)
     (complete (lambda (partial)
                 (guard (ex [else '()])
                   (reverse (fold-left (lambda (out e)
                                         (let ([b (get (caddr e) 'batch #f)])
-                                          (if (or (not b) (assoc b out)) out (cons (cons b (format "Edits by ~s" (cadr e))) out))))
-                             '() (store:log (current-document)))))))
-    (write (lambda (v) (format "'~s" v))))
+                                          (if (or (not b) (assoc b out)) out (cons (list b #f (format "Edits by ~s" (cadr e))) out))))
+                             '() (store:log (current-document))))))))
   (edoc-type conflict "a pending reload conflict in the current document"
     (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
     (complete (lambda (partial)
                 (guard (ex [else '()])
-                  (map (lambda (c) (cons (car c) (format "mine ~s; disk ~s" (string:join (list-ref c 4) "\n")
-                                                         (string:join (list-ref c 5) "\n")))) (store:conflicts (current-document))))))
-    (write number->string))
+                  (map (lambda (c) (list (car c) #f (format "mine ~s; disk ~s" (string:join (list-ref c 4) "\n")
+                                                      (string:join (list-ref c 5) "\n")))) (store:conflicts (current-document)))))))
 
   (edoc "Read the current document's retained history, newest first. Select by count, actor, batch, since, until or state; a batch literal selects its entries."
         (options (list-of (or list batch)) "optional selector") (returns list) (public))
@@ -100,7 +96,7 @@
 
   (edoc "Create an unmounted conflict or rewrite review with an independent draft, bounded table and read-only preview. The ordered document scope is explicit; rewrite accepts exactly one document. Commands contain the host's return target. Removing a view preserves its draft; retiring the query removes its owned draft and output."
         (commands list "host commands") (kind (one-of conflicts rewrite) "review kind")
-        (documents (list-of integer) "borrowed source documents") (returns model) (public))
+        (documents (list-of buffer) "borrowed source documents") (returns model) (public))
   (define (create! commands kind documents)
     (unless (and (memq kind '(conflicts rewrite)) (list? documents)
               (or (eq? kind 'conflicts) (= (length documents) 1))) (error 'create! "invalid review scope"))
@@ -115,7 +111,7 @@
            [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() q)]
            [preview (view:create! head:ui-actor (car p) 'review-preview-panel 1 '() '() q)]
            [status (view:create! head:ui-actor (car p) 'review-status 1 '() '() q)]
-           [editor (view:create! head:ui-actor (list 'buffer (cadr p)) 'editor 1
+           [editor (view:create! head:ui-actor (cadr p) 'editor 1
                      '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) q)]
            [d (view:snapshot table)]
            [button (lambda (label action args)
@@ -219,8 +215,8 @@
   (define (conflicts! . window)
     (let ([documents (fold-left (lambda (out w)
                                   (let ([id (head:buffer-store-id (head:window-buffer w))])
-                                    (if (or (not id) (memv id out)) out (append out (list id)))))
-                       (let ([id (head:buffer-store-id (head:current-buffer))]) (if id (list id) '())) (head:windows))])
+                                    (if (or (not id) (member id out)) out (append out (list id)))))
+                       (let ([id (head:buffer-store-id (head:current-buffer-mirror))]) (if id (list id) '())) (head:windows))])
       (show-review! "conflicts" 'conflicts documents
         (if (null? window) (head:current-window) (edoc:type-value 'window (car window))))))
 

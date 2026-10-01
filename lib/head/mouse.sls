@@ -170,7 +170,7 @@
                   (head:set-drag! (cons w (head:window-buffer w)))
                   ;; A mode may act on the click -- following a link,
                   ;; say -- through a MOUSE-CLICK binding in its keymap.
-                  (let ([context (mode:key-context (head:current-buffer))])
+                  (let ([context (mode:key-context (head:current-buffer-mirror))])
                     (when context
                       (let ([action (keymap:event-binding context "MOUSE-CLICK")])
                         (when (procedure? action)

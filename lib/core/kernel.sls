@@ -738,16 +738,6 @@
       (hashtable-set! evaluation-environments environment #t))
     (eval (list 'edoc:expression form) environment))
 
-  (define (publish-literals!)
-    ;; Every type a module defines with a completer spells its values as a
-    ;; literal, (mode "scheme") say, and reads them back at the top level
-    ;; under its own name: the constructor edoc derives from the type. A
-    ;; name already bound there, (literal)'s own constructors say, is left.
-    (for-each (lambda (name)
-                (unless (top-level-bound? name (interaction-environment))
-                  (define-top-level-value name (edoc:type-literal name) (interaction-environment))))
-              (edoc:type-literals)))
-
   (edoc "Import a module's library into the editor's top level, compiling it when stale, and run its init! owning its registrations."
         (name string "the module"))
   (define (init-module! name)
@@ -757,8 +747,8 @@
     (let ([lib (module-library name)])
       ;; every module but one arrives prefixed in the editor's top level,
       ;; exactly as code imports it -- M-x says (store:edit! ...) and
-      ;; (edit:save! ...) too. (literal) is bare because its names are how
-      ;; values print, (buffer "name") and (window n)
+      ;; (edit:save! ...) too. Only the temporary (window n) selector from
+      ;; (literal) remains bare until window records migrate to models.
       (eval (if (string=? name "literal")
                 `(import ,lib)
                 `(import (prefix ,lib
@@ -769,8 +759,7 @@
       (when (memq 'init! (library-exports lib))
         (parameterize ([registering-module (string->symbol name)])
           (eval `(let () (import (only ,lib init!)) (init!))
-                (interaction-environment))))
-      (publish-literals!)))
+                (interaction-environment))))))
 
   (edoc "Load a module once: import it, run its init!, and record it; a failed first initialization discards its staged registrations."
         (name string "the module"))

@@ -189,7 +189,7 @@
 
   (define (format-on-save! path)
     (when (and (scheme-format-on-save)
-               (equal? (mode:name-of (head:current-buffer)) "scheme"))
+               (equal? (mode:name-of) "scheme"))
       (edit:format-buffer!)))
 
   (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries." (public))

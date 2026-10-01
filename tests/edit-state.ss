@@ -28,7 +28,7 @@
      (define raises? test:raises?)
      (define (fresh name shared?)
        (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          b))
      (define (state b)
@@ -54,7 +54,7 @@
      (insert! id 0 "agent work")
      (check 'foreign-edit-is-dirty-before-adoption (store:property id 'modified) #t)
      (check 'head-still-has-old-empty-cache (head:buffer-lines b) '#(""))
-     (check 'discard-reads-current-text-not-empty-cache (buffer-clean? b) #f)
+     (check 'discard-reads-current-text-not-empty-cache (buffer-clean? (head:buffer-store-id b)) #f)
      (head:before-frame!)
      (check 'adoption-retains-dirty-state (head:buffer-modified b) #t)
      (store:undo! bot id)
@@ -88,17 +88,17 @@
      (check 'creation-with-content-is-dirty (store:property born 'modified) #t)
      (head:before-frame!)
      (define adopted (head:buffer-of-store-id born))
-     (check 'newly-adopted-work-needs-protection (buffer-clean? adopted) #f)
+     (check 'newly-adopted-work-needs-protection (buffer-clean? (head:buffer-store-id adopted)) #f)
      (head:buffer-read-only-set! adopted #t)
-     (check 'read-only-does-not-authorize-disposal (buffer-clean? adopted) #f)
+     (check 'read-only-does-not-authorize-disposal (buffer-clean? (head:buffer-store-id adopted)) #f)
      (head:buffer-fact-set! adopted 'disposable #t)
-     (check 'generated-output-explicitly-allows-disposal (buffer-clean? adopted) #t)
+     (check 'generated-output-explicitly-allows-disposal (buffer-clean? (head:buffer-store-id adopted)) #t)
      ;; an app marking its local buffer's work unsaved protects it the same way
      (define local-work (fresh "local-work" #f))
      (head:store-edit! local-work (text:make-span 0 0 0 0) '("keep"))
      (head:buffer-fact-set! local-work 'modified #t)
      (head:buffer-read-only-set! local-work #t)
-     (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
+     (check 'local-read-only-work-is-protected (buffer-clean? (head:buffer-store-id local-work)) #f)
      ;; One sequence covers clock ownership and no-op/save preservation.
      ;; Actual changes must fall within UTC bounds.
      (define (utc-nanos)
@@ -251,7 +251,7 @@
              (head:store-reset! b input)
              (vector-set! input 0 "caller mutation")
              (check 'baseline-owns-its-vector (head:buffer-lines b) '#("before")))
-           (head:with-buffer b (mode:choose! "invalid-line-output"))
+           (head:with-buffer-mirror b (mode:choose! "invalid-line-output"))
            (let ([before (state b)])
              (check 'invalid-inputs-refuse-before-changing-either-owner
                (map
@@ -290,9 +290,9 @@
                 (raises? (lambda () (head:buffer-fact b 'file 'fallback))) #t)
          (check 'store-write-failure-propagates
                 (raises? (lambda () (head:buffer-file-set! b "lost"))) #t)
-         (check 'unavailable-shared-state-is-not-disposable (buffer-clean? b) #f)
+         (check 'unavailable-shared-state-is-not-disposable (buffer-clean? (head:buffer-store-id b)) #f)
          (check 'failed-deletion-does-not-retire-the-head-buffer
-           (list (raises? (lambda () (kill-buffer! b))) (and (memq b (head:buffers)) #t)) '(#t #t)))
+           (list (raises? (lambda () (kill-buffer! (head:buffer-store-id b)))) (and (memq b (head:buffers)) #t)) '(#t #t)))
        (lambda () (set-box! store-cell saved-store)))
      (check 'failure-recovery-keeps-shared-text (store:line id 0) "agent work!")
 
@@ -315,7 +315,7 @@
                        (lambda (event)
                          (when (and (eq? (car event) 'create) (string=? (caddr event) (file:base-name target)))
                            (set! id (cadr event)))
-                         (when (eqv? (cadr event) id)
+                         (when (equal? (cadr event) id)
                            (set! events (cons (car event) events))
                            (when (eq? (car event) 'create)
                              (set! observed
@@ -324,7 +324,7 @@
                                    (property:select facts '(file base stamp trailing modified)))))
                              (set! opened
                                (if (eq? effect 'revisit)
-                                   (begin (visit-file! target) (head:current-buffer))
+                                   (begin (visit-file! target) (head:current-buffer-mirror))
                                    (head:adopt-store-buffer! id)))
                              (case effect
                                [(edit revisit) (insert! id 0 "agent ")]
@@ -342,8 +342,8 @@
                              (list lines 0
                                (list (cons 'file target) (cons 'base (or content ""))
                                      (cons 'stamp (or stamp (file:stamp target))) (cons 'trailing trailing) '(modified . #f))))
-                           (eq? opened (head:current-buffer))
-                           (and kept? (or (eq? effect 'metadata) (equal? (mode:name-of opened) mode)))
+                           (eq? opened (head:current-buffer-mirror))
+                           (and kept? (or (eq? effect 'metadata) (equal? (mode:name-of (head:buffer-store-id opened)) mode)))
                            (= 1 (length (filter (lambda (event) (eq? event 'create)) events)))
                            (equal? (and (file-exists? target) (file:read target)) (or content ""))
                            (if (memq effect '(edit revisit))
@@ -421,7 +421,7 @@
                (insert-text! "written")
                (head:buffer-facts-set! saved '((read-only . #t) (disposable . #t)))
                (head:buffer-name-set! saved "before save")
-               (head:with-buffer saved (mode:choose! "invalid-line-output"))
+               (head:with-buffer-mirror saved (mode:choose! "invalid-line-output"))
                (let ([token
                       (store:subscribe! saved-id
                         (lambda (event)
@@ -436,7 +436,7 @@
                               [(retarget) (head:buffer-facts-set! saved
                                             '((file . "/tmp/retargeted.ss") (base . "new baseline\n")))])
                             (when (memq effect '(name retarget)) (head:buffer-name-set! saved "callback name"))
-                            (when (memq effect '(mode retarget)) (head:with-buffer saved (mode:choose! "invalid-line-output")))
+                            (when (memq effect '(mode retarget)) (head:with-buffer-mirror saved (mode:choose! "invalid-line-output")))
                             (head:before-frame!)
                             (set! seen (current)))))])
                  (dynamic-wind void
@@ -447,7 +447,7 @@
                          (list saved? observed written
                                (and seen (equal? seen (current)))
                                (head:buffer-lines saved) (head:buffer-modified saved)
-                               (buffer-clean? saved)))
+                               (buffer-clean? (head:buffer-store-id saved))))
                        (let ([dirty? (and (memq effect '(text retarget)) #t)])
                          (list #t (list (file:base-name path) path "written\n"
                                         (if adopt? "save-state" "invalid-line-output") adopt?
@@ -456,11 +456,11 @@
                                dirty? (or (not adopt?) (not dirty?))))))
                    (lambda () (store:unsubscribe! token))))))
            '((name #f) (mode #f) (name #t) (mode #t) (retarget #t) (text #t)))
-         (head:with-buffer saved (mode:choose! "invalid-line-output"))
+         (head:with-buffer-mirror saved (mode:choose! "invalid-line-output"))
          (check 'second-save-writes-later-text-and-keeps-manual-mode
            (let* ([saved? (save-file! path)] [written (file:read path)])
              (list saved? written (head:buffer-modified saved)
-                   (mode:name-of saved) (head:buffer-mode-auto saved)))
+                   (mode:name-of (head:buffer-store-id saved)) (head:buffer-mode-auto saved)))
            '(#t "written-later\n" #f "invalid-line-output" #f))
          ;; Pre-save edits need not have reached the head's cached text.
          (parameterize ([kernel:registering-module 'state-save-hook])
@@ -496,7 +496,7 @@
                                    [(file) (head:buffer-facts-set! b
                                              '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
                                    [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
-                                   [(mode) (head:with-buffer b (mode:choose! "invalid-line-output"))]
+                                   [(mode) (head:with-buffer-mirror b (mode:choose! "invalid-line-output"))]
                                    [(trailing) (head:buffer-trailing-set! b #f)]
                                    [(text) (insert! (head:buffer-store-id b) 0 "later ")])
                                  (set! before (state b)))

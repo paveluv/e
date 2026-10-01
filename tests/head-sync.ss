@@ -295,8 +295,7 @@
             (list creation-state (eq? constructed created-during-callback)
                   (head:buffer-lines constructed)
                   (head:buffer-base constructed) (length (store:history (head:buffer-store-id constructed)))
-                  (length (filter (lambda (b) (eqv? (head:buffer-store-id b)
-                                                    (head:buffer-store-id constructed)))
+                  (length (filter (lambda (b) (equal? (head:buffer-store-id b) (head:buffer-store-id constructed)))
                                   (head:buffers))))
             '(((#("initial") 0) ("initial" #f #f #f #f #f)) #t #("initial subscriber") "initial" 1 1))
      (define other '(head "other"))
@@ -368,7 +367,7 @@
      (define cleanups 0)
      (head:add-buffer-kill-hook!
        (lambda (source)
-         (when (eqv? (head:buffer-store-id source) private)
+         (when (equal? (head:buffer-store-id source) private)
            (set! cleanups (+ cleanups 1)))))
      (head:set-adopt-hook!
        (lambda (source)

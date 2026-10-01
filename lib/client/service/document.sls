@@ -15,20 +15,20 @@
     (client:request operation id))
 
   (edoc "Save a shared document at the base, including merge, backup and atomic file/mode adoption. Returns (saved/unchanged/refused/failed message). Disk contents remain in the base; hooks belong to the caller."
-        (actor actor "connection supplies attribution") (id integer "document identity")
+        (actor actor "connection supplies attribution") (id buffer "document identity")
         (path string "canonical target") (adoption list "(reviewed-first-line detected-mode-name-or-false)") (returns list))
   (define (save! actor id path adoption)
     (unless (equal? actor (client:identity)) (error 'save! "actor differs from connection identity"))
     (client:request 'document-save id path adoption))
 
   (edoc "Reload a document's file at the base as an undoable merge, guarded against concurrent edits and retargeting; return status and detail. Disk contents remain in the base."
-        (actor actor "connection supplies attribution") (id integer "buffer identity"))
+        (actor actor "connection supplies attribution") (id buffer "buffer identity"))
   (define (reload! actor id) (apply values (request actor id 'document-reload)))
 
   (edoc "Reread a document's file at the base as one undoable replacement, guarded against concurrent edits and retargeting; return status and detail. Disk contents remain in the base."
-        (actor actor "connection supplies attribution") (id integer "buffer identity"))
+        (actor actor "connection supplies attribution") (id buffer "buffer identity"))
   (define (reread! actor id) (apply values (request actor id 'document-reread)))
 
   (edoc "Check a document's disk content against its baseline in the base. Equal content updates only its reviewed stamp. This is a reload hint, not an overwrite authorization."
-        (actor actor "connection supplies attribution") (id integer "buffer identity") (returns boolean))
+        (actor actor "connection supplies attribution") (id buffer "buffer identity") (returns boolean))
   (define (check! actor id) (request actor id 'document-check)))

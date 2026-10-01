@@ -330,7 +330,7 @@
   (define (mode-info b lines)
     ;; The legacy window supplies only declared presentation facts. Modes
     ;; receive this window's text projection, never its mutable buffer record.
-    (let ([m (mode:of b)])
+    (let ([m (mode:find (head:buffer-fact b 'mode #f))])
       (vector (and m (mode:name m))
               (and m (mode:render m))
               (and m (mode:row-styles m))
@@ -380,7 +380,7 @@
                    [else (cons 0 line-length)])))))
 
   (edoc "A buffer's wrap fact: default, #t, #f, clean or (clean . columns), shared by every window and head showing it."
-        (b buffer "the buffer")
+        (b (record buffer) "the buffer")
         (returns (or (one-of default #t #f clean) pair)))
   (define (buffer-wrap-setting b)
     ;; the buffer's wrap fact -- default, #t, #f, clean, or (clean . n)
@@ -521,7 +521,7 @@
   (define (mode-highlights)
     ;; The ordinary-window boundary adapts logical source spans to the old
     ;; painter protocol. Providers themselves never see a window or buffer.
-    (let* ([b (head:current-buffer)] [lines (head:window-text (head:current-window))])
+    (let* ([b (head:current-buffer-mirror)] [lines (head:window-text (head:current-window))])
       (if (or (editor-frame (head:current-window)) (head:app-buffer? b) (not (vector? lines))) '()
         (apply append
           (map (lambda (p)
@@ -530,7 +530,7 @@
                      (if (> row (car end)) (reverse out)
                        (loop (+ row 1) (cons (list row (if (= row (car start)) (cdr start) 0)
                                                (if (= row (car end)) (cdr end) (+ 1 (string-length (vector-ref lines row)))) (cadr p)) out))))))
-            (mode:highlights (vector-ref (mode-info b lines) 4) (mode:of b) (head:point)))))))
+            (mode:highlights (vector-ref (mode-info b lines) 4) (mode:find (head:buffer-fact b 'mode #f)) (head:point)))))))
 
   (edoc "Every highlighter's ranges for this frame, the hovered hyperlink included; a raising highlighter contributes none."
         (returns list))
@@ -576,7 +576,7 @@
           '())))
 
   (edoc "The hyperlinks of a buffer row as source character ranges, on or off screen."
-        (buffer buffer "the buffer")
+        (buffer (record buffer) "the buffer")
         (row integer "the row")
         (returns list))
   (define (buffer-line-hyperlinks buffer row)
@@ -603,7 +603,7 @@
   (edoc "The ranges among a frame's highlight ranges that fall on a row of a window: scoped ones for that buffer or window, unscoped ones when the window is current."
         (ranges list "the frame's ranges")
         (w window "the window")
-        (b buffer "its buffer")
+        (b (record buffer) "its buffer")
         (row integer "the row")
         (current? boolean "whether the window is current")
         (returns list))
@@ -1114,11 +1114,11 @@
   ;; breaks mid-word) and memoized per line string and width, like the
   ;; style cache: edits replace line strings, so identity keys it.
   (edoc "Put point and the top row of a buffer, and of every window showing it but the excluded ones, at a position and top clamped into the text."
-        (b buffer "the buffer")
+        (b (record buffer) "the buffer")
         (position position "where point goes")
         (top integer "the top row")
         (excluded-windows (list-of window) "windows left alone")
-        (returns buffer))
+        (returns (record buffer)))
   (define (set-buffer-viewports! b position top excluded-windows)
     (let* ([count (head:buffer-line-count b)]
            [row (max 0 (min (car position) (- count 1)))]

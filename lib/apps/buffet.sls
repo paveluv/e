@@ -59,7 +59,7 @@
           (list (cadr row) (caddr version) (caddr archive))))))
 
   (define (archive! row action)
-    (let-values ([(status metadata) (store:archive! head:ui-actor (cadar row) (cadr row) action)])
+    (let-values ([(status metadata) (store:archive! head:ui-actor (car row) (cadr row) action)])
       (unless (eq? status 'applied) (error 'buffet "document changed; choose it again" status))))
 
   (edoc "Open the exact selected document through the host; archive selections restore that ID against its shown version first."
@@ -93,13 +93,13 @@
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
         (returns model "Buffet view"))
   (define (open!)
-    (let* ([was (head:current-buffer)] [host (default!)]
+    (let* ([was (head:current-buffer-mirror)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
                                                 (not (equal? (head:buffer-fact b 'tool-key #f) "*buffet*")))) (head:buffers)) was)]
            [b (window:show-widget! (head:current-window) host)]
            [host (head:buffer-fact b 'widget-id #f)] [app (child host 'app)]
            [table (child app 'table)] [entry (child (child table 'filter) 'entry)])
-      (head:show-buffer! b)
+      (head:show-buffer-mirror! b)
       (entry:delete! entry 'all)
       (widget:focus! host entry)
       (widget:pump!)
@@ -108,12 +108,12 @@
 
   (define (switch! direction)
     (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
-           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (head:current-buffer)) direction)]
+           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (head:current-buffer-mirror)) direction)]
            [b (and ref (catalogue-host:resolve! ref))])
       (when ref
         (cond [(not b) (window:open-document! host ref)]
           [(equal? (head:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
-          [else (head:show-buffer! b)]))))
+          [else (head:show-buffer-mirror! b)]))))
 
   (edoc "Switch to the next live document in Buffet's unfiltered compound order, wrapping at the end.")
   (define (next!) (switch! 'next))

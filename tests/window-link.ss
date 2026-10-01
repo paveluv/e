@@ -49,7 +49,7 @@
               (list (indexes (window:linked 'mirror)) (edoc:type-completions 'window-link-tag "")
                     (edoc:type-value 'window-link-tag 'mirror)))
        (list (indexes (list w3))
-             '((target . "the window a chooser in the linked window opens its pick in") (mirror . "a window showing the same text"))
+             '((target #f "the window a chooser in the linked window opens its pick in") (mirror #f "a window showing the same text"))
              'mirror))
      (check 'unlinking-removes-the-links-to-a-window-under-a-tag-or-all
        (begin (window:unlink! w3 'mirror)

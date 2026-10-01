@@ -25,23 +25,23 @@
      (define a (fresh "navigation-a"))
      (define b (fresh "navigation-b"))
      (define c (fresh "navigation-c"))
-     (define (position) (head:buffer-point (head:current-buffer)))
+     (define (position) (head:buffer-point (head:current-buffer-mirror)))
      (define observations '())
      ;; The first edit command invokes (edit) and, through it, the painter,
      ;; whose initialization installs its own repaint hook; the test's goes after.
-     (head:show-buffer! a)
+     (head:show-buffer-mirror! a)
      (head:goto! '(0 . 0))
      (head:set-repaint-hook!
        (lambda ()
          (set! observations
-           (cons (list (head:current-buffer) (position) (head:window-top w)
+           (cons (list (head:current-buffer-mirror) (position) (head:window-top w)
                        (head:window-topseg w) (head:window-left w)) observations))))
      (head:goto! '(1 . 3))
      (head:window-top-set! w 1)
      (head:window-topseg-set! w 2)
      (head:window-left-set! w 3)
      (set! observations '())
-     (head:show-buffer! a)
+     (head:show-buffer-mirror! a)
      (check 'redisplay-preserves-live-window
             (list (position) (head:window-top w) (head:window-topseg w) (head:window-left w))
             '((1 . 3) 1 2 3))
@@ -50,9 +50,9 @@
      (head:buffer-spot-col-set! b 4)
      (head:buffer-spot-top-set! b 1)
      (check 'hidden-point-read (head:buffer-point b) '(2 . 4))
-     (check 'point-read-does-not-switch (eq? (head:current-buffer) a) #t)
+     (check 'point-read-does-not-switch (eq? (head:current-buffer-mirror) a) #t)
      (check 'point-read-does-not-notify observations '())
-     (head:show-buffer! b)
+     (head:show-buffer-mirror! b)
      (check 'callback-observes-complete-window
             observations (list (list b '(2 . 4) 1 0 0)))
      (check 'old-point-is-saved (head:buffer-point a) '(1 . 3))
@@ -64,8 +64,8 @@
               (lambda ()
                 (head:call-with-display-update
                   (lambda ()
-                    (head:show-buffer! a)
-                    (head:call-with-display-update (lambda () (head:show-buffer! b)))
+                    (head:show-buffer-mirror! a)
+                    (head:call-with-display-update (lambda () (head:show-buffer-mirror! b)))
                     (head:goto! '(1 . 2))
                     (values 'one 'two)))) list)
             '(one two))
@@ -75,13 +75,13 @@
      (check 'empty-scope-does-not-notify observations '())
      (guard (ex [else (void)])
        (head:call-with-display-update
-         (lambda () (head:show-buffer! a) (head:goto! '(2 . 1)) (error 'probe "stop"))))
+         (lambda () (head:show-buffer-mirror! a) (head:goto! '(2 . 1)) (error 'probe "stop"))))
      (check 'exception-flushes-completed-state observations (list (list a '(2 . 1) 1 0 0)))
      (set! observations '())
      (call/cc
        (lambda (escape)
          (head:call-with-display-update
-           (lambda () (head:show-buffer! b) (head:goto! '(0 . 1)) (escape 'done)))))
+           (lambda () (head:show-buffer-mirror! b) (head:goto! '(0 . 1)) (escape 'done)))))
      (check 'escape-flushes-completed-state observations (list (list b '(0 . 1) 1 0 0)))
 
      ;; A callback starts a fresh scope, and no outer transition can
@@ -91,17 +91,17 @@
        (lambda ()
          (when once
            (set! once #f)
-           (check 'callback-sees-requested-buffer (eq? (head:current-buffer) a) #t)
-           (head:call-with-display-update (lambda () (head:show-buffer! c) (head:goto! '(2 . 2)))))))
-     (head:show-buffer! a)
-     (check 'reentrant-switch-survives (eq? (head:current-buffer) c) #t)
+           (check 'callback-sees-requested-buffer (eq? (head:current-buffer-mirror) a) #t)
+           (head:call-with-display-update (lambda () (head:show-buffer-mirror! c) (head:goto! '(2 . 2)))))))
+     (head:show-buffer-mirror! a)
+     (check 'reentrant-switch-survives (eq? (head:current-buffer-mirror) c) #t)
      (check 'reentrant-point-survives (position) '(2 . 2))
      (head:set-repaint-hook! (lambda () (error 'callback "failure")))
      (check 'callback-error-propagates
-            (guard (ex [else #t]) (head:call-with-display-update (lambda () (head:show-buffer! a))) #f) #t)
+            (guard (ex [else #t]) (head:call-with-display-update (lambda () (head:show-buffer-mirror! a))) #f) #t)
      (set! observations '())
-     (head:set-repaint-hook! (lambda () (set! observations (cons (head:current-buffer) observations))))
-     (head:show-buffer! b)
+     (head:set-repaint-hook! (lambda () (set! observations (cons (head:current-buffer-mirror) observations))))
+     (head:show-buffer-mirror! b)
      (check 'callback-failure-does-not-poison-next-update observations (list b))
 
      (head:set-repaint-hook! (lambda () (paint:invalidate-screen-cache!)))
@@ -109,7 +109,7 @@
      ;; cells, survives short rows and wide-glyph interiors, and is also the
      ;; column used by paging into rows outside the current rendition demand.
      (head:buffer-lines-set! a '#("界ab" "a\x301;bcde" "x" "界ab"))
-     (head:show-buffer! a)
+     (head:show-buffer-mirror! a)
      (head:window-wrap-set! w #f)
      (head:goto! '(0 . 1))
      (define (steps action arguments)

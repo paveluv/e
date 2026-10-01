@@ -310,7 +310,7 @@
 
   (edoc "Edit a shared buffer as a session: a span replaced by lines against a basis, with an optional edit context and a delta flag; the receipt (revision text changes edit-facts)."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (basis integer "the revision edited")
         (span list "the span replaced")
         (lines list "the replacement")
@@ -341,7 +341,7 @@
 
   (edoc "Undo or redo in a shared buffer as a session: (values status detail)."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (direction (one-of undo redo) "which way")
         (scope any "whose actions"))
   (define (session-history-step! s id direction scope)
@@ -352,7 +352,7 @@
 
   (edoc "Undo in a shared buffer as a session, its own actions by default: (values status detail)."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (scope (list-of any) "mine, all or (actor who), at most one"))
   (define (session-undo! s id . scope)
     ;; Default mine, or all/(actor who), under the same buffer permission.
@@ -363,7 +363,7 @@
 
   (edoc "Redo the session's latest undo in a shared buffer: (values status detail)."
         (s (record session) "the session")
-        (id integer "the buffer"))
+        (id buffer "the buffer"))
   (define (session-redo! s id)
     ;; Redo belongs to the requester who undid, even for another author's edit.
     (let-values ([(status detail) (session-history-step! s id 'redo 'mine)])
@@ -371,7 +371,7 @@
 
   (edoc "Disable entries of a shared buffer as a session, their inverses the session's own action: (values status detail), status applied, blocked or refused."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (disabled (list-of integer) "the revisions to disable"))
   (define (session-rewrite! s id disabled)
     (call-as-session s
@@ -381,7 +381,7 @@
 
   (edoc "Reload a shared buffer from its file as a session, the disk's changes the session's own entries: (values status detail), applied with (revision conflicts), or refused."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
         (review (list-of any) "optional coherent (revision . facts) review"))
@@ -394,7 +394,7 @@
 
   (edoc "Reread a shared buffer from its file as a session: the disk's text as one undoable edit of the session's, the pending conflicts settled: (values status detail), applied with the revision, or refused."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
         (review (list-of any) "optional coherent (revision . facts) review"))
@@ -407,7 +407,7 @@
 
   (edoc "Settle a reload conflict as a session: (values status detail), as store:resolve! gives them."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (revision integer "the conflicted entry")
         (choice any "disk, mine or the replacement lines"))
   (define (session-resolve! s id revision choice)
@@ -418,7 +418,7 @@
 
   (edoc "Settle exactly a reviewed conflict snapshot as a session: (values status detail)."
         (s (record session) "the session")
-        (id integer "the buffer")
+        (id buffer "the buffer")
         (expected list "the reviewed conflict records")
         (mine (list-of integer) "the revisions picked Mine"))
   (define (session-resolve-picks! s id expected mine)

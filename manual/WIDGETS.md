@@ -22,7 +22,7 @@ target's registered action. Targets must be mounted in the same head.
 Forks remap internal targets and retain external references. Changes to state
 connections never execute commands.
 
-At M-x, refer to a view with the `(model N)` literal; Tab at a documented
+At M-x, refer to a view with `'(model N)` data; Tab at a documented
 model argument offers live models. `C-x TAB` includes **Widget commands**
 for the current composition, showing named connections and their target
 API calls. `(widget:command-bindings root)` provides the same discovery as
@@ -1021,7 +1021,7 @@ one undo step per document, with a common batch and the outermost scope's label.
 Mode metadata is acquired outside painting; warm navigation and
 resizing use the shared mirror without requesting text or publishing geometry.
 
-The canonical commands take an explicit view, including `(model N)` at M-x:
+The canonical commands take an explicit view, written `'(model N)` at M-x:
 
 - `edit:select! id caret anchor` establishes a selection, or clears it when
   the endpoints agree. It also recovers from unavailable selection history.

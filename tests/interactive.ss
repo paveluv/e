@@ -144,7 +144,7 @@
                      (let ([b (head:new-local-buffer! "scroll-burst")])
                        (head:buffer-lines-set! b
                          (list->vector (map (lambda (i) (format "~a ~a" i (make-string 90 #\x))) (iota 100))))
-                       (head:show-buffer! b))
+                       (head:show-buffer-mirror! b))
                      (window:set-wrap! #t)
                      (window:split-right!)
                      (window:set-wrap! #t)
@@ -173,7 +173,7 @@
      (evaluate '(begin
                   (keymap:unbind! "F11") (keymap:unbind! "F12") (paint:input-delay 8)
                   (window:delete-others!)
-                  (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+                  (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
 
      ;; A divider owns its drag across widget contents, on either axis.
      ;; Release inside the widget must also retire the host's gesture.
@@ -206,7 +206,7 @@
        '(window:split-below! window:split-right!))
      (evaluate '(begin
                   (keymap:unbind! 'buffet "F12") (window:delete-others!)
-                  (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+                  (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
 
      ;; -- a nested terminal: default partial capture lets whole editor
      ;; commands through while other keys reach the child; full capture
@@ -284,19 +284,18 @@
      (send! "\x1b;xhead:show-buffer! \t\t")
      (wait-for! 'a-typed-argument-lists-its-values
                 (lambda () (and (find-cell "matches of buffer")
-                                (find-cell "(buffer \"*scratch*\")")
-                                (find-cell "(buffer \"*terminal*\")")
-                                (find-cell "Completion") (find-cell "Details") (find-cell "terminal  modified")))
+                                (find-cell "*scratch*") (find-cell "*terminal*")
+                                (find-cell "Completion") (find-cell "Details") (find-cell "'(buffer ") (find-cell "terminal  modified")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; A string argument completes as a session: a sole directory opens the
-     ;; type's literal and stays open without settling, and the pop-up lists
+     ;; path string and stays open without settling, and the pop-up lists
      ;; its entries at once.
      (send! "\x1b;xedit:visit-file! \"man\t")
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
-                (lambda () (and (find-cell "λ (edit:visit-file! (file \"manual/")
+                (lambda () (and (find-cell "λ (edit:visit-file! \"manual/")
                                 (find-cell "matches of file")
                                 (find-cell "manual/APPS.md")))
                 5000)
@@ -306,7 +305,7 @@
      ;; A needle argument searches as it is typed: the note counts the
      ;; matches in a separate editor; Tab navigates without moving the source.
      (evaluate '(let ([b (head:new-buffer! "needles")])
-                  (head:show-buffer! b)
+                  (head:show-buffer-mirror! b)
                   (edit:insert-text! "alpha beta alpha\ngamma alpha")
                   (head:goto! '(0 . 0))
                   (head:buffer-name b)))
@@ -331,7 +330,7 @@
      (wait-for! 'incremental-search-repeat
        (lambda () (equal? (evaluate '(head:point)) '(0 . 16))) 5000)
      (check 'incremental-search-preserves-document
-       (equal? (evaluate '(head:buffer-lines (head:current-buffer))) '#("alpha beta alpha" "gamma alpha")))
+       (equal? (evaluate '(head:buffer-lines (head:current-buffer-mirror))) '#("alpha beta alpha" "gamma alpha")))
      (send! "\x7;")
      (wait-for! 'incremental-search-cancel
        (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(0 . 0)))) 5000)
@@ -345,25 +344,26 @@
      (send! "\x13;gamma\r")
      (wait-for! 'return-settles-the-last-needle-before-closing
        (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(1 . 5)))) 5000)
-     (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+     (evaluate '(begin (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
      ;; A revision candidate highlights a separate read-only editor; the
      ;; source editor's caret and style stay unchanged throughout.
      (evaluate '(let ([b (head:new-buffer! "previews")])
-                  (head:show-buffer! b)
+                  (head:show-buffer-mirror! b)
                   (head:goto! '(0 . 0))
                   (edit:insert-text! "alpha ")
                   (edit:insert-text! "beta")
                   (head:goto! '(0 . 0))
                   (head:buffer-name b)))
-     (send! "\x1b;xdelta-log:show! (revision 2\t")
-     (wait-for! 'a-sole-revision-settles-and-previews
-                (lambda () (find-cell "λ (delta-log:show! (revision 2))")) 5000)
+     (send! "\x1b;xdelta-log:show! 2")
      (wait-for! 'the-previewed-entry-is-highlighted
        (lambda ()
          (exists (lambda (row)
                    (let* ([line (list-ref (screen-lines) row)] [at (string:search line "alpha beta" 0 (string-length line))])
                      (and at (not (eq? (style-at (cons row (+ at 6))) 'plain)))))
            (iota (length (screen-lines))))) 5000)
+     (send! "\t")
+     (wait-for! 'a-sole-revision-settles-and-previews
+                (lambda () (find-cell "λ (delta-log:show! 2)")) 5000)
      (check 'revision-preview-does-not-move-or-restyle-original
        (let ([cell (find-cell "alpha beta")])
          (and (equal? (evaluate '(head:point)) '(0 . 0)) cell
@@ -374,13 +374,13 @@
        (equal? (list (evaluate '(head:point))
                      (let ([cell (find-cell "alpha beta")]) (and cell (style-at (cons (car cell) (+ (cdr cell) 6))))))
                (list '(0 . 0) 'plain)))
-     (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
+     (evaluate '(begin (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
      ;; A closed string is final: Tab settles the forms around it, the file
      ;; literal closing at its one argument and the command at its one,
      ;; whether or not the path exists.
-     (send! "\x1b;xedit:save-file! (file \"~/ddd\"\t")
+     (send! "\x1b;xedit:save-file! \"~/ddd\"\t")
      (wait-for! 'a-final-datum-settles-the-forms-around-it
-                (lambda () (find-cell "λ (edit:save-file! (file \"~/ddd\"))")) 5000)
+                (lambda () (find-cell "λ (edit:save-file! \"~/ddd\")")) 5000)
      (send! "\x7;")                     ; C-g
      ;; Completing a sole candidate includes punctuation and remains executable.
      (send! "\x1b;xspwir\t\r")
@@ -416,7 +416,7 @@
        (lambda () (find-cell "λ (list (string-append \"a\" \"b\"))")) 5000)
      (send! "\r")
      (wait-for! 'completed-expression-keeps-its-arguments
-       (lambda () (find-cell "=> (\"ab\")")) 5000)
+       (lambda () (find-cell "=> '(\"ab\")")) 5000)
 
      ;; -- a private source and its asynchronous widget presentation -----------
      (send! "\x8;fmarkdown:view!\r") ; C-h f, then the documented name

@@ -21,7 +21,7 @@
       [(actor id generation source projection) (request actor 'environment-evaluate id generation source projection)]))
 
   (edoc "Get the persistent isolated environment for an explicit document. Changed recipes reset its generation and live bindings, preserving completed jobs. Concurrent heads share the same document environment."
-    (actor actor "caller") (document integer "owning document ID") (input list "environment recipe") (returns model) (public))
+    (actor actor "caller") (document buffer "owning document ID") (input list "environment recipe") (returns model) (public))
   (define (for-document! actor document input) (request actor 'environment-for-document document input))
 
   (edoc "Cancel a queued job without resetting definitions. Running cancellation resets the namespace and reaps its worker; committed effects remain. Return queued, reset or finished."

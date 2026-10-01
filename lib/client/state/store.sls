@@ -11,23 +11,34 @@
           set-marks! set-properties! set-property! snapshot snapshot-since snapshot-state
           trash-retention undo-authors undo-labels unsubscribe! validate-edit-context validate-properties
           visible? visit! watch!)
-  (import (chezscheme)
-          (prefix (core client) client:)
+  (import (chezscheme) (prefix (core client) client:)
+          (prefix (core handle) handle:)
           (prefix (core identity) identity:)
           (prefix (core kernel) kernel:)
           (prefix (core property) property:)
           (prefix (foundation datum) datum:)
           (prefix (foundation text) text:))
 
+  (edoc-type buffer "a (buffer positive-integer) reference; shape does not imply availability"
+    (predicate handle:buffer?) (portable #t) (within list)
+    (complete (lambda (partial)
+                (fold-right (lambda (row out)
+                              (let ([m (cadr row)])
+                                (if (and m (not (cdr (assq 'internal m))) (not (cdr (assq 'trashed m))))
+                                  (cons (list (car row) (cdr (assq 'name m))
+                                          (format "~a~a~a" (or (cdr (assq 'file m)) "")
+                                            (let ([mode (cdr (assq 'mode m))]) (if mode (string-append "  " mode) ""))
+                                            (if (cdr (assq 'modified m)) "  modified" ""))) out) out)))
+                  '() (cadr (metadata))))))
   (define validate-properties property:validate)
   (define validate-edit-context property:edit-context)
 
   (edoc "Read coherent metadata without buffer contents: (epoch ((id metadata-or-false) ...))."
-        (selection (list-of list) "optional numeric IDs; omitted means all") (returns list) (effects remote))
+        (selection (list-of list) "optional buffer references; omitted means all") (returns list) (effects remote))
   (define (metadata . selection) (apply client:request 'buffer-metadata selection))
 
   (edoc "Trash, restore or permanently delete an archive by ID and reviewed metadata version. Return status and current metadata; a refusal never retries."
-        (actor actor "connection supplies attribution") (id integer "buffer ID") (version integer "reviewed metadata version")
+        (actor actor "connection supplies attribution") (id buffer "buffer ID") (version integer "reviewed metadata version")
         (action (one-of trash restore delete) "operation"))
   (define (archive! actor id version action)
     (let ([reply (client:request 'buffer-archive id version action)])
@@ -47,31 +58,42 @@
   (define (remember-chain! id have changes)
     ;; changes: decoded, oldest first, ending at the current revision
     (let ([fresh (reverse (filter (lambda (change) (> (car change) have)) changes))])
-      (hashtable-set! chains id
-        (let take ([rest (append fresh (hashtable-ref chains id '()))] [n 0] [out '()])
-          (if (or (null? rest) (= n chain-limit)) (reverse out)
-              (take (cdr rest) (+ n 1) (cons (car rest) out)))))))
+      (hashtable-set!
+        chains
+        (index id)
+        (let take ([rest (append
+                           fresh
+                           (hashtable-ref chains (index id) '()))]
+                   [n 0]
+                   [out '()])
+          (if (or (null? rest) (= n chain-limit))
+            (reverse out)
+            (take (cdr rest) (+ n 1) (cons (car rest) out)))))))
   (define (chain-since id basis revision)
     ;; the retained chain after basis, oldest first, or #f
-    (let take ([rest (hashtable-ref chains id '())] [out '()])
+    (let take ([rest (hashtable-ref chains (index id) '())] [out '()])
       (cond [(= (+ basis (length out)) revision)
              (if (or (null? out) (= (caar out) (+ basis 1))) out #f)]
             [(or (null? rest) (<= (car (car rest)) basis)) #f]
             [else (take (cdr rest) (cons (car rest) out))])))
 
-  (define (entry id) (and (hashtable-contains? cache id) (hashtable-ref cache id #f)))
+  (define (index id)
+    (unless (handle:buffer? id) (error 'store "expected a buffer reference" id))
+    (cadr id))
+
+  (define (entry id) (and (hashtable-contains? cache (index id)) (hashtable-ref cache (index id) #f)))
   (define (merge-facts fresh old)
     (append fresh (remp (lambda (fact) (assq (car fact) fresh)) old)))
   (define (stale! id level)
-    (when (and (hashtable-contains? cache id)
-               (not (eq? (hashtable-ref stale id #f) 'facts)))
-      (hashtable-set! stale id level)))
+    (when (and (hashtable-contains? cache (index id))
+               (not (eq? (hashtable-ref stale (index id) #f) 'facts)))
+      (hashtable-set! stale (index id) level)))
   (define (mark-stale! pending)
     ;; A batch names changed ids, each flagged when its facts or lifecycle
     ;; changed; #f means anything may have changed.
     (if pending
         (for-each (lambda (change) (stale! (car change) (if (cdr change) 'facts 'text))) pending)
-        (vector-for-each (lambda (id) (stale! id 'facts)) (hashtable-keys cache))))
+        (vector-for-each (lambda (id) (stale! (list 'buffer id) 'facts)) (hashtable-keys cache))))
   (define invalidation
     (kernel:call-with-runtime-registrations
       (lambda () (client:subscribe! 'changed mark-stale!))))
@@ -101,7 +123,7 @@
                text changes))
 
   (edoc "Refresh the cache from the authority: (label text revision facts changes), or #f for a buffer that is gone; the changes are the decoded chain since the caller's basis, #f when it is not continuous."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the caller's revision")
         (returns (or list #f))
         (effects internal))
@@ -112,11 +134,11 @@
     (let* ([old (entry id)]
            [have (and old (caddr old))]
            [ask (cond [(not have) basis] [(not basis) have] [else (min have basis)])]
-           [mode (and have (if (eq? (hashtable-ref stale id 'text) 'facts) #t 'facts))]
+           [mode (and have (if (eq? (hashtable-ref stale (index id) 'text) 'facts) #t 'facts))]
            [state (client:request 'state id ask mode)])
-      (hashtable-delete! stale id)
+      (hashtable-delete! stale (index id))
       (cond
-        [(not state) (hashtable-set! cache id #f) #f]
+        [(not state) (hashtable-set! cache (index id) #f) #f]
         [else
          (let* ([changes (and ask (decode-changes (list-ref state 4)))]
                 [text (or (cadr state) (apply-chain (cadr old) have changes))]
@@ -124,26 +146,26 @@
                 [facts (if (and (eq? mode 'facts) (not (cadr state)))
                            (merge-facts (cadddr state) (cadddr old))
                            (cadddr state))])
-           (cond [(not changes) (hashtable-delete! chains id)]
-                 [(cadr state) (hashtable-set! chains id (reverse changes))]
+           (cond [(not changes) (hashtable-delete! chains (index id))]
+                 [(cadr state) (hashtable-set! chains (index id) (reverse changes))]
                  [else (remember-chain! id have changes)])
-           (hashtable-set! cache id (list (car state) text revision facts))
+           (hashtable-set! cache (index id) (list (car state) text revision facts))
            (list (car state) text revision facts
                  (and basis changes (<= basis revision)
                       (filter (lambda (change) (> (car change) basis)) changes))))])))
   (define (cached id)
-    (if (and (hashtable-contains? cache id) (not (hashtable-contains? stale id)))
-        (hashtable-ref cache id #f)
-        (and (read-state id #f) (hashtable-ref cache id #f))))
+    (if (and (hashtable-contains? cache (index id)) (not (hashtable-contains? stale (index id))))
+        (hashtable-ref cache (index id) #f)
+        (and (read-state id #f) (hashtable-ref cache (index id) #f))))
   (define (required id)
     (or (cached id) (error 'store "no buffer" id)))
   (define (forget! id)
-    (hashtable-delete! cache id)
-    (hashtable-delete! stale id)
-    (hashtable-delete! chains id))
+    (hashtable-delete! cache (index id))
+    (hashtable-delete! stale (index id))
+    (hashtable-delete! chains (index id)))
 
   (edoc "Every buffer's id."
-        (returns (list-of integer)))
+        (returns (list-of buffer)))
   (define (buffer-list)
     (client:request 'buffers))
 
@@ -153,40 +175,37 @@
     (client:request 'trash-retention))
 
   (edoc "Whether a buffer id is live."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns boolean))
   (define (exists? id)
     (and (cached id) #t))
 
   (edoc "A copy of a buffer's name."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns string))
   (define (buffer-name id)
     (string-copy (car (required id))))
 
-  (edoc "The id of the buffer with a name, or #f."
-        (name string "the name")
-        (returns (or integer #f)))
+  (edoc "The id of the buffer with a name, or #f." (name string "the name") (returns (or buffer #f)))
   (define (find-named name)
     (find (lambda (id) (equal? (buffer-name id) name)) (buffer-list)))
 
   (edoc "The id of the buffer visiting a file, or #f."
-        (path file "the file")
-        (returns (or integer #f))
-        (effects internal) (public))
+    (path file "the file") (returns (or buffer #f))
+    (effects internal) (public))
   (define (find-file path)
     (let ([id (client:request 'find-file path)])
       (when id (forget! id))
       id))
 
   (edoc "Every fact of a buffer, copied."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns list))
   (define (properties id)
     (datum:copy (cadddr (required id))))
 
   (edoc "A buffer's fact, or a fallback when absent, #f by default."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (key symbol "the fact")
         (fallback any "the value when absent")
         (returns any))
@@ -200,7 +219,7 @@
 
   (edoc "Whether an actor is in a buffer's audience."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns boolean))
   (define (visible? actor id)
     ;; as the base decides it: a trashed buffer is visible to nobody
@@ -214,14 +233,14 @@
     ;; complete until a notice says otherwise. Facts are shared here;
     ;; readers that hand them out copy them.
     (let* ([old (entry id)]
-           [chain (and basis old (not (hashtable-contains? stale id))
+           [chain (and basis old (not (hashtable-contains? stale (index id)))
                        (<= basis (caddr old)) (chain-since id basis (caddr old)))])
       (if chain
           (append old (list chain))
           (or (read-state id basis) (error 'snapshot-state "no buffer" id)))))
 
   (edoc "A buffer's text, revision and facts from one read, and the changes since a basis when one is given: (values text revision facts [changes])."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the earlier revision"))
   (define snapshot-state
     (case-lambda
@@ -234,12 +253,12 @@
              (values (cadr state) (caddr state) (datum:copy (cadddr state)))))]))
 
   (edoc "A buffer's text and revision: (values text revision)."
-        (id integer "the buffer id"))
+        (id buffer "the buffer id"))
   (define (snapshot id)
     (let ([state (capture id #f)]) (values (cadr state) (caddr state))))
 
   (edoc "A buffer's text, revision and the changes since a basis: (values text revision changes)."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the earlier revision"))
   (define (snapshot-since id basis)
     ;; The per-frame catch-up: no facts copy, which would include a file
@@ -247,26 +266,26 @@
     (let ([state (capture id basis)]) (values (cadr state) (caddr state) (list-ref state 4))))
 
   (edoc "A buffer's revision."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns integer))
   (define (revision id)
     (caddr (required id)))
 
   (edoc "How many lines a buffer has."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns integer))
   (define (line-count id)
     (vector-length (cadr (required id))))
 
   (edoc "One line of a buffer."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (row integer "the row")
         (returns string))
   (define (line id row)
     (vector-ref (cadr (required id)) row))
 
   (edoc "A span's content in a buffer, as lines."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (span (record span) "the span")
         (returns list))
   (define (extract id span)
@@ -285,7 +304,7 @@
         (name string "the name")
         (lines (or list vector) "the lines")
         (facts (list-of list) "a fact batch, at most one")
-        (returns integer))
+        (returns buffer))
   (define (create! actor name lines . facts)
     (check-actor actor)
     (apply client:request 'create name lines facts))
@@ -303,13 +322,13 @@
 
   (edoc "Delete a buffer."
         (actor actor "the actor identity")
-        (id integer "the buffer id"))
+        (id buffer "the buffer id"))
   (define (delete! actor id)
     (mutate actor id 'delete '()) (void))
 
   (edoc "Delete a buffer only while its reviewed revision and facts still hold; whether it was deleted."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (revision integer "the reviewed revision")
         (facts list "the reviewed facts")
         (returns boolean))
@@ -318,7 +337,7 @@
 
   (edoc "Replace a buffer's baseline wholesale, with optional facts and a reviewed state; the new revision, or #f."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (lines (or list vector) "the lines")
         (options (list-of any) "facts, then a reviewed state")
         (returns (or integer #f)))
@@ -327,7 +346,7 @@
 
   (edoc "Rename a buffer; the accepted name."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (name string "the wanted name")
         (returns string) (public))
   (define (rename! actor id name)
@@ -335,7 +354,7 @@
 
   (edoc "Set facts of a buffer, optionally under a review and with a new name; whether accepted."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (updates list "(key . value) facts")
         (options (list-of any) "a fact review, then a new name")
         (returns boolean))
@@ -344,7 +363,7 @@
 
   (edoc "Set one fact of a buffer."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (key symbol "the fact")
         (value datum "its value"))
   (define (set-property! actor id key value)
@@ -352,7 +371,7 @@
 
   (edoc "Apply an edit against a basis, acknowledged with (revision text changes edit-facts) that advances the head's cache."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
         (replacement list "the replacement lines")
@@ -374,7 +393,7 @@
       ;; committed facts leave the entry stale.
       (if (and (eq? status 'applied) delta?
                (not (or (pair? (property:context-undo context)) (pair? (property:context-commit context)))))
-          (hashtable-delete! stale id)
+          (hashtable-delete! stale (index id))
           (stale! id 'facts))
       (values status
         (if (eq? status 'applied)
@@ -383,14 +402,14 @@
                    [text (or (cadr detail) (apply-chain (cadr old) have changes))]
                    [facts (and old (merge-facts (cadddr detail) (cadddr old)))])
               (when old
-                (hashtable-set! cache id (list (car old) text revision facts))
-                (if delta? (remember-chain! id have changes) (hashtable-set! chains id (reverse changes))))
+                (hashtable-set! cache (index id) (list (car old) text revision facts))
+                (if delta? (remember-chain! id have changes) (hashtable-set! chains (index id) (reverse changes))))
               (list revision text changes (datum:copy (cadddr detail))))
             detail))))
 
   (edoc "Apply an edit against a basis: (values applied revision), or (values stale reason)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis integer "the revision edited")
         (span (record span) "the span replaced")
         (replacement list "the replacement lines")
@@ -401,7 +420,7 @@
 
   (edoc "Undo or redo in a buffer under a scope: (values status detail)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (direction (one-of undo redo) "which way")
         (scope any "mine, all or (actor who)")
         (access (list-of any) "write access, at most one"))
@@ -410,33 +429,33 @@
     (apply values (mutate actor id 'history-step (list direction scope))))
 
   (edoc "The actors with retained live actions in a buffer, newest first."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns list) (public))
   (define (undo-authors id)
     (client:request 'undo-authors id))
 
   (edoc "A buffer's newest applied edits as plain data, newest first."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (count (list-of integer) "how many, at most one")
         (returns list) (public))
   (define (history id . count)
     (apply client:request 'history id count))
 
   (edoc "A buffer's undo groups from the base, newest first, (actor label) each."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns list))
   (define (undo-labels id)
     (client:request 'undo-labels id))
 
   (edoc "A buffer's retained log entries as data, newest first, (revision actor labels delta origin state) each, narrowed by a selector alist among count, actor, batch, since and until."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (selector (list-of any) "constraints, at most one alist")
         (returns list))
   (define (log-entries id . selector)
     (apply client:request 'log id selector))
 
   (edoc "A rewrite preview with entries disabled, from one base snapshot: (values text mapping conflicts revision)."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (disabled (list-of integer) "the revisions to disable")
         (returns any "(values text mapping conflicts revision)"))
   (define (rewrite-preview id disabled)
@@ -444,7 +463,7 @@
 
   (edoc "Disable entries of a buffer for everyone through the base: (values status detail)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (disabled (list-of integer) "the revisions to disable")
         (access (list-of any) "write access, at most one"))
   (define (rewrite! actor id disabled . access)
@@ -453,7 +472,7 @@
 
   (edoc "Reload a buffer from its file through the base as one undoable action, preserving earlier undo history: (values status detail), applied with (revision conflicts)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
         (access (list-of any) "optional write access, then coherent (revision . facts) review"))
@@ -463,7 +482,7 @@
 
   (edoc "Reread a buffer from its file through the base, the disk's text one undoable edit settling the pending conflicts: (values status detail), applied with the revision."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (lines (or list vector) "the disk's lines")
         (facts list "the facts to commit")
         (access (list-of any) "optional write access, then coherent (revision . facts) review"))
@@ -473,7 +492,7 @@
 
   (edoc "Settle a reload conflict through the base: (values status detail)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (revision integer "the conflicted entry")
         (choice any "disk, mine or the replacement lines")
         (access (list-of any) "write access, at most one"))
@@ -483,7 +502,7 @@
 
   (edoc "Settle exactly the reviewed conflict snapshot in one base transaction: (values status detail)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (expected list "the reviewed conflict records")
         (mine (list-of integer) "the revisions picked Mine")
         (access (list-of any) "write access, at most one"))
@@ -492,13 +511,13 @@
     (apply values (mutate actor id 'resolve-picks (list expected mine))))
 
   (edoc "A buffer's pending reload conflicts from the base, (revision actor labels region mine disk) each; Disk contains the current lines that settlement keeps."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns list))
   (define (conflicts id)
     (client:request 'conflicts id))
 
   (edoc "Read text, revision and pending conflicts together from the base: (values text revision conflicts), with all conflict regions in this text's coordinates."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns any "(values text revision conflicts)"))
   (define (conflict-state id)
     (let* ([old (entry id)]
@@ -508,7 +527,7 @@
       (values (or (car state) (cadr old)) (cadr state) (caddr state))))
 
   (edoc "A buffer's newest edits with their spans in the current text: (span actor revision) each."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (count (list-of integer) "how many, at most one")
         (returns list))
   (define (blame id . count)
@@ -516,16 +535,16 @@
       (apply client:request 'blame id count)))
 
   (edoc "Locate one retained edit in current text; return (source-revision span-datum), or false span for expired history."
-        (id integer "document") (revision integer "entry revision") (returns list))
+        (id buffer "document") (revision integer "entry revision") (returns list))
   (define (revision-span id revision) (client:request 'revision-span id revision))
 
   (edoc "Locate a pending conflict as (source-revision span-datum), with false span for a missing or settled conflict; no alternatives or source text cross the wire."
-        (id integer "document") (revision integer "conflict identity") (returns list))
+        (id buffer "document") (revision integer "conflict identity") (returns list))
   (define (conflict-span id revision) (client:request 'conflict-span id revision))
 
   (edoc "Set and drop this head's marks in a buffer against a basis: (values applied revision) or (values stale revision)."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the revision the positions describe")
         (updates list "(name . position) marks")
         (drops list "names to remove"))
@@ -540,7 +559,7 @@
 
   (edoc "This head's marks in a buffer, (name . position) each."
         (actor actor "the actor identity")
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns list))
   (define (marks actor id)
     (check-actor actor)

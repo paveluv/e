@@ -24,15 +24,15 @@
 
      ;; issue #7: open, kill, open again
      (visit-file! path)
-     (define first (head:current-buffer))
+     (define first (head:current-buffer-mirror))
      (define first-id (head:buffer-store-id first))
      (define name (head:buffer-name first))
      (insert-text! "unsaved ")
-     (kill-buffer! first)
+     (kill-buffer! (head:buffer-store-id first))
      (visit-file! path)
-     (define fresh (head:current-buffer))
+     (define fresh (head:current-buffer-mirror))
      (check 'a-visit-after-a-kill-reads-the-disk-into-a-fresh-buffer-under-the-plain-name
-       (list (and (head:buffer-store-id fresh) (not (eqv? (head:buffer-store-id fresh) first-id)))
+       (list (and (head:buffer-store-id fresh) (not (equal? (head:buffer-store-id fresh) first-id)))
              (text fresh) (head:buffer-name fresh) (map car (trash)))
        (list #t '("on disk") name (list (string-append name "<2>"))))
 
@@ -40,22 +40,22 @@
        (let-values ([(next states) (store:export)]) (store:valid-import? next states)) #t)
      ;; a second kill of the same name: the trash lists the newest first
      (insert-text! "second ")
-     (kill-buffer! fresh)
+     (kill-buffer! (head:buffer-store-id fresh))
      (check 'the-trash-holds-both-kills-under-distinct-names (map car (trash)) (list name (string-append name "<2>")))
 
      ;; restore! takes the newest; the next restore! the older, under a unique name
-     (define newest (restore! name))
-     (define older (restore! (string-append name "<2>")))
+     (define newest (head:buffer-of-store-id (restore! name)))
+     (define older (head:buffer-of-store-id (restore! (string-append name "<2>"))))
      (check 'restore-brings-both-back-under-their-distinct-names
-       (list (eqv? (head:buffer-store-id newest) (head:buffer-store-id fresh)) (text newest) (head:buffer-name newest)
-             (eqv? (head:buffer-store-id older) first-id) (text older) (head:buffer-name older)
-             (equal? (head:buffer-file older) (head:buffer-file newest)) (trash) (eq? (head:current-buffer) older))
+       (list (equal? (head:buffer-store-id newest) (head:buffer-store-id fresh)) (text newest) (head:buffer-name newest)
+             (equal? (head:buffer-store-id older) first-id) (text older) (head:buffer-name older)
+             (equal? (head:buffer-file older) (head:buffer-file newest)) (trash) (eq? (head:current-buffer-mirror) older))
        (list #t '("second on disk") name #t '("unsaved on disk") (string-append name "<2>") #t '() #t))
 
      (check 'permanent-deletion-refuses-live-or-missing-names
        (map (lambda (name) (test:raises? (lambda () (delete-trashed! name))))
          (list (head:buffer-name older) "not-in-trash")) '(#t #t))
-     (kill-buffer! older)
+     (kill-buffer! (head:buffer-store-id older))
      (delete-trashed! (head:buffer-name older))
      (check 'permanent-deletion-removes-history-but-keeps-the-file-and-live-namesake
        (list (store:exists? first-id) (trash) (text newest)

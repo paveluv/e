@@ -1,4 +1,4 @@
-;; Load this file, then (editor-example:open! (head:buffer-store-id (head:current-buffer))).
+;; Load this file, then (editor-example:open! (head:current-buffer)).
 ;; The window is only the outer host; both inner editors use the same document.
 (define (editor-example:open! document)
   (let* ([who head:ui-actor]

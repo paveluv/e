@@ -29,7 +29,7 @@
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) head:new-local-buffer! head:new-buffer!) name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          b))
      (define (text-of b) (vector->list (head:buffer-lines b)))
@@ -167,7 +167,7 @@
      ;; when the provider pumps a frame and an after-commit observer does too.
      (mode:register! "position-format" '() '() (lambda (line) #f))
      (define formatted (fresh "position-format-source" '("abc" "tail")))
-     (head:with-buffer formatted (mode:choose! "position-format"))
+     (head:with-buffer-mirror formatted (mode:choose! "position-format"))
      (head:goto! '(0 . 2))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
@@ -187,7 +187,7 @@
      (check 'format-undo-keeps-both-foreign-edits (text-of formatted) '("RQabc" "tail"))
 
      (define conflict (fresh "position-format-conflict" '("abc")))
-     (head:with-buffer conflict (mode:choose! "position-format"))
+     (head:with-buffer-mirror conflict (mode:choose! "position-format"))
      (mode:register-formatter! "position-format"
        (lambda (b from to)
          (foreign! conflict (text:make-span 0 1 0 2) '("R"))
@@ -199,7 +199,7 @@
             (filter (lambda (group) (equal? (car group) head:ui-actor)) (store:undo-labels (head:buffer-store-id conflict))) '())
 
      (define indented (fresh "position-indent-source" '("  abc" "tail")))
-     (head:with-buffer indented (mode:choose! "position-format"))
+     (head:with-buffer-mirror indented (mode:choose! "position-format"))
      (head:goto! '(1 . 2))
      (set-mark-command!)
      (head:goto! '(0 . 3))

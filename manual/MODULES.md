@@ -11,8 +11,8 @@ The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
 Plain `e` starts or connects to the base, checks source and wire compatibility,
 and claims the connection before importing the modules, each under its
-prefix, the literals (bare: `(buffer "name")`, `(window n)`, `(mode "scheme")` and one per completing type,
-`(region ...)` and `(head "desk")` read back as they print) and `main`, and
+prefix, the temporary bare `(window n)` selector
+and `main`, and
 runs `(main:run!)`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
@@ -110,10 +110,10 @@ that explicit page against its reviewed revision; presentation stays in the head
 
 Every library is imported with its own prefix, and that is also how M-x
 sees it: `edit:`, `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only
-`literal`'s names are bare, the constructors that read a printed value
-back, `(buffer "name")`, `(window n)`, `(region b start end)` and the
-identities `(head "desk")`, `(agent "claude")` and `(base 'e)`, with the
-region's predicate and accessors. Modules
+`literal`'s temporary `(window n)` selector is bare. Portable references, identities and regions use quoted Scheme
+data, such as `'(buffer 17)`, `'(head "desk")` and
+`'(region (buffer 17) (0 . 0) (4 . 0))`. `region:` owns region validation,
+normalizing construction and accessors. Modules
 are named in the singular (`style`, `file`, `mode`,
 `string`, `actor`, `doc`), and their exported names drop the module's stem: the
 prefix says it once -- `style:set!`, not `styles:set-style!`; `keymap:bind!`,
@@ -462,7 +462,7 @@ until a mode is chosen for it by hand:
 
 ```scheme
 (mode:choose! "scheme")
-(mode:choose! "markdown" (buffer "notes.md"))
+(mode:choose! "markdown" (store:find-named "notes.md"))
 ```
 
 Registering a mode, deriving one or adding an ending gives the mode to the
@@ -472,23 +472,19 @@ mode, detected or chosen, keeps it and picks up only a reloaded record of the
 same name; `(mode:assign!)` re-detects the current buffer on request, and either
 command takes another buffer as a last argument or under `head:with-buffer`.
 
-Every type a library defines with a completer also spells its values as a
-literal at the top level, named after the type and derived from it: `(mode
-"scheme")`, `(file "notes.txt")`, `(directory "lib")`, `(style 'ghost)`,
-`(key "C-x C-f")`. The literal reads the spelling with the type's reader when
-it has one, `(buffer "name")` giving the live buffer, and otherwise returns
-the spelling itself once the type accepts it, so `(mode "scheme")` is the
-name `"scheme"` checked against the registered modes. Commands take the bare
-value and the literal alike; a command's author gets that with one call,
-`(edoc:type-value 'mode name)`, which returns a value the type accepts or
-reads it from its spelling. So the commands that take a buffer take its name
-too, and those that take a window its index: `(kill-buffer! "notes.txt")`,
-`(window:focus! 2)`, `(head:with-buffer "*scratch*" ...)`, `(mode:of
-"notes.txt")`; the accessors under `head:` keep taking the values
-themselves. A type whose literal returns its spelling, `file` or `mode`,
-needs nothing, since `(file "notes.txt")` is `"notes.txt"`. Completion
-spells an argument's options as literals, a reminder of the type at that
-position, and writes the whole literal on Tab.
+Completing types describe values and offer choices; they never create
+top-level constructors. Paths, mode names and key spellings remain strings,
+styles and link tags remain symbols, and revisions remain numbers. For
+example, use `(mode:choose! "scheme")`, `(edit:visit-file! "notes.txt")`
+and `(keymap:bind! "C-x w" window:split-right!)`.
+Mode names accept nonempty strings; `mode:find` separately queries the
+registry. Operations validate their own arguments, and `edoc:type-accepts?`
+is available for generic typed tools.
+
+Buffer commands take `'(buffer id)` values. Resolve names explicitly with
+`store:find-named`, or select `head:current-buffer`. The temporary window
+adapter still accepts `(window n)` and numeric selectors such as
+`(window:focus! 2)` until windows have model identities.
 
 Whole-text presentation callbacks receive `(source row line)`. The source is
 an explicit snapshot made by `(mode:source lines facts)`, with immutable text

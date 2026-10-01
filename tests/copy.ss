@@ -22,7 +22,7 @@
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          b))
      (define (copy) (head:copy-buffer #f))
@@ -64,22 +64,22 @@
      ;; undo in *copy* brings the previous copy back; redo the later one
      (copy-text! "first")
      (copy-text! "second")
-     (head:with-buffer (head:copy-buffer) (undo!))
+     (head:with-buffer-mirror (head:copy-buffer) (undo!))
      (define after-undo (head:copy-text))
-     (head:with-buffer (head:copy-buffer) (redo!))
+     (head:with-buffer-mirror (head:copy-buffer) (redo!))
      (check 'undo-and-redo-in-the-copy-buffer-walk-the-copies (list after-undo (head:copy-text)) '("first" "second"))
 
      ;; the setter is one more entry, so a prompt's kill is undone like a copy
      (define before (entries))
      (head:set-copy-text! "raw\n")
      (check 'the-setter-adds-one-entry (list (head:copy-text) (- (entries) before)) (list "raw\n" 1))
-     (head:with-buffer (head:copy-buffer) (undo!))
+     (head:with-buffer-mirror (head:copy-buffer) (undo!))
      (check 'undo-takes-the-set-text-back (head:copy-text) "second")
 
      ;; killing *copy* asks nothing and deletes it from the store; the next copy recreates it
      (define old (copy))
      (define old-id (head:buffer-store-id old))
-     (kill-buffer! old)
+     (kill-buffer! (head:buffer-store-id old))
      (define gone (copy))
      (copy-text! "again")
      (check 'a-killed-copy-buffer-is-recreated-by-the-next-copy
@@ -88,7 +88,7 @@
      ;; the store names a second head's copy buffer apart, *copy*<2>; a head
      ;; shows its own as [copy] whatever the store's suffix, unless it already
      ;; shows a buffer under that label, when the suffix stays
-     (kill-buffer! (copy))
+     (kill-buffer! (head:buffer-store-id (copy)))
      (define other '(head "other seat"))
      (define others (store:create! other "*copy*" '("theirs") (list (cons 'copy #t) (cons 'audience (list other)) (cons 'disposable #t))))
      (copy-text! "mine")
@@ -101,15 +101,15 @@
      (check 'a-per-head-buffer-whose-label-is-taken-here-keeps-the-stores-suffix
        (list (store:buffer-name twin) (head:buffer-name (head:buffer-named "[copy<3>]")) (head:buffer-name (copy)))
        '("*copy*<3>" "[copy<3>]" "[copy]"))
-     (kill-buffer! (head:buffer-named "[copy<3>]"))
+     (kill-buffer! (head:buffer-store-id (head:buffer-named "[copy<3>]")))
      (store:delete! other others)
 
      ;; a window showing *copy* follows the arriving text
-     (head:show-buffer! (head:copy-buffer))
+     (head:show-buffer-mirror! (head:copy-buffer))
      (head:goto! '(0 . 0))
      (copy-text! "l1\nl2\nl3")
      (check 'a-window-showing-the-copy-buffer-follows-the-arriving-text
-       (list (eq? (head:current-buffer) (copy)) (head:point)) '(#t (2 . 2)))
+       (list (eq? (head:current-buffer-mirror) (copy)) (head:point)) '(#t (2 . 2)))
 
      ;; a plain local buffer returns on resume with its text and facts; the
      ;; copy buffer lives in the base and needs no checkpoint

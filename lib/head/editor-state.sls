@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor-state)
   (export annotations? create! points state word-range)
-  (import (chezscheme) (prefix (foundation text) text:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (foundation text) text:)
           (prefix (head text-source) text-source:) (prefix (state view) view:))
 
   (define (position? p)
@@ -23,14 +23,14 @@
       (text-source:changes mirror (or (view:basis d) revision) revision)))
 
   (edoc "Create an unmounted editor view over a shared document. Options include wrap (#t, #f or default), read-only (a view preference) and annotations (revision-bound logical ranges); no window is created."
-        (actor actor "creator") (document integer "store document identity") (options list "logical preferences") (owner (list-of model) "optional lifetime owner") (returns model))
+        (actor actor "creator") (document buffer "store document identity") (options list "logical preferences") (owner (list-of model) "optional lifetime owner") (returns model))
   (define (create! actor document options . owner)
-    (unless (and (integer? document) (exact? document) (> document 0)
+    (unless (and (handle:buffer? document)
               (list? options) (for-all (lambda (p) (and (pair? p) (case (car p)
                                                                     [(wrap) (memq (cdr p) '(default #t #f))] [(read-only) (boolean? (cdr p))] [(annotations) (annotations? (cdr p))] [else #f]))) options)
               (let unique ([rest options]) (or (null? rest) (and (not (assq (caar rest) (cdr rest))) (unique (cdr rest))))))
       (error 'create! "invalid document or editor options"))
-    (apply view:create! actor (list 'buffer document) 'editor 1
+    (apply view:create! actor document 'editor 1
       (if (assq 'annotations options) options (cons '(annotations) options)) '((0 . 0) (0 . 0) (0 . 0) #f) owner))
 
   (edoc "The word at or immediately before a character column, as (first . end), or false on punctuation or whitespace."
@@ -51,7 +51,7 @@
   (define (annotations? value)
     (or (null? value)
       (and (list? value) (= (length value) 3)
-        (integer? (car value)) (exact? (car value)) (> (car value) 0)
+        (handle:buffer? (car value))
         (integer? (cadr value)) (exact? (cadr value)) (>= (cadr value) 0)
         (list? (caddr value))
         (for-all (lambda (p)

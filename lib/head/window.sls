@@ -111,7 +111,7 @@
                     (head:set-app-status-position! b (lambda (b) "")) b))))]))
 
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
-        (w window "outer host") (id model "root view id") (returns buffer))
+        (w window "outer host") (id model "root view id") (returns (record buffer)))
   (define (show-widget! w id)
     (let ([origin (catalogue-host:reference (head:window-buffer w))])
       (head:set-window-buffer! w (widget-buffer! id))
@@ -155,7 +155,7 @@
                           (lambda (commands) ((cdr factory) (or (head:buffer-store-id b) (error 'open-document! "presentation needs a source document"))
                                               commands (if point (cdr point) '(0 . 0))))
                           (format "~a:~s" (car factory) ref)))
-                      (head:with-window w (head:show-buffer! b) (when point (head:goto! (cdr point))))))
+                      (head:with-window w (head:show-buffer-mirror! b) (when point (head:goto! (cdr point))))))
           (if (null? targets) (list target) targets)))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
@@ -166,7 +166,7 @@
            [b (or origin
                 (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
       (if (and (head:popup? w) (not origin)) (head:hide-popup!)
-        (when b (head:with-window w (head:show-buffer! b))))))
+        (when b (head:with-window w (head:show-buffer-mirror! b))))))
 
   (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view is mounted for the caller's action and can be shown or forked. Hidden mounts are released at the next frame."
         (name string "tool name without brackets") (build procedure "commands -> app view")
@@ -185,7 +185,7 @@
     (let* ([d (interaction:snapshot id)] [app (cadr (assq 'app (view:children d)))])
       (when (assq 'current (widget:commands app))
         (widget:invoke! app 'current
-          (and (not (eq? (head:current-buffer) (widget:host id))) (catalogue-host:reference (head:current-buffer)))))))
+          (and (not (eq? (head:current-buffer-mirror) (widget:host id))) (catalogue-host:reference (head:current-buffer-mirror)))))))
 
   (define (init-widget-host!)
     ;; Definition reload keeps runtime mounts. Rediscover only at installation;
@@ -240,7 +240,7 @@
     ;; the current window while it shows an edit buffer: the window
     ;; settings, wrap and line numbers, are for text a user edits; an
     ;; app's buffer shows itself as the app decides
-    (when (head:app-buffer? (head:current-buffer)) (refuse! "Not an edit buffer"))
+    (when (head:app-buffer? (head:current-buffer-mirror)) (refuse! "Not an edit buffer"))
     (head:current-window))
 
   ;;; Focus -----------------------------------------------------------------------
@@ -357,7 +357,7 @@
 
   (define (split! orientation first?)
     ;; Split only the selected leaf, as in Emacs, showing the same buffer.
-    (or (split-current-window! orientation (head:current-buffer) first?)
+    (or (split-current-window! orientation (head:current-buffer-mirror) first?)
         (begin (message! "Not enough room to split") #f)))
 
   (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer. The new window, or #f with a message when there is no room."
@@ -443,8 +443,7 @@
 
   (edoc-type window-link-tag "a tag on a link between windows, one the code registered, target say"
     (predicate (lambda (v) (and (symbol? v) (assq v link-tags) #t)))
-    (complete (lambda (partial) (map (lambda (entry) (cons (car entry) (cdr entry))) link-tags)))
-    (write (lambda (v) (format "'~s" v))))
+    (complete (lambda (partial) (map (lambda (entry) (list (car entry) #f (cdr entry))) link-tags))))
 
   (define (live-links)
     ;; the links whose windows are both in the layout
@@ -547,10 +546,10 @@
     (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))
 
   (edoc "Show a buffer without leaving the current window: in the window already showing it, else the next window, else a fresh split below. The window, or #f when the screen has no room for one."
-        (b buffer "the buffer to show")
+        (b (or buffer model) "shared document or mounted widget to show")
         (returns (or window #f)))
   (define (display! b)
-    (let ([b (edoc:type-value 'buffer b)])
+    (let ([b (or (catalogue-host:resolve! b) (error 'display! "document is not available" b))])
       (head:add-buffer! b)
       (cond
         [(window-showing b)]
@@ -562,12 +561,12 @@
         [else #f])))
 
   (edoc "Show a help-like buffer in the window already displaying it, else in a new window below the current ordinary window. From a pop-up, use the last ordinary window. Focus stays where it was. The window, or #f when there was no room."
-        (b buffer "the buffer to show")
+        (b (or buffer model) "shared document or mounted widget to show")
         (returns (or window #f)))
   (define (pop-up-or-reuse! b)
     ;; Help-like buffers never appropriate another leaf: the buffer stays a
     ;; reference beside the command that asked for it.
-    (let ([b (edoc:type-value 'buffer b)])
+    (let ([b (or (catalogue-host:resolve! b) (error 'pop-up-or-reuse! "document is not available" b))])
       (head:add-buffer! b)
       (or (window-showing b)
           (let ([anchor (if (head:popup? (head:current-window))

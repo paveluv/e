@@ -30,7 +30,7 @@
   (define copy (view:fork! actor a))
   (define root (view:create! actor #f 'row 1 '() '()))
   (define (preview id) (query (child id 'preview)))
-  (define (output id) (cadr (query (child (child id 'preview) 'text))))
+  (define (output id) (query (child (child id 'preview) 'text)))
   (define (pump!)
     (head:before-frame!) (range:pump!) (widget:pump!)
     (widget:present! (list (list (widget:prepare! root 240 16) 0 0)))
@@ -61,7 +61,7 @@
   (await copy)
   (check 'fork-shares-the-draft-but-copies-preview-and-its-selection-binding
     (list (equal? (query a) (query copy)) (not (equal? (preview a) (preview copy)))
-      (not (= (output a) (output copy))) (store:line (output copy) 0)) '(#t #t #t "disk"))
+      (not (equal? (output a) (output copy))) (store:line (output copy) 0)) '(#t #t #t "disk"))
   (check 'bulk-control-and-key-command-share-one-draft
     (begin (delta-log:choose-all! a 'mine) (await a) (store:line (output a) 20)) "other mine")
   (let ([before (store:revision (output c))])

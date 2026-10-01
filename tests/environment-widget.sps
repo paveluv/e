@@ -25,8 +25,8 @@
               (check 'model-receiver-is-explicitly-exposed-and-completes-without-id-lookup
                 (list (and (assoc env receivers) (widget:receiver-live? (assoc env receivers)))
                   (map completion:candidate-value candidates))
-                (list #t (list (format "(model ~a)" (cadr env)))))))
-          (let ([draft (cadr (get (view:options (view:snapshot panel)) 'draft))])
+                (list #t (list (format "'~s" env))))))
+          (let ([draft (get (view:options (view:snapshot panel)) 'draft)])
             (store:reset! who draft '("(+ private-name 1)")))
           (pump!) (prompt:accept! prompt) (pump!) (prompt:drain!)
           (pump!)
@@ -58,7 +58,7 @@
       (include "tests/history.sps")
       (let* ([view (eval:create-result-view! who job)] [fork (view:fork! who view)]
              [children (test:child-pids)]
-             [draft (list 'buffer (store:create! who "model prompt" '("(+ private-name 1)") '((internal . #t))))]
+             [draft (store:create! who "model prompt" '("(+ private-name 1)") '((internal . #t)))]
              [prompt (eval:create-model-prompt! env 1 draft '())])
         (widget:mount! view 'result-a) (widget:mount! fork 'result-b) (widget:mount! prompt 'model-prompt)
         (pump!)
@@ -73,5 +73,5 @@
         (check 'model-prompt-refuses-a-reset-origin (prompt:accept! prompt) 'invalid)
         (for-each widget:unmount! (list view fork prompt)) (prompt:drain!)
         (check 'unmount-borrows-job-and-authored-draft
-          (list (and (model:snapshot job) #t) (store:exists? (cadr draft))) '(#t #t))))
+          (list (and (model:snapshot job) #t) (store:exists? draft)) '(#t #t))))
     (lambda () (environment:close! who env (get (value env) 'generation)))))

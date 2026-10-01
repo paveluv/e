@@ -2,23 +2,23 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head catalogue-host)
   (export reference resolve! retire!)
-  (import (chezscheme) (prefix (core row) row:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core row) row:)
           (prefix (head head) head:)
           (prefix (state model) model:) (prefix (state view) view:))
 
   (edoc "The shared document or widget view represented by an outer window buffer; false for legacy local text."
-        (b buffer "head buffer") (returns any))
+        (b (record buffer) "head buffer") (returns any))
   (define (reference b)
     (and (memq b (head:buffers))
-      (if (head:buffer-store-id b) (list 'buffer (head:buffer-store-id b))
+      (if (head:buffer-store-id b) (head:buffer-store-id b)
         (head:buffer-fact b 'widget-id #f))))
 
   (edoc "Resolve a document reference in the default window host, adopting shared text when needed. A widget without a local placement returns false; window:show-widget! can mount it."
-        (ref any "buffer or model reference") (returns (or buffer #f)))
+        (ref any "buffer or model reference") (returns (or (record buffer) #f)))
   (define (resolve! ref)
     (and (list? ref)
-      (cond [(and (= (length ref) 2) (eq? (car ref) 'buffer) (integer? (cadr ref)))
-             (head:adopt-store-buffer! (cadr ref))]
+      (cond [(handle:buffer? ref)
+             (head:adopt-store-buffer! ref)]
         [(row:source? ref) (find (lambda (b) (equal? ref (reference b))) (head:buffers))]
         [else #f])))
 

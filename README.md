@@ -211,8 +211,9 @@ M-x (describe:this terminal:open!)
 ```
 
 Module APIs use their prefixes, including the command layer: `edit:`, `head:`,
-`log-view:`, `terminal:`. Value constructors such as `(file "~/notes.txt")`,
-`(buffer "notes.txt")` and `(window 2)` are bare. A single `!` marks an effectful
+`log-view:`, `terminal:`. Paths are strings such as `"~/notes.txt"`;
+buffer and model references are quoted data, such as `'(buffer 17)`. Only the
+temporary `(window 2)` selector is bare. A single `!` marks an effectful
 procedure; interactive commands use the same suffix, with prompting recorded
 in their documentation metadata.
 

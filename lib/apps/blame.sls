@@ -42,7 +42,7 @@
     (when (hashtable-contains? observed source) (let-values ([(batch deadline) (refresh! source)]) (void))))
 
   (edoc "Describe recent authorship at an explicit document position. Return text suitable for a host's label, pop-up or message; the bounded base delta journal owns the attribution."
-        (document integer "shared document identity") (position position "logical source position") (returns string) (public))
+        (document buffer "shared document identity") (position position "logical source position") (returns string) (public))
   (define (describe document position)
     (cond [(find (lambda (entry) (or (text:contains? (car entry) position) (text:position=? position (text:span-start (car entry)))))
              (store:blame document 64))

@@ -186,7 +186,7 @@
     (let ([r (model:snapshot source)])
       (unless (and r (eq? (field r 'kind) 'filesystem-source) (eq? (field r 'persistence) 'persistent))
         (error 'create-query! "expected persistent filesystem source"))
-      (let* ([filter (list 'buffer (store:create! actor "Finder filter" (list text) (list '(internal . #t) (cons 'audience (list actor)))))]
+      (let* ([filter (store:create! actor "Finder filter" (list text) (list '(internal . #t) (cons 'audience (list actor))))]
              [query (collection:create! actor source text '() 'persistent (list source filter))])
         (connection:bind! actor query (list (list query 'filter #f (list filter 'text)))) (list query filter))))
 

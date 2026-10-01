@@ -27,7 +27,7 @@
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          b))
      (define (spans->list text) (map vector->list (expression:spans text)))
@@ -97,7 +97,7 @@
      (backward-kill-expression!)
      (check 'moving-point-ends-kill-accumulation (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)"))
      (define indenting (fresh "indenting" '("(define (h)" "(+ 1" "2))" "")))
-     (head:with-buffer indenting (mode:choose! "scheme"))
+     (head:with-buffer-mirror indenting (mode:choose! "scheme"))
      (head:goto! '(0 . 0))
      (indent-expression!)
      (check 'indent-expression-indents-the-lines-below-the-first
@@ -122,7 +122,7 @@
      (check 'a-definition-evaluated-before-point-took-effect (last-eval) '("(+ ex-forty 2)" . "42"))
      (head:goto! '(1 . 9))
      (eval:top-level-form!)
-     (check 'top-level-form-evaluates-the-form-around-point (last-eval) '("(list 1 (+ 2 3) 4)" . "(1 5 4)"))
+     (check 'top-level-form-evaluates-the-form-around-point (last-eval) '("(list 1 (+ 2 3) 4)" . "'(1 5 4)"))
      (head:goto! '(3 . 0))
      (eval:top-level-form!)
      (check 'top-level-form-after-the-last-takes-the-last (last-eval) '("(+ ex-forty 2)" . "42"))
@@ -131,6 +131,6 @@
 
      ;; *scratch* speaks Scheme once the mode is registered (it was, above)
      (check 'scratch-has-scheme-mode-by-default
-       (mode:name-of (head:buffer-named "*scratch*")) "scheme")
+       (mode:name-of (head:buffer-store-id (head:buffer-named "*scratch*"))) "scheme")
 
      (test:finish! 'expression)))

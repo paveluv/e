@@ -1,7 +1,7 @@
 ;; Reuse the namespace process and the ordinary widget/collection pump.
 (let ()
   (define history (history:create! who 'persistent))
-  (define document (list 'buffer (store:create! who "history text" '("retained text") '((internal . #t)))))
+  (define document (store:create! who "history text" '("retained text") '((internal . #t))))
   (define first (history:append! who history 0 (list 'text 1 document) document (list document)))
   (define second (history:append! who history 1 (list 'result 1 job) #f (list job env)))
   (define missing (history:append! who history 2 '(missing-example 1 (portable data)) #f '()))
@@ -35,7 +35,7 @@
   (test:await 'history-remount (lambda () (page-ready? a "Registered later" 50)))
   (widget:unmount! a) (widget:unmount! b)
   (check 'history-hiding-preserves-borrowed-work
-    (list (and (model:snapshot job) #t) (store:exists? (cadr document))) '(#t #t))
+    (list (and (model:snapshot job) #t) (store:exists? document)) '(#t #t))
   (load "examples/history.e")
   (let ([root (history-example:create!)])
     (widget:mount! root 'history-example)

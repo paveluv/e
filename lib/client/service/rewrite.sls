@@ -3,7 +3,11 @@
   (export close! create! preview settle! toggle!)
   (import (chezscheme) (prefix (core client) client:))
 
-  (edoc "Create an independent rewrite draft over a borrowed document." (actor actor "connection attribution") (document integer "source") (returns model))
+  (edoc
+    "Create an independent rewrite draft over a borrowed document."
+    (actor actor "connection attribution")
+    (document buffer "source")
+    (returns model))
   (define (create! actor document) (client:request 'rewrite-create document))
 
   (edoc "Toggle entries against a draft revision; return its updated envelope." (actor actor "connection attribution") (id model "draft")

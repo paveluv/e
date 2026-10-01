@@ -20,7 +20,7 @@
   (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
   (let* ([a (git-view:create! ".")] [b (git-view:create! "lib")]
          [qa (query a)] [qb (query b)] [patch (child a 'patch)] [qp (query patch)]
-         [document (cadr (query (child patch 'text)))])
+         [document (query (child patch 'text))])
     (check 'git-creation-does-not-start-work (get (get (model:snapshot qa) 'value) 'generation) 0)
     (set! root (view:create! head:ui-actor #f 'row 1 '() '()))
     (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
@@ -46,13 +46,13 @@
           (list (store:property document 'read-only) (store:line document 0))
           (list #t (format "~a  ~a" (cadadr (car files)) (caddr (cadr (car files))))))
         (let* ([fork (view:fork! head:ui-actor a)] [copy-query (query (child fork 'patch))]
-               [copy-document (cadr (query (child (child fork 'patch) 'text)))]
+               [copy-document (query (child (child fork 'patch) 'text))]
                [before (store:revision document)])
           (widget:mount! fork 'git-fork)
           (choose! fork expanded (car files))
           (rows copy-query)
           (check 'git-forks-own-their-patch-query-and-output
-            (list (equal? (query fork) qa) (not (equal? copy-query qp)) (not (= copy-document document))
+            (list (equal? (query fork) qa) (not (equal? copy-query qp)) (not (equal? copy-document document))
               (= before (store:revision document)) (store:line copy-document 0))
             (list #t #t #t #t (store:line document 0)))
           (widget:unmount! fork)
@@ -68,7 +68,7 @@
         (kernel:retract-module! 'git-view-test)
         (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
         (pump!)
-        (check 'git-reload-keeps-query-and-patch-identity (list (query a) (query (child (child a 'patch) 'text))) (list qa (list 'buffer document)))
+        (check 'git-reload-keeps-query-and-patch-identity (list (query a) (query (child (child a 'patch) 'text))) (list qa document))
         (widget:unmount! root)
         (let ([before (store:revision document)])
           (git-source:refresh! head:ui-actor qa)

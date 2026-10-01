@@ -36,9 +36,9 @@
           install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-receiver signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
-          type-denotes-record? type-literal type-literal-spelling type-literals type-named type-owner type-portable? type-prose type-read
+          type-denotes-record? type-named type-owner type-portable? type-prose
           type-spelling
-          type-text type-value type-within)
+          type-text type-value type-within value-expression)
   (import (rnrs)
           (only (chezscheme) library import meta void make-weak-eq-hashtable make-eq-hashtable
                 eq-hashtable-ref eq-hashtable-set! eq-hashtable-contains? format syntax->list
@@ -398,20 +398,27 @@
         (cddr spec))))
 
   (define (plain-datum? value)
-    ;; plain data, pairs, vectors and strings down to atoms, within a budget
-    ;; that keeps a cyclic value from spinning: past it the value passes
-    (let walk ([v value] [fuel 10000])
-      (cond
-        [(<= fuel 0) #t]
-        [(pair? v) (and (walk (car v) (- fuel 1)) (walk (cdr v) (- fuel 1)))]
-        [(vector? v) (let loop ([i 0]) (or (= i (vector-length v)) (and (walk (vector-ref v i) (- fuel 1)) (loop (+ i 1)))))]
-        [else (or (null? v) (symbol? v) (string? v) (number? v) (boolean? v) (char? v) (bytevector? v))])))
+    ;; Memoize compound values so shared structure is linear and cycles are
+    ;; rejected. An opaque leaf must never acquire a fake readable spelling.
+    (let ([seen #f])
+      (let walk ([v value])
+        (if (or (pair? v) (vector? v))
+          (begin
+            (unless seen (set! seen (make-eq-hashtable)))
+            (case (hashtable-ref seen v #f)
+              [(done) #t] [(active) #f]
+              [else
+               (hashtable-set! seen v 'active)
+               (and (if (pair? v) (and (walk (car v)) (walk (cdr v)))
+                      (let loop ([i 0]) (or (= i (vector-length v)) (and (walk (vector-ref v i)) (loop (+ i 1))))))
+                 (begin (hashtable-set! seen v 'done) #t))]))
+          (or (null? v) (symbol? v) (string? v) (number? v) (boolean? v) (char? v) (bytevector? v))))))
 
   (define (always v) #t)
 
   (define base-types
     (begin
-      (register-type! 'boolean "a boolean" boolean? (lambda (partial) (list (cons #t #f) (cons #f #f))) #f #f "(foundation edoc)" #f)
+      (register-type! 'boolean "a boolean" boolean? (lambda (partial) '((#t #f #f) (#f #f #f))) #f #f "(foundation edoc)" #f)
       (for-each
         (lambda (entry) (register-type! (car entry) (cadr entry) (caddr entry) #f #f #f "(foundation edoc)" #f))
         (list (list 'string "a string" string?)
@@ -456,7 +463,7 @@
       '(edoc "Define a type for edoc clauses inside an elibrary: (edoc-type name prose (predicate p) (complete c) (read r) (write w) (within t) (portable #t)), all but the predicate optional; registered when the library initializes."
          (name symbol "the type's name")
          (prose string "what values of the type are")
-         (field list "(predicate p), (complete c) giving (value . hint) pairs for a partial text, (read r) text to value, (write w) value to expression text, (within t) the type this one refines, (portable #t) a pure bounded predicate for portable contracts")
+         (field list "(predicate p), (complete c) giving (value label hint) entries; label and hint may be false for a partial text, (read r) text to value, (write w) value to expression text, (within t) the type this one refines, (portable #t) a pure bounded predicate for portable contracts")
          ("kind" syntax) ("library" "(foundation edoc)"))))
 
   (define edoc-documentation
@@ -697,7 +704,7 @@
            [type-name (syntax->datum type)]
            [noun (let* ([s (symbol->string type-name)] [n (string-length s)])
                    ;; a type named to avoid clashing with its constructor
-                   ;; procedure, region-record say, is a region in prose
+                   ;; procedure drops its -record suffix in prose
                    (if (and (> n 7) (string=? (substring s (- n 7) n) "-record")) (substring s 0 (- n 7)) s))]
            [summary (syntax-case doc () [(summary . _) (syntax->datum #'summary)])])
       (check-summary! who x doc)
@@ -1299,77 +1306,20 @@
     (type-within-of type))
 
   (edefine (type-denotes-record? t name)
-    (edoc "Whether a named type is a documented record's type, region and region-record say: its predicate is the record's."
+    (edoc "Whether a named type denotes a documented record: its predicate is the record's."
           (t symbol "the type's name") (name symbol "the record type's name") (returns boolean))
     (let ([type (type-named t)] [predicate (eq-hashtable-ref record-predicates name #f)])
       (and type predicate (eq? (type-predicate-of type) predicate))))
 
-  (define (literal-type? name)
-    ;; whether a type spells its values as literals: a library's own type
-    ;; with a completer; the language's keep their native spellings
-    (let ([type (lookup-type name)])
-      (and type (type-complete-of type) (type-owner-of type)
-           (not (equal? (type-owner-of type) "(foundation edoc)")) #t)))
-
-  (edefine (type-literals)
-    (edoc "The names of the types that spell their values as literals, (mode \"scheme\") say: the types a library defines with a completer, in name order."
-          (returns list))
-    (list-sort (lambda (a b) (string<? (symbol->string a) (symbol->string b)))
-      (filter literal-type? (vector->list (hashtable-keys types)))))
-
-  ;; the derived literals, one per type: the procedure the kernel binds is the
-  ;; one type-literal returns, so a name bound to it is known for its literal
-  (define literals (make-eq-hashtable))
-
-  (edefine (type-literal name)
-    (edoc "A type's literal constructor: a procedure from a spelling to the type's value, the type's reader applied when it has one, that must then satisfy the type; how (mode \"scheme\") and (buffer \"name\") read. The type is looked up at each use, so a reload is followed; the constructor documents itself, so completion continues inside it. One procedure per type, however often asked."
-          (name symbol "the type's name") (returns procedure) (effects internal))
-    (or (eq-hashtable-ref literals name #f)
-        (let ([type (type-named name)])
-          (unless type (error 'type-literal "no such type" name))
-          (let ([literal
-                 (attach! name
-                   (lambda (spelling)
-                     (let ([type (type-named name)])
-                       (unless type (error name "no such type"))
-                       (let ([value (if (type-read-of type) ((type-read-of type) spelling) spelling)])
-                         (unless (type-accepts? name value)
-                           (error name (string-append "expected " (type-prose-of type)) spelling))
-                         value)))
-                   (list 'edoc (string-append (type-prose-of type) ", as its literal (" (symbol->string name) " spelling) reads it back")
-                         (list 'spelling (if (type-read-of type) 'string name) "the spelling, as completion offers it")
-                         (list 'returns name)
-                         (list "kind" 'procedure) (list "formals" '(spelling)) (list "library" "(foundation edoc)")))])
-            (eq-hashtable-set! literals name literal)
-            literal))))
-
   (edefine (type-value name v)
-    (edoc "A value as a type's own: v itself when it satisfies the type, else the type's literal read from v as a spelling; how a command takes a bare name and a literal alike, (mode:choose! \"scheme\") and (mode:choose! (mode \"scheme\"))."
-          (name symbol "the type's name") (v any "the value, or its spelling") (returns any) (effects internal))
-    (if (type-accepts? name v) v ((type-literal name) v)))
-
-  (edefine (type-literal-spelling t value)
-    (edoc "A value of a type as the literal denoting it, (mode \"scheme\") say, when the type spells its values so and its own spelling is not a form already; else its spelling, as type-spelling gives it."
-          (t datum "the type") (value any "the value") (returns string))
-    (cond
-      [(and (pair? t) (eq? (car t) 'or))
-       ;; a member with a literal spells the value it accepts, (or list
-       ;; batch) a batch as its literal rather than as a bare list
-       (let ([m (or (find (lambda (m) (and (symbol? m) (literal-type? m) (type-accepts? m value))) (cdr t))
-                    (find (lambda (m) (type-accepts? m value)) (cdr t)))])
-         (if m (type-literal-spelling m value) (type-spelling t value)))]
-      [(and (symbol? t) (literal-type? t))
-       ;; a spelling that is a form already, (agent "helper") for an actor
-       ;; say, denotes the value as it is; a bare one takes the type's literal
-       (let ([spelling (type-spelling t value)])
-         (if (and (> (string-length spelling) 0) (char=? (string-ref spelling 0) #\())
-             spelling
-             (string-append "(" (symbol->string t) " " spelling ")")))]
-      [else (type-spelling t value)]))
-
-  (edefine (type-read type)
-    (edoc "A type's reader, text to value, or #f." (type (record type) "the type record") (returns (or procedure #f)))
-    (type-read-of type))
+    (edoc "Validate a typed value; the legacy window reader temporarily resolves its selector. No constructors are generated."
+      (name symbol "type name") (v any "value or legacy selector") (returns any) (effects internal))
+    (if (type-accepts? name v) v
+      (let* ([type (type-named name)] [reader (and type (type-read-of type))]
+             [value (and reader (reader v))])
+        (unless (and reader (type-accepts? name value))
+          (error 'type-value "value does not satisfy the type" name v))
+        value)))
 
   (edefine (type-accepts? t value)
     (edoc "Whether a value satisfies a type: its predicate for a name, membership for a one-of, any member for an or, every element for a list-of, the record's predicate for (record name); an unknown name accepts anything."
@@ -1411,7 +1361,7 @@
       (cond [(null? types) #f] [(null? (cdr types)) (car types)] [else (cons 'or (reverse types))])))
 
   (edefine (type-completions t partial)
-    (edoc "The values a type offers for a partial text, as (value . hint) pairs: a completer's for a name, the literals of a one-of, every member's for an or, #f for #f."
+    (edoc "The values a type offers for a partial text, as (value label hint) entries; label and hint may be false: a completer's for a name, the literals of a one-of, every member's for an or, #f for #f."
           (t datum "the type") (partial string "the text typed so far") (returns list))
     (cond
       [(symbol? t)
@@ -1419,19 +1369,20 @@
          (if (and type (type-complete-of type))
              (guard (ex [else '()]) ((type-complete-of type) partial))
              '()))]
-      [(eq? t #f) (list (cons #f #f))]
+      [(eq? t #f) (list (list #f #f #f))]
       [(and (pair? t) (list? t))
        (case (car t)
-         [(one-of) (map (lambda (literal) (cons literal #f)) (cdr t))]
+         [(one-of) (map (lambda (literal) (list literal #f #f)) (cdr t))]
          [(or) (apply append (map (lambda (m) (type-completions m partial)) (cdr t)))]
          [else '()])]
       [else '()]))
 
   (edefine (type-spelling t value)
-    (edoc "A value of a type as the expression denoting it: the type's writer, else written, a symbol or a list quoted."
+    (edoc "A value as a Scheme expression, independent of its type for plain data. Opaque values retain a legacy type writer or a diagnostic spelling."
           (t datum "the type") (value any "the value") (returns string))
-    (define (default v) (if (or (symbol? v) (pair? v) (null? v)) (format "'~s" v) (format "~s" v)))
+    (define (default v) (format "~s" v))
     (cond
+      [(value-expression value) => values]
       [(symbol? t)
        (let ([type (type-named t)])
          (if (and type (type-write-of type))
@@ -1441,6 +1392,13 @@
        (let ([m (find (lambda (m) (type-accepts? m value)) (cdr t))])
          (if m (type-spelling m value) (default value)))]
       [else (default value)]))
+
+  (edefine (value-expression value)
+    (edoc "A reconstructible Scheme expression for finite plain data, or false for cyclic or opaque runtime values. Quote compound data and symbols once; metadata and resource availability never affect spelling."
+      (value any "value to spell") (returns (or string #f)))
+    (and (plain-datum? value)
+      (if (or (symbol? value) (pair? value) (null? value) (vector? value))
+        (format "'~s" value) (format "~s" value))))
 
   (edefine (type-prose t)
     (edoc "A type as prose: a name's own description, else type-text." (t datum "the type") (returns string))

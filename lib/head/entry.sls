@@ -101,7 +101,7 @@
     (text-control:context id 'entry))
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
-      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref)))
+      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup ref))
         (let-values ([(source d inputs) (widget:context id 'current)])
           (when (single-line? (text-control:lines source))
             (text-control:advance! id source d (state d) values))))))

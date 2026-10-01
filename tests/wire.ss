@@ -222,7 +222,7 @@
            (lambda (record presentation)
              (when (eq? (log:component record) 'base:audit-store-event!)
                (let* ([event (log:datum record)] [app? (eq? (car (log:actor record)) 'app)]
-                      [operation? (and (pair? event) (memq (car event) '(edit reset)) (= (cadr event) notes))])
+                      [operation? (and (pair? event) (memq (car event) '(edit reset)) (equal? (cadr event) notes))])
                  (when app? (set! app-presentations (cons presentation app-presentations)))
                  (when operation? (set! operation-audits (cons (list (log:actor record) event) operation-audits)))
                  (when (or app? operation?)
@@ -249,8 +249,7 @@
                            (actor:send! (cadr event) '(from-base "welcome"))
                            (let ([name (cadadr event)])
                              (when (member name '("stalled count" "stalled bytes"))
-                               (store:set-property! '(base e) 2 'padding
-                                 (make-string (if (string=? name "stalled count") 8192 2097152) #\x)))
+                               (store:set-property! '(base e) '(buffer 2) 'padding (make-string (if (string=? name "stalled count") 8192 2097152) #\x)))
                              ;; Publication may itself cause mail before the
                              ;; writer starts. Refusal must reach the sender.
                              (when (equal? name "stalled mail")
@@ -316,7 +315,7 @@
        (rpc connection 'vt-open "printf ready; while read value; do printf '<%s>' \"$value\"; done"
          root 3 32 'dark))
      (define (inventory connection)
-       (cdr (assq 'sessions (caddr (rpc connection 'snapshot 1)))))
+       (cdr (assq 'sessions (caddr (rpc connection 'snapshot '(buffer 1))))))
 
      ;; Drive the real editor in the daemon's installation. All heads use
      ;; the same object cache, which also exercises repeated client loading.
@@ -390,7 +389,7 @@
              (fixture:evaluate (evaluator-connection) who expression)))))
      (define (head-blame head)
        (head-read head
-         '(let* ([b (head:current-buffer)] [id (head:buffer-store-id b)]
+         '(let* ([b (head:current-buffer-mirror)] [id (head:buffer-store-id b)]
                  [frame (widget:prepared (head:window-editor (head:current-window)))]
                  [styles (widget:frame-cell-styles frame 0)])
             (list
@@ -777,7 +776,7 @@
                    (list (and (reject control 'restart (cadr review)) #t)
                          (> (occurrences (fixture:diagnostics base) "durability is uncertain") 0)
                          (sys:process-status (fixture:process base))) '(#t #t #f)))
-               (let* ([view (rpc head 'view-create (list 'buffer term) 'terminal 1 '() '(partial #t))]
+               (let* ([view (rpc head 'view-create term 'terminal 1 '() '(partial #t))]
                       [generation (begin (rpc head 'view-claim view) (cdr (assq 'generation (rpc head 'view-read view))))])
                  (rpc head 'send (cdr (assq 'app (caddr (rpc head 'snapshot term))))
                    (list 'input '(head "kept desk") term "TEXT"
@@ -804,7 +803,7 @@
                (test:await 'saved-base-exits (lambda () (sys:process-status (fixture:process base))))
                (set! saved (call-with-input-file path read))
                (test:check 'snapshot-has-private-mode-and-no-temporary-file
-                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 2)))
+                 (list (get-mode path) (file-exists? temporary) (list-head saved 2)) '(#o600 #f (session 3)))
                (test:check 'session-saves-persistent-models-and-transient-allocation-gaps
                  (list (list-ref saved 6) (car expected-models) (length (cadr expected-models)))
                  (list (cons* 'models (car expected-models) (cadr expected-models)) 5 3)))))
@@ -819,9 +818,9 @@
                  (test:check 'session-restores-opaque-models-before-config-and-disables-unsupported-actions
                    (call-with-input-file model-state read) (list expected-models '(#f #f #t)))
                  (test:check 'restore-precedes-configuration-and-preserves-allocator-gaps
-                   (list (list-sort < (car before)) (cadr before)
-                     (assv omitted states) (assv gap states) (rpc head 'checkpoint))
-                   (list (map car states) (cadddr saved) #f #f checkpoint))
+                   (list (list-sort (lambda (a b) (< (cadr a) (cadr b))) (car before)) (cadr before)
+                     (assoc omitted states) (assoc gap states) (rpc head 'checkpoint))
+                   (list (map car states) (list 'buffer (cadddr saved)) #f #f checkpoint))
                  (test:check 'restore-preserves-text-revisions-baselines-and-edit-time
                    (list (rpc head 'snapshot note)
                      (let ([facts (caddr (rpc head 'snapshot file))])
@@ -838,7 +837,7 @@
                             (list (car (rpc head 'snapshot id)) (cdr (assq 'read-only facts)) (assq 'wrap facts)
                               (filter (lambda (entry) (memq (car entry) '(app mode alive disposable))) facts))))
                      (list term ended))
-                   (map (lambda (id) (list (list-ref (assv id states) 3) #t '(wrap . #f) '((mode . "terminal")))) (list term ended)))
+                   (map (lambda (id) (list (list-ref (assoc id states) 3) #t '(wrap . #f) '((mode . "terminal")))) (list term ended)))
                  (let* ([revision (cadr expected)] [notice (rpc head 'startup-notice)])
                    (rpc head 'edit note revision '(0 0 0 0) '("new base "))
                    ;; The restored log keeps the deltas: a basis from before the
@@ -869,11 +868,11 @@
                    (hello head '(head "kept desk"))
                    (test:check (list 'repeated-stops-restore-latest-state mode cycle)
                      (list (rpc head 'snapshot note) (rpc head 'checkpoint)
-                           (list-sort < (car before)) (cadr before)
+                           (list-sort (lambda (a b) (< (cadr a) (cadr b))) (car before)) (cadr before)
                            (rpc head 'history note)
                            (map (lambda (id) (car (rpc head 'snapshot id))) (list term ended)))
-                     (list expected checkpoint (map car (cdr (list-ref saved 4))) (cadddr saved) expected-history
-                           (map (lambda (id) (list-ref (assv id (cdr (list-ref saved 4))) 3)) (list term ended))))
+                     (list expected checkpoint (map car (cdr (list-ref saved 4))) (list 'buffer (cadddr saved)) expected-history
+                           (map (lambda (id) (list-ref (assoc id (cdr (list-ref saved 4))) 3)) (list term ended))))
                    (let ([review (and (eq? mode 'shutdown) (rpc head 'prepare-close))])
                      ;; Shared edits during a shutdown review need no new
                      ;; consent, just as with the maintenance restart above.
@@ -890,7 +889,7 @@
                    (test:await 'repeated-save-exits (lambda () (sys:process-status (fixture:process base))))
                    (set! saved (call-with-input-file path read))
                    (test:check (list 'repeated-stops-replace-session mode cycle)
-                     (list (list-ref (assv note (cdr (list-ref saved 4))) 3)
+                     (list (list-ref (assoc note (cdr (list-ref saved 4))) 3)
                            (cadr (assoc "kept desk" (cdr (list-ref saved 5))))
                            (list-ref saved 6)
                            (call-with-input-file model-state read)
@@ -1194,7 +1193,7 @@
                                 (occurrences errors (format "~a modified" (cdr (assq 'modified before))))
                                 (occurrences (caddr result) "\x1b;")
                                 (equal? before (rpc control 'status))
-                                (head-read head '(list (head:buffer-line (head:current-buffer) 0) (length (log:entries 'policy 100)))))))
+                                (head-read head '(list (head:buffer-line (head:current-buffer-mirror) 0) (length (log:entries 'policy 100)))))))
                       (list #f (+ wire:version 1)))
                  (make-list 2 (list 1 1 1 1 0 #t (list "kept after restart" policy-before)))))
              (write-text source-path (string-append source "\n; changed source for maintenance restart\n")))
@@ -1212,7 +1211,7 @@
                  (sys:reap-terminal-process! (vector-ref launcher 0))
                  (test:check 'restart-cancellation-is-inert
                    (list (equal? original (call-with-input-file pid-path read))
-                         (head-read head '(head:buffer-line (head:current-buffer) 0))) '(#t "kept after restart"))))
+                         (head-read head '(head:buffer-line (head:current-buffer-mirror) 0))) '(#t "kept after restart"))))
              '("n\n" "\x04;"))
            (mkdir temporary #o700)
            (dynamic-wind void
@@ -1242,16 +1241,16 @@
              (write-text wire-path
                (string-append (substring wire-source 0 at) (format "(define version ~a)" (+ wire:version 1))
                  (substring wire-source (+ at (string-length needle)) (string-length wire-source)))))
-           (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer) 0) (head:point)))]
+           (let* ([expected (head-read head '(list (head:buffer-line (head:current-buffer-mirror) 0) (head:point)))]
                   [saved-query (head-read head
                                  '(let* ([source (collection:create-source! head:ui-actor '((name "Name" string))
                                                    '#(("persisted" ((name . "persisted")) ())) 'persistent)])
                                     (collection:create! head:ui-actor source "" '() 'persistent)))]
                   [saved-widget (head-read head
                                   '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))]
-                                         [was (head:current-buffer)])
+                                         [was (head:current-buffer-mirror)])
                                      (window:show-widget! (head:current-window) id)
-                                     (head:show-buffer! was) (head:checkpoint!) id))]
+                                     (head:show-buffer-mirror! was) (head:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
                (lambda () (> (occurrences (vector-ref launcher 3) "Restart anyway?") 0)))
@@ -1298,7 +1297,7 @@
                                            [screen (string:search output "\x1b;[?1049h" 0 (string-length output))])
                                       (and notice screen (< notice screen)))) heads)))
                    (not (equal? original replacement))
-                   (head-read launcher '(list (head:buffer-line (head:current-buffer) 0) (head:point)))
+                   (head-read launcher '(list (head:buffer-line (head:current-buffer-mirror) 0) (head:point)))
                    (head-read launcher '(and (head:buffer-named "<local draft kept>") #t))
                    (map (lambda (head)
                           (head-read head '(let ([status (client:request 'status)])
@@ -1330,11 +1329,11 @@
            ;; A hidden Finder keeps its own cursor while another view edits
            ;; their shared filter. Restart must rebase that saved cursor.
            (head-read head
-             `(let* ([was (head:current-buffer)] [app (finder:open-directory! ,root)]
-                     [host (head:buffer-fact (head:current-buffer) 'widget-id #f)]
+             `(let* ([was (head:current-buffer-mirror)] [app (finder:open-directory! ,root)]
+                     [host (head:buffer-fact (head:current-buffer-mirror) 'widget-id #f)]
                      [entry (widget:descendant app 'table 'filter 'entry)])
                 (entry:insert! entry "old")
-                (head:show-buffer! was) (widget:unmount! host)
+                (head:show-buffer-mirror! was) (widget:unmount! host)
                 (let ([other (view:fork! head:ui-actor entry)])
                   (widget:mount! other 'filter-writer)
                   (entry:set-text! other ,(string-append root "/A"))
@@ -1353,7 +1352,7 @@
              (test:check 'no-live-restart-keeps-omission-notice-and-opens-file-argument
                (list (occurrences (vector-ref launcher 3) "Restart anyway?")
                      (> (occurrences (vector-ref launcher 3) "restart keeps shared text with undo/redo history") 0)
-                     (head-read launcher '(head:buffer-file (head:current-buffer)))) (list 0 #t file))
+                     (head-read launcher '(head:buffer-file (head:current-buffer-mirror)))) (list 0 #t file))
              (test:check 'restarted-hidden-finder-edits-the-restored-filter
                (head-read launcher
                  '(let* ([app (finder:open!)] [entry (widget:descendant app 'table 'filter 'entry)])
@@ -1539,8 +1538,8 @@
                (hello temporary '(head "prompt owner")) (receive temporary)
                (let* ([id (rpc temporary 'prompt-create #f #f "input" '((origin . explicit)) '(head-symbols 1))]
                       [record (caddr (caadr (rpc head 'model-read (list id))))]
-                      [draft (cadr (cdr (assq 'draft (cdr (assq 'value record)))))]
-                      [view (rpc temporary 'view-create (list 'buffer draft) 'entry 1 '() '((0 . 0) (0 . 0)) id)]
+                      [draft (cdr (assq 'draft (cdr (assq 'value record))))]
+                      [view (rpc temporary 'view-create draft 'entry 1 '() '((0 . 0) (0 . 0)) id)]
                       [removed (rpc temporary 'view-create #f 'label 1 '() '() id)])
                  (test:check 'prompt-wire-attribution-and-service-ownership
                    (list (rpc head 'prompt-accept id 0 0)
@@ -1553,10 +1552,10 @@
                  (test:await 'prompt-wire-departure-releases-owned-state
                    (lambda () (and (not (caddr (caadr (rpc head 'model-read (list id)))))
                                 (not (caddr (caadr (rpc head 'model-read (list view)))))
-                                (not (memv draft (rpc head 'buffers))))))))
+                                (not (member draft (rpc head 'buffers))))))))
              (let* ([temporary (connect)] [document (car (rpc head 'buffers))])
                (hello temporary '(head "search owner")) (receive temporary)
-               (let* ([target (rpc temporary 'view-create (list 'buffer document) 'editor 1 '() '((0 . 0) (0 . 0) (0 . 0) #f))]
+               (let* ([target (rpc temporary 'view-create document 'editor 1 '() '((0 . 0) (0 . 0) (0 . 0) #f))]
                       [request (map cons '(target document basis sequence start needle fold? visible direction summary? overlap?)
                                  (list target document 0 0 '(0 . 0) "hello" #f '(0 0 0 7) 'next #f #t))]
                       [id (rpc temporary 'search-create request #t)])
@@ -1578,7 +1577,7 @@
                              (format "(display \"ready\") (let wait () (unless (file-exists? ~s) (sleep (make-time 'time-duration 5000000 0)) (wait))) 42" gate) #f)])
                  (define (job-value)
                    (cdr (assq 'value (caddr (caadr (rpc head 'model-read (list job)))))))
-                 (let ([output (cadr (cdr (assq 'output (job-value))))])
+                 (let ([output (cdr (assq 'output (job-value)))])
                    (test:await 'environment-worker-streaming
                      (lambda () (equal? (car (rpc head 'snapshot output)) '#("ready"))))
                    (sys:close-connection! temporary)
@@ -1604,14 +1603,14 @@
                (make-list 6 (list 'error #t #t (list (list identity identity)))))
              (test:check 'request-errors-preserve-the-connection
                (map (lambda (message) (list-head (exchange head message) 3))
-                    '((request 1 edit) (request 2 snapshot 999) (request 3 buffers extra)
-                      (request 4 edit 1 0 (0 0 -1 0) ("x")) (request 5 edit 1 0.5 (0 0 0 0) ("x"))
-                      (request 6 undo 1 everyone)
-                      (request 7 edit 1 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
-                      (request 8 edit 1 0 (0 0 0 0) ("x") #f #f #f)
-                      (request 8 edit 1 0 (0 0 0 0) ("x") #f delta)
-                      (request 9 redo 1 all) (request 10 snapshot 1 #f)
-                      (request 11 snapshot 1 -1) (request 12 watch extra)
+                    '((request 1 edit) (request 2 snapshot (buffer 999)) (request 3 buffers extra)
+                      (request 4 edit (buffer 1) 0 (0 0 -1 0) ("x")) (request 5 edit (buffer 1) 0.5 (0 0 0 0) ("x"))
+                      (request 6 undo (buffer 1) everyone)
+                      (request 7 edit (buffer 1) 0 (0 0 0 0) ("x") (g "invalid" ((trailing . #t)) ((trailing . #f))))
+                      (request 8 edit (buffer 1) 0 (0 0 0 0) ("x") #f #f #f)
+                      (request 8 edit (buffer 1) 0 (0 0 0 0) ("x") #f delta)
+                      (request 9 redo (buffer 1) all) (request 10 snapshot (buffer 1) #f)
+                      (request 11 snapshot (buffer 1) -1) (request 12 watch extra)
                       (request 13 checkpoint (head "another") stolen)
                       (request 14 eval) (request 15 eval #f (agent "forged"))
                       (request 16 revoke (head "desk λ")) (request 17 revoke #f)
@@ -1631,7 +1630,7 @@
                  (reply 22 error) (reply 23 error) (reply 24 error) (reply 25 error)
                  (reply 26 error) (reply 27 ok) (reply 28 error) (reply 29 error) (reply 30 error)))
              (test:check 'existing-endpoint-is-never-unlinked
-               (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name 1))
+               (list (test:raises? (lambda () (sys:listen-local socket))) (rpc head 'name '(buffer 1)))
                '(#t "notes λ"))
              (sys:close-connection! head))
            ;; Leave one connection stalled before hello and another after it.
@@ -1639,11 +1638,11 @@
            (let ([idle (connect)] [agent (connect)] [identity '(agent "reader")])
              (test:check 'agent-uses-the-same-read-connection
                (list (hello agent identity) (receive agent) (rpc agent 'buffers)
-                 (car (rpc agent 'snapshot 2))
+                 (car (rpc agent 'snapshot '(buffer 2)))
                  (rpc agent 'eval "(buffer-text-line \"notes λ\" 0)") (rpc agent 'eval #f)
                  (rpc agent 'eval "'#0=#(#0#)")
                  (rpc agent 'eval "(") (car (rpc agent 'eval "(delete-file \"unused\")")))
-               (list (list 'hello wire:version identity '(read)) '(event (from-base "welcome")) '(1 2 3)
+               (list (list 'hello wire:version identity '(read)) '(event (from-base "welcome")) '((buffer 1) (buffer 2) (buffer 3))
                  '#("a local audience") '(ok . "=> \"hello λ\"") '(ok . "=> #f")
                  '(ok . "=> #0=#(#0#)")
                  '(error . "unreadable expression") 'unbound))
@@ -1692,7 +1691,7 @@
                         (list (hello connection actor) (receive connection)
                           (rpc connection 'watch) (rpc connection 'watch))) writers actors)
                  (map (lambda (actor) (list (list 'hello wire:version actor '(read edit undo redo))
-                                        '(event (from-base "welcome")) '(1 2 3) '(1 2 3))) actors))
+                                        '(event (from-base "welcome")) '((buffer 1) (buffer 2) (buffer 3)) '((buffer 1) (buffer 2) (buffer 3)))) actors))
                (test:check 'wire-evaluation-uses-the-configured-grants-fuel-and-preview-cap
                  (list (rpc first 'eval "(+ 1 2)")
                    (rpc first 'eval "(display \"hi\") (+ 1 2)")
@@ -1700,17 +1699,21 @@
                    (car (rpc first 'eval "(buffer-names)"))
                    (car (rpc first 'eval "(let loop () (loop))"))
                    (car (rpc first 'eval "(make-vector 100000 #f)"))
-                   (car (rpc second 'snapshot 1)))
+                   (car (rpc second 'snapshot '(buffer 1))))
                  '((ok . "=> 3") (ok . "=> 3\noutput:\nhi") (ok . "=> \"abcdefghijkl ...")
                    unbound fuel fuel #("hello λ")))
                ;; Hold the first policy audit callback after commit. A second
                ;; actor commits before the first reply: its receipt must still
                ;; describe exactly its own accepted revision and anchor chain.
                (wire:send! (sys:connection-output first)
-                 '(request 7 edit 1 0 (0 0 0 5) ("HELLO")
-                    ((batch 1) "replace and prefix" (undo . ((trailing . #f))) (commit . ((saved-stamp . "observed")))) #t))
+                 '(request 7 edit (buffer 1) 0 (0 0 0 5) ("HELLO")
+                    ((batch 1)
+                     "replace and prefix"
+                     (undo (trailing . #f))
+                     (commit (saved-stamp . "observed")))
+                    #t))
                (test:await 'first-edit-committed (lambda () (file-exists? edit-held)))
-               (let ([second-result (rpc second 'edit 1 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
+               (let ([second-result (rpc second 'edit '(buffer 1) 0 '(0 7 0 7) '("!") '((batch 1) "other actor"))])
                  (write-text edit-release "continue")
                  (let ([results (list (reply-value (receive-reply first)) second-result)])
                    (test:check 'full-and-delta-receipts-keep-each-writers-own-commit-facts
@@ -1730,60 +1733,59 @@
                (test:check 'watchers-adopt-one-text-facts-and-anchor-snapshot
                  (map
                    (lambda (connection)
-                     (let* ([state (rpc connection 'snapshot 1 0)] [chain (cadddr state)])
+                     (let* ([state (rpc connection 'snapshot '(buffer 1) 0)] [chain (cadddr state)])
                        (list (car state) (cadr state) (assq 'trailing (caddr state))
                          (assq 'saved-stamp (caddr state))
                          (apply-changes '#("hello λ") chain) (map cadr chain)
                          (and (exists (lambda (notice)
                                         (and (eq? (car notice) connection)
-                                             (or (not (cdr notice)) (assv 1 (cdr notice))))) (notices)) #t))))
+                                             (or (not (cdr notice)) (assoc '(buffer 1) (cdr notice))))) (notices)) #t))))
                    writers)
                  (make-list 2 '(#("HELLO λ!") 2 (trailing . #f) (saved-stamp . "observed")
                                 #("HELLO λ!") ((agent "first") (agent "second")) #t)))
                (test:check 'wire-delta-replies-omit-text-only-with-a-complete-chain
-                 (let ([delta (rpc (car writers) 'state 1 0 #t)]
-                       [plain (rpc (car writers) 'state 1 0)]
-                       [future (rpc (car writers) 'state 1 5 #t)])
+                 (let ([delta (rpc (car writers) 'state '(buffer 1) 0 #t)]
+                       [plain (rpc (car writers) 'state '(buffer 1) 0)]
+                       [future (rpc (car writers) 'state '(buffer 1) 5 #t)])
                    (list (cadr delta) (apply-changes '#("hello λ") (list-ref delta 4)) (caddr delta)
                      (cadr plain) (cadr future) (list-ref future 4)
-                     (map car (cadddr (rpc (car writers) 'state 1 2 'facts)))
+                     (map car (cadddr (rpc (car writers) 'state '(buffer 1) 2 'facts)))
                      (and (assq 'trailing (cadddr delta)) #t)))
                  '(#f #("HELLO λ!") 2 #("HELLO λ!") #("HELLO λ!") #f (modified modified-at conflicts) #t))
                (test:check 'stale-and-permission-refusals-preserve-text
-                 (list (rpc second 'edit 1 0 '(0 1 0 3) '("bad"))
-                   (rpc agent 'edit 1 2 '(0 0 0 0) '("bad"))
-                   (rpc first 'edit 2 0 '(0 0 0 0) '("bad"))
-                   (rpc agent 'undo 1 'all) (rpc first 'undo 2) (rpc agent 'redo 1) (rpc first 'redo 2)
-                   (car (rpc agent 'snapshot 1)) (car (rpc agent 'snapshot 2)))
+                 (list (rpc second 'edit '(buffer 1) 0 '(0 1 0 3) '("bad"))
+                   (rpc agent 'edit '(buffer 1) 2 '(0 0 0 0) '("bad"))
+                   (rpc first 'edit '(buffer 2) 0 '(0 0 0 0) '("bad"))
+                   (rpc agent 'undo '(buffer 1) 'all) (rpc first 'undo '(buffer 2)) (rpc agent 'redo '(buffer 1)) (rpc first 'redo '(buffer 2))
+                   (car (rpc agent 'snapshot '(buffer 1))) (car (rpc agent 'snapshot '(buffer 2))))
                  '((stale overlap) (refused buffer) (refused buffer) (refused buffer) (refused buffer) (refused buffer) (refused buffer)
                    #("HELLO λ!") #("a local audience")))
                ;; Repeating an actor/buffer-local key joins its two commits,
                ;; across the other writer's same-key edit. Undo facts reverse
                ;; with the text; observed external facts survive undo/redo.
-               (rpc first 'edit 1 2 '(0 0 0 0) '("A") '((batch 1) "replace and prefix"))
-               (let* ([mine (rpc first 'undo 1)] [after-mine (rpc agent 'snapshot 1)]
-                      [again (rpc first 'undo 1)] [other (rpc first 'undo 1 '(actor (agent "second")))])
+               (rpc first 'edit '(buffer 1) 2 '(0 0 0 0) '("A") '((batch 1) "replace and prefix"))
+               (let* ([mine (rpc first 'undo '(buffer 1))] [after-mine (rpc agent 'snapshot '(buffer 1))]
+                      [again (rpc first 'undo '(buffer 1))] [other (rpc first 'undo '(buffer 1) '(actor (agent "second")))])
                  (test:check 'grouped-undo-defaults-to-mine-and-keeps-commit-facts
                    (list mine (car after-mine) (assq 'trailing (caddr after-mine))
                      (assq 'saved-stamp (caddr after-mine)) again other)
                    '((applied 5) #("hello λ!") #f (saved-stamp . "observed") (nothing #f) (applied 6))))
-               (let* ([original-author (rpc second 'redo 1)] [other (rpc first 'redo 1)]
-                      [mine (rpc first 'redo 1)] [after (rpc agent 'snapshot 1)]
-                      [undo-group (rpc first 'undo 1 'all)] [undo-other (rpc first 'undo 1 'all)])
+               (let* ([original-author (rpc second 'redo '(buffer 1))] [other (rpc first 'redo '(buffer 1))]
+                      [mine (rpc first 'redo '(buffer 1))] [after (rpc agent 'snapshot '(buffer 1))]
+                      [undo-group (rpc first 'undo '(buffer 1) 'all)] [undo-other (rpc first 'undo '(buffer 1) 'all)])
                  (test:check 'redo-belongs-to-the-undo-requester-and-restores-whole-groups
                    (list original-author other mine (car after)
                      (assq 'trailing (caddr after)) (assq 'saved-stamp (caddr after))
-                     undo-group undo-other (car (rpc agent 'snapshot 1)))
+                     undo-group undo-other (car (rpc agent 'snapshot '(buffer 1))))
                    '((nothing #f) (applied 7) (applied 9) #("AHELLO λ!")
                      (trailing . #f) (saved-stamp . "observed") (applied 11) (applied 12) #("hello λ"))))
-               (rpc first 'edit 1 12 '(0 0 0 0) '("") '(protect "protect" (undo . ((read-only . #t)))))
-               (let ([before (rpc agent 'snapshot 1)])
+               (rpc first 'edit '(buffer 1) 12 '(0 0 0 0) '("") '(protect "protect" (undo (read-only . #t))))
+               (let ([before (rpc agent 'snapshot '(buffer 1))])
                  (test:check 'wire-clients-cannot-bypass-read-only-with-facts-or-history
-                   (list (rpc first 'edit 1 13 '(0 0 0 0) '("bad")
-                              '(escape "escape" (undo . ((read-only . #f))) (expected . (read-only))))
-                     (rpc second 'edit 1 13 '(0 0 0 0) '("bad"))
-                     (rpc first 'undo 1 'all) (rpc first 'redo 1)
-                     (equal? before (rpc agent 'snapshot 1)))
+                   (list (rpc first 'edit '(buffer 1) 13 '(0 0 0 0) '("bad") '(escape "escape" (undo (read-only . #f)) (expected read-only)))
+                     (rpc second 'edit '(buffer 1) 13 '(0 0 0 0) '("bad"))
+                     (rpc first 'undo '(buffer 1) 'all) (rpc first 'redo '(buffer 1))
+                     (equal? before (rpc agent 'snapshot '(buffer 1))))
                    '((refused read-only) (refused read-only) (refused read-only) (refused read-only) #t)))
                (for-each sys:close-connection! writers)
                (test:await 'connection-sessions-revoked
@@ -1800,38 +1802,38 @@
                                    (lambda ()
                                      (guard (ex [else (void)])
                                        (do ([i 0 (+ i 1)]) ((= i (cdr scenario)))
-                                           (wire:send! (sys:connection-output slow) (list 'request i 'snapshot 2))))))])
+                                           (wire:send! (sys:connection-output slow) (list 'request i 'snapshot '(buffer 2)))))))])
                        (test:await 'overloaded-reader-detached
                          (lambda () (not (assoc who (rpc agent 'actors)))))
                        (sent))
                      (sys:close-connection! slow)
                      (list (not (assoc who (inventory agent)))
-                       (cdr (assq 'alive (caddr (rpc agent 'snapshot 3)))))))
+                       (cdr (assq 'alive (caddr (rpc agent 'snapshot '(buffer 3))))))))
                  '(("stalled count" . 512) ("stalled bytes" . 32)))
                '((#t #t) (#t #t)))
              (let ([slow (connect)] [who '(agent "stalled mail")])
                (wire:send! (sys:connection-output slow) (list 'hello wire:version who (fingerprint)))
                (test:await 'publication-mail-refused
-                 (lambda () (assq 'mail-refused (caddr (rpc agent 'snapshot 1)))))
+                 (lambda () (assq 'mail-refused (caddr (rpc agent 'snapshot '(buffer 1))))))
                (test:await 'publication-overload-detached
                  (lambda () (not (assoc who (rpc agent 'actors)))))
                (test:check 'publication-overload-refuses-delivery-and-cleans-up-before-writer-start
                  (list (eof-object? (receive slow)) (not (assoc who (inventory agent)))
-                   (assq 'mail-refused (caddr (rpc agent 'snapshot 1))))
+                   (assq 'mail-refused (caddr (rpc agent 'snapshot '(buffer 1)))))
                  '(#t #t (mail-refused . #t))))
              (write-text trigger "continue")
              (test:await 'background-agent
-               (lambda () (equal? (car (rpc agent 'snapshot 1)) '#("agent work while detached"))))
+               (lambda () (equal? (car (rpc agent 'snapshot '(buffer 1))) '#("agent work while detached"))))
              (test:check 'terminal-outlives-head-disconnect
-               (cdr (assq 'alive (caddr (rpc agent 'snapshot 3)))) #t)
+               (cdr (assq 'alive (caddr (rpc agent 'snapshot '(buffer 3))))) #t)
              (signal! "HUP")
              (test:check 'hup-keeps-the-base-and-current-revision
-               (car (rpc agent 'snapshot 1)) '#("agent work while detached"))
+               (car (rpc agent 'snapshot '(buffer 1))) '#("agent work while detached"))
              ;; a basis before the reset at 14 gets a chain, the reset bridged by
              ;; a line diff; a future basis gets none
              (test:check 'wire-catchup-distinguishes-current-bridged-and-missing-history
                (map (lambda (basis)
-                      (let ([state (rpc agent 'snapshot 1 basis)])
+                      (let ([state (rpc agent 'snapshot '(buffer 1) basis)])
                         (list (car state) (cadr state) (assq 'read-only (caddr state))
                               (let ([changes (cadddr state)]) (if (pair? changes) 'chain changes)))))
                     '(14 13 15))
@@ -1854,12 +1856,12 @@
                    (list (map add1 (iota 14))
                      (append '((agent "first") (agent "second")) (make-list 11 '(agent "first"))
                        '((agent "background")))
-                     '(edit 1 1 (0 0 0 5)) '(reset 1 14) #t))))
+                     '(edit (buffer 1) 1 (0 0 0 5)) '(reset (buffer 1) 14) #t))))
              (let ([head (connect)])
                (hello head '(head "desk λ")) (receive head)
                (test:check 'released-name-reads-producer-work-and-respects-read-only
-                 (list (car (rpc head 'snapshot 1))
-                   (rpc head 'edit 1 14 '(0 0 0 0) '("bad")) (rpc head 'undo 1) (rpc head 'redo 1))
+                 (list (car (rpc head 'snapshot '(buffer 1)))
+                   (rpc head 'edit '(buffer 1) 14 '(0 0 0 0) '("bad")) (rpc head 'undo '(buffer 1)) (rpc head 'redo '(buffer 1)))
                  '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only)))
                ;; Separate connection threads race named fact batches against
                ;; state reads. Bounded bursts keep writes contending without
@@ -1920,24 +1922,24 @@
              (let ([id (rpc head 'create "attached text" '("shared text") '((trailing . #t)))])
                (write-forms (string-append root "/config.e")
                  `((main:set-startup-page! #f)
-                   (head:show-buffer! (head:adopt-store-buffer! ,id))))
+                   (head:show-buffer-mirror! (head:adopt-store-buffer! ',id))))
                (let* ([a (start-head "screen A")]
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text")))
                  (test:check 'rewrite-preview-crosses-the-client-seam
-                   (head-read a `(call-with-values (lambda () (store:rewrite-preview ,id '())) list)) '(#("shared text") () () 0))
+                   (head-read a `(call-with-values (lambda () (store:rewrite-preview ',id '())) list)) '(#("shared text") () () 0))
                  (test:check 'rewrite-draft-lifecycle-crosses-the-client-seam
-                   (head-read a `(let* ([draft (rewrite:create! head:ui-actor ,id)] [p (rewrite:preview draft)])
+                   (head-read a `(let* ([draft (rewrite:create! head:ui-actor ',id)] [p (rewrite:preview draft)])
                                    (let ([preview (review-preview:create! head:ui-actor draft)])
                                      (review-preview:close! head:ui-actor (car preview))
                                      (when (store:exists? (cadr preview)) (error 'preview "output survived retirement")))
                                    (rewrite:close! head:ui-actor draft 0)
                                    (list (list-ref p 3) (list-ref p 6)))) '(#("shared text") 0))
                  (test:check 'conflict-review-lifecycle-crosses-the-client-seam
-                   (head-read a `(let* ([draft (conflict-review:create! head:ui-actor (list ,id))]
-                                        [p (conflict-review:preview draft ,id)]
-                                        [results (conflict-review:settle! head:ui-actor draft 0 (list ,id))])
+                   (head-read a `(let* ([draft (conflict-review:create! head:ui-actor (list ',id))]
+                                        [p (conflict-review:preview draft ',id)]
+                                        [results (conflict-review:settle! head:ui-actor draft 0 (list ',id))])
                                    (conflict-review:close! head:ui-actor draft 0)
                                    (list (list-ref p 3) (map cadr results)))) '(#("shared text") (applied)))
                  (let* ([draft (rpc head 'conflict-review-create (list id))]
@@ -1956,7 +1958,7 @@
                    (rpc head 'conflict-review-close draft 0))
                  (for-each (lambda (ui)
                              (head-read ui `(begin (log-view:show!) (window:delete-others!)
-                                                   (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))) (list a b))
+                                                   (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))) (list a b))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
                    (let ([view (rpc head 'view-create model 'value 1 '() 0)])
@@ -2015,8 +2017,8 @@
                         [composition
                          (head-read a
                            `(let* ([who head:ui-actor] [source (store:create! who "entry across heads" '("seed"))]
-                                   [left (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
-                                   [right (view:create! who (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [left (view:create! who source 'entry 1 '() '((0 . 0) (0 . 0)))]
+                                   [right (view:create! who source 'entry 1 '() '((0 . 0) (0 . 0)))]
                                    [row (view:create! who #f 'row 1 '() '())]
                                    [column (view:create! who #f 'column 1 '() '())]
                                    [overlay (view:create! who #f 'overlay 1 '() '())]
@@ -2051,12 +2053,12 @@
                    (head-read a `(begin (widget:focus! ',root-view ',left) #t))
                    (head-send! a "\x1b;[200~local \x1b;[201~")
                    (head-wait 'nested-entry-paste a (lambda () (head-sees? a "local seed")))
-                   (head-read b `(begin (head:store-edit! (head:adopt-store-buffer! ,source) (text:make-span 0 0 0 0) '("remote ")) #t))
+                   (head-read b `(begin (head:store-edit! (head:adopt-store-buffer! ',source) (text:make-span 0 0 0 0) '("remote ")) #t))
                    (head-wait 'nested-entry-foreign-text a (lambda () (head-sees? a "remote local seed")))
                    (head-read a `(begin (entry:undo! ',left) (entry:select! ',right 3 1) (widget:focus! ',root-view ',right) #t))
                    (head-wait 'nested-entry-shared-undo a (lambda () (head-sees? a "remote seed")))
                    (test:check 'nested-entry-keeps-shared-text-and-independent-selection
-                     (head-read a `(list (text-source:lines (text-source:lookup ,source))
+                     (head-read a `(list (text-source:lines (text-source:lookup ',source))
                                          (view:state (interaction:snapshot ',right))
                                          (equal? (view:state (interaction:snapshot ',left)) (view:state (interaction:snapshot ',right)))))
                      '(#("remote seed") ((0 . 3) (0 . 1)) #f))
@@ -2076,14 +2078,24 @@
                      (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
                    (test:check 'nested-resume-restores-focus-and-advances-logical-selection
                      (head-read a `(list (view:focus (interaction:snapshot ',root-view)) (view:state (interaction:snapshot ',right))
-                                         (text-source:lines (text-source:lookup ,source))))
+                                         (text-source:lines (text-source:lookup ',source))))
                      (list right '((0 . 7) (0 . 5)) '#("off remote seed")))
                    (test:check 'resumed-entry-edits-its-rebased-selection-after-detached-edits
-                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (text-source:lines (text-source:lookup ,source)) 0)))
+                     (head-read a `(begin (entry:insert! ',right "X") (vector-ref (text-source:lines (text-source:lookup ',source)) 0)))
                      "off rXote seed")
                    (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (head:buffer-fact b 'widget-id #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
-                                        (window:delete-others!) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
-                   (head-read b `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote second)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers))) (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                                        (window:delete-others!) (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
+                   (head-read
+                     b
+                     `(begin
+                        (for-each
+                          (lambda (b) (head:forget-buffer! b))
+                          (filter
+                            (lambda (b)
+                              (equal? ',second (head:buffer-fact b 'widget-id #f)))
+                            (head:buffers)))
+                        (head:show-buffer-mirror! (head:adopt-store-buffer! ',id))
+                        #t)))
                  (test:check 'two-real-heads-use-client-services-and-local-tools
                    (map (lambda (client)
                           (head-read client
@@ -2123,11 +2135,11 @@
                                         '((base . "alpha tail") (trailing . #f)))])
                    (define (review)
                      (head-read a
-                       `(let-values ([(text revision conflicts) (store:conflict-state ,conflicted)])
+                       `(let-values ([(text revision conflicts) (store:conflict-state ',conflicted)])
                           (list text (map (lambda (c) (list-ref c 5)) conflicts)))))
                    (rpc head 'edit conflicted 0 '(0 0 0 5) '("mine"))
                    (rpc head 'reload conflicted '("disk tail") '((base . "disk tail") (trailing . #f)))
-                   (head-read a `(begin (store:snapshot ,conflicted) #t))
+                   (head-read a `(begin (store:snapshot ',conflicted) #t))
                    (let ([cached (review)] [picked (rpc head 'conflicts conflicted)]
                          [omitted (car (rpc head 'conflict-state conflicted (cadr (rpc head 'snapshot conflicted))))])
                      (rpc head 'reload conflicted '("newdisk tail") '((base . "newdisk tail") (trailing . #f)))
@@ -2136,10 +2148,10 @@
                        '((#("disk tail") (("disk"))) #f (#("newdisk tail") (("newdisk")))))
                      (test:check 'attached-settlement-checks-the-reviewed-state-at-the-base
                        (head-read a
-                         `(let ([stale (call-with-values (lambda () (store:resolve-picks! head:ui-actor ,conflicted ',picked '(1))) list)]
-                                [fresh (store:conflicts ,conflicted)])
-                            (let-values ([(status detail) (store:resolve-picks! head:ui-actor ,conflicted fresh '(1))])
-                              (list stale status (store:line ,conflicted 0)))))
+                         `(let ([stale (call-with-values (lambda () (store:resolve-picks! head:ui-actor ',conflicted ',picked '(1))) list)]
+                                [fresh (store:conflicts ',conflicted)])
+                            (let-values ([(status detail) (store:resolve-picks! head:ui-actor ',conflicted fresh '(1))])
+                              (list stale status (store:line ',conflicted 0)))))
                        '((refused conflict-changed) applied "mine tail")))
                    (rpc head 'delete conflicted))
                  ;; Exercise the installed save hook, including first load,
@@ -2214,7 +2226,7 @@
                          (map cadr (rpc head 'history id 3))
                          (let ([stamp (cdr (assq 'modified-at (caddr (rpc head 'snapshot id))))])
                            (map (lambda (screen)
-                                  (= stamp (head-read screen '(head:buffer-modified-at (head:current-buffer))))) (list a b))))
+                                  (= stamp (head-read screen '(head:buffer-modified-at (head:current-buffer-mirror))))) (list a b))))
                    '(#("shared text B") (0 . 0) ((head "screen A") (head "screen B") (head "screen A")) (#t #t)))
                  (head-read a '(parameterize ([edit:undo-scope 'all]) (edit:undo!)))
                  (test:check 'attached-explicit-other-actor-undo-and-requester-redo
@@ -2224,7 +2236,7 @@
                  (let ([ink (rpc head 'create "tint overlap" '("base"))])
                    (for-each
                      (lambda (screen)
-                       (head-read screen `(begin (head:show-buffer! (head:adopt-store-buffer! ,ink)) #t)))
+                       (head-read screen `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',ink)) #t)))
                      (list a b))
                    (head-send! b "\x1b;[200~FOREIGN\x1b;[201~")
                    (head-wait 'foreign-ink a (lambda () (head-sees? a "FOREIGNbase")))
@@ -2239,7 +2251,7 @@
                          #("FORXEIGNbase"))))
                    (for-each
                      (lambda (screen)
-                       (head-read screen `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                       (head-read screen `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t)))
                      (list a b))
                    (rpc head 'delete ink))
                  (let ([ticket (reply-value (exchange agent
@@ -2297,13 +2309,13 @@
                  ;; request envelope: a refused fact batch must stay false.
                  (let ([target (rpc head 'create "guarded facts" '("keep")
                                     '((base . "keep\n") (trailing . #t)))])
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',target)) #t))
                    (rpc head 'properties target '((base . "other\n")))
                    (let ([before (rpc head 'snapshot target)])
                      (test:check 'attached-fact-and-merge-refusals-preserve-the-source
                        (list
                          (head-read a
-                           '(let ([b (head:current-buffer)])
+                           '(let ([b (head:current-buffer-mirror)])
                               (list (head:buffer-facts-set! b '((base . "lost")) '((base . "keep\n")) "lost name")
                                     (guard (ex [else (kernel:refusal? ex)])
                                       (head:store-edit! b (text:make-span 0 0 0 4) '("lost")
@@ -2315,7 +2327,7 @@
                        '((#f #t) (stale property-changed) #t () "guarded facts")))
                    (test:check 'attached-fresh-guards-commit-and-undo-keeps-the-baseline
                      (head-read a
-                       '(let* ([b (head:current-buffer)]
+                       '(let* ([b (head:current-buffer-mirror)]
                                [accepted (head:buffer-facts-set! b '((stamp . #f)) '((base . "other\n") stamp) "accepted facts")])
                           (head:store-edit! b (text:make-span 0 0 0 4) '("disk")
                             '(merge "merge" (undo . ((trailing . #f))) (commit . ((base . "disk"))) (expected . ((base . "other\n") (trailing . #t)))))
@@ -2324,7 +2336,7 @@
                             (list accepted clean? (head:buffer-lines b) (head:buffer-base b)
                                   (head:buffer-trailing b) (head:buffer-modified b) (head:buffer-name b)))))
                      '(#t #t #("keep") "disk" #t #t "accepted facts"))
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                    (rpc head 'delete target))
 
                  (for-each
@@ -2332,18 +2344,18 @@
                      (let ([path (string-append root (if existing? "/wire-open-existing.txt" "/wire-open-missing.txt"))])
                        (when existing? (write-text path "disk\n"))
                        (let ([target (head-read a
-                                       `(begin (edit:visit-file! ,path) (head:buffer-store-id (head:current-buffer))))])
+                                       `(begin (edit:visit-file! ,path) (head:buffer-store-id (head:current-buffer-mirror))))])
                          (test:check (list existing? 'attached-file-opening-keeps-create-callback-work)
                            (let* ([screens
                                    (map (lambda (screen)
                                           (head-read screen
                                             `(begin (head:before-frame!)
-                                                    (let* ([b (head:buffer-of-store-id ,target)]
+                                                    (let* ([b (head:buffer-of-store-id ',target)]
                                                            [seen (head:buffer-fact b 'open-observation #f)])
                                                       (list (car seen) (cadr seen)
                                                         (map (lambda (key) (or (assq key (caddr seen)) key))
                                                           '(file base trailing mode mode-auto wrap modified))
-                                                        (head:buffer-lines b) (mode:name-of b) (head:buffer-mode-auto b)
+                                                        (head:buffer-lines b) (mode:name-of (head:buffer-store-id b)) (head:buffer-mode-auto b)
                                                         (head:buffer-base b) (head:buffer-modified b)))))) (list a b))]
                                   [authors (map cadr (rpc head 'history target))]
                                   [disk (and (file-exists? path) (call-with-input-file path get-string-all))])
@@ -2361,7 +2373,7 @@
                                      (if existing? "disk\n" "") #t))
                              '((agent "opening")) (if existing? "disk\n" (eof-object))
                              (list (if existing? '#("disk") '#("")) #f #f)))
-                         (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                         (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                          (rpc head 'delete target))))
                    '(#t #f))
 
@@ -2377,7 +2389,7 @@
                        (let* ([target (rpc head 'find-file path)]
                               [second (head-read b
                                         `(begin (edit:visit-file! ,(string-append root "/./" name))
-                                                (edit:insert-text! "B ") (head:buffer-store-id (head:current-buffer))))]
+                                                (edit:insert-text! "B ") (head:buffer-store-id (head:current-buffer-mirror))))]
                               [before (rpc head 'snapshot target)] [history (rpc head 'history target)]
                               [reused (rpc head 'visit "stale candidate" '("lost")
                                            (list (cons 'file path) '(base . "lost\n") '(mode . #f)))]
@@ -2386,13 +2398,13 @@
                                           (equal? history (rpc head 'history target)))])
                          (write-text open-release "continue")
                          (test:check (list existing? 'overlapping-head-visits-share-current-work)
-                           (list (= target second) kept?
+                           (list (equal? target second) kept?
                                  (map (lambda (screen)
                                         (head-read screen
                                           '(begin (head:before-frame!)
-                                             (let ([b (head:current-buffer)])
+                                             (let ([b (head:current-buffer-mirror)])
                                                (list (head:buffer-store-id b) (head:buffer-lines b)
-                                                     (head:buffer-base b) (mode:name-of b)
+                                                     (head:buffer-base b) (mode:name-of (head:buffer-store-id b))
                                                      (head:buffer-mode-auto b)
                                                      (length (store:history (head:buffer-store-id b)))))))) (list a b))
                                  (and (file-exists? path) (call-with-input-file path get-string-all)))
@@ -2400,7 +2412,7 @@
                                  (make-list 2 (list target (if existing? '#("B callback disk") '#("B callback "))
                                                     (if existing? "disk\n" "") "scheme" #f 2))
                                  (if existing? "disk\n" (eof-object))))
-                         (for-each (lambda (screen) (head-read screen `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t)))
+                         (for-each (lambda (screen) (head-read screen `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t)))
                            (list a b))
                          (rpc head 'delete target))
                        (delete-file path)
@@ -2411,29 +2423,29 @@
                         [retarget (string-append root "/retargeted.ss")]
                         [target (rpc head 'create "before adoption" '("written")
                                      `((save-retarget . ,retarget) (read-only . #t) (disposable . #t)))])
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',target)) #t))
                    (test:check 'attached-save-publishes-adoption-together-and-keeps-newer-callback-choices
                      (list (head-read a `(edit:save-file! ,path)) (call-with-input-file path get-string-all)
                            (map (lambda (screen)
                                   (head-read screen
                                     `(begin (head:before-frame!)
-                                       (let ([b (head:buffer-of-store-id ,target)])
+                                       (let ([b (head:buffer-of-store-id ',target)])
                                          (list (head:buffer-name b) (head:buffer-file b) (head:buffer-base b)
-                                               (mode:name-of b) (head:buffer-mode-auto b)
+                                               (mode:name-of (head:buffer-store-id b)) (head:buffer-mode-auto b)
                                                (head:buffer-lines b) (head:buffer-modified b)))))) (list a b))
                            (cdr (assq 'save-observation (caddr (rpc head 'snapshot target))))
                            (file-exists? retarget))
                      (list #t "written\n"
                            (make-list 2 (list "retargeted.ss" retarget "new baseline\n" "scheme" #f '#("written") #t))
                            (list "adoption.txt" path "written\n" #f #t #f #f #f) #f))
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                    (rpc head 'delete target))
 
                  (let ([path (string-append root "/saved.txt")])
                    (write-text path "shared text B\n")
                    (head-read a
                      `(begin
-                        (head:buffer-facts-set! (head:current-buffer) '((file . ,path) (base . "shared text B\n")))
+                        (head:buffer-facts-set! (head:current-buffer-mirror) '((file . ,path) (base . "shared text B\n")))
                         (parameterize ([kernel:registering-module 'wire-save-hook])
                           (file:add-pre-save-hook!
                             (lambda (target)
@@ -2445,7 +2457,7 @@
                      (lambda () (equal? (car (rpc head 'snapshot id)) '#("from hook"))))
                    (test:check 'the-hooks-write-is-reloaded-then-written
                      (list (head-read a '(begin (kernel:retract-module! 'wire-save-hook)
-                                                (head:buffer-facts-set! (head:current-buffer) '((file . #f) (base . #f))) #t))
+                                                (head:buffer-facts-set! (head:current-buffer-mirror) '((file . #f) (base . #f))) #t))
                            (call-with-input-file path get-string-all) (car (rpc head 'snapshot id)))
                      '(#t "from hook\n" #("from hook")))
                    ;; Nothing asks about a file changed on disk: a visit merges the
@@ -2459,18 +2471,18 @@
                        (let ([target (rpc head 'create "file review" '("keep")
                                           `((file . ,path) (base . "base\n") (trailing . #t)))])
                          (head-read a
-                           `(begin (head:show-buffer! (head:adopt-store-buffer! ,target))
+                           `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',target))
                                    (edit:insert-text! "mine ") #t))
                          (head-send! a (format "\x1b;x~a ~s\r" command path))
                          (head-wait (list command 'rereads-without-asking) a
                            (lambda () (head-sees? a (if (eq? command 'edit:save-file!) "was reread" "Reread"))))
                          (test:check (list command 'a-changed-file-past-the-log-is-reread-undoably)
-                           (list (head-read a '(let ([b (head:current-buffer)])
+                           (list (head-read a '(let ([b (head:current-buffer-mirror)])
                                                  (list (head:buffer-lines b) (head:buffer-modified b) (head:buffer-conflicted b))))
                                  (call-with-input-file path get-string-all)
-                                 (head-read a '(begin (edit:undo!) (head:buffer-lines (head:current-buffer)))))
+                                 (head-read a '(begin (edit:undo!) (head:buffer-lines (head:current-buffer-mirror)))))
                            '((#("disk") #f #f) "disk\n" #("mine keep")))
-                         (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                         (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                          (rpc head 'delete target)))
                      '(edit:visit-file! edit:save-file!))
                    ;; saving under a name a file holds asks nothing: what the file held
@@ -2478,7 +2490,7 @@
                    ;; .bak, and restore! brings it back
                    (write-text path "disk\n")
                    (let ([target (rpc head 'create "file review" '("keep") '((trailing . #t)))])
-                     (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine ") #t))
+                     (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',target)) (edit:insert-text! "mine ") #t))
                      (head-send! a (format "\x1b;xedit:save-file! ~s\r" path))
                      (head-wait 'save-as-writes-and-says-so a (lambda () (head-sees? a "saved.txt.bak")))
                      (test:check 'a-save-as-over-a-file-keeps-what-it-held-as-a-backup
@@ -2486,9 +2498,9 @@
                              ;; the newest backup of the path, its name saved.txt.bak or a suffixed one
                              (head-read a `(let ([kept (find (lambda (b) (equal? (cadr b) ,path)) (edit:backups))])
                                              (and kept (string? (list-ref kept 4))
-                                                  (begin (edit:restore! (car kept)) (vector->list (head:buffer-lines (head:current-buffer))))))))
+                                                  (begin (edit:restore! (car kept)) (vector->list (head:buffer-lines (head:current-buffer-mirror))))))))
                        '("mine keep\n" ("disk")))
-                     (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                     (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                      (rpc head 'delete target)))
 
                  ;; A recovered visiting buffer may have no disk baseline.
@@ -2496,7 +2508,7 @@
                  ;; brings the text back to save. New visits now create a baseline.
                  (let* ([path (string-append root "/missing-save.txt")]
                         [target (rpc head 'create "missing-save.txt" '("") (list (cons 'file path) '(trailing . #t)))])
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,target)) (edit:insert-text! "mine") #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',target)) (edit:insert-text! "mine") #t))
                    (write-text path "disk\n")
                    ;; Inspect the refusal itself: its echo may wrap anywhere
                    ;; as paths and qualified source names vary in length.
@@ -2506,12 +2518,12 @@
                                                       (string-length (kernel:condition-text ex))) #t)])
                                      (edit:save-file! ,path) #f)) #t)
                    (test:check 'a-save-without-a-baseline-rereads-and-undo-restores-the-text-to-save
-                     (list (head-read a '(head:buffer-lines (head:current-buffer)))
+                     (list (head-read a '(head:buffer-lines (head:current-buffer-mirror)))
                            (call-with-input-file path get-string-all)
-                           (head-read a `(begin (edit:undo!) (edit:save-file! ,path) (head:buffer-lines (head:current-buffer))))
+                           (head-read a `(begin (edit:undo!) (edit:save-file! ,path) (head:buffer-lines (head:current-buffer-mirror))))
                            (call-with-input-file path get-string-all))
                      '(#("disk") "disk\n" #("mine") "mine\n"))
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                    (rpc head 'delete target)
                    (delete-file path))
 
@@ -2520,15 +2532,15 @@
                  ;; and restore! brings it back under its name.
                  (let ([doomed (rpc head 'create "kill review" '("work"))])
                    (rpc head 'edit doomed 0 '(0 4 0 4) '("!"))
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,doomed)) #t))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',doomed)) #t))
                    (head-send! a "\x18;k")
                    (head-wait 'kill-trashes-unsaved-work a (lambda () (head-sees? a "its unsaved work is in the trash")))
                    (test:check 'a-trashed-buffer-is-hidden-but-kept
-                     (head-read a `(list (store:exists? ,doomed) (store:visible? head:ui-actor ,doomed)
+                     (head-read a `(list (store:exists? ',doomed) (store:visible? head:ui-actor ',doomed)
                                          (map car (edit:trash)) (and (head:buffer-named "kill review") #t)))
                      '(#t #f ("kill review") #f))
                    (test:check 'restore-brings-the-buffer-back-with-its-text
-                     (head-read a '(let ([b (edit:restore! "kill review")])
+                     (head-read a '(let ([b (head:buffer-of-store-id (edit:restore! "kill review"))])
                                      (list (head:buffer-name b) (vector->list (head:buffer-lines b)) (edit:trash))))
                      '("kill review" ("work!") ()))
                    (rpc head 'delete doomed))
@@ -2556,7 +2568,7 @@
              (let ([id (rpc head 'create "attached text" '("shared text B") '((trailing . #t)))])
                (write-forms (string-append root "/config.e")
                  `((main:set-startup-page! #f) (client:inbox-limits (cons 48 262144))
-                   (head:show-buffer! (head:adopt-store-buffer! ,id))))
+                   (head:show-buffer-mirror! (head:adopt-store-buffer! ',id))))
                (let* ([a (start-head "screen A")]
                       [ready-a (head-wait 'first-real-head a (lambda () (head-sees? a "shared text")))]
                       [b (start-head "screen B")])
@@ -2568,7 +2580,7 @@
                        (and (> (occurrences frames "\x1b;[?2026h") 0)
                             (= (occurrences frames "\x1b;[?2026h")
                                (occurrences frames "\x1b;[?2026l")))))
-                   (head-read a `(begin (head:show-buffer! (head:adopt-store-buffer! ,scroll))
+                   (head-read a `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',scroll))
                                         (window:split-right!) #t))
                    ;; A PTY read may end between row text and the frame's
                    ;; closing marker. Both capture boundaries need a frame.
@@ -2619,7 +2631,7 @@
                    (vt:emulator-resize! (vector-ref a 2) 24 80)
                    (sys:resize-terminal-process! (vector-ref a 0) 24 80)
                    (head-read a `(begin (window:delete-others!)
-                                        (head:show-buffer! (head:adopt-store-buffer! ,id)) #t))
+                                        (head:show-buffer-mirror! (head:adopt-store-buffer! ',id)) #t))
                    (rpc head 'delete scroll))
                  (test:check 'attached-private-doc-source-and-local-rendering
                    (head-read a
@@ -2650,8 +2662,8 @@
                    '(() ()))
                  (head-read a '(begin (terminal:open! "printf 'attached terminal'; read answer; printf '\\n%s' \"$answer\"; read done") #t))
                  (head-wait 'attached-terminal a (lambda () (head-sees? a "attached terminal")))
-                 (let ([terminal-id (head-read a '(head:buffer-store-id (head:current-buffer)))])
-                   (head-read b `(begin (head:show-buffer! (head:adopt-store-buffer! ,terminal-id)) #t))
+                 (let ([terminal-id (head-read a '(head:buffer-store-id (head:current-buffer-mirror)))])
+                   (head-read b `(begin (head:show-buffer-mirror! (head:adopt-store-buffer! ',terminal-id)) #t))
                    (head-wait 'shared-terminal-surface b (lambda () (head-sees? b "attached terminal")))
                    (head-read a '(begin (terminal:send! (head:window-widget (head:current-window)) "through base\n") #t))
                    (head-wait 'shared-terminal-input b (lambda () (head-sees? b "through base")))
@@ -2784,7 +2796,7 @@
                    (let ([again a])
                      (head-wait 'real-head-reattaches again (lambda () (head-sees? again "through base")))
                      (test:check 'clean-reattach-restores-the-terminal-and-reuses-scratch
-                       (list (head-read again '(list (head:buffer-store-id (head:current-buffer))
+                       (list (head-read again '(list (head:buffer-store-id (head:current-buffer-mirror))
                                                      (length (remq (head:popup) (head:windows))) (head:copy-text)))
                              (filter (lambda (name) (string:prefix? "*scratch*" name))
                                (map (lambda (id) (rpc head 'name id)) (rpc head 'buffers))))
@@ -2796,11 +2808,11 @@
                                           "" "# After table" "" "# Tail"))])
                        (head-read again
                          `(begin
-                            (head:show-buffer! (head:adopt-store-buffer! ,plain))
+                            (head:show-buffer-mirror! (head:adopt-store-buffer! ',plain))
                             (window:split-right!) (window:focus-next!)
-                            (let ([source (head:adopt-store-buffer! ,source)])
-                              (head:with-buffer source (mode:choose! "markdown"))
-                              (head:show-buffer! source) (head:goto! '(4 . 0))
+                            (let ([source (head:adopt-store-buffer! ',source)])
+                              (head:with-buffer-mirror source (mode:choose! "markdown"))
+                              (head:show-buffer-mirror! source) (head:goto! '(4 . 0))
                               (markdown:view!))
                             (window:focus-next!) (window:set-wrap! #f) (window:split-below!)
                             ;; the user's tree is the root split's first subtree;
@@ -2811,9 +2823,9 @@
                               (head:layout-split-first-weight-set! (head:layout-split-first rest) 2)
                               (head:layout-split-second-weight-set! (head:layout-split-first rest) 1))
                             (head:goto! '(25 . 3)) (head:window-top-set! (head:current-window) 20)
-                            (head:buffer-mark-row-set! (head:current-buffer) 26)
-                            (head:buffer-mark-col-set! (head:current-buffer) 4)
-                            (head:buffer-marked-set! (head:current-buffer) #t)
+                            (head:buffer-mark-row-set! (head:current-buffer-mirror) 26)
+                            (head:buffer-mark-col-set! (head:current-buffer-mirror) 4)
+                            (head:buffer-marked-set! (head:current-buffer-mirror) #t)
                             ;; the lower-left window, numbered 3 behind the pop-up's 0
                             (let ([other (head:window-numbered 3)])
                               (head:window-prow-set! other 50) (head:window-pcol-set! other 4)
@@ -2850,7 +2862,7 @@
                              (list before truth))
                            (test:check 'resumed-marks-replace-old-window-and-region-names
                              (head-read resumed
-                               `(let* ([marks (store:marks head:ui-actor ,plain)] [region (cdr (assq 'region marks))])
+                               `(let* ([marks (store:marks head:ui-actor ',plain)] [region (cdr (assq 'region marks))])
                                   (list (length marks)
                                         (text:span-start region) (text:span-end region))))
                              '(5 (26 . 3) (27 . 4)))
@@ -2865,7 +2877,7 @@
                                (list (head-read fallback '(map (lambda (w) (head:buffer-store-id (head:window-buffer w)))
                                                                (remq (head:popup) (head:windows))))
                                      (head-read b '(list (length (remq (head:popup) (head:windows)))
-                                                         (head:buffer-store-id (head:current-buffer)) (head:copy-text))))
+                                                         (head:buffer-store-id (head:current-buffer-mirror)) (head:copy-text))))
                                (list (list id id #f) (list 1 terminal-id "screen B kill")))
                              ;; A screen saved before the pop-up numbered its
                              ;; ordinary window 0. It resumes renumbered beside
@@ -2883,7 +2895,7 @@
                                    (head-read legacy
                                      '(list (head:window-index (head:current-window)) (head:window-index (head:popup))
                                             (map head:window-index (remq (head:popup) (head:windows)))
-                                            (head:buffer-store-id (head:current-buffer)) (head:copy-text)))
+                                            (head:buffer-store-id (head:current-buffer-mirror)) (head:copy-text)))
                                    (list 1 0 '(1) lines ""))))))))))
                )))
            (stop!)
@@ -2906,7 +2918,7 @@
              (let ([id (rpc head 'create "attached text" '("shared text B") '((trailing . #t)))])
                (write-forms (string-append root "/config.e")
                  `((main:set-startup-page! #f) (client:inbox-limits (cons 48 262144))
-                   (head:show-buffer! (head:adopt-store-buffer! ,id))))
+                   (head:show-buffer-mirror! (head:adopt-store-buffer! ',id))))
                (let ([b (start-head "screen B")])
                  (head-wait 'second-real-head b (lambda () (head-sees? b "shared text B")))
                  ;; Pause only a head's UI while its socket reader keeps
@@ -2934,7 +2946,7 @@
                          (lambda () (> (occurrences (vector-ref slow 3) "pending input limit reached") 0)))
                        (test:check (list 'attached-inbox-overload (car case))
                          (list (and (member '(head "screen B") (map car (rpc head 'actors))) #t)
-                               (cdr (assq 'alive (caddr (rpc head 'snapshot 3))))) '(#t #t))))
+                               (cdr (assq 'alive (caddr (rpc head 'snapshot '(buffer 3)))))) '(#t #t))))
                    '((inbox-count 96 1024) (inbox-bytes 3 131072)))
                )))
            (stop!)
@@ -3123,7 +3135,7 @@
                       [leavers (list (connect) (connect))])
                  (head-wait 'automatic-resume again (lambda () (head-sees? again "retained")))
                  (test:check 'quit-keeps-shared-edits-and-print-only-one-farewell-line
-                   (list (head-read again '(list (head:buffer-line (head:current-buffer) 0) (head:point)))
+                   (list (head-read again '(list (head:buffer-line (head:current-buffer-mirror) 0) (head:point)))
                          (equal? record (call-with-input-file pid-path read))
                          (occurrences (vector-ref again 3) "e: started base")
                          (map (lambda (head)
@@ -3152,7 +3164,7 @@
                    (head-wait 'stale-endpoints-recovered fresh (lambda () (head-sees? fresh "*scratch*")))
                    (test:check 'stale-cleanup-starts-a-fresh-in-memory-session
                      (list (not (equal? record (call-with-input-file pid-path read)))
-                           (head-read fresh '(head:buffer-line (head:current-buffer) 0))) '(#t ""))
+                           (head-read fresh '(head:buffer-line (head:current-buffer-mirror) 0))) '(#t ""))
                    (write-control! "stop")
                    (head-wait 'announced-base-stop fresh (lambda () (head-sees? fresh "e: the base stopped (signal)")))
                    (sys:reap-terminal-process! (vector-ref fresh 0))

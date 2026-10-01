@@ -3,9 +3,9 @@
 e is a live Scheme environment. Both evaluation commands run code in the
 editor's interaction environment: the same top level used by `config.e` and
 the module loader, with Chez Scheme, every loaded module's exports under its
-prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and the literals of
-`(head literal)` bare, `(buffer "name")` and `(window n)`, and one per completing type,
-`(mode "scheme")` say, in scope. Definitions
+prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and the temporary bare `(window n)` selector from `(head literal)`.
+Paths and mode names are strings, styles are symbols, and buffer/model/actor
+references are quoted data. Definitions
 persist for the rest of the session and are immediately available to later
 evaluations.
 
@@ -17,7 +17,7 @@ evaluations.
 the label `λ`, and evaluates it:
 
 ```scheme
-λ (head:buffer-name (head:current-buffer))
+λ (store:buffer-name (head:current-buffer))
 λ (define answer 42)
 λ answer
 ```
@@ -110,10 +110,9 @@ Tab acts on the datum at point. A partial symbol completes as above. A datum
 that is final, a closed string, a closed form, or a string value at its dead
 end, is settled instead: Tab closes each enclosing form whose operator has a
 fixed arity once its arguments are all there, innermost first, and where more
-are due steps one space on to the next argument. So `(edit:save-file! (file
-"~/ddd"` Tab gives `(edit:save-file! (file "~/ddd"))`, the file literal taking
-one argument and `edit:save-file!` one, whether or not `~/ddd` exists; had
-either taken two, the cursor would step to the second. A Tab with exactly one
+are due steps one space on to the next argument. So `(edit:save-file!
+"~/ddd"` Tab gives `(edit:save-file! "~/ddd")`, whether or not `~/ddd` exists.
+Had the command taken two arguments, the cursor would step to the second. A Tab with exactly one
 match inserts that symbol, closes the list, and settles the same way:
 a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
@@ -143,52 +142,50 @@ itself. The hint is display-only: clicking anywhere in a candidate's rows
 inserts just the symbol. The prompt's help row counts the matches and names
 what they are, such as `12 matches of file` or `4 matches of symbol`.
 
-At an argument position of a documented procedure, Tab completes by the
-argument's type instead of by symbol. `(head:show-buffer! ` offers every live
-buffer as the expression that denotes it, `(buffer "edit.sls")`, with the
-buffer's file, mode and state as its hint; then the documented procedures
-and parameters that produce a buffer, `(head:current-buffer)` and
-`(head:new-buffer! name)` say, which insert their opening and settle to their
-first argument; then the top-level variables holding one, so a buffer you
-bound with `define` at M-x is offered by name. The token matches a
-candidate's own spelling the way it matches a symbol, by parts starting at
-any punctuation, so `scr` finds `(buffer "*scratch*")` and `cur` finds
-`(head:current-buffer)`, while the formals shown in a producer's label take no
-part. Tab extends the token to the longest text every current candidate
-still matches: `bu` becomes `(buffer` when everything offered is a form,
-and stays bare while a variable such as `myb` is among the matches. The
-operator position of a nested form takes the enclosing argument's type,
-so `(head:show-buffer! (cu` completes to `(head:current-buffer)` rather than to every
-symbol; a form under a quote, or under an undocumented operator, completes
-symbols as before, except an element of a quoted list at an argument typed
-`(list-of T)`, which completes as a `T`: `(extension:load! "x" "y" '("../sch`
-lists directories. A `one-of` type offers its literals, a boolean `#t` and
-`#f`. Every type that completes spells its values as a literal derived from
-the type, `(mode "scheme")` or `(file "manual/EVAL.md")`, and a command
-takes the bare value and the literal alike, so the literal is a reminder of
-the type that costs no typing: Tab writes it. A string at such an argument
-expands into the literal from its quote, `(mode:choose! "sch` Tab giving
-`(mode:choose! (mode "scheme")`, and a bare `sch` does the same; inside the
-constructor the values spell bare, `(mode "sc` Tab giving `(mode "scheme`.
-A `model` argument offers live model references as `(model 7)`, with the
-model kind beside each choice. Inside `(model `, Tab offers the allocation
-numbers. Model references remain ordinary Scheme values: variables and
-expressions producing them work as arguments too.
+At a documented argument, Tab offers values of its type, compatible producers
+and variables. `(head:show-buffer! ` offers buffer names with their portable
+references, file paths, modes and modified state beside them. Typing `scr` finds `*scratch*`; selecting
+it inserts `'(buffer 17)` (with its actual ID). Explicit `'(buffer` input searches
+reference spellings instead. No name lookup is hidden in the inserted value.
+`(head:current-buffer)` and `(edit:new-buffer! name)` are compatible producers;
+head mirror constructors are not. A variable holding a reference is offered
+by its variable name.
+
+Tab uses the same fuzzy matcher for names and symbols, extending a filter
+without changing its matches and inserting the actual value when one remains.
+Readable labels never become alternative values. Producer formals are shown
+for guidance and do not participate in matching. The operator position of a
+nested form takes the enclosing argument's type: `(head:show-buffer! (cu`
+completes to `(head:current-buffer)` rather than to every
+symbol. Inside quoted data, completion offers values without another quote,
+never producer calls or variables. A `(list-of T)` argument completes its
+elements as `T`, recursively: `(extension:load! "x" "y" '("../sch` lists
+directories. Explicit `(quote ...)` and quasiquotes follow the same rule;
+unquoted positions within a quasiquote offer expressions again.
+A `one-of` type offers its literals, a boolean `#t` and `#f`.
+Completing types keep ordinary Scheme values: a mode is `"scheme"`, a file
+path is `"manual/EVAL.md"`, a style is `'ghost`, and a revision is a number.
+Tab completes `(mode:choose! "sch` to `(mode:choose! "scheme"`; a bare `sch`
+inserts the same quoted string. It never adds a type constructor.
+A `model` argument offers live model references as `'(model 7)`, with the
+model kind beside each choice. References in a quoted collection appear
+without another quote: `'((model 7) (model 8))`. Variables and expressions
+producing references work as arguments too.
 A string value completes as a session: `(edit:visit-file! "man` lists the
-paths under `manual/`, `(buffer "` the buffer names; with several matches
+paths under `manual/`; with several matches
 Tab extends the path to their longest common prefix, as a shell does; a
 sole match is inserted whole, open while it still completes, a directory
 say, and the literal closes only at a dead end, where completing from the
 value would offer nothing but the value itself. So `(edit:visit-file! "man`
-Tab gives `(edit:visit-file! (file "manual/` with the manual's entries
-listed at once, and `"manual/EVAL.m` Tab gives `(file "manual/EVAL.md")`,
+Tab gives `(edit:visit-file! "manual/` with the manual's entries
+listed at once, and `"manual/EVAL.m` Tab completes `"manual/EVAL.md"`,
 closed and settled; a directory argument closes at a directory without
 subdirectories. A name with a space completes like any other; a quote or a
 backslash in a name is escaped as the string literal holds it, `quo\"te.txt`,
 and a token typed with its escapes reads the same way. `~` and `/` lead the
 home and the root directory though the
-matcher has no segment for them: `(edit:visit-file! ~` Tab gives `(file "~/`,
-a bare `/` gives `(file "/` unless a symbol containing `/` is among the
+matcher has no segment for them: `(edit:visit-file! ~` Tab opens `"~/`,
+a bare `/` opens `"/` unless a symbol containing `/` is among the
 matches, and the same holds at a directory argument. How paths
 are offered is the `file:completion` parameter: `fuzzy`, the default, lists
 every entry of the partial path's directory for the matcher's segments, so
@@ -196,9 +193,11 @@ every entry of the partial path's directory for the matcher's segments, so
 extend its last component, as a shell does; `deep` lists the entries below
 the directory as well, a few thousand at most, so `"lib/evsl` finds
 `lib/apps/eval.sls`. Switch at M-x with `(file:completion 'prefix)`. An actor argument lists the registered actors as
-`(head "desk")` or `(agent "claude")`, the identities' own spelling. The language's own types, `string` or `integer`, offer
+`'(head "desk")` or `'(agent helper)`. Symbol and string names keep their
+distinct identities; arbitrary actor kinds need no constructor. The language's own types, `string` or `integer`, offer
 no producers, and an argument whose type offers nothing the token matches
-falls back to symbol completion. `S-Tab` always completes symbols. An
+falls back to symbol completion in expression positions. `S-Tab` offers
+editor-defined symbols there; quoted data never offers executable calls. An
 argument may search instead of completing: a `needle`, the text
 `search:replace!` finds, highlights its matches in a read-only preview as it
 is typed, the prompt notes `[1 of 3]`, and Tab visits the matches in turn,
@@ -259,8 +258,9 @@ whole current buffer:
 Another buffer or region is evaluated under a scope form:
 
 ```scheme
-(head:with-buffer (buffer "scratch.scm") (eval:run!))
-(edit:with-region (region (head:current-buffer) '(10 . 0) '(18 . 0)) (eval:run!))
+(head:with-buffer (store:find-named "scratch.scm") (eval:run!))
+(edit:with-region (region:make (store:find-named "scratch.scm") '(10 . 0) '(18 . 0))
+  (eval:run!))
 ```
 
 Every datum in the text is evaluated. The values of the last datum become
@@ -285,8 +285,11 @@ eval:report! (+ 20 22) => 42 [copied]
 ```
 
 The ghost is presentation only and is not part of the result or log record.
-The copied text is exactly the displayed result representation. Void results,
-zero-value results, errors, and interruptions do not replace the copy buffer.
+The copied text is exactly the displayed Scheme expression. Symbols and
+compound data are quoted; multiple return values use `(values ...)`.
+Ports, procedures and other opaque runtime objects remain diagnostic output
+and do not replace the copy buffer. Neither do cyclic data, void results,
+zero-value results, errors or interruptions.
 
 Disable automatic copying in `config.e`:
 

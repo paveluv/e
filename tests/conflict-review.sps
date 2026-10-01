@@ -14,7 +14,7 @@
   (define b (review:create! actor (list x)))
   (define (revision id) (model:revision id))
   (define (entry id document)
-    (find (lambda (e) (= document (get e 'document))) (get (get (model:snapshot id) 'value) 'records)))
+    (find (lambda (e) (equal? document (get e 'document))) (get (get (model:snapshot id) 'value) 'records)))
   (define (mine id document) (get (entry id document) 'mine))
   (define (refresh id scope) (review:refresh! actor id (revision id) scope))
   (define (choose id document)
@@ -31,7 +31,7 @@
     (store:edit! bot x (store:revision x) (text:make-span 0 0 0 0) '("prefix" ""))
     (check 'stale-click-and-unrefreshed-settlement-refuse-changed-coordinates
       (list (test:raises? (lambda () (review:choose! actor a (revision a) (list (cons x witness)) 'mine)))
-        (cadr (assv x (review:settle! actor a (revision a) (list x)))) (mine a x)) '(#t refused (1))))
+        (cadr (assoc x (review:settle! actor a (revision a) (list x)))) (mine a x)) '(#t refused (1))))
   (refresh a (list x))
   (check 'retained-evidence-rebases-mine-without-losing-unrelated-text
     (list (mine a x) (get (entry a x) 'invalidated) (list-ref (review:preview a x) 3))

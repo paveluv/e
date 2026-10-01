@@ -5,11 +5,12 @@
   (export count (rename (search-fold-case fold-case)) (rename (search! incremental!)) init!
           preview-next! replace!)
   (import (chezscheme)
+          (prefix (core region) region:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head edit) edit:) (prefix (head editor) editor:) (prefix (head editor-state) editor-state:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
-          (prefix (head layout) layout:) (head literal)
+          (prefix (head layout) layout:)
           (prefix (head prompt) prompt:) (prefix (head search-control) search-control:)
           (prefix (head search-host) search-host:)
           (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
@@ -68,39 +69,35 @@
 
   ;;; Matching -----------------------------------------------------------------------
 
-  (define (for-matches! r needle handle!)
-    ;; Walk the matches of needle inside r in order, calling
-    ;; (handle! row col) on each; it returns the width the match occupies
-    ;; afterwards (an edit may have changed it).  The match count.
-    ;; Needles are single-line: lines are searched one at a time.
+  (define (fold-matches basis r needle step initial)
+    ;; Count and replacement proposals use the same immutable text and
+    ;; selected endpoints. Rewrites retain this basis for store rebasing.
     (when (= (string-length needle) 0)
       (error 'search "empty search string"))
-    (let* ([b (region-buffer r)]
+    (unless (equal? (cadr basis) (region:buffer r))
+      (error 'search "region and text belong to different documents" r))
+    (let* ([lines (car basis)]
            [m (string-length needle)]
-           [start (region-start r)]
-           [end (region-end r)]
-           [count 0])
-      (let row-loop ([row (max 0 (car start))])
-        (when (<= row (min (car end) (- (head:buffer-line-count b) 1)))
-          (let col-loop ([at (if (= row (car start)) (cdr start) 0)]
-                         [shift 0])
-            (let* ([s (head:buffer-line b row)]
-                   [limit (if (= row (car end))
-                              (min (+ (cdr end) shift) (string-length s))
-                              (string-length s))]
-                   [hit (string:search s needle at limit)])
-              (if hit
-                  (let ([w (handle! row hit)])
-                    (set! count (+ count 1))
-                    (col-loop (+ hit w) (+ shift (- w m))))
-                  (row-loop (+ row 1)))))))
-      count))
+           [start (region:start r)] [end (region:end r)])
+      (for-each
+        (lambda (p)
+          (unless (and (< (car p) (vector-length lines))
+                    (<= (cdr p) (string-length (vector-ref lines (car p)))))
+            (error 'search "position is outside the document" p)))
+        (list start end))
+      (let rows ([row (car start)] [out initial])
+        (if (> row (car end)) out
+          (let* ([s (vector-ref lines row)]
+                 [limit (if (= row (car end)) (cdr end) (string-length s))])
+            (let hits ([at (if (= row (car start)) (cdr start) 0)] [out out])
+              (let ([hit (string:search s needle at limit)])
+                (if hit (hits (+ hit m) (step row hit out)) (rows (+ row 1) out)))))))))
 
   (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
         (needle needle "the text to count, within one line")
         (returns integer) (public))
   (define (count needle)
-    (for-matches! (edit:current-region) needle (lambda (row col) (string-length needle))))
+    (fold-matches (edit:basis) (edit:current-region) needle (lambda (row col total) (+ total 1)) 0))
 
   (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one entry of the delta log per occurrence under one batch, one undo step, point left where it was."
         (from needle "the text to find, within one line")
@@ -108,32 +105,13 @@
         (returns integer "how many occurrences were replaced")
         (public) (edits))
   (define (replace! from to)
-    (define m (string-length from))
-    (define (occurrences r)
-      ;; every occurrence within the region, an edit each in the text's
-      ;; order; the needle is within one line, so each selected row is
-      ;; searched between its selected edges
-      (let* ([b (region-buffer r)]
-             [start (region-start r)]
-             [end (region-end r)]
-             [last (min (car end) (- (head:buffer-line-count b) 1))])
-        (let rows ([row (max 0 (car start))] [out '()])
-          (if (> row last)
-              (reverse out)
-              (let* ([s (head:buffer-line b row)]
-                     [n (string-length s)]
-                     [from-col (if (= row (car start)) (min (cdr start) n) 0)]
-                     [to-col (if (= row (car end)) (min (cdr end) n) n)])
-                (let hits ([at from-col] [out out])
-                  (let ([hit (and (< at to-col) (string:search s from at to-col))])
-                    (if hit
-                        (hits (+ hit m) (cons (list (cons row hit) (cons row (+ hit m)) to) out))
-                        (rows (+ row 1) out)))))))))
-    (when (= m 0) (error 'replace! "empty search string"))
-    (let ([r (edit:current-region)] [basis (edit:basis)])
+    (let* ([r (edit:current-region)] [basis (edit:basis)]
+           [occurrences
+            (reverse (fold-matches basis r from
+                       (lambda (row col out) (cons (list (cons row col) (cons row (+ col (string-length from))) to) out)) '()))])
       (edit:call-as-one-edit!
         (format "(search:replace! ~s ~s)" from to)
-        (lambda () (edit:rewrite-regions! basis (occurrences r))))))
+        (lambda () (edit:rewrite-regions! basis occurrences)))))
 
   (edoc "Install search, its scoped needle-completion presentation and default C-s/M-% bindings." (public))
   (define (init!)

@@ -16,8 +16,13 @@ Before every commit, run `tools/scheme-format.sps -i` on all `*.sls`,
 
 Every module API, including the command layer `edit`, is imported with its own
 prefix -- seams and apps alike (`edit:`, `store:`, `terminal:`, `git:`,
-`sys:`) -- and that is how M-x sees them. Value constructors from `literal`
-and completing types are bare, such as `(buffer "name")` and `(file "path")`.
+`sys:`) -- and that is how M-x sees them. Portable values use ordinary Scheme
+data, with quoting in expressions: `'(model 7)` and `'(app describe)`, or
+`'((model 7) (model 8))` in collections. Completing types do not change their
+spelling. Scalar refinements stay strings, symbols or numbers; completing a
+type never publishes a constructor. Only the temporary `(window n)`
+adapter remains bare while windows migrate to models. Do not
+introduce new constructor aliases.
 Modules are named in the singular (`style`, `file`, `mode`, `string`, `actor`,
 `doc`), and exported names never repeat the module's stem:
 `style:set!`, `log:add!`, `git:branches`, `terminal:send!` -- never

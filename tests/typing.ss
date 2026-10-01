@@ -27,7 +27,7 @@
      (window:init!)
      (delta-log:init!)
      (define b (head:new-buffer! "typing"))
-     (head:show-buffer! b)
+     (head:show-buffer-mirror! b)
      (head:goto! '(0 . 0))
      (define (text) (vector->list (head:buffer-lines b)))
      (define (type! s) (for-each dispatch:key! (string->list s)))

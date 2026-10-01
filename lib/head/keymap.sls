@@ -148,8 +148,7 @@
   (edoc-type key "a key spelling, C-x C-f say"
     (predicate (lambda (v) (and (string? v) (guard (ex [else #f]) (key-spec v) #t))))
     (complete (lambda (partial)
-                (map (lambda (owned) (cons (binding-spec (cdr owned)) #f)) (effective-bindings 'global))))
-    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+                (map (lambda (owned) (list (binding-spec (cdr owned)) #f #f)) (effective-bindings 'global)))))
 
 
   ;;; The binding table ---------------------------------------------------------

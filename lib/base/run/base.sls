@@ -207,7 +207,7 @@
       [(buffers actors)
        (arity 0)
        (if (eq? operation 'actors) (actor:attached)
-           (sort < (store:buffer-list)))]
+           (sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list)))]
       [(buffer-metadata) (control!)
        (unless (<= (length args) 1) (error 'wire "buffer-metadata expects optional IDs"))
        (apply store:metadata args)]
@@ -747,7 +747,7 @@
               (let-values ([(token take!) (store:watch! (lambda () (post! #t)))])
                 (set! changes take!)))))
         ;; Subscribe before inventory so a racing commit is in one or both.
-        (sort < (store:buffer-list)))
+        (sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list)))
       (define (watch-head!)
         (unless (eq? (car (policy:session-actor session)) 'head) (error 'wire "expected a head connection"))
         (unless head-watch?

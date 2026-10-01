@@ -26,7 +26,7 @@
      (define (fresh name lines)
        (let ([b (head:new-buffer! name)])
          (head:buffer-lines-set! b (list->vector lines))
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          b))
      (define (text-of b) (vector->list (head:buffer-lines b)))
@@ -98,7 +98,7 @@
      ;; subsequent edit is its own action, and the undone one is no redo
      (let ([b (head:new-buffer! "edit-after-group-undo")])
        (head:buffer-lines-set! b '#("base"))
-       (head:show-buffer! b)
+       (head:show-buffer-mirror! b)
        (call-as-one-edit! "group with undo"
          (lambda () (insert-text! "A") (undo!) (insert-text! "B")))
        (undo!)
@@ -211,7 +211,7 @@
      ;; desired cursor movement cannot be installed before a refused edit.
      (define indented (fresh "edit-indent-refusal" '("  abc")))
      (mode:register! "conflict-indent" '() '() (lambda (line) #f))
-     (head:with-buffer indented (mode:choose! "conflict-indent"))
+     (head:with-buffer-mirror indented (mode:choose! "conflict-indent"))
      (head:goto! '(0 . 2))
      (mode:register-indenter! "conflict-indent"
        (lambda (b from to)

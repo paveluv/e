@@ -182,7 +182,7 @@
   (define (show!)
     (let* ([b (window:show-widget! (head:current-window) (default!))]
            [host (head:buffer-fact b 'widget-id #f)] [app (child host 'app)])
-      (head:show-buffer! b) (focus-entry! app) (widget:pump!) app))
+      (head:show-buffer-mirror! b) (focus-entry! app) (widget:pump!) app))
 
   (edoc "Reopen the retained Finder with its filter intact; first use starts in the current document's directory."
         (returns model "Finder view"))

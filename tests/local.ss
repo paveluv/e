@@ -22,7 +22,7 @@
 
      (define scratch (head:window-buffer (head:current-window)))
      (define scratch-id (head:buffer-store-id scratch))
-     (define initial-store (list-sort < (store:buffer-list)))
+     (define initial-store (list-sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list)))
      (define events '())
      (define subscription
        (store:subscribe! #f (lambda (event) (set! events (cons event events)))))
@@ -89,7 +89,7 @@
      (check 'forgotten-from-list (memq local (head:buffers)) #f)
      (check 'window-falls-back (eq? (head:window-buffer (head:current-window)) scratch) #t)
      (head:forget-buffer! other)
-     (check 'store-list-unchanged (list-sort < (store:buffer-list)) initial-store)
+     (check 'store-list-unchanged (list-sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list)) initial-store)
      (check 'local-lifecycle-emits-no-store-events events '())
      (store:unsubscribe! subscription)
 

@@ -60,7 +60,7 @@
               (edoc-type hue "a hue, by name"
                 (portable #t) (within symbol)
                 (predicate (lambda (v) (and (memq v '(red green blue)) #t)))
-                (complete (lambda (partial) (map (lambda (h) (cons h "a hue")) '(red green blue))))
+                (complete (lambda (partial) (map (lambda (h) (list h #f "a hue")) '(red green blue))))
                 (write (lambda (v) (format "'~a" v))))
               (edoc "Paint a place with a hue." (p (record place) "the place") (h hue "the hue") (returns list))
               (define (paint p h) (list p h))
@@ -131,9 +131,27 @@
              (edoc-type? 'hue) (edoc-type? 'nonsense) (edoc-type? '(list-of hue)))
        '("(probe)" "(foundation edoc)" #f "a hue, by name" "an exact integer" "hue or #f"
          #t #f #t #f #t #f #t #f #t #f #t #f #t #t #f #t
-         ((red . "a hue") (green . "a hue") (blue . "a hue")) ((utf-8 . #f) (latin-1 . #f))
-         ((red . "a hue") (green . "a hue") (blue . "a hue") (#f . #f))
+         ((red #f "a hue") (green #f "a hue") (blue #f "a hue")) ((utf-8 #f #f) (latin-1 #f #f))
+         ((red #f "a hue") (green #f "a hue") (blue #f "a hue") (#f #f #f))
          "'red" "\"a\"" "'a" "'blue" #t #f #t))
+     (check 'plain-values-round-trip-independently-of-metadata
+       (for-all
+         (lambda (value)
+           (for-all (lambda (type)
+                      (let ([spelling (type-spelling type value)])
+                        (and (equal? spelling (value-expression value))
+                          (equal? value (eval (read (open-input-string spelling)))))))
+             '(datum model actor row-source style (list-of model))))
+         (list '(model 17) '(app describe) '(agent helper) '(agent "helper")
+           (string->symbol "two words|123\\") (string->symbol "123")
+           '((model 17) (model 18)) '((document . (buffer 4)) (actor . (app describe)))
+           '#((model 17) "a\"b" ghost) #vu8(0 255) '() #f)) #t)
+     (check 'opaque-and-cyclic-values-are-not-copyable-expressions
+       (let ([cycle (list 1)])
+         (set-cdr! cycle cycle)
+         (map value-expression (list (lambda () #t) (current-output-port) (void) (list (lambda () #t)) cycle)))
+       '(#f #f #f #f #f))
+
      ;; Defining a library only visits it; a reference invokes it, and that is
      ;; when its names resolve. The steps are sequenced explicitly, and the
      ;; broken libraries are referenced in a copy of the environment, so the
@@ -272,7 +290,7 @@
              ((or string #f) string) (string (or string #f))
              ((list-of hue) (list-of symbol)) ((list-of symbol) (list-of hue))
              (missing-type any) (buffer buffer))))
-       '((#t #t #f #f #f #t #f #f #t #t) (#t #f #t #f #t #f #f #t #t #f #f #f)))
+       '((#t #t #f #f #t #t #f #f #t #t) (#t #f #t #f #t #f #f #t #t #f #f #t)))
 
      (let* ([before (type-named 'file)]
             [aborted (test:raises? (lambda () (kernel:call-with-registration-update

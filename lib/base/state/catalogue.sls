@@ -20,7 +20,7 @@
   (define job-order '())
   (define pending-views (make-hashtable equal-hash equal?))
   (define reset-views? #t)
-  (define inventory (make-eqv-hashtable)) ; worker-owned, metadata only
+  (define inventory (make-hashtable equal-hash equal?)) ; worker-owned, metadata only
   (define orders (make-hashtable equal-hash equal?)) ; worker-owned, shared across filters
   (define rings (make-eq-hashtable)) ; ordered live list -> vector and key indexes
   (define view-rows (make-hashtable equal-hash equal?)) ; id -> (row audience)
@@ -74,8 +74,7 @@
       (unless (and r (eq? (get r 'kind #f) 'buffer-catalogue) (eq? (get r 'persistence #f) 'persistent)
                 (equal? actor (get (get r 'value '()) 'owner #f)))
         (error 'create-query! "expected this head's persistent catalogue source" source))
-      (let* ([filter (list 'buffer (store:create! actor "Buffet filter" '("")
-                                     (list '(internal . #t) (cons 'audience (list actor)))))]
+      (let* ([filter (store:create! actor "Buffet filter" '("") (list '(internal . #t) (cons 'audience (list actor))))]
              [query (collection:create! actor source "" '() (get r 'persistence 'persistent) (list source filter))])
         (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))
         (list query filter))))
@@ -118,7 +117,7 @@
       (expires-at "Expires" integer)))
   (define (document m)
     (let ([trashed (get m 'trashed #f)] [backup (get m 'backup #f)])
-      (list (list 'buffer (get m 'id #f))
+      (list (get m 'id #f)
         (append (list (cons 'name (get m 'name "")) (cons 'flags (get m 'flags '())) (cons 'version (get m 'version 0))
                   (cons 'lines (get m 'lines 0)) (cons 'archive (if trashed (if backup 'backup 'trash) 'live)))
           (if (and (get m 'modified #f) (get m 'modified-at #f)) (list (cons 'modified (get m 'modified-at #f))) '())

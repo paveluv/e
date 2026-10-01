@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service git-source)
   (export create! create-patch! expand! refresh! select-patch!)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core row) row:)
           (prefix (core work-queue) work-queue:) (prefix (service file) file:)
           (prefix (service git) git:) (prefix (state collection) collection:)
           (prefix (state model) model:) (prefix (state store) store:))
@@ -16,7 +16,7 @@
           (natural? (get v 'refresh))
           (if (get v 'document)
             (and (eq? (not (get v 'commit)) (not (get v 'file))) (or (not (get v 'file)) (string? (get v 'file)))
-              (natural? (get v 'document)) (> (get v 'document) 0))
+              (handle:buffer? (get v 'document)))
             (not (get v 'file)))))))
   ;; Dedicated worker: a slow Git process must not stall Finder or Search.
   (define worker (work-queue:create))
@@ -26,7 +26,7 @@
   (define columns '((commit "Commit" string) (date "Date" integer) (author "Author" string) (subject "Subject / file" string)
                     (path "Path" string) (status "Change" symbol)))
   (define (query! actor path commit file document . owner)
-    (let* ([refs (if document (list (list 'buffer document)) '())]
+    (let* ([refs (if document (list document) '())]
            [source (model:create! actor 'git-source 1 'session 'persistent refs
                      (map cons '(path commit file document refresh) (list path commit file document 0)))])
       (guard (ex [else (model:retire! actor source 0) (raise ex)])
@@ -49,9 +49,9 @@
       (let ([document (store:publish! producer (gensym->unique-string (gensym "git-patch")) "<git-patch>"
                         '("[Loading patch]") (cons (cons 'git-request (stamp v)) patch-facts) #f)])
         (guard (ex [else (store:delete! producer document) (raise ex)])
-          (let ([copy (model:create! actor 'git-source 1 'session 'persistent (list (list 'buffer document))
+          (let ([copy (model:create! actor 'git-source 1 'session 'persistent (list document)
                         (map (lambda (p) (if (eq? (car p) 'document) (cons 'document document) p)) v))])
-            (values (list (cons (get source 'id) copy) (cons (list 'buffer old-document) (list 'buffer document)))
+            (values (list (cons (get source 'id) copy) (cons old-document document))
               (lambda () (model:retire! actor copy 0) (when (store:exists? document) (store:delete! producer document)))))))))
   (define copying (collection:register-copy! 'git-source 1 copy-source!))
   (define (source query)

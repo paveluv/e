@@ -31,7 +31,7 @@
        '(error #t interrupted #t))
 
      (define b (head:new-buffer! "evaluation"))
-     (head:show-buffer! b)
+     (head:show-buffer-mirror! b)
      (define nested
        (run (lambda ()
               (edit:insert-text! "outer")
@@ -44,10 +44,10 @@
                 (car (eval:values inner))))))
      (test:check 'nested-evaluation-streams-each-line-once
        (list (eval:values nested) (output 'stdout)
-             (output 'stderr) (edit:buffer-text b))
+             (output 'stderr) (edit:buffer-text (head:buffer-store-id b)))
        '((42) ("inner" "outer") ("warning") "outerinner\n"))
      (edit:undo!)
-     (test:check 'nested-edits-share-one-undo (edit:buffer-text b) "\n")
+     (test:check 'nested-edits-share-one-undo (edit:buffer-text (head:buffer-store-id b)) "\n")
 
      (define handler (keyboard-interrupt-handler))
      (define descriptors (test:fd-count))
@@ -81,7 +81,7 @@
        (list (eval:status result) (eval:values result) (car (output 'stdout)) (car (output 'stderr))
          (= descriptors (test:fd-count))) '(ok (#t) "before pause" "after pause" #t))
      (edit:undo!)
-     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text b) "beforeother\n")
+     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text (head:buffer-store-id b)) "beforeother\n")
      (edit:undo!) (edit:undo!)
 
      (eval:report! nested 'probe)
@@ -97,6 +97,13 @@
      (define spoken (run (lambda () (echo:set-text! "command message") (void))))
      (eval:report! spoken 'probe)
      (test:check 'void-report-preserves-the-command-message (echo:text) "command message")
+     (let ([values-to-copy '((app describe) ((model 17) (model 18)) #((agent helper) "a\"b"))])
+       (eval:report! (run (lambda () (apply values values-to-copy))) 'probe)
+       (test:check 'copied-multiple-values-are-an-executable-expression
+         (call-with-values (lambda () (eval (read (open-input-string (head:copy-text))))) list) values-to-copy)
+       (let ([copied (head:copy-text)])
+         (eval:report! (run (lambda () (list (current-output-port)))) 'probe)
+         (test:check 'opaque-result-does-not-overwrite-a-usable-copy (head:copy-text) copied)))
      ;; A library compiled on import announces itself as a compile record for
      ;; the log alone; a broken one fails the evaluation, which the echo shows.
      (define root (format "/tmp/e-eval-compile-~a-~a" (get-process-id) (random 1000000)))

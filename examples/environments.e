@@ -26,7 +26,7 @@
 
 (define (environment-example:panel! env title)
   (let* ([who head:ui-actor]
-         [draft (list 'buffer (store:create! who "worksheet draft" '("(+ seed 1)") '((internal . #t))))]
+         [draft (store:create! who "worksheet draft" '("(+ seed 1)") '((internal . #t)))]
          [root (view:create! who env 'environment-example 1 (list (cons 'draft draft)) '())]
          [title (view:create! who #f 'label 1 (list (cons 'text title)) '())]
          [prompt (eval:create-model-prompt! env 1 draft (list (list 'accepted root 'accepted '())))])

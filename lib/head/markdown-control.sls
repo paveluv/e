@@ -111,7 +111,7 @@
           (when (session-copy s) (service-copy! id s))))))
 
   (edoc "Create an unmounted Markdown view over a borrowed document, with independent selection and scrolling. The base shares interpretation; each head fits its own width."
-        (actor actor "creator") (document integer "source document")
+        (actor actor "creator") (document buffer "source document")
         (origin (list-of integer) "optional initial source row") (returns model) (public))
   (define (create-view! actor document . origin)
     (unless (and (<= (length origin) 1) (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) origin))

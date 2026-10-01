@@ -266,7 +266,7 @@
   (define (pretty-buffer?)
     ;; The modes whose display hides the source characters -- they get
     ;; the REPL-style closing and the source hint.
-    (member (mode:name-of (head:current-buffer))
+    (member (mode:name-of)
             '("pretty-scheme-clusters" "pretty-scheme-depth")))
 
   (define (innermost-opener lines target)
@@ -299,7 +299,7 @@
     (if id
       (let-values ([(source d) (text-control:context id 'editor)])
         (edit:insert! id (closing (text-control:basis-text source d) (car (view:state d)))))
-      (edit:insert-text! (closing (head:buffer-lines (head:current-buffer)) (head:point)))))
+      (edit:insert-text! (closing (head:buffer-lines (head:current-buffer-mirror)) (head:point)))))
 
   (define (toggle-mode! name)
     (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
@@ -353,7 +353,7 @@
       (lambda ()
         (and (pretty-buffer?)
              (let* ([p (head:point)]
-                    [s (head:buffer-line (head:current-buffer) (car p))]
+                    [s (head:buffer-line (head:current-buffer-mirror) (car p))]
                     [c (and (< (cdr p) (string-length s))
                             (string-ref s (cdr p)))])
                (and c (memv c '(#\( #\) #\[ #\]))

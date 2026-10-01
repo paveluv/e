@@ -69,7 +69,7 @@ echo area; it is never split or deleted, and is selected only while it shows
 Ordinary windows are numbered from 1. A new window takes the smallest number no
 window holds, so a closed window's number goes to the next window created and
 the numbers on screen stay small. `(window 1)` names the window numbered 1 in
-M-x and in module code, the way `(buffer "name")` names a buffer, and windows
+M-x and in module code, while `(store:find-named "name")` resolves a buffer, and windows
 print in that form.
 
 ## Switching, creating, and killing
@@ -286,7 +286,7 @@ alternatives. Changes elsewhere refresh the demanded review asynchronously.
 choices for reopening. New reviews have independent drafts.
 
 At M-x, `(delta-log:conflicts)` lists the current document's alternatives and
-`(delta-log:resolve! (conflict n) 'mine)` settles one explicitly; replacement
+`(delta-log:resolve! n 'mine)` settles one explicitly; replacement
 lines may be supplied instead. For scripted or embedded reviews, use
 `delta-log:create!` with an explicit document scope and host commands.
 `conflict-review:create!`, `choose!`, `preview` and `settle!` expose the base
@@ -397,7 +397,7 @@ relationships. `(delta-log:log)` returns the current document's entries,
 newest first, as `(revision actor labels delta origin state)` records.
 An optional selector narrows them by `count`, `actor`, `batch`, `since`,
 `until` or `state`, for example `(delta-log:log '((count . 10)))`.
-A `(batch '(...))` literal selects that batch. `(delta-log:show! (revision n))`
+A quoted batch value selects that batch. `(delta-log:show! n)`
 describes one retained entry in the echo area. Revision and batch arguments
 complete from the current document's log.
 
@@ -741,52 +741,54 @@ the current window's targets, `(window:links)` every link as data by window
 indexes, and `(window:unlink! (window 2))` removes the links to a window,
 one tag or all. `(window:register-link-tag! 'mirror "...")` adds a tag with
 its description; the `window-link-tag` type completes the registered tags at
-M-x, so a tag is a literal there, `(window-link-tag 'target)`.
+M-x, so a tag is an ordinary symbol there, `'target`.
 
 ## Buffer API
 
-The public Scheme API exposes read-only inspection through `head:current-buffer`,
-`head:buffers`, `head:buffer?`, `head:buffer-name`, `head:buffer-file`, `edit:buffer-text`,
-`edit:buffer-clean?`, `head:buffer-modified`, `head:buffer-modified-at`,
-`head:buffer-read-only`, `head:buffer-flags`, `mode:name-of`,
-`head:buffer-line`, and `head:buffer-line-count`. To obtain the buffer's cached
-line styler, use `(mode:line-styles (mode:of b))`.
+Buffers are stable data references, such as `'(buffer 17)`. Use
+`(head:current-buffer)` for the current shared document (or `#f` in a local
+widget host), and `(store:find-named "notes.txt")` to resolve a name once.
+Renaming a document does not change its reference. A deleted reference never
+names a later buffer with the same name. The `buffer` type checks only shape;
+operations check availability. Names, numbers and head records are not buffer
+arguments.
 
-`(head:buffer-modified-at b)` returns the last content-change time as an exact
-integer of UTC nanoseconds, or `#f` before a change has been recorded.
-`(store:property id 'modified-at)` exposes the same owner-maintained fact
-for shared buffers. Like `modified`, it cannot be overwritten through the
-shared property API. It survives saves; use `head:buffer-modified` to check
-whether there are unsaved changes.
+Read text with `edit:buffer-text`, `store:line`, `store:line-count` or
+`store:snapshot-state`; read names and metadata with `store:buffer-name`,
+`store:property` and `store:metadata`. These operations do not require a window
+or a head mirror. `edit:buffer-clean?` checks one coherent snapshot and returns
+false if it cannot be read. `mode:name-of` and `mode:of` take the same reference;
+without an argument they inspect the current window.
 
-`(buffer "name")` looks up a live buffer; buffers print in that reusable form.
-`(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer!`, `head:new-local-buffer!`, `head:show-buffer!`,
-`window:display!`,
-`window:pop-up-or-reuse!`, `edit:kill-buffer!`,
-`head:buffer-append!`, `mode:choose!`, and `head:buffer-read-only-set!` provide
-controlled mutation and display. `head:with-buffer` temporarily makes another
-buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
-entries. `window:focus-up!`, `window:focus-down!`, `window:focus-left!`, and
-`window:focus-right!` expose directional focus to Scheme. App authors should
-use base documents or collection sources with explicit widget views for generated content. Run
-`M-x (describe:show!)` for live signatures and registered command documentation.
+`(store:property id 'modified-at)` is the last content-change time in UTC
+nanoseconds, or `#f` before a recorded change. It survives saves; `modified`
+indicates unsaved changes. Both facts are maintained by the text owner.
 
-`(head:new-buffer! name)` creates a shared buffer with one empty line and
-adopts its canonical record into this head's buffer list. Use
-`(head:new-buffer! name lines facts)` to publish initial text and a fact alist
-together, before create subscribers run. Missing `trailing`, `mode-auto`
-and `wrap` facts default to `#t`, `#t` and `default`; explicit `#f` values
-are preserved. As with other text inputs, the line container is copied and
-its strings must be treated as immutable. Fact values are copied.
-`(head:new-local-buffer! name)` creates a buffer belonging only to this
-head, with one empty line and no store id, a view or a tool that editing
-commands refuse and whose text its app sets; its caller decides when to add
-it to the list. Use `head:show-buffer!` or `window:display!`
-to display the result in a window. The same text, mode, and fact accessors
-work on either kind. A local buffer's facts and generated text stay in the head and
-produce no store notifications; local points and selections are not
-published to other actors.
+`(edit:new-buffer! name)` creates an empty shared document, shows it, and returns
+its reference. `store:create!` creates content without placing it. Use
+`head:show-buffer!` to select a document, or `window:display!` and
+`window:pop-up-or-reuse!` to place a shared document or mounted widget reference
+without leaving the current window. `head:with-buffer` temporarily selects a
+shared document for current-context editing and search. For example:
+
+```scheme
+(head:with-buffer (store:find-named "notes.txt")
+  (search:replace! "old" "new"))
+```
+
+`edit:kill-buffer!` takes a buffer reference; without one it closes the current
+buffer, including a local tool. Shared documents go to Trash; disposable
+output is deleted. `edit:restore!` selects a named archived document and
+returns its original reference. `edit:call-as-one-edit!` groups edits into
+coherent undo entries.
+
+The default window host still uses opaque head records internally. Its
+`head:current-buffer-mirror`, `head:show-buffer-mirror!`,
+`head:with-buffer-mirror`, `head:new-buffer!`, `head:new-local-buffer!` and
+`head:buffer-*` accessors are temporary presentation adapters, documented as
+`(record buffer)`. They are neither portable buffer values nor application
+models. Extensions should use base resources and explicit widget views.
+Window records and `(window n)` selectors remain temporary host adapters too.
 
 Opening a file reads and admits its text, disk baseline and canonical path
 in the base. A missing file and its missing parent directories are created

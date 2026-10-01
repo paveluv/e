@@ -141,7 +141,7 @@
 
   (edoc "Project a buffer's text and the demanded surface rows into a frame of terminal cells, reusing the previous frame's rows where the text is unchanged."
         (previous (or (record frame) #f) "the last frame")
-        (id (or integer #f) "the store buffer id")
+        (id (or buffer #f) "the store buffer id")
         (text vector "the lines")
         (revision integer "the text revision")
         (ranges list "the demanded (from . to) row ranges")
@@ -170,7 +170,7 @@
                  [ranges (if (and cursor (> height 0))
                              (cons (cons (- (car cursor) height -1) (+ (car cursor) height)) ranges) ranges)]
                  [wanted (requested-rows ranges (line-count text))])
-            (if (and previous (eqv? (frame-id previous) id)
+            (if (and previous (equal? (frame-id previous) id)
                      (eq? (frame-text previous) text)
                      (equal? (frame-header previous) next)
                      (for-all (lambda (i) (hashtable-contains? (frame-rows previous) i)) wanted))

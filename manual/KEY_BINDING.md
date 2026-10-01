@@ -111,15 +111,15 @@ Keep the command name explicit in bindings, including Enter's `activate`, so
 the listing identifies which connection is followed:
 
 ```scheme
-(table:invoke! (model 110) 'activate) ; default action, opening a row in Buffet
-(table:invoke! (model 110) 'trash)    ; invoke the table's trash connection
-(table:invoke! (model 110) 'delete)   ; invoke the table's delete connection
+(table:invoke! '(model 110) 'activate) ; default action, opening a row in Buffet
+(table:invoke! '(model 110) 'trash)    ; invoke the table's trash connection
+(table:invoke! '(model 110) 'delete)   ; invoke the table's delete connection
 ```
 
 Buffet's `C-k`, for example, is displayed as:
 
 ```scheme
-(table:invoke! (widget:descendant (model 109) 'table) 'trash)
+(table:invoke! (widget:descendant '(model 109) 'table) 'trash)
 ```
 
 The table supplies its hovered or selected row and result basis to the
@@ -127,11 +127,11 @@ connected action. Bindings shows the full registered forwarding chain below
 the key, with each operation's own documentation:
 
 ```scheme
-(table:invoke! (widget:descendant (model 109) 'table) 'trash)
-  → (table:invoke! (model 110) 'trash)
-    → (widget:invoke! (model 110) 'trash selection basis)
-      → (widget:act! (model 109) 'kill selection basis)
-        → (buffet:kill! (model 109) selection basis)
+(table:invoke! (widget:descendant '(model 109) 'table) 'trash)
+  → (table:invoke! '(model 110) 'trash)
+    → (widget:invoke! '(model 110) 'trash selection basis)
+      → (widget:act! '(model 109) 'kill selection basis)
+        → (buffet:kill! '(model 109) selection basis)
 ```
 
 The model IDs are those of the current composition. `selection` and `basis`
@@ -173,8 +173,8 @@ listing without resetting its reading position.
 This discovery reads mounted descriptors and cached sources locally. It
 does not execute actions or query the base, and does no work while Bindings is
 hidden. Argument spelling in Bindings and prefilled M-x expressions uses the
-same edoc types as completion; a model argument is `(model N)`, while an
-ordinary list argument stays quoted.
+same Scheme spelling as completion: a model argument is `'(model N)`, and
+compound values are quoted once regardless of their argument type.
 
 `(mouse:bindings)` returns the current `(gesture action)` pairs as data;
 an optional `(column . row)` selects another screen cell, using one-based

@@ -26,20 +26,20 @@
   (define (own-head actor)
     (unless (equal? actor (client:identity)) (error 'vt "an attached head acts as itself")))
 
-  (edoc "Ask the base to open a terminal for this head; its buffer id."
-        (actor actor "the actor identity")
-        (command (or string #f) "the command line, or #f for the shell")
-        (directory directory "the working directory")
-        (rows integer "the rows")
-        (cols integer "the columns")
-        (scheme any "the color scheme")
-        (returns integer))
+  (edoc
+    "Ask the base to open a terminal for this head; its buffer id."
+    (actor actor "the actor identity")
+    (command
+      (or string #f)
+      "the command line, or #f for the shell")
+    (directory directory "the working directory")
+    (rows integer "the rows") (cols integer "the columns")
+    (scheme any "the color scheme") (returns buffer))
   (define (open! actor command directory rows cols scheme)
     (own-head actor)
     (client:request 'vt-open command directory rows cols scheme))
 
-  (edoc "Close a terminal by its buffer id."
-        (id integer "the buffer id"))
+  (edoc "Close a terminal by its buffer id." (id buffer "the buffer id"))
   (define (close! id)
     (client:request 'vt-close id))
 

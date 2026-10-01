@@ -2,12 +2,14 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service rewrite)
   (export close! create! preview settle! toggle!)
-  (import (chezscheme) (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
+  (import (chezscheme) (prefix (core handle) handle:)
+    (prefix (state model) model:) (prefix (state store) store:)
+    (prefix (state view) view:))
   (define (get r k) (cdr (assq k r)))
   (define (revision? n) (and (integer? n) (exact? n) (> n 0)))
   (define kind (model:register-kind! 'rewrite-draft 1
                  (lambda (v) (and (list? v) (for-all pair? v) (equal? (map car v) '(document disabled))
-                               (revision? (get v 'document)) (list? (get v 'disabled)) (for-all revision? (get v 'disabled))
+                               (handle:buffer? (get v 'document)) (list? (get v 'disabled)) (for-all revision? (get v 'disabled))
                                (let loop ([xs (get v 'disabled)])
                                  (or (null? xs) (and (not (memv (car xs) (cdr xs))) (loop (cdr xs)))))))))
   (define lock (make-mutex))
@@ -19,10 +21,10 @@
       (unless (equal? revision (get r 'revision)) (error 'rewrite "draft changed; review its current choices")) r))
 
   (edoc "Create an independent persistent rewrite draft over a borrowed document. Other drafts over the same document keep their own disabled revisions."
-        (actor actor "creator") (document integer "source document") (returns model))
+        (actor actor "creator") (document buffer "source document") (returns model))
   (define (create! actor document)
     (unless (store:visible? actor document) (error 'create! "document is unavailable"))
-    (model:create! actor 'rewrite-draft 1 'session 'persistent (list (list 'buffer document))
+    (model:create! actor 'rewrite-draft 1 'session 'persistent (list document)
       (list (cons 'document document) '(disabled))))
 
   (edoc "Toggle retained revisions in an explicit draft against its model revision. Validate the complete choice before changing anything; source text is never edited. Return the updated model envelope."

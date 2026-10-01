@@ -26,10 +26,10 @@
     (list (car (shown)) (view:state (interaction:snapshot id)))
     '(("new") ((0 . 0) (0 . 3) (0 . 0) #t)))
   (widget:unmount! id)
-  (let ([bad? #f] [view (view:create! actor (list 'buffer source) 'snapshot-fixture 1 '() '())])
+  (let ([bad? #f] [view (view:create! actor source 'snapshot-fixture 1 '() '())])
     (widget:register! 'snapshot-fixture 1
       (list (cons 'snapshot (lambda (id envelope)
-                              (list (assq 'revision envelope) (cons 'id (if bad? '(buffer 99999) (list 'buffer source)))
+                              (list (assq 'revision envelope) (cons 'id (if bad? '(buffer 99999) source))
                                 (assq 'value envelope))))))
     (widget:mount! view 'snapshot-fixture)
     (check 'snapshot-envelopes-are-order-independent-and-cannot-retarget-a-source
@@ -38,7 +38,7 @@
     (widget:unmount! view)))
 
 ;; Two widths share text and the existing renderer, but never interaction.
-(let* ([actor head:ui-actor] [ambient (head:current-buffer)]
+(let* ([actor head:ui-actor] [ambient (head:current-buffer-mirror)]
        [source (store:create! actor "nested editor" '("abcdefghijklmno" "a界éz" "" "last") '((mode . "editor-test")))]
        [a (create-view! actor source '())] [b (create-view! actor source '((wrap . #f)))]
        [root (view:create! actor #f 'row 1 '() '())] [calls 0])
@@ -57,7 +57,7 @@
     (check 'editor-nests-at-independent-widths
       (list (map glyph:cells (map car (map widget:frame-lines (list narrow wide))))
         (substring (cadr (widget:frame-lines narrow)) 0 6)
-        (eq? ambient (head:current-buffer)) (not (head:buffer-of-store-id source)))
+        (eq? ambient (head:current-buffer-mirror)) (not (head:buffer-of-store-id source)))
       '((10 17) "klmno " #t #t))
     (show! 27)
     (check 'editor-warm-frame-does-not-repeat-mode-analysis calls before))
@@ -116,9 +116,9 @@
       (lambda ()
         (set! batch (current-batch))
         (insert! a "G")
-        (head:with-buffer other (insert-text! "x"))
+        (head:with-buffer-mirror other (insert-text! "x"))
         (call-as-one-edit! "Nested label"
-          (lambda () (insert! a "H") (head:with-buffer other (insert-text! "y"))))))
+          (lambda () (insert! a "H") (head:with-buffer-mirror other (insert-text! "y"))))))
     (check 'one-edit-scope-covers-nested-and-current-window-commands
       (list (cadar (store:undo-labels source)) (cadar (store:undo-labels other-id))
         (for-all (lambda (row) (equal? batch (cdr (assq 'batch (caddr row)))))
@@ -186,7 +186,7 @@
   (store:set-property! actor source 'read-only #t)
   (select! a '(1 . 0) '(2 . 3)) (key "M-w")
   (check 'editor-copy-read-only-reversed-region-without-retargeting
-    (list (copy-text) (cadddr (state a)) (eq? ambient (head:current-buffer)) (store:line source 1)) '("abc\ndef" #f #t "abc"))
+    (list (copy-text) (cadddr (state a)) (eq? ambient (head:current-buffer-mirror)) (store:line source 1)) '("abc\ndef" #f #t "abc"))
   (select! a '(1 . 0) '(2 . 3))
   (check 'editor-refused-cut-keeps-clipboard (list (refused? (lambda () (key "C-w"))) (copy-text)) '(#t "abc\ndef"))
   (store:set-property! actor source 'read-only #f)
@@ -268,7 +268,7 @@
   (widget:pump!) (show! 27)
   (key ")")
   (check 'editor-mode-binding-uses-its-own-source
-    (list (store:line source 0) (eq? ambient (head:current-buffer))
+    (list (store:line source 0) (eq? ambient (head:current-buffer-mirror))
       (cadar (cadr (widget:key-scopes root "")))) '("[foo]" #t (pretty-scheme-depth scheme widget-editor)))
   (keymap:bind-default! 'scheme "C-c x" (keymap:call move! widget:target 'start))
   (key "C-c")
@@ -282,7 +282,7 @@
   (text-source:open! actor source) (select! a '(0 . 0) '(0 . 0)) (select! b '(0 . 0) '(0 . 0))
   (model:register-kind! 'editor-annotations 1 list?)
   (port:register! '(model editor-annotations 1) '((output ranges list (value))))
-  (let* ([producer (model:create! actor 'editor-annotations 1 'session 'transient (list (list 'buffer source))
+  (let* ([producer (model:create! actor 'editor-annotations 1 'session 'transient (list source)
                      (list source (text-source:revision (text-source:lookup source))
                        '(((0 8 0 13) match) ((1 1 1 2) conflict-disk))))])
     (interaction:bind! actor root (map (lambda (id) (list id 'annotations #f (list producer 'ranges))) (list a b)))

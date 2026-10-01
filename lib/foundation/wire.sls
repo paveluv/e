@@ -10,7 +10,7 @@
   ;; retains its version 1 contract so mismatched builds can still restart.
   (edoc "The wire protocol version a hello must carry."
         (value integer))
-  (define version 6)
+  (define version 7)
   (define frame-limit #x1000000) ; 16 MiB, checked before reading a payload
 
   (define (frame-size! size)

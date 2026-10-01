@@ -53,10 +53,16 @@
                (and r (equal? id (get (get r 'value) 'parent)) child))) (model:ids 'prompt-request))))
   (define (create-draft! actor value)
     (let-values ([(lines trailing?) (text:from-string value)])
-      (list 'buffer
-        (store:create! actor "<prompt>"
-          (if trailing? (list->vector (append (vector->list lines) '(""))) lines)
-          (list '(internal . #t) '(disposable . #t) (cons 'audience (list actor)))))))
+      (store:create!
+        actor
+        "<prompt>"
+        (if trailing?
+          (list->vector (append (vector->list lines) '("")))
+          lines)
+        (list
+          '(internal . #t)
+          '(disposable . #t)
+          (cons 'audience (list actor))))))
 
   (edoc "Create a transient input request with a captured origin and provider recipe. A false draft creates an owned internal disposable buffer from text; an explicit buffer borrows its authored text unchanged. Parent must still be editing and belong to this head. Return a model or false when the parent became unavailable."
         (actor actor "requesting head") (parent (or model #f) "owning request")
@@ -73,7 +79,7 @@
           (let ([parents (ancestors actor parent)])
             (and parents
               (begin
-                (when (and draft (not (store:exists? (cadr draft)))) (error 'create! "draft is unavailable" draft))
+                (when (and draft (not (store:exists? draft))) (error 'create! "draft is unavailable" draft))
                 (let ([source (or draft (create-draft! actor text))]
                       [committed? #f])
                   (dynamic-wind void
@@ -88,8 +94,8 @@
                                (lambda (ids) (map witness parents)))])
                         (set! committed? (and ids #t)) (and ids (car ids))))
                     (lambda ()
-                      (when (and (not committed?) (not draft) (store:exists? (cadr source)))
-                        (store:delete! actor (cadr source)))))))))))))
+                      (when (and (not committed?) (not draft) (store:exists? source))
+                        (store:delete! actor source))))))))))))
 
   (edoc "Bind the request's sole outcome controller once, while editing. The controller must be a prompt view scoped to and showing this request. Forked views may show the same interaction, but only this identity owns its named outcomes and host lifetime. Return applied, stale, bound, closed or unavailable."
         (actor actor "request owner") (id model "request") (revision integer "expected request revision")
@@ -123,7 +129,7 @@
             [(not (= revision (get r 'revision))) 'stale]
             [else
              (let* ([v (get r 'value)] [parents (ancestors actor (get v 'parent))]
-                    [draft (cadr (get v 'draft))]
+                    [draft (get v 'draft)]
                     [text (store:state draft #f '())])
                (cond [(not parents) 'closed] [(not text) 'unavailable]
                  [(not (= draft-revision (caddr text))) 'stale]
@@ -166,7 +172,7 @@
                   [(stale) (loop)]
                   [(applied)
                    (view:retire-scope! actor id)
-                   (let* ([v (get r 'value)] [draft (cadr (get v 'draft))])
+                   (let* ([v (get r 'value)] [draft (get v 'draft)])
                      (when (and (get v 'owned?) (store:exists? draft)) (store:delete! actor draft)))]))))))))
 
   (edoc "Abandon the departing head's transient requests, preserving borrowed drafts and independent actor questions. Call before admitting a replacement attachment."

@@ -51,7 +51,7 @@
      (evaluate! "(edit:forward-copy-buffer-to-system-clipboard #t)")
      (evaluate! "(edit:copy-text! \"abc\")")
      (wait-for! 'a-copy-publishes-its-text-at-once (lambda () (written? "\x1b;]52;c;YWJj\x1b;\\")) 5000)
-     (evaluate! "(begin (head:show-buffer! (head:copy-buffer)) (void))")
+     (evaluate! "(begin (head:show-buffer-mirror! (head:copy-buffer)) (void))")
      (wait-for! 'the-copy-buffer-shows (lambda () (on-screen? "[copy]")) 5000)
      (send! "d")
      (wait-for! 'a-hand-edit-in-the-copy-buffer-publishes-at-the-next-frame

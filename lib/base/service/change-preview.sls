@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service change-preview)
   (export create!)
-  (import (chezscheme) (prefix (core work-queue) work-queue:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core work-queue) work-queue:)
           (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state store) store:) (prefix (state view) view:))
   (define (get r k) (cdr (assq k r)))
@@ -10,7 +10,7 @@
   (define kind (model:register-kind! 'change-preview 1
                  (lambda (v) (and (list? v) (for-all pair? v)
                                (equal? (map car v) '(document selection basis status annotations))
-                               (positive-integer? (get v 'document)) (memq (get v 'status) '(pending ready unavailable))
+                               (handle:buffer? (get v 'document)) (memq (get v 'status) '(pending ready unavailable))
                                (list? (get v 'annotations))))))
   (define worker (work-queue:create))
   (define lock (make-mutex))
@@ -18,11 +18,11 @@
   (define (record id)
     (let ([r (model:snapshot id)]) (and r (eq? (get r 'kind) 'change-preview) r)))
   (define (spec document owner)
-    (list 'change-preview 1 owner 'transient (list (list 'buffer document))
+    (list 'change-preview 1 owner 'transient (list document)
       (map cons '(document selection basis status annotations) (list document #f #f 'pending '()))))
 
   (edoc "Create a transient revision/conflict annotation query over a borrowed document. Connect selection to false or (revision entry)/(conflict entry); annotations contain at most one revision-bound span. Base workers locate it only while demanded. The owning view must declare this query in owned."
-        (actor actor "creator") (document integer "borrowed document") (owner model "owning view") (returns model))
+        (actor actor "creator") (document buffer "borrowed document") (owner model "owning view") (returns model))
   (define (create! actor document owner)
     (unless (and (store:visible? actor document) (view:snapshot owner)) (error 'create! "document or owner is unavailable"))
     (apply model:create! actor (spec document owner)))
@@ -83,5 +83,5 @@
         (lambda (event)
           (vector-for-each (lambda (id)
                              (let ([r (record id)])
-                               (when (and r (= (cadr event) (get (get r 'value) 'document))) (schedule! id))))
+                               (when (and r (equal? (cadr event) (get (get r 'value) 'document))) (schedule! id))))
             (with-mutex lock (hashtable-keys active))))))))

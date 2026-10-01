@@ -36,7 +36,7 @@
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
      (paint:set-screen-cols! 300) (paint:window-layout)
      (define app (finder:open-directory! root))
-     (define host (head:buffer-fact (head:current-buffer) 'widget-id #f))
+     (define host (head:buffer-fact (head:current-buffer-mirror) 'widget-id #f))
      (define table (child app 'table))
      (define entry (child (child table 'filter) 'entry))
      (define query (view:source (interaction:snapshot table)))
@@ -82,7 +82,7 @@
                               (and (eq? (get v 'status) 'ready) (null? (get (get v 'details) 'completion)))))))
      (settle!)
      (check 'finder-starts-focused-in-entry-with-real-row-keys
-       (list (equal? (widget:focused host) entry) (head:buffer-name (head:current-buffer))
+       (list (equal? (widget:focused host) entry) (head:buffer-name (head:current-buffer-mirror))
          (map (lambda (r) (caddr (assq 'name (caddr r)))) (rows)))
        '(#t "<finder>" ("empty" "large" "small" "a 日本語 long (name).txt" "APPLE.txt" "apple.txt" "odd\nname.txt" "zeta.txt")))
      (press! "HOME")
@@ -147,13 +147,13 @@
        (list (keys) (and (visible? "[showing hidden]") #t)) (list (list (list 'path (path "small/.日本語\n/leaf") 'directory)) #f))
      (filter! (path ""))
      (select! (list 'path (path "zeta.txt") 'file))
-     (define finder-buffer (head:current-buffer))
+     (define finder-buffer (head:current-buffer-mirror))
      (define wide (widget:frame-lines (draw!)))
      (press! "RET")
-     (check 'finder-opens-file-through-window-host (head:buffer-file (head:current-buffer)) (path "zeta.txt"))
+     (check 'finder-opens-file-through-window-host (head:buffer-file (head:current-buffer-mirror)) (path "zeta.txt"))
      (finder:open!) (settle!)
      (check 'finder-wide-reopen-retains-metadata-and-fitting
-       (list (eq? finder-buffer (head:current-buffer)) (equal? wide (widget:frame-lines (draw!)))
+       (list (eq? finder-buffer (head:current-buffer-mirror)) (equal? wide (widget:frame-lines (draw!)))
          (visible? "rw") (visible? "Modified")) '(#t #t #t #t))
      (draw! 35) (draw!)
      (check 'finder-width-belongs-to-mount-and-expands-again (equal? wide (widget:frame-lines (draw!))) #t)
@@ -170,7 +170,7 @@
             [ready (list '(status . ready) (cons 'input-filter sample) (list 'details (cons 'missing (cons start (string-length sample)))))]
             [pending '((status . pending) (details))]
             [source (store:create! head:ui-actor "path presentation" (list sample))]
-            [id (view:create! head:ui-actor (list 'buffer source) 'entry 1
+            [id (view:create! head:ui-actor source 'entry 1
                   (list '(presentation finder 1) (cons 'context ready)) '((0 . 0) (0 . 0)))])
        (define (show) (styled (widget:prepare! id 300 1) 0 'italic))
        (define (context! context)
@@ -220,7 +220,7 @@
      (check 'right-on-proposed-file-has-no-side-effects (file-exists? (path "new")) #f)
      (press! "RET")
      (check 'creation-opens-file-and-logs-parent-first
-       (list (head:buffer-file (head:current-buffer))
+       (list (head:buffer-file (head:current-buffer-mirror))
          (map log:datum (reverse (list-head (log:entries 'file:create!) 3))))
        (list (path "new/inner 日本語/note.txt")
          (list (string-append "Created directory " (path "new/"))
@@ -248,12 +248,12 @@
          (view:arrange! head:ui-actor (list (list other (get (model:snapshot other) 'revision) (view:children d)
                                               (list (list 'commands (list 'open receiver 'open '()))))) '()))
        (widget:mount! other 'embedded-finder) (widget:mount! receiver 'embedded-receiver)
-       (let* ([q (view:source (view:snapshot other))] [before (head:current-buffer)])
+       (let* ([q (view:source (view:snapshot other))] [before (head:current-buffer-mirror)])
          (test:await 'embedded-ready (lambda () (eq? (get (get (collection:summary q) 'value) 'status) 'ready)))
          (let* ([v (get (collection:summary q) 'value)] [key (list 'path (path "zeta.txt") 'file)])
            (finder:choose! other #f (list q (get v 'generation) key) (get v 'basis)))
          (check 'embedded-finder-delivers-reference-without-window-placement
-           (list (eq? before (head:current-buffer)) (equal? destination (catalogue-host:reference (head:buffer-named "zeta.txt")))) '(#t #t)))
+           (list (eq? before (head:current-buffer-mirror)) (equal? destination (catalogue-host:reference (head:buffer-named "zeta.txt")))) '(#t #t)))
        (widget:unmount! other) (widget:unmount! receiver))
      (for-each (lambda (name) (delete-file (path name))) (append names '("new/inner 日本語/note.txt" "race")))
      (for-each (lambda (name) (delete-directory (path name))) (append '("new/inner 日本語" "new" "only") (reverse directories)))

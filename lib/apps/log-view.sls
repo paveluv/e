@@ -331,7 +331,7 @@
         (component (list-of symbol) "optional component filter") (returns model) (public))
   (define (show! . component)
     (unless (and (<= (length component) 1) (for-all symbol? component)) (error 'show! "expected at most one component"))
-    (let ([root (default! (and (pair? component) (car component)))]) (window:pop-up-or-reuse! (widget:host root)) root))
+    (let ([root (default! (and (pair? component) (car component)))]) (window:pop-up-or-reuse! root) root))
 
   (edoc "Register the journal widget and named text commands without opening a tool." (public))
   (define (init!)

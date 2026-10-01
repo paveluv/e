@@ -32,7 +32,7 @@
         (values source d (car ps)))))
   (define (home source point) (list (text-source:id (text-control:mirror source)) (text-control:revision source) point))
   (define (rebase source home)
-    (and (= (car home) (text-source:id (text-control:mirror source)))
+    (and (equal? (car home) (text-source:id (text-control:mirror source)))
       (let ([ps (text-source:rebase (list (caddr home))
                   (text-source:changes (text-control:mirror source) (cadr home) (text-control:revision source)))])
         (and ps (car ps)))))

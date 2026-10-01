@@ -52,7 +52,7 @@
     (unless (equal? head (client:identity)) (error 'reference "expected this head's identity")))
 
   (edoc "Read an explicit reference page as (id revision selected-name), or false when unavailable."
-        (head head "requesting head") (id integer "source document")
+        (head head "requesting head") (id buffer "source document")
         (returns (or list #f))
         (effects internal))
   (define (page head id)
@@ -67,7 +67,7 @@
     (client:request 'reference-create name keys (documents)))
 
   (edoc "Select or refresh an explicit reference page against its revision; changed or deleted sources refuse."
-        (head head "requesting head") (id integer "source document")
+        (head head "requesting head") (id buffer "source document")
         (revision integer "reviewed revision") (name (or symbol string) "documented name")
         (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
   (define (select! head id revision name keys)

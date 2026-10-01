@@ -49,7 +49,7 @@ was. Every occurrence is an entry of the buffer's delta log, all under one
 batch, and the whole replacement is one undo step. Reviewing the occurrences
 happens in the delta log rather than one question at a time: the buffer shows
 the result at once, and `C-x l` opens the delta log browser in the pop-up,
-where `(delta-log:filter! review (batch '(...)))` narrows an explicit review
+where `(delta-log:filter! review '(...))` supplies a batch value to narrow an explicit review
 to the replacement's entries. An unwanted occurrence can be omitted from the
 rewrite preview and the draft settled, or the whole replacement undone.
 
@@ -66,12 +66,18 @@ first hit is available.
 
 ```scheme
 (search:replace! "old" "new")
-(head:with-buffer (buffer "notes.md") (search:replace! "old" "new"))
-(edit:with-region (region (buffer "notes.md") '(0 . 0) '(4 . 0))
+(head:with-buffer (store:find-named "notes.md") (search:replace! "old" "new"))
+(edit:with-region (region:make (store:find-named "notes.md") '(0 . 0) '(4 . 0))
   (search:replace! "old" "new"))
 (for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (search:replace! "old" "new"))))
           (head:buffers))
 ```
+
+Regions are ordinary data: `'(region (buffer 17) (0 . 0) (4 . 0))`.
+`region:make` validates the reference and positions and orders the endpoints;
+`edit:with-region` checks the document and bounds before selecting it. A saved
+region keeps its document identity through renames, but its coordinates do
+not follow later edits. Use `edit:region-text` to read it without displaying it.
 
 Each call is one undo step in its buffer and retains its point, through
 `edit:rewrite-regions!`, the editing operation that takes the basis the

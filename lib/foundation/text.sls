@@ -29,6 +29,9 @@
           splice to-string)
   (import (rnrs) (only (chezscheme) format) (prefix (foundation datum) datum:))
 
+  (edoc-type position "a (row . column) pair of nonnegative exact integers, in characters"
+    (predicate position?) (portable #t))
+
   ;;; Text boundaries ------------------------------------------------------
 
   (edoc "Whether a value is a line: a string without newlines."
@@ -115,7 +118,7 @@
         (p any "the value")
         (returns boolean))
   (define (position? p)
-    (and (pair? p) (fixnum? (car p)) (fixnum? (cdr p))
+    (and (pair? p) (integer? (car p)) (exact? (car p)) (integer? (cdr p)) (exact? (cdr p))
          (>= (car p) 0) (>= (cdr p) 0)))
 
   (edoc "Whether one position comes before another."

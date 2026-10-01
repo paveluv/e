@@ -15,7 +15,7 @@
   (define recipe
     (list (cons 'directory (current-directory)) '(roots) '(values (seed . 11))
       '(imports (chezscheme) (prefix (service resource) resource:))
-      (list 'resources (cons 'shared (list 'buffer shared)))))
+      (list 'resources (cons 'shared shared))))
   (define a (environment:for-document! alice shared recipe))
   (define b (environment:create! bob recipe 'transient))
   (dynamic-wind void
@@ -42,12 +42,12 @@
             (let-values ([(status info) (store:undo! bob shared)]) status) (store:line shared 0))
           '(((stale)) "abc!" applied "abc")))
       (let* ([j (run alice a "(display \"out\") (display \"err\" (current-error-port)) (lambda (x) x)")]
-             [outcome (result j)] [output (cadr (get (value j) 'output))]
+             [outcome (result j)] [output (get (value j) 'output)]
              [v (value a)] [page (environment:completion a (generation a) (get v 'catalogue) 0 256)])
         (test:check 'job-output-and-catalogue-are-base-resources
           (list (car outcome) (list-sort char<? (string->list (store:line output 0))) (get (value j) 'status)
             (<= (length (list-ref page 3)) 256)
-            (let-values ([(next states) (store:export)]) (and (assv output states) #t))
+            (let-values ([(next states) (store:export)]) (and (assoc output states) #t))
             (environment:cancel! alice j))
           '(handle (#\e #\o #\r #\r #\t #\u) ok #t #t finished))
         (environment:for-document! alice shared (append recipe '()))
@@ -62,7 +62,7 @@
           (list (environment:release! alice j) (model:snapshot j) (store:exists? output) (store:exists? shared))
           '(#t #f #f #t)))
       (let* ([running (run alice a "(display \"ready\") (let loop () (loop))")]
-             [output (cadr (get (value running) 'output))]
+             [output (get (value running) 'output)]
              [queued (run bob a "(error 'test \"must not execute\")")])
         (test:await 'streaming-job (lambda () (string=? (store:line output 0) "ready")))
         (test:check 'queued-cancel-and-independent-work-do-not-reset-running-group
@@ -95,7 +95,7 @@
         (environment:restore!)
         (test:check 'recovery-keeps-portable-outcomes-but-not-native-bindings
           (list (get (value saved) 'result) (get (value a) 'status)
-            (store:line (cadr (get (value saved) 'output)) 0)
+            (store:line (get (value saved) 'output) 0)
             (get (value saved) 'channels)
             (get (done (run alice a "transient-binding")) 'status))
           '((value ((portable)) "((portable))") reset "retained" ((stdout 0 0)) error)))
@@ -113,7 +113,7 @@
                                  (store:revision shared)))])
         (test:check 'resource-observer-can-reset-its-worker-without-deadlock-or-late-effects
           (list (get (done job) 'status) reset? (store:line shared 0)
-            (store:line (cadr (get (value job) 'output)) 0)) '(reset #t "kept abc" ""))
+            (store:line (get (value job) 'output) 0)) '(reset #t "kept abc" ""))
         (store:unsubscribe! watch))
       (environment:close! alice a (generation a))
       (test:await 'workers-reaped (lambda () (equal? (test:child-pids) baseline)))

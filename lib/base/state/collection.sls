@@ -208,7 +208,7 @@
           (when deleted?
             (for-each (lambda (ref)
                         (if (eq? (car ref) 'buffer)
-                          (when (store:exists? (cadr ref)) (store:delete! '(base collection) (cadr ref)))
+                          (when (store:exists? ref) (store:delete! '(base collection) ref))
                           (let ([r (model:snapshot ref)]) (when r (model:retire! '(base collection) ref (field r 'revision)))))) resources)
             (view:retire-scope! '(base collection) id)))
         (begin
@@ -283,7 +283,7 @@
         (lambda (ids)
           (for-each (lambda (id) (when (with-mutex lock (hashtable-contains? owned id)) (schedule! id))) ids)
           (prune-envelopes!)))
-      (store:subscribe! #f (lambda (event) (invalidate! (list (list 'buffer (cadr event))))))
+      (store:subscribe! #f (lambda (event) (invalidate! (list (cadr event)))))
       (port:observe! (lambda () (with-mutex lock (set! contract-generation (+ contract-generation 1))) (rescan!)))
       (kernel:registry-observe! providers
         (lambda (removed added) (with-mutex lock (set! contract-generation (+ contract-generation 1))) (rescan!)))))

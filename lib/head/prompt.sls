@@ -562,7 +562,7 @@
                 (accept-draft! id))))))))
   (define (accept-draft! id)
     (let-values ([(source d value) (context id)])
-      (let ([draft (text-source:lookup (cadr (get value 'draft)))])
+      (let ([draft (text-source:lookup (get value 'draft))])
         (unless draft (error 'accept! "draft is unavailable"))
         (let ([status (if (and (option (view:options d) 'choices #f)
                             (not (valid-choice? (option (view:options d) 'choices #f) (string:join (vector->list (text-source:lines draft)) "\n")))) 'invalid

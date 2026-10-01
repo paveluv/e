@@ -23,17 +23,13 @@
           (prefix (service vt) vt:)
           (prefix (state store) store:))
 
-  (define (terminal-facts buffer)
-    (let* ([facts (head:app-facts buffer)] [owner (and facts (cdr (assq 'app facts)))])
-      (and owner (equal? (cadr owner) 'terminal) facts)))
-
-  (define (terminal-id buffer)
-    (and (terminal-facts buffer) (head:buffer-store-id buffer)))
-
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
-        (buffer* (list-of buffer) "the terminal buffer, at most one") (public))
+        (buffer* (list-of buffer) "the terminal buffer reference, at most one") (public))
   (define (terminal-close! . buffer*)
-    (cond [(terminal-id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (head:current-buffer))) => vt:close!])
+    (unless (<= (length buffer*) 1) (error 'terminal-close! "expected at most one buffer"))
+    (let* ([id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (head:current-buffer))]
+           [owner (and id (store:property id 'app #f))])
+      (when (and owner (eq? (cadr owner) 'terminal)) (vt:close! id)))
     (void))
 
   (edoc "Tell the terminals the host's color scheme, so their default colors follow it."
@@ -44,12 +40,12 @@
   (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
         (command* (list-of string) "the command line to run, at most one; the shell by default"))
   (define (terminal! . command*)
-    (let* ([prior (head:current-buffer)] [path (head:buffer-file prior)] [id #f] [buffer #f])
+    (let* ([prior (head:current-buffer-mirror)] [path (head:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
                     (vt:close! id)
                     (when (store:exists? id) (store:delete! head:ui-actor id)))
-                  (when (eq? (head:current-buffer) buffer) (head:show-buffer! prior))
+                  (when (eq? (head:current-buffer-mirror) buffer) (head:show-buffer-mirror! prior))
                   (raise ex)])
         (paint:window-layout)
         (let ([w (head:current-window)])
@@ -58,7 +54,7 @@
                      (max 1 (head:window-size w)) (head:window-content-width w)
                      (head:host-color-scheme))))
         (set! buffer (head:adopt-store-buffer! id))
-        (head:show-buffer! buffer)
+        (head:show-buffer-mirror! buffer)
         (void))))
 
   (edoc "Install the terminal app: its mode with the keys of its context, color scheme and clipboard capabilities, the C-c t binding and its describe entries." (public))

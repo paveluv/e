@@ -2,9 +2,10 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-source)
   (export adopt! basis-text call-grouped! call-segmented! changes current-batch edit! forget! history!
-          (rename (source-id id) (source-lines lines)) lookup make observe! open! project-positions rebase
+          id (rename (source-lines lines)) lookup make observe! open! project-positions rebase
           (rename (source-revision revision)) snapshot span suspension-safe?)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:) (prefix (foundation text) text:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core property) property:)
+          (prefix (foundation datum) datum:) (prefix (foundation text) text:)
           (prefix (service log) log:) (prefix (state store) store:))
 
   (define limit 256)
@@ -53,12 +54,12 @@
     (let ([batch (current-batch actor)])
       (if (not batch) (proc context)
         (let* ([context (property:edit-context context)] [labels (edit-group-labels (group))]
-               [existing (hashtable-ref labels id #f)]
+               [existing (hashtable-ref labels (cadr id) #f)]
                ;; Reserve a label before callbacks can submit another edit.
                ;; A refused attempt cannot name a later successful action.
                [entry (or existing (cons (or (edit-group-label (group)) (and context (cadr context))) #f))])
-          (unless existing (hashtable-set! labels id entry))
-          (guard (ex [else (when (and (not existing) (not (cdr entry))) (hashtable-delete! labels id)) (raise ex)])
+          (unless existing (hashtable-set! labels (cadr id) entry))
+          (guard (ex [else (when (and (not existing) (not (cdr entry))) (hashtable-delete! labels (cadr id))) (raise ex)])
             (call-with-values
               (lambda ()
                 (proc (cons* batch (car entry)
@@ -68,22 +69,30 @@
               (lambda result (set-cdr! entry #t) (apply values result))))))))
 
   (edoc "An adopted text source, shared by all its head projections. Local sources have no store identity; neither kind contains selection or geometry."
-        (id (or integer #f) "store identity") (lines any "immutable text")
+        (id (or buffer #f) "store identity") (lines any "immutable text")
         (revision integer "content revision") (links list "bounded revision links"))
   (define-record-type source (fields id (mutable lines) (mutable revision) (mutable links)))
 
-  (edoc "Look up an already acquired document mirror without I/O." (id integer "store identity") (returns any))
-  (define (lookup id) (hashtable-ref mirrors id #f))
+  (edoc "The mirror's owned buffer reference, or false for a local source."
+        (source (record source) "mirror") (returns (or buffer #f)))
+  (define (id source) (datum:copy (source-id source)))
+
+  (edoc "Look up an already acquired document mirror without I/O." (id buffer "store identity") (returns any))
+  (define (lookup id)
+    (unless (handle:buffer? id) (error 'lookup "expected a buffer reference" id))
+    (hashtable-ref mirrors (cadr id) #f))
 
   (edoc "Create a local mirror or reuse a document's single mirror. Initial text is already acquired; an existing mirror is never overwritten."
-        (id (or integer #f) "store identity") (lines any "immutable text") (revision integer "content revision") (returns (record source)) (effects internal))
+        (id (or buffer #f) "store identity") (lines any "immutable text") (revision integer "content revision") (returns (record source)) (effects internal))
   (define (make id lines revision)
     (or (and id (lookup id))
-      (let ([source (make-source id lines revision '())])
-        (when id (hashtable-set! mirrors id source)) source)))
+      (let ([source (make-source (datum:copy id) lines revision '())])
+        (when id (hashtable-set! mirrors (cadr id) source)) source)))
 
-  (edoc "Forget an unavailable document's mirror. Retained frames cannot edit it." (id integer "store identity"))
-  (define (forget! id) (hashtable-delete! mirrors id))
+  (edoc "Forget an unavailable document's mirror. Retained frames cannot edit it." (id buffer "store identity"))
+  (define (forget! id)
+    (unless (handle:buffer? id) (error 'forget! "expected a buffer reference" id))
+    (hashtable-delete! mirrors (cadr id)))
 
   (edoc "Observe adopted shared text as (source basis lines revision changes). Legacy host adapters follow anchors here; observers must not perform a second edit. Module retraction removes the observer."
         (proc procedure "head-local adoption observer"))
@@ -134,7 +143,7 @@
           (for-each (lambda (proc) (proc source basis lines revision changes)) (kernel:registry-items observers))))))
 
   (edoc "Acquire or refresh a visible document outside painting. Optionally retain history from a saved view basis; missing history remains explicit."
-        (actor actor "head") (id integer "document") (basis (list-of integer) "optional saved revision") (returns any))
+        (actor actor "head") (id buffer "document") (basis (list-of integer) "optional saved revision") (returns any))
   (define (open! actor id . basis)
     (unless (<= (length basis) 1) (error 'open! "expected at most one basis"))
     (if (not (store:visible? actor id)) (begin (forget! id) #f)
@@ -210,7 +219,7 @@
                 (if after (project-positions (car basis) span replacement actual before (map caddr after) positions) '()) committed)))))))
 
   (edoc "Undo or redo a document through its attributed journal without consulting a window. Presentation adoption follows separately; only a service failure maps to blocked."
-        (actor actor "editing actor") (id integer "document") (direction (one-of undo redo) "step") (scope any "mine, all or actor"))
+        (actor actor "editing actor") (id buffer "document") (direction (one-of undo redo) "step") (scope any "mine, all or actor"))
   (define (history! actor id direction scope)
     (guard (ex [else (values 'blocked 'store-unavailable)]) (store:history-step! actor id direction scope 'any)))
 )

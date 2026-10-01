@@ -42,37 +42,37 @@
 
      (define by-file (head:new-buffer! "x.probe"))
      (head:buffer-file-set! by-file "/nowhere/x.probe")
-     (head:with-buffer by-file (mode:assign!))
-     (check 'detect-by-extension (mode:name-of by-file) "probe")
+     (head:with-buffer-mirror by-file (mode:assign!))
+     (check 'detect-by-extension (mode:name-of (head:buffer-store-id by-file)) "probe")
      (check 'detected-is-auto (head:buffer-mode-auto by-file) #t)
 
      (define by-interpreter (head:new-buffer! "script"))
      (head:buffer-lines-set! by-interpreter (vector "#!/usr/bin/env probesh" "x"))
-     (head:with-buffer by-interpreter (mode:assign!))
-     (check 'detect-by-interpreter (mode:name-of by-interpreter) "probe")
+     (head:with-buffer-mirror by-interpreter (mode:assign!))
+     (check 'detect-by-interpreter (mode:name-of (head:buffer-store-id by-interpreter)) "probe")
 
      (define plain (head:new-buffer! "notes.txt"))
      (head:buffer-file-set! plain "/nowhere/notes.txt")
-     (head:with-buffer plain (mode:assign!))
-     (check 'detect-nothing (mode:name-of plain) #f)
-     (check 'of-nothing (mode:of plain) #f)
+     (head:with-buffer-mirror plain (mode:assign!))
+     (check 'detect-nothing (mode:name-of (head:buffer-store-id plain)) #f)
+     (check 'of-nothing (mode:of (head:buffer-store-id plain)) #f)
 
      ;; -- choosing by hand ----------------------------------------------------
 
-     (head:with-buffer plain (mode:choose! "probe"))
-     (check 'chosen (list (mode:name-of plain) (mode:key-context plain)) '("probe" probe))
+     (head:with-buffer-mirror plain (mode:choose! "probe"))
+     (check 'chosen (list (mode:name-of (head:buffer-store-id plain)) (mode:key-context plain)) '("probe" probe))
      (check 'chosen-is-not-auto (head:buffer-mode-auto plain) #f)
-     (head:with-buffer plain (mode:choose! #f))
-     (check 'unchosen (mode:of plain) #f)
+     (head:with-buffer-mirror plain (mode:choose! #f))
+     (check 'unchosen (mode:of (head:buffer-store-id plain)) #f)
 
      ;; the optional buffer goes as its literal or by name
-     (mode:choose! "probe" (buffer "notes.txt"))
-     (check 'chosen-by-literal (mode:name-of (buffer "notes.txt")) "probe")
-     (mode:choose! "probe" "notes.txt")
-     (check 'chosen-by-name (list (mode:name-of "notes.txt") (mode:name-of plain)) '("probe" "probe"))
-     (mode:choose! #f "notes.txt")
-     (mode:assign! "notes.txt")
-     (check 'assigned-by-name (list (mode:of "notes.txt") (head:buffer-mode-auto plain)) '(#f #t))
+     (mode:choose! "probe" (store:find-named "notes.txt"))
+     (check 'chosen-by-literal (mode:name-of (store:find-named "notes.txt")) "probe")
+     (check 'mode-rejects-name-coercion (test:raises? (lambda () (mode:choose! "probe" "notes.txt"))) #t)
+     (check 'chosen-by-name (list (mode:name-of (store:find-named "notes.txt")) (mode:name-of (head:buffer-store-id plain))) '("probe" "probe"))
+     (mode:choose! #f (store:find-named "notes.txt"))
+     (mode:assign! (store:find-named "notes.txt"))
+     (check 'assigned-by-name (list (mode:of (store:find-named "notes.txt")) (head:buffer-mode-auto plain)) '(#f #t))
 
      (check 'adoption-distinguishes-undetected-and-explicit-no-mode
        (map (lambda (choice)
@@ -83,7 +83,7 @@
                      [token (store:subscribe! id (lambda (event) (set! events (cons event events))))]
                      [b (head:adopt-store-buffer! id)])
                 (store:unsubscribe! token)
-                (list (mode:name-of b) (head:buffer-mode-auto b) (length events))))
+                (list (mode:name-of (head:buffer-store-id b)) (head:buffer-mode-auto b) (length events))))
          '(missing #f "probe"))
        '(("probe" #t 2) (#f #f 0) ("probe" #f 0)))
 
@@ -96,38 +96,38 @@
          (lambda (event)
            (when (eq? (car event) 'property)
              (set! mode-observations
-               (cons (list (mode:name-of atomic-mode) (head:buffer-mode-auto atomic-mode))
+               (cons (list (mode:name-of (head:buffer-store-id atomic-mode)) (head:buffer-mode-auto atomic-mode))
                      mode-observations))))))
-     (head:with-buffer atomic-mode (mode:choose! "probe"))
+     (head:with-buffer-mirror atomic-mode (mode:choose! "probe"))
      (check 'manual-mode-choice-is-atomic mode-observations '(("probe" #f) ("probe" #f)))
      (set! mode-observations '())
-     (head:with-buffer atomic-mode (mode:assign!))
+     (head:with-buffer-mirror atomic-mode (mode:assign!))
      (check 'detected-mode-choice-is-atomic mode-observations '(("probe" #t) ("probe" #t)))
      (store:unsubscribe! mode-token)
 
      ;; A local buffer uses the same mode API, without a store twin.
      (define local (head:new-local-buffer! "*local-mode*"))
      (head:buffer-lines-set! local (vector "#!/usr/bin/env probesh" "local"))
-     (head:with-buffer local (mode:assign!))
-     (check 'local-detection (mode:name-of local) "probe")
+     (head:with-buffer-mirror local (mode:assign!))
+     (check 'local-detection (head:with-buffer-mirror local (mode:name-of)) "probe")
      (check 'local-detected-is-auto (head:buffer-mode-auto local) #t)
      (check 'local-has-no-twin (head:buffer-store-id local) #f)
-     (head:with-buffer local (mode:choose! "probe"))
-     (check 'local-chosen (mode:name-of local) "probe")
+     (head:with-buffer-mirror local (mode:choose! "probe"))
+     (check 'local-chosen (head:with-buffer-mirror local (mode:name-of)) "probe")
      (check 'local-chosen-is-not-auto (head:buffer-mode-auto local) #f)
      (check 'local-line-styles
-            (vector->list ((mode:line-styles (mode:of local)) "abc"))
+            (vector->list ((mode:line-styles (head:with-buffer-mirror local (mode:of))) "abc"))
             '(keyword keyword keyword))
-     (head:with-buffer local (mode:choose! #f))
-     (check 'local-mode-cleared (mode:of local) #f)
+     (head:with-buffer-mirror local (mode:choose! #f))
+     (check 'local-mode-cleared (head:with-buffer-mirror local (mode:of)) #f)
 
      ;; -- extensions added later ----------------------------------------------
 
      (mode:add-extension! "probe" ".pr2")
      (define by-addition (head:new-buffer! "y.pr2"))
      (head:buffer-file-set! by-addition "/nowhere/y.pr2")
-     (head:with-buffer by-addition (mode:assign!))
-     (check 'detect-by-added-extension (mode:name-of by-addition) "probe")
+     (head:with-buffer-mirror by-addition (mode:assign!))
+     (check 'detect-by-added-extension (mode:name-of (head:buffer-store-id by-addition)) "probe")
      (check 'bad-extension-refused
             (guard (ex [else 'refused]) (mode:add-extension! "probe" "pr3"))
             'refused)
@@ -137,7 +137,7 @@
 
      ;; -- memoized line styles ------------------------------------------------
 
-     (define styles-of (mode:line-styles (mode:of by-file)))
+     (define styles-of (mode:line-styles (mode:of (head:buffer-store-id by-file))))
      (define line (string #\a #\b #\c))
      (set-box! styler-calls 0)
      (check 'line-styles (vector->list (styles-of line)) '(keyword keyword keyword))
@@ -146,11 +146,11 @@
      (check 'line-styles-memoized-by-identity (unbox styler-calls) 1)
      (styles-of (string #\a #\b #\c))
      (check 'line-styles-fresh-string (unbox styler-calls) 2)
-     (check 'plain-buffer-styles ((mode:line-styles (mode:of plain)) "abc") #f)
+     (check 'plain-buffer-styles ((mode:line-styles (mode:of (head:buffer-store-id plain))) "abc") #f)
 
      (mode:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
-     (head:with-buffer plain (mode:choose! "raiser"))
-     (check 'raising-styler-paints-plain ((mode:line-styles (mode:of plain)) "abc") #f)
+     (head:with-buffer-mirror plain (mode:choose! "raiser"))
+     (check 'raising-styler-paints-plain ((mode:line-styles (mode:of (head:buffer-store-id plain))) "abc") #f)
 
      ;; Explicit text presentations share analysis without any head buffer.
 
@@ -185,8 +185,8 @@
      (mode:refresh!)
      (store:unsubscribe! refresh-token)
      (check 'refresh-resolves-replaced-modes-without-rewriting-unchanged-facts
-       (list (eq? (mode:find "probe") old) (eq? (mode:of by-file) (mode:find "probe"))
-             (mode:name-of by-file) refresh-writes)
+       (list (eq? (mode:find "probe") old) (eq? (mode:of (head:buffer-store-id by-file)) (mode:find "probe"))
+             (mode:name-of (head:buffer-store-id by-file)) refresh-writes)
        '(#f #t "probe" 0))
 
      ;; A derived mode follows live behavior, while detection and keys stay
@@ -208,9 +208,9 @@
        (map (lambda (name) (mode:required-facts (mode:find name)))
          '("grandchild" "render-child" "replaced-child" "no-such-mode"))
        '((parent-fact) (child-fact parent-fact) (child-fact) ()))
-     (head:with-buffer plain (mode:choose! "grandchild"))
+     (head:with-buffer-mirror plain (mode:choose! "grandchild"))
      (define derived-line (string-copy "abc"))
-     ((mode:line-styles (mode:of plain)) derived-line)
+     ((mode:line-styles (mode:of (head:buffer-store-id plain))) derived-line)
      (mode:indent-on-tab! "parent" #f)
      (check 'derivation-retains-own-detection-and-key-context
        (list (mode:name (mode:detect "x.parent" ""))
@@ -220,7 +220,7 @@
        '("parent" "child" () grandchild #t #f))
      (parent! (lambda (s) (make-vector (string-length s) 'string)) new-indent)
      (check 'parent-replacement-updates-presentation-operations-and-cached-styles
-       (list (vector->list ((mode:line-styles (mode:of plain)) derived-line))
+       (list (vector->list ((mode:line-styles (mode:of (head:buffer-store-id plain))) derived-line))
              (map (lambda (get) (eq? (get (mode:find "child")) new-indent))
                (list mode:render mode:row-styles))
              (eq? (mode:indenter "grandchild") new-indent)
@@ -251,40 +251,40 @@
      ;; claims their ending assigns it to them at once, as the worksheet does
      (define late (head:new-buffer! "notes.late"))
      (head:buffer-file-set! late "/tmp/notes.late")
-     (head:with-buffer late (mode:assign!))
-     (define before-derivation (mode:name-of late))
+     (head:with-buffer-mirror late (mode:assign!))
+     (define before-derivation (mode:name-of (head:buffer-store-id late)))
      (mode:derive! "late" "parent" '(".late"))
      (check 'deriving-a-mode-assigns-it-to-open-buffers-with-its-ending
-       (list before-derivation (mode:name-of late)) '(#f "late"))
+       (list before-derivation (mode:name-of (head:buffer-store-id late))) '(#f "late"))
      ;; a mode's source edited to claim one more ending, then reloaded: its
      ;; re-registration gives the open buffers with that ending the mode
      (define newly (head:new-buffer! "notes.newly"))
      (head:buffer-file-set! newly "/tmp/notes.newly")
-     (head:with-buffer newly (mode:assign!))
-     (define before-reregistration (mode:name-of newly))
+     (head:with-buffer-mirror newly (mode:assign!))
+     (define before-reregistration (mode:name-of (head:buffer-store-id newly)))
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "parent" '(".parent" ".newly") '("parentsh") probe-styler))
      (check 'reregistering-a-mode-with-a-new-ending-assigns-it-to-open-buffers
-       (list before-reregistration (mode:name-of newly) (mode:name-of late)) '(#f "parent" "late"))
+       (list before-reregistration (mode:name-of (head:buffer-store-id newly)) (mode:name-of (head:buffer-store-id late))) '(#f "parent" "late"))
      ;; a detected or chosen mode stays when others register: registration
      ;; is additive, and a mode chosen by hand follows only its own name
-     (head:with-buffer late (mode:choose! "parent"))
+     (head:with-buffer-mirror late (mode:choose! "parent"))
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "thief" '(".newly" ".late") '() probe-styler))
      (define stolen (head:new-buffer! "z.newly"))
      (head:buffer-file-set! stolen "/tmp/z.newly")
-     (head:with-buffer stolen (mode:assign!))
+     (head:with-buffer-mirror stolen (mode:assign!))
      (check 'registration-takes-only-buffers-without-a-mode
-       (list (mode:name-of newly) (mode:name-of late) (mode:name-of stolen)) '("parent" "parent" "thief"))
+       (list (mode:name-of (head:buffer-store-id newly)) (mode:name-of (head:buffer-store-id late)) (mode:name-of (head:buffer-store-id stolen))) '("parent" "parent" "thief"))
      (parent! probe-styler new-indent)
      (check 'a-chosen-mode-stays-through-its-reregistration
-       (list (mode:name-of late) (eq? (mode:of late) (mode:find "parent"))) '("parent" #t))
+       (list (mode:name-of (head:buffer-store-id late)) (eq? (mode:of (head:buffer-store-id late)) (mode:find "parent"))) '("parent" #t))
      (check 'a-derivation-cycle-is-refused-and-preserves-the-existing-parent
        (list (test:raises? (lambda () (mode:derive! "parent" "grandchild" '())))
              (mode:extensions (mode:find "parent"))) '(#t (".parent")))
      (kernel:retract-module! 'derived-parent)
      (check 'missing-parent-loses-presentation-but-keeps-child-and-local-overrides
-       (list (mode:name-of plain) ((mode:line-styles (mode:of plain)) derived-line)
+       (list (mode:name-of (head:buffer-store-id plain)) ((mode:line-styles (mode:of (head:buffer-store-id plain))) derived-line)
              (mode:render (mode:find "child")) (eq? (mode:formatter "child") old-indent))
        '("grandchild" #f #f #t))
 

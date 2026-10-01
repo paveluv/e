@@ -148,12 +148,14 @@
            (let* ([new-token (surface:subscribe! id late)]
                   [other (buffer)]
                   [other-frame (publish other #f 0 '() #f '(2 2))]
-                  [last (publish id (generation id) 0 '() '(1 2 #t) '(2 3))])
+                  [ref (list 'buffer (cadr id))]
+                  [last (publish ref (generation id) 0 '() '(1 2 #t) '(2 3))])
+             (set-car! (cdr ref) 999999)
              (release #t)
              (writer)
              (test:check (list 'coalesced retire?)
-               (list (filter (lambda (event) (= (cadr event) id)) (seen))
-                     (filter (lambda (event) (= (cadr event) other)) (seen))
+               (list (filter (lambda (event) (equal? (cadr event) id)) (seen))
+                     (filter (lambda (event) (equal? (cadr event) other)) (seen))
                      (length (seen)) (revoked) (late))
                (list (list (list 'surface id (cadr last) 0 (if retire? 'all '(0 1)) '(1 2 #t) '(2 3)))
                      (list (list 'surface other (cadr other-frame) 0 'all #f '(2 2)))

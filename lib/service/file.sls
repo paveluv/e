@@ -74,15 +74,13 @@
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
     (portable #t)
     (within string)
-    (complete (lambda (partial) (map (lambda (path) (cons path #f)) (offered partial))))
-    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+    (complete (lambda (partial) (map (lambda (path) (list path #f #f)) (offered partial)))))
 
   (edoc-type directory "a directory, by its path"
     (predicate (lambda (v) (and (string? v) (guard (ex [else #f]) (file-directory? (path:canonical (path:expand v)))))))
     (complete (lambda (partial)
-                (map (lambda (path) (cons path #f))
-                     (filter (lambda (path) (string:suffix? "/" path)) (offered partial)))))
-    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p))))))
+                (map (lambda (path) (list path #f #f))
+                     (filter (lambda (path) (string:suffix? "/" path)) (offered partial))))))
 
   (edoc "How M-x completes a path inside a string: fuzzy, the default, offers every entry of the partial path's directory for the matcher's segments, prefix only the entries that extend its last component, deep every entry below the directory as well."
         (value (one-of prefix fuzzy deep)))

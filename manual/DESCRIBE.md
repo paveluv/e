@@ -175,24 +175,28 @@ resolves to a type record with prose, a predicate and, optionally, a
 completer, a reader and a writer; an unknown name is an error then, and
 `tools/edoc-coverage.sps` reports one statically. The language's types come
 predefined in `(foundation edoc)`; the editor's notions are defined by the libraries
-that own them, `buffer`, `window`, `region`, `actor` and `head` in `(head literal)`, `file` in `(service file)`, `mode`
+that own them, `buffer` in `(state store)`, legacy `window` plus `actor` and `head` in `(head literal)`,
+`region` in `(core region)`, `position` in `(foundation text)`, `file` in `(service file)`, `mode`
 in `(head mode)`, `key` in `(head keymap)`, `style` in `(head style)`, with a form in the
 body:
 
 ```scheme
-(edoc-type buffer "a live buffer, spelled (buffer \"name\")"
-  (predicate live-buffer?)
-  (complete (lambda (partial) (map (lambda (b) (cons b (buffer-details b))) buffers)))
-  (read lookup-buffer)
-  (write (lambda (b) (format "(buffer ~s)" (head:buffer-name b)))))
+(edoc-type color-choice "a color symbol"
+  (predicate (lambda (v) (memq v '(red blue))))
+  (portable #t) (within symbol)
+  (complete (lambda (partial)
+              '((red "warm red" "warning color")
+                (blue "cool blue" "information color")))))
 ```
 
-The completer gives `(value . hint)` pairs for a partial text, the writer
-spells a value as the expression denoting it, and a record documented in an
-elibrary registers its predicate for `(record name)` by itself. M-x uses the
-completers and writers to complete arguments by type; see
-[Evaluation](EVAL.md). `type-accepts?`, `type-completions`, `type-spelling`
-and `type-prose` work over the compound forms too.
+A completer returns `(value label hint)` entries. A false label uses ordinary
+Scheme spelling; a nonfalse label is searchable display text. A false hint
+omits extra details. Selection inserts the value, never the label. Plain
+values use the same expression spelling regardless of type. The temporary
+window record adapter still has a reader and writer; new portable types need
+neither. An elibrary record registers its predicate for `(record name)`.
+See [Evaluation](EVAL.md) for argument completion. `type-accepts?`,
+`type-completions`, `type-spelling` and `type-prose` work over compound forms too.
 
 When the library is initialized the edocs are attached to the objects they
 document; a keyword, a record or condition type, and a value without

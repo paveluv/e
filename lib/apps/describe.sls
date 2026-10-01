@@ -51,10 +51,10 @@
         (let ([context (list (keymap:generation) (doc:entries) definition-generation)])
           (unless (equal? context (hashtable-ref refreshed id #f))
             (hashtable-set! refreshed id context)
-            (let ([page (reference:page head:ui-actor (cadr (view:source d)))])
+            (let ([page (reference:page head:ui-actor (view:source d))])
               (when page (reference:select! head:ui-actor (car page) (cadr page) (caddr page) (keymap:command-keys (caddr page))))))))))
   (define (create-page! document commands)
-    (let* ([page (view:create! head:ui-actor (list 'buffer document) 'describe 1 '() '())]
+    (let* ([page (view:create! head:ui-actor document 'describe 1 '() '())]
            [body (markdown:create! head:ui-actor document commands)])
       (view:arrange! head:ui-actor (list (list page 0 (list (list 'body body '(grow 1))) '())) '()) page))
 
@@ -66,7 +66,7 @@
 
   (edoc "Show documentation in an independent Markdown page and return its source document. An optional explicit page changes that receiver only."
         (name (or symbol string procedure) "the documented name")
-        (receiver (list-of integer) "optional reference source document") (returns (or integer #f)))
+        (receiver (list-of buffer) "optional reference source document") (returns (or buffer #f)))
   (define (describe! name . receiver)
     (unless (<= (length receiver) 1) (error 'describe! "expected at most one page"))
     (let* ([name (cond [(string? name) (string->symbol name)]
@@ -83,7 +83,7 @@
           (head:adopt-store-buffer! id)
           (let* ([root (window:tool! "describe" (lambda (commands) (create-page! id commands)) (format "describe:~a" id))]
                  [b (catalogue-host:resolve! root)])
-            (if (window:pop-up-or-reuse! b) (edit:set-message! "")
+            (if (window:pop-up-or-reuse! root) (edit:set-message! "")
               (edit:set-message! (format "~a: see ~a" name (head:buffer-name b)))))))
       id))
 
@@ -105,7 +105,7 @@
   (define (symbol-at-point)
     ;; The symbol the cursor is on -- or just after, as at the end of a
     ;; word -- in the current buffer; #f when point is not at one.
-    (let* ([b (head:current-buffer)]
+    (let* ([b (head:current-buffer-mirror)]
            [p (head:point)]
            [s (head:buffer-line b (car p))]
            [n (string-length s)]
@@ -123,7 +123,7 @@
   (define (scheme-buffer?)
     ;; Scheme under any dress: the scheme mode itself and the
     ;; pretty-scheme-* renderings, which draw the same buffer text.
-    (let ([m (mode:name-of (head:current-buffer))])
+    (let ([m (mode:name-of)])
       (and m (or (string=? m "scheme")
                  (string:prefix? "pretty-scheme" m)))))
 

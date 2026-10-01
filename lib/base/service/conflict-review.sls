@@ -2,28 +2,28 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service conflict-review)
   (export choose! close! create! preview refresh! settle!)
-  (import (chezscheme) (prefix (foundation text) text:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (foundation text) text:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
   (define (get r k) (cdr (assq k r)))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
-  (define (document? n) (and (natural? n) (> n 0)))
+  (define (revision? n) (and (natural? n) (> n 0)))
   (define (unique? xs) (or (null? xs) (and (not (member (car xs) (cdr xs))) (unique? (cdr xs)))))
-  (define (scope? xs) (and (list? xs) (for-all document? xs) (unique? xs)))
+  (define (scope? xs) (and (list? xs) (for-all handle:buffer? xs) (unique? xs)))
   (define (fields? v ks) (and (list? v) (for-all pair? v) (equal? (map car v) ks)))
   (define (alternative? c)
-    (and (list? c) (= (length c) 6) (document? (car c)) (list? (caddr c))
+    (and (list? c) (= (length c) 6) (revision? (car c)) (list? (caddr c))
       (guard (ex [else #f]) (text:datum->span (cadddr c)) #t)
       (for-all (lambda (lines) (and (list? lines) (pair? lines) (for-all string? lines))) (cddddr c))))
   (define (entry? e)
-    (and (fields? e '(document basis alternatives mine invalidated)) (document? (get e 'document))
+    (and (fields? e '(document basis alternatives mine invalidated)) (handle:buffer? (get e 'document))
       (natural? (get e 'basis)) (list? (get e 'alternatives)) (for-all alternative? (get e 'alternatives))
-      (unique? (map car (get e 'alternatives))) (scope? (get e 'mine)) (scope? (get e 'invalidated))
+      (unique? (map car (get e 'alternatives))) (for-all (lambda (xs) (and (list? xs) (for-all revision? xs) (unique? xs))) (list (get e 'mine) (get e 'invalidated)))
       (for-all (lambda (n) (assv n (get e 'alternatives))) (get e 'mine))))
   (define kind (model:register-kind! 'conflict-review 1
                  (lambda (v) (and (fields? v '(scope records)) (scope? (get v 'scope))
                                (list? (get v 'records)) (for-all entry? (get v 'records))
                                (unique? (map (lambda (e) (get e 'document)) (get v 'records)))
-                               (for-all (lambda (d) (find (lambda (e) (= d (get e 'document))) (get v 'records))) (get v 'scope))))))
+                               (for-all (lambda (d) (find (lambda (e) (equal? d (get e 'document))) (get v 'records))) (get v 'scope))))))
   (define lock (make-mutex))
   (define (record id)
     (let ([r (model:snapshot id)])
@@ -32,10 +32,10 @@
     (let ([r (record id)])
       (unless (equal? revision (get r 'revision)) (error 'conflict-review "review changed")) r))
   (define (entry v document)
-    (or (find (lambda (e) (= document (get e 'document))) (get v 'records))
+    (or (find (lambda (e) (equal? document (get e 'document))) (get v 'records))
       (error 'conflict-review "document is outside the review" document)))
   (define (replace r k v) (map (lambda (p) (if (eq? k (car p)) (cons k v) p)) r))
-  (define (references records) (map (lambda (e) (list 'buffer (get e 'document))) records))
+  (define (references records) (map (lambda (e) (get e 'document)) records))
   (define (commit! actor r value)
     (unless (equal? value (get r 'value))
       (let-values ([(status rows) (model:commit! actor (list (list (get r 'id) (get r 'revision) (references (get value 'records)) value)))])
@@ -75,7 +75,7 @@
           (list document revision cs kept (filter (lambda (n) (not (memv n kept))) mine))))))
 
   (edoc "Create an independent persistent conflict review over an ordered, deduplicated scope of borrowed documents. Unpicked alternatives show Disk."
-        (actor actor "creator") (scope (list-of integer) "document IDs") (returns model))
+        (actor actor "creator") (scope (list-of buffer) "document IDs") (returns model))
   (define (create! actor scope)
     (unless (and (scope? scope) (for-all (lambda (d) (store:visible? actor d)) scope)) (error 'create! "invalid review scope"))
     (let ([records (map (lambda (d) (refreshed d #f)) scope)])
@@ -84,13 +84,13 @@
 
   (edoc "Refresh a review and its explicit scope at the expected model revision. Retain picks only when exact alternatives or retained edit evidence proves their identity. Removed documents retain choices but cannot settle; changed picks are listed as invalidated. Return the updated envelope."
         (actor actor "caller") (id model "review") (revision integer "expected draft revision")
-        (scope (list-of integer) "ordered document IDs") (returns list))
+        (scope (list-of buffer) "ordered document IDs") (returns list))
   (define (refresh! actor id revision scope)
     (unless (and (scope? scope) (for-all (lambda (d) (store:visible? actor d)) scope)) (error 'refresh! "invalid review scope"))
     (with-mutex lock
       (let* ([r (current id revision)] [old (get (get r 'value) 'records)]
-             [records (append (map (lambda (d) (refreshed d (find (lambda (e) (= d (get e 'document))) old))) scope)
-                        (filter (lambda (e) (not (memv (get e 'document) scope))) old))])
+             [records (append (map (lambda (d) (refreshed d (find (lambda (e) (equal? d (get e 'document))) old))) scope)
+                        (filter (lambda (e) (not (member (get e 'document) scope))) old))])
         (commit! actor r (list (cons 'scope scope) (cons 'records records))))))
 
   (edoc "Choose Mine or Disk for exact displayed alternatives. Groups are (document alternative ...). A single Mine choice displaces overlapping picks; multiple Mine choices must be disjoint. All groups validate before changing the draft. Return its envelope; no source is edited."
@@ -98,12 +98,12 @@
         (groups list "document and exact alternatives per group") (side (one-of mine disk) "choice") (returns list))
   (define (choose! actor id revision groups side)
     (unless (and (memq side '(mine disk)) (list? groups)
-              (for-all (lambda (g) (and (pair? g) (document? (car g)) (list? (cdr g)) (for-all alternative? (cdr g)))) groups)
+              (for-all (lambda (g) (and (pair? g) (handle:buffer? (car g)) (list? (cdr g)) (for-all alternative? (cdr g)))) groups)
               (unique? (map car groups))) (error 'choose! "invalid choices"))
     (with-mutex lock
       (let* ([r (current id revision)] [v (get r 'value)])
         (for-each (lambda (g)
-                    (unless (and (memv (car g) (get v 'scope))
+                    (unless (and (member (car g) (get v 'scope))
                               (let ([e (entry v (car g))])
                                 (and (equal? (get e 'alternatives) (store:conflicts (car g)))
                                   (for-all (lambda (c) (member c (get e 'alternatives))) (cdr g)))))
@@ -112,7 +112,7 @@
         (commit! actor r
           (replace v 'records
             (map (lambda (e)
-                   (let ([g (assv (get e 'document) groups)])
+                   (let ([g (assoc (get e 'document) groups)])
                      (if (not g) e
                        (replace e 'mine
                          (fold-left (lambda (mine c)
@@ -138,10 +138,10 @@
             (loop (cdr cs) text deltas (cons (list (car c) 'disk (text:span->datum region)) regions)))))))
 
   (edoc "Derive read-only preview text and semantic regions from an explicit reviewed document. Return (draft-revision document source-revision text regions). Refuse changed alternatives instead of projecting stale coordinates."
-        (id model "review") (document integer "scoped source") (returns list))
+        (id model "review") (document buffer "scoped source") (returns list))
   (define (preview id document)
     (let* ([r (record id)] [v (get r 'value)] [e (entry v document)])
-      (unless (memv document (get v 'scope)) (error 'preview "document is outside the review scope"))
+      (unless (member document (get v 'scope)) (error 'preview "document is outside the review scope"))
       (let-values ([(text revision cs) (store:conflict-state document)])
         (unless (equal? cs (get e 'alternatives)) (error 'preview "conflict alternatives changed; refresh the review"))
         (let-values ([(text regions) (project text cs (get e 'mine))])
@@ -149,11 +149,11 @@
 
   (edoc "Settle explicit documents in the review's current scope against complete displayed alternatives, including Disk. Return (document status detail) results; each source settles atomically and undoably. Refused documents retain their choices. This operation never refreshes stale witnesses before writing."
         (actor actor "caller") (id model "review") (revision integer "expected draft revision")
-        (documents (list-of integer) "ordered subset of current scope") (returns list))
+        (documents (list-of buffer) "ordered subset of current scope") (returns list))
   (define (settle! actor id revision documents)
     (with-mutex lock
       (let* ([r (current id revision)] [v (get r 'value)])
-        (unless (and (scope? documents) (for-all (lambda (d) (memv d (get v 'scope))) documents))
+        (unless (and (scope? documents) (for-all (lambda (d) (member d (get v 'scope))) documents))
           (error 'settle! "documents are outside the review scope"))
         (let* (
                [results (map (lambda (d)
@@ -161,7 +161,7 @@
                                  (let-values ([(status detail) (store:resolve-picks! actor d (get e 'alternatives) (get e 'mine) 'any)])
                                    (list d status detail)))) documents)])
           (commit! actor r (replace v 'records
-                             (map (lambda (e) (let ([result (assv (get e 'document) results)])
+                             (map (lambda (e) (let ([result (assoc (get e 'document) results)])
                                                 (if (and result (eq? (cadr result) 'applied))
                                                   (map cons '(document basis alternatives mine invalidated) (list (car result) (caddr result) '() '() '()))
                                                   e))) (get v 'records))))

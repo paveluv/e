@@ -666,7 +666,7 @@
            '((header bold bold header header) (header header header header header))))
        (widget:unmount! root))
      (model:register-kind! 'frame-test 1 string?)
-     (let* ([w (head:current-window)] [was (head:current-buffer)]
+     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
             [source (model:create! head:ui-actor 'frame-test 1 'session 'persistent '() "a\nb\nc\nd\ne")]
             [text (view:create! head:ui-actor source 'text 2 '() 0)]
             [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f)])
@@ -704,11 +704,11 @@
            (check 'partial-output-cannot-reenable-uncertain-hits (widget:shown) '())
            (painted paint:redraw!)
            (check 'full-output-reenables-widget-frame (widget:frame-id (caar (widget:shown))) scroll))
-         (head:show-buffer! was) (head:forget-buffer! b)))
+         (head:show-buffer-mirror! was) (head:forget-buffer! b)))
      (entry:init!)
-     (let* ([w (head:current-window)] [was (head:current-buffer)]
+     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
             [source (store:create! head:ui-actor "entry paint" '("abcdef"))]
-            [id (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 2) (0 . 0)))]
+            [id (view:create! head:ui-actor source 'entry 1 '() '((0 . 2) (0 . 0)))]
             [b (window:show-widget! w id)])
        (let ([output (painted paint:redraw!)])
          (check 'entry-selection-and-blinking-block-reach-the-window-painter
@@ -719,13 +719,13 @@
        (let ([output (painted paint:redraw!)])
          (check 'unchanged-entry-text-still-updates-selection-and-caret
            (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
-       (head:show-buffer! was) (head:forget-buffer! b))
+       (head:show-buffer-mirror! was) (head:forget-buffer! b))
      ;; Ordinary documents use the same editor projection as embedded ones;
      ;; source identity, wrapped input, outer chrome and resume agree.
      (edit:init!)
      (let* ([w (head:current-window)] [b (head:new-buffer! "hosted editor")])
        (head:buffer-lines-set! b (list->vector (cons (make-string 180 #\a) (make-list 30 "界éz"))))
-       (head:show-buffer! b) (head:window-line-numbers-set! w #t)
+       (head:show-buffer-mirror! b) (head:window-line-numbers-set! w #t)
        (paint:set-screen-cols! 100) (paint:set-screen-rows! 24)
        (let* ([other (window:split-right!)] [a (head:window-editor w)] [c (head:window-editor other)])
          (window:focus! w)

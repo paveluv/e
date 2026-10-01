@@ -48,7 +48,7 @@
               (list revision facts (caddr publication))))))))
 
   (edoc "Read an explicit reference page as (id revision selected-name), or false when unavailable."
-        (head head "requesting head") (id integer "source document")
+        (head head "requesting head") (id buffer "source document")
         (returns (or list #f)))
   (define (page head id)
     (let ([state (page-state head id)])
@@ -77,7 +77,7 @@
             "*describe*" lines (page-facts head name lines) #f)))))
 
   (edoc "Select or refresh an explicit reference page against its revision. Missing documentation becomes an informative page; a changed selection, audience or deleted source refuses without recreation."
-        (head head "requesting head") (id integer "source document")
+        (head head "requesting head") (id buffer "source document")
         (revision integer "reviewed revision") (name (or symbol string) "documented name")
         (keys (list-of string) "contextual key spellings") (returns (or integer #f)))
   (define (select! head id revision name keys)

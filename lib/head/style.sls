@@ -145,9 +145,8 @@
   (edoc-type style "a face, by name"
     (predicate symbol?)
     (complete (lambda (partial)
-                (map (lambda (name) (cons name #f))
-                     (append (map car default-styles) (map car (kernel:registry-items style-overrides))))))
-    (write (lambda (v) (string-append "'" (symbol->string v)))))
+                (map (lambda (name) (list name #f #f))
+                     (append (map car default-styles) (map car (kernel:registry-items style-overrides)))))))
 
 
   ;; The painter's repaint trigger: painted rows are cached by content

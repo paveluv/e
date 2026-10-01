@@ -66,7 +66,7 @@
   (define (mirror source)
     (let ([id (and source (cdr (assq 'id source)))])
       (unless (and (pair? id) (eq? (car id) 'buffer)) (error 'text-control "expected a text buffer source" id))
-      (or (text-source:lookup (cadr id)) (error 'text-control "source is unavailable" id))))
+      (or (text-source:lookup id) (error 'text-control "source is unavailable" id))))
 
   (edoc "Read a widget text snapshot's revision." (source list "source snapshot") (returns integer))
   (define (revision source) (cdr (assq 'revision source)))

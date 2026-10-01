@@ -15,7 +15,7 @@
           (prefix (sys activity) activity:)
           (prefix (sys sys) sys:))
 
-  (define format-version 2)
+  (define format-version 3)
   (define lock (make-mutex))
   (define saved-at #f)
   (define restored-at #f)
@@ -23,6 +23,73 @@
   (define archives '())
   (define rejected-archive #f)
   (define notice-pending? #f)
+
+  (define (upgrade value)
+    ;; Session 3 tags document identities. Convert only fields owned by a
+    ;; known saved schema; extension payloads, Scheme code and user text are
+    ;; opaque. Allocation counters and history revisions remain integers.
+    (define (buffer n) (if n (list 'buffer n) #f))
+    (define (field value key) (cond [(assq key value) => cdr] [else #f]))
+    (define (update value key proc)
+      (map (lambda (p) (if (eq? (car p) key) (cons key (proc (cdr p))) p)) value))
+    (define (annotations value)
+      (if (null? value) value (cons (buffer (car value)) (cdr value))))
+    (define (layout node)
+      (case (car node)
+        [(split) (append (list-head node 4) (map layout (list-tail node 4)))]
+        [(window)
+         (if (= (length node) 8)
+           (append (list-head node 7)
+             (list (map (lambda (p) (cons (buffer (car p)) (cdr p))) (list-ref node 7)))) node)]
+        [else node]))
+    (define (checkpoint state)
+      (if (and (list? state) (= (length state) 5) (eq? (car state) 'screen)
+               (memv (cadr state) '(4 5 6)))
+        (append (list-head state 3)
+          (list (layout (list-ref state 3))
+            (map (lambda (entry)
+                   (let ([ref (car entry)])
+                     (if (and (pair? ref) (eq? (car ref) 'shared))
+                       (cons (cons* 'shared (buffer (cadr ref)) (cddr ref)) (cdr entry)) entry)))
+              (list-ref state 4)))) state))
+    (if (not (and (list? value) (memv (length value) '(6 7)) (eq? (car value) 'session)
+                  (or (and (= (length value) 6) (equal? (cadr value) 1))
+                      (and (= (length value) 7) (equal? (cadr value) 2))))) value
+      (let ([models (if (= (length value) 7) (list-ref value 6) '(models 1))])
+        (define (record id) (find (lambda (r) (equal? id (field r 'id))) (cddr models)))
+        (define (review-query? id)
+          (let* ([q (record id)] [source (and q (eq? (field q 'kind) 'collection) (equal? (field q 'schema) 1)
+                                           (record (field (field q 'value) 'source)))])
+            (and source (equal? (field source 'schema) 1)
+              (memq (field source 'kind) '(conflict-review rewrite-draft)))))
+        (define (selection value)
+          (if (and (list? value) (= (length value) 3) (review-query? (car value))
+                   (pair? (caddr value)) (integer? (caaddr value)))
+            (list (car value) (cadr value) (cons (buffer (caaddr value)) (cdaddr value))) value))
+        (define (model r)
+          (if (not (equal? (field r 'schema) (if (eq? (field r 'kind) 'widget-view) 2 1))) r
+            (update r 'value
+              (lambda (v)
+                (case (field r 'kind)
+                  [(rewrite-draft markup-source git-source environment)
+                   (update v 'document buffer)]
+                  [(conflict-review)
+                   (update (update v 'scope (lambda (xs) (map buffer xs))) 'records
+                     (lambda (xs) (map (lambda (e) (update e 'document buffer)) xs)))]
+                  [(review-preview)
+                   (update (update (update v 'document buffer) 'annotations annotations) 'selection selection)]
+                  [(widget-view)
+                   (if (equal? (field v 'schema) 1)
+                     (case (field v 'kind)
+                       [(editor) (update v 'options (lambda (o) (update o 'annotations annotations)))]
+                       [(table list) (update v 'state (lambda (s) (update s 'selection selection)))]
+                       [(scroll) (update v 'state selection)]
+                       [else v]) v)]
+                  [else v])))))
+        (list 'session format-version (caddr value) (cadddr value)
+          (cons 'buffers (map (lambda (state) (cons (buffer (car state)) (cdr state))) (cdr (list-ref value 4))))
+          (cons 'checkpoints (map (lambda (entry) (list (car entry) (checkpoint (cadr entry)))) (cdr (list-ref value 5))))
+          (cons* 'models (cadr models) (map model (cddr models)))))))
 
   (define (now)
     (let ([time (current-time 'time-utc)])
@@ -56,7 +123,8 @@
                [else (raise ex)])
       (let* ([port (open-bytevector-input-port bytes
                      (make-transcoder (utf-8-codec) 'none 'raise))]
-             [value (datum:copy (read port))])
+             [value (datum:copy (read port))]
+             [value (guard (ex [else #f]) (upgrade value))])
         (and (eof-object? (read port)) (valid? value #t) value))))
 
   (define (recovery-name? name)

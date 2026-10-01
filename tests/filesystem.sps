@@ -104,7 +104,7 @@
     (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination (head:buffer-store-id value))))
     (model:unsubscribe! token)
     (test:check 'ordinary-visit-invalidates-proposals-and-logs-creation-in-order
-      (list (file-exists? target) (integer? nested) (store:property destination 'base)
+      (list (file-exists? target) (equal? nested (store:find-file (path "nested-acquire"))) (store:property destination 'base)
         (map (lambda (q) (map (lambda (r) (car (cadr r))) (rows q '(name)))) (list q2 alias))
         (reverse (map log:datum (filter (lambda (r) (string:search (log:datum r) (path "acquired") 0 (string-length (log:datum r))))
                                   (log:entries 'file:create!)))))
@@ -174,7 +174,7 @@
   (for-each retire! (list q q2))
   (let* ([source (filesystem:create-source! actor root #f 'persistent)]
          [owned (filesystem:create-query! actor source (path "apple"))]
-         [query (car owned)] [buffer (cadadr owned)] [v (ready query)])
+         [query (car owned)] [buffer (cadr owned)] [v (ready query)])
     (filesystem:complete! actor query (field v 'generation))
     (let-values ([(text revision) (store:snapshot buffer)])
       (store:edit! actor buffer revision (text:make-span 0 0 0 (string-length (vector-ref text 0))) (list (path "zeta"))))

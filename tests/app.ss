@@ -60,33 +60,33 @@
 
      ;; The ordinary buffer path validates generated hyperlink ranges too.
      (let ([b (head:new-buffer! "*hyperlink-test*")])
-       (head:with-buffer b (insert-text! "https://example.com/path"))
+       (head:with-buffer-mirror b (insert-text! "https://example.com/path"))
        (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
          '((0 24 "https://example.com/path")))
-       (kill-buffer! b))
+       (kill-buffer! (head:buffer-store-id b)))
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
      (entry:init!)
      ;; Widget host hooks must leave shared buffers alone after their store
      ;; records disappear, whether hidden or still shown in a window.
-     (let* ([was (head:current-buffer)]
+     (let* ([was (head:current-buffer-mirror)]
             [shown (head:new-buffer! "deleted while shown")]
             [hidden (head:new-buffer! "deleted while hidden")]
             [ids (map head:buffer-store-id (list shown hidden))]
             [errors (log:entries 'head:forget-buffer!)])
-       (head:show-buffer! shown)
+       (head:show-buffer-mirror! shown)
        (for-each (lambda (id) (store:delete! '(base test) id)) ids)
        (head:sync-foreign-edits!)
        (check 'widget-host-retirement-never-reads-deleted-shared-facts
          (list (map head:buffer-of-store-id ids)
-               (and (not (memq (head:current-buffer) (list shown hidden))) #t)
+               (and (not (memq (head:current-buffer-mirror) (list shown hidden))) #t)
                (equal? errors (log:entries 'head:forget-buffer!)))
          '((#f #f) #t #t))
-       (head:show-buffer! was))
+       (head:show-buffer-mirror! was))
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
-     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
+     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer-mirror)]
             [owner (string-copy "widget-test-renderer")] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
             [first (view:create! head:ui-actor data 'probe 1 '() 0)]
@@ -98,7 +98,7 @@
            (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
        (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
        (install!)
-       (head:show-buffer! a)
+       (head:show-buffer-mirror! a)
        (head:set-layout-root! (head:make-layout-split 'right w other 1 2))
        (head:window-width-set! w 12) (head:window-size-set! w 4)
        (head:window-width-set! other 24) (head:window-size-set! other 2)
@@ -129,7 +129,7 @@
        (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
          (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
                (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
-       (head:set-layout-root! root) (head:show-buffer! was)
+       (head:set-layout-root! root) (head:show-buffer-mirror! was)
        (kernel:retract-module! owner))
 
      ;; Tree mounts allocate no buffers. Reorder retains identity and state;
@@ -159,14 +159,14 @@
 
      ;; Additional window placement forks descriptors; reopening hidden roots
      ;; reuses their adapter and remembered interaction.
-     (let* ([w (head:current-window)] [was (head:current-buffer)]
+     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
             [id (view:create! head:ui-actor data 'text 2 '() 0)]
             [b (window:show-widget! w id)]
             [other (head:make-window b 0 0 0 0 0 2 0 12 'default)]
             [copy (head:window-buffer other)] [fork (head:buffer-fact copy 'widget-id #f)])
        (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
-       (head:show-buffer! was)
+       (head:show-buffer-mirror! was)
        (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
        (widget:unmount! id)
        (check 'explicitly-unmounted-adapter-remounts-on-show
@@ -181,7 +181,7 @@
            (list (length ids) (equal? (car ids) (cadr ids))
                  (map (lambda (id) (view:source (view:snapshot id))) ids))
            (list 2 #f (list data data))))
-       (window:delete-others!) (head:show-buffer! was)
+       (window:delete-others!) (head:show-buffer-mirror! was)
        (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
@@ -290,10 +290,10 @@
 
      ;; Entries share authored text and its journal, but never cursor state.
      (let* ([source (store:create! head:ui-actor "widget entry" '("a界éz"))]
-            [a (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
-            [b (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [a (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
+            [b (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
             [root (view:create! head:ui-actor #f 'row 1 '() '())]
-            [ambient (head:current-buffer)])
+            [ambient (head:current-buffer-mirror)])
        (define (line) (let-values ([(text rev) (store:snapshot source)]) (vector-ref text 0)))
        (define (show!) (widget:present! (list (list (widget:prepare! root 20 1) 0 0))))
        (define (foreign! start end replacement)
@@ -361,7 +361,7 @@
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
          (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)
-               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer))) '(#f #f #t #t))
+               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer-mirror))) '(#f #f #t #t))
        (widget:unmount! root) (widget:invalidate!))
 
      (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
@@ -398,13 +398,13 @@
 
      (model:register-kind! 'widget-view 3 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
-            [previous (head:current-buffer)] [b (window:show-widget! (head:current-window) id)])
-       (head:show-buffer! b)
+            [previous (head:current-buffer-mirror)] [b (window:show-widget! (head:current-window) id)])
+       (head:show-buffer-mirror! b)
        ((head:app-refresh! (head:app-of b)))
        (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
          (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
          '(() #f "future descriptor"))
-       (head:forget-buffer! b) (head:show-buffer! previous))
+       (head:forget-buffer! b) (head:show-buffer-mirror! previous))
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")

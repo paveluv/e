@@ -8,7 +8,7 @@
 
   (edoc-type buffer-flag "a buffer flag: conflicted or read-only"
     (predicate (lambda (v) (and (memq v '(conflicted read-only)) #t)))
-    (complete (lambda (partial) '((conflicted . "unsettled reload conflicts") (read-only . "ordinary editing is guarded"))))
+    (complete (lambda (partial) '((conflicted #f "unsettled reload conflicts") (read-only #f "ordinary editing is guarded"))))
     (portable #t) (within symbol))
 
   (edoc "Active buffer flags in canonical order from a fact alist; conditional edit guards count as read-only."

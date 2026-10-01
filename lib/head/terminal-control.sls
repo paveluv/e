@@ -43,7 +43,7 @@
       (unless (and d (eq? (view:kind d) 'terminal) (= (view:schema d) 1)
                 (view:source d) (eq? (car (view:source d)) 'buffer))
         (error 'terminal "expected a mounted terminal view" id))
-      (values (cadr (view:source d)) d)))
+      (values (view:source d) d)))
   (define (live? id) (fact (mount-facts (mounted id)) 'alive #f))
   (define (child id) (widget:descendant id 'text))
   (define (size id)
@@ -178,15 +178,15 @@
           (list (cons " " #f) (cons (if (eq? (car (terminal-state:state d)) 'full) "●" "◐") (mount-toggle (mounted id)))) '()))))
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [source (and d (view:source d))])
-      (when (and source (eq? (car source) 'buffer) (store:visible? head:ui-actor (cadr source)))
-        (let* ([m (mounted id)] [facts (store:properties (cadr source))]
+      (when (and source (eq? (car source) 'buffer) (store:visible? head:ui-actor source))
+        (let* ([m (mounted id)] [facts (store:properties source)]
                [alive? (fact facts 'alive #f)] [grid (size id)] [lease (witness id d)] [offer (list lease grid)])
           (mount-facts-set! m facts)
-          (when (text-source:lookup (cadr source)) (present-notices! (cadr source) facts))
+          (when (text-source:lookup source) (present-notices! source facts))
           (when (and (not alive?) (cadr (terminal-state:state d))) (follow! id #f))
           (when (and alive? grid (not (equal? offer (mount-offered m))))
             (mount-offered-set! m offer)
-            (actor:send! (fact facts 'app #f) (list 'request head:ui-actor (cadr source) 'resize
+            (actor:send! (fact facts 'app #f) (list 'request head:ui-actor source 'resize
                                                 (list (cons 'view lease) (cons 'size grid)))))))))
 
   (edoc "Install terminal capture around the shared editor viewport; acquisition, notices and resize offers run on the service path."

@@ -58,13 +58,13 @@
     (model:unsubscribe! watch)
     (let* ([query (collection:create! actor source "catalogue/" '((flags ascending)) 'transient)]
            [filtered (collection:create! actor source "~/catalogue/" '() 'transient)]
-           [expected (list (list 'buffer second) (list 'buffer first) '(section backup) (list 'buffer backup) '(section trash) (list 'buffer trash))])
+           [expected (list second first '(section backup) backup '(section trash) trash)])
       (expect query expected)
-      (expect filtered (list (list 'buffer first)))
+      (expect filtered (list first))
       (test:check 'catalogue-shared-inventory-filter-and-archive-sections
         (list (keys query) (keys filtered)
           (list-ref (collection:seek query (field (field (collection:summary query) 'value) 'generation) 2 'forward 0) 3))
-        (list expected (list (list 'buffer first)) 3))
+        (list expected (list first) 3))
       (let ([v (version trash)])
         (store:rename! actor trash "catalogue/renamed")
         (test:check 'catalogue-rename-fences-restoration (act trash v 'restore) 'stale))

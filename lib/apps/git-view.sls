@@ -23,7 +23,7 @@
            [refresh (view:create! head:ui-actor #f 'action-text 1
                       (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '())]
            [preview (view:create! head:ui-actor (car patch) 'git-patch 1 '() '() (car patch))]
-           [editor (view:create! head:ui-actor (list 'buffer (cadr patch)) 'editor 1
+           [editor (view:create! head:ui-actor (cadr patch) 'editor 1
                      '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch))]
            [d (view:snapshot table)])
       (view:arrange! head:ui-actor
@@ -71,7 +71,7 @@
       (let ([app (child root 'app)]) (widget:focus! root (child (child (child app 'table) 'body) 'rows)) app)))
 
   (edoc "Open Git history for the current file, or the working directory. Repository work remains asynchronous.")
-  (define (log!) (log-of! (or (head:buffer-file (head:current-buffer)) ".")))
+  (define (log!) (log-of! (or (head:buffer-file (head:current-buffer-mirror)) ".")))
 
   (edoc "Register the Git composition, patch highlighting and named bindings without opening a repository or tool." (public))
   (define (init!)

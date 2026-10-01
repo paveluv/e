@@ -38,7 +38,8 @@
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head head) head:)
-          (prefix (head render) render:))
+          (prefix (head render) render:)
+          (prefix (state store) store:))
 
   ;; Mode callbacks receive explicit text and only the facts they declare.
   ;; Neither the snapshot nor its analysis cache owns a buffer or window.
@@ -133,8 +134,7 @@
 
   (edoc-type mode "a mode, by name, registered or not"
     (predicate (lambda (v) (and (string? v) (> (string-length v) 0))))
-    (complete (lambda (partial) (map (lambda (m) (cons (mode-name m) (mode-details m))) (kernel:registry-items modes))))
-    (write (lambda (v) (call-with-string-output-port (lambda (p) (write v p)))))
+    (complete (lambda (partial) (map (lambda (m) (list (mode-name m) #f (mode-details m))) (kernel:registry-items modes))))
     (within string))
 
   (define mode-printing
@@ -262,7 +262,7 @@
         (scratch-mode b)))
 
   (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
-        (b buffer "the buffer"))
+        (b (record buffer) "the buffer"))
   (define (assign-mode! b)
     (set-mode-of! b (detected-mode b) #t))
 
@@ -274,12 +274,14 @@
          (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name)))))
 
   (define (the-buffer b)
-    ;; the optional buffer argument, by name or as its literal, else the current buffer
-    (if (pair? b) (edoc:type-value 'buffer (car b)) (head:current-buffer)))
+    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
+    (if (null? b) (head:current-buffer-mirror)
+      (or (head:adopt-store-buffer! (edoc:type-value 'buffer (car b)))
+        (error 'mode "buffer is not visible" (car b)))))
 
   (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
         (name (or mode #f) "the mode's name, or #f for none")
-        (b (list-of buffer) "the buffer, at most one"))
+        (b (list-of buffer) "the shared document, at most one"))
   (define (set-buffer-mode! name . b)
     ;; how transcript buffers get their highlighting, and how a user picks
     ;; a mode by hand
@@ -287,14 +289,14 @@
       (set-mode-of! (the-buffer b) (and name (find-mode name)) #f)))
 
   (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
-        (b (list-of buffer) "the buffer, at most one") (public))
+        (b (list-of buffer) "the shared document, at most one") (public))
   (define (assign-current-mode! . b)
     (assign-mode! (the-buffer b)))
 
   (edoc "The keymap context of a buffer's mode, named after it, or false."
-        (b buffer "the buffer") (returns (or symbol #f)))
+        (b (record buffer) "the buffer") (returns (or symbol #f)))
   (define (key-context b)
-    (let ([name (buffer-mode-name b)]) (and name (string->symbol name))))
+    (let ([name (head:buffer-fact b 'mode #f)]) (and name (find-mode name) (string->symbol name))))
 
   ;; A context a buffer has by its state rather than its mode: merge while
   ;; its text holds conflict markers, say.  The app binding keys in it
@@ -319,23 +321,26 @@
   (edoc "Read a mode's inherited key contexts, nearest first. The legacy buffer adapter also prepends its state contexts."
         (source any "resolved mode, false, or legacy buffer") (returns (list-of symbol)))
   (define (key-contexts source)
-    (if (head:buffer? source) (append (state-contexts-of source) (key-contexts (mode-of source)))
+    (if (head:buffer? source) (append (state-contexts-of source) (key-contexts (find-mode (head:buffer-fact source 'mode #f))))
       (let loop ([m source] [out '()])
         (if (not m) (reverse out)
           (loop (and (mode-parent m) (find-mode (mode-parent m))) (cons (string->symbol (mode-name m)) out))))))
 
   (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
-        (b (list-of buffer) "the buffer, at most one")
+        (b (list-of buffer) "the shared document, at most one")
         (returns (or string #f)))
   (define (buffer-mode-name . b)
     ;; The name of b's mode, or #f without one.
     (let ([m (apply mode-of b)]) (and m (mode-name m))))
 
   (edoc "A buffer's mode record, the current buffer's without an argument, or #f."
-        (b (list-of buffer) "the buffer, at most one")
+        (b (list-of buffer) "the shared document, at most one")
         (returns (or (record mode) #f)))
   (define (mode-of . b)
-    (let ([n (head:buffer-fact (the-buffer b) 'mode #f)]) (and n (find-mode n))))
+    (unless (<= (length b) 1) (error 'mode-of "expected at most one buffer"))
+    (let ([n (if (null? b) (head:buffer-fact (head:current-buffer-mirror) 'mode #f)
+               (store:property (edoc:type-value 'buffer (car b)) 'mode #f))])
+      (and n (find-mode n))))
 
   (define (set-mode-of! b m . auto?)
     (head:buffer-facts-set! b

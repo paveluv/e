@@ -2,20 +2,19 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service review-preview)
   (export close! create!)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core port) port:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core port) port:)
           (prefix (core review-contract) review-contract:) (prefix (core row) row:)
           (prefix (core work-queue) work-queue:) (prefix (foundation text) text:)
           (prefix (service conflict-review) conflict-review:) (prefix (service rewrite) rewrite:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
   (define (get r k) (cdr (assq k r)))
-  (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
   (define producer '(app review-preview))
   (define facts '((internal . #t) (disposable . #t) (read-only . #t) (mode-auto . #f)))
   (define kind (model:register-kind! 'review-preview 1
                  (lambda (v)
                    (and (list? v) (for-all pair? v) (equal? (map car v) '(draft document selection status basis annotations truncated?))
-                     (model:reference? (get v 'draft)) (natural? (get v 'document)) (> (get v 'document) 0)
+                     (model:reference? (get v 'draft)) (handle:buffer? (get v 'document))
                      (or (not (get v 'selection)) (row:selection? (get v 'selection)))
                      (memq (get v 'status) '(pending ready blocked unavailable)) (list? (get v 'annotations)) (boolean? (get v 'truncated?))))))
   (define ports (port:register! '(model review-preview 1) review-contract:ports))
@@ -37,7 +36,7 @@
   (define (new-document!)
     (store:publish! producer (gensym->unique-string (gensym "review-preview")) "<review-preview>" '("") facts #f))
   (define (specification draft document scope)
-    (list 'review-preview 1 scope 'persistent (list draft (list 'buffer document))
+    (list 'review-preview 1 scope 'persistent (list draft document)
       (map cons '(draft document selection status basis annotations truncated?) (list draft document #f 'pending #f '() #f))))
 
   (edoc "Create an independent preview request and disposable read-only document over a borrowed conflict or rewrite draft; return (request document). Connect a table's selection output to the request's selection input. Derivation runs only while requested."
@@ -68,7 +67,7 @@
   (define (copy-resource! actor r)
     (let* ([v (get r 'value)] [document (new-document!)])
       (values (lambda (mapped) (specification (mapped (get v 'draft)) document (mapped (get r 'scope))))
-        (list (cons (list 'buffer (get v 'document)) (list 'buffer document)))
+        (list (cons (get v 'document) document))
         (lambda () (when (store:exists? document) (store:delete! producer document))))))
   (define lifecycle (view:register-resource-kind! 'review-preview 1 copy-resource! close!))
 
@@ -82,7 +81,7 @@
                 [key (caddr selection)])
            (unless (and row (eq? (car row) 'ready) (pair? (list-ref row 4)) (list? key) (= (length key) 2)
                      (equal? (get q 'source) (get r 'id))
-                     (if rewrite? (= (car key) (get v 'document)) (memv (car key) (get v 'scope))))
+                     (if rewrite? (equal? (car key) (get v 'document)) (member (car key) (get v 'scope))))
              (pending "selection is pending or belongs to another draft")) key)]
         [rewrite? (list (get v 'document) #f)]
         [(pair? (get v 'scope)) (list (car (get v 'scope)) #f)]

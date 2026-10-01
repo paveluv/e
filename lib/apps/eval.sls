@@ -104,7 +104,7 @@
     (let ([v (model-value job 'evaluation-job)])
       (unless v (error 'create-result-view! "evaluation job is unavailable" job))
       (let* ([root (view:create! actor job 'evaluation-result 1 '() '() job)]
-             [output (edit:create-view! actor (cadr (cdr (assq 'output v))) '((read-only . #t)))]
+             [output (edit:create-view! actor (cdr (assq 'output v)) '((read-only . #t)))]
              [summary (view:create! actor job 'evaluation-summary 1 '() '() job)])
         (view:arrange! actor (list (list root 0 (list (list 'output output '(grow 1)) (list 'result summary 'fit)) '())) '()) root)))
 
@@ -129,6 +129,7 @@
           (let scan ()
             (let-values ([(kind value from to) (read-token in)])
               (cond [(or (eq? kind 'eof) (> from start)) #f]
+                [(and (eq? kind 'quote) (eq? value 'datum-comment)) (read in) (scan)]
                 [(> to start)
                  (and (eq? kind 'atomic) (symbol? value) (= from start) (cons start end))]
                 [else (scan)])))))))
@@ -162,12 +163,15 @@
     (or (= pos 0) (and (memv (string-ref s (- pos 1)) '(#\space #\tab #\newline #\( #\[ #\{)) #t)))
 
   (define (open-string-start s pos)
-    ;; the index of the quote opening a string still open at pos, or #f
-    (let loop ([i 0] [open #f])
-      (cond [(>= i pos) open]
-            [(and open (char=? (string-ref s i) #\\)) (loop (+ i 2) open)]
-            [(char=? (string-ref s i) #\") (loop (+ i 1) (if open #f i))]
-            [else (loop (+ i 1) open)])))
+    ;; Let the lexer distinguish strings from quotes in comments/characters.
+    (guard (ex [else #f])
+      (let ([in (open-input-string (string-append (substring s 0 pos) "\""))])
+        (let loop ()
+          (let-values ([(kind value from to) (read-token in)])
+            (cond [(eq? kind 'eof) #f]
+              [(and (eq? kind 'quote) (eq? value 'datum-comment)) (read in) (loop)]
+              [(and (eq? kind 'atomic) (string? value) (= to (+ pos 1))) from]
+              [else (loop)]))))))
 
   (define (callable-formals sig)
     ;; the lambda list of a documented callable: a procedure's own, a record
@@ -210,40 +214,25 @@
   (define (argument-type sym index)
     (edoc:call-argument-type (operator-signatures sym) index))
 
+  (define (element-type type)
+    (cond [(and (pair? type) (eq? (car type) 'list-of)) (cadr type)]
+      [(and (pair? type) (eq? (car type) 'or)) (exists element-type (cdr type))]
+      [else #f]))
+
   (define (argument-context s pos)
     ;; (type start end token where) for the cursor at a documented argument
     ;; position: the argument's type, the range and text of the token being
-    ;; completed, and where it sits: #t inside a string literal, literal in
-    ;; a string at an argument whose type spells its values as literals,
-    ;; which expands into the literal from its quote, inside for a bare
-    ;; token within a literal constructor, else #f. At the operator position
+    ;; completed, and where it sits: #t inside a string literal, else #f.
+    ;; At the operator position
     ;; of a nested form, (head:show-buffer! (bu, the token is the form's
     ;; opening and the type is the enclosing argument's: whatever the form
-    ;; produces has to serve it. #f under a quote, or without a type.
+    ;; produces has to serve it. Quoted data offers only values, recursively
+    ;; using list element types; quoted replaces the value's own outer quote,
+    ;; data inserts inside a surrounding quotation. #f without a type.
     (define (typed frame start end token where)
       (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
         (and type (list type start end token where))))
     (define (plain? frame) (and (not (frame-quoted? frame)) (string? (frame-operator frame))))
-    (define (element-type type)
-      ;; the element type of a (list-of t) argument, or of such a member of an or
-      (cond [(and (pair? type) (eq? (car type) 'list-of) (pair? (cdr type))) (cadr type)]
-            [(and (pair? type) (eq? (car type) 'or)) (exists element-type (cdr type))]
-            [else #f]))
-    (define (literal-typed? type)
-      ;; whether the type, or a member of a union, spells its values as literals
-      (cond [(symbol? type) (and (memq type (edoc:type-literals)) #t)]
-            [(and (pair? type) (eq? (car type) 'or)) (exists literal-typed? (cdr type))]
-            [else #f]))
-    (define (literal-operator? frame)
-      ;; whether the frame's operator denotes a value: a type's derived
-      ;; literal, or a constructor (head literal) writes by hand, (agent
-      ;; "name") say, which are the procedures that library documents
-      (let ([sym (string->symbol (frame-operator frame))])
-        (or (and (memq sym (edoc:type-literals)) #t)
-            (let ([sigs (operator-signatures sym)])
-              (and sigs
-                   (exists (lambda (sig) (and (eq? (edoc:signature-kind sig) 'procedure) (equal? (edoc:signature-library sig) "(head literal)"))) sigs)
-                   #t)))))
     (let* ([quote-at (open-string-start s pos)]
            [range (and (not quote-at) (symbol-range s pos))]
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
@@ -251,27 +240,36 @@
            [token (let ([raw (substring s start end)]) (if quote-at (string-content raw) raw))]
            [frames (call-frames (substring s 0 (if quote-at quote-at start)))])
       (and (or quote-at (and range (< (car range) (cdr range))) (open-position? s pos)) (pair? frames)
-           (let ([frame (car frames)])
+           (let* ([frame (car frames)]
+                  ;; A partially inserted reference is still one value, not
+                  ;; an application of its tag. Include its quote/container
+                  ;; when replacing it, even after normalization added spaces.
+                  [whole (and (data-position? frames) (find (lambda (f)
+                                                              (and (frame-expected f) (not (element-type (frame-expected f)))
+                                                                (or (frame-quoted? f) (quotation-frame? f))))
+                                                        (let loop ([rest frames] [out '()])
+                                                          (if (or (null? rest)
+                                                                (and (quotation-frame? (car rest)) (eqv? (next-mode rest) 0))) out
+                                                            (loop (cdr rest) (cons (car rest) out))))))])
              (cond
-               [(plain? frame)
-                (let ([context (typed frame start end token (and quote-at #t))])
-                  (cond [(not context) #f]
-                        ;; inside (file "~ the values spell bare, never a literal within a literal
-                        [(literal-operator? frame) (if quote-at context (list (car context) start end token 'inside))]
-                        ;; a string at an argument spelling its values as
-                        ;; literals expands into the literal, from its quote
-                        [(and quote-at (literal-typed? (car context))) (list (car context) quote-at end token 'literal)]
-                        [else context]))]
+               [whole
+                (let* ([from (frame-start whole)]
+                       [through (guard (ex [else end])
+                                  (let ([in (open-input-string (substring s from (string-length s)))])
+                                    (read in) (max end (+ from (file-position in)))))])
+                  (list (frame-expected whole) from through (substring s from end)
+                    (if (eqv? (frame-mode whole) 0) 'quoted 'data)))]
+               [(data-position? frames)
+                (let ([type (next-type frames)])
+                  (and type (list type start end token (if quote-at #t 'data))))]
+               [(quotation-frame? frame)
+                (let ([type (next-type frames)])
+                  (and type (list type start end token (and quote-at #t))))]
+               [(plain? frame) (typed frame start end token (and quote-at #t))]
                [(and (eq? (frame-operator frame) 'pending) (not (frame-quoted? frame)) (not quote-at)
                      (pair? (cdr frames)) (plain? (cadr frames))
                      (> start 0) (char=? (string-ref s (- start 1)) (frame-opener frame)))
                 (typed (cadr frames) (- start 1) end (substring s (- start 1) end) #f)]
-               ;; an element of a quoted list at an argument typed (list-of t)
-               ;; takes t: '("../sch completes directories under a roots argument
-               [(and (frame-quoted? frame) (pair? (cdr frames)) (plain? (cadr frames)))
-                (let ([type (element-type (argument-type (string->symbol (frame-operator (cadr frames)))
-                                                         (frame-arguments (cadr frames))))])
-                  (and type (list type start end token (and quote-at #t))))]
                [else #f])))))
 
   (edoc "Whether a produced type serves a wanted one: the same, one refining it, a named type and the record type it denotes either way round, or a member serving a member across unions; #f, the absence a union allows, serves nothing."
@@ -315,7 +313,7 @@
   ;; label's face. The text is the candidate's opening: its spelling without
   ;; the closers the settle step supplies, so an extension never closes the
   ;; form the token is still inside.
-  (define-record-type option (fields text insert label hint face value))
+  (define-record-type option (fields text insert label hint face value named?))
 
   (define (opening spelling)
     (let loop ([end (string-length spelling)])
@@ -323,23 +321,40 @@
           (loop (- end 1))
           (substring spelling 0 end))))
 
+  (define (unquoted text)
+    ;; Source punctuation is not a search key. Explicit quote and reader
+    ;; abbreviation normalize to the same datum prefix.
+    (cond [(string:prefix? "'" text) (substring text 1 (string-length text))]
+      [(string:prefix? "(quote " text) (substring text 7 (string-length text))]
+      [else text]))
+
   (define (value-options type token in-string?)
-    ;; the type's values as options, with the value itself: inside a string
-    ;; the bare string values, completing the literal in place; inside a
-    ;; literal constructor, (file "~ say, each value's own spelling; elsewhere,
-    ;; and for a string expanding into a literal, the literal denoting it
+    ;; Inside a string, complete its contents. Other positions use the
+    ;; value's ordinary Scheme spelling, with quotation only in expressions.
     (fold-right
-      (lambda (pair out)
-        (let ([value (car pair)] [hint (or (cdr pair) "")])
+      (lambda (entry out)
+        (let* ([value (car entry)] [label (cadr entry)] [hint (or (caddr entry) "")]
+               [spelling (edoc:type-spelling type value)]
+               [named? (and label (not (eq? in-string? #t))
+                            (not (string:prefix? "(" token)))])
           (cond
+            [(and (eq? in-string? 'quoted) (not (edoc:value-expression value))) out]
+            [named?
+             ;; Search readable labels; insertion remains the value's ordinary
+             ;; Scheme expression. Explicit datum prefixes search that spelling.
+             (let ([insert (if (eq? in-string? 'data) (format "~s" value) spelling)])
+               (cons (make-option label insert label
+                       (string-append spelling (if (string=? hint "") "" (string-append "  " hint))) 'plain value #t) out))]
             [(eq? in-string? #t)
              ;; the literal stays open: the settle step closes it at the
              ;; session's dead end, once nothing more completes from the value
-             (if (string? value) (cons (make-option value value value hint 'plain value) out) out)]
-            [else (let ([text (if (eq? in-string? 'inside)
-                                  (edoc:type-spelling type value)
-                                  (edoc:type-literal-spelling type value))])
-                    (cons (make-option (opening text) text text hint 'plain value) out))])))
+             (if (string? value) (cons (make-option value value value hint 'plain value #f) out) out)]
+            [(eq? in-string? 'data)
+             (if (edoc:value-expression value)
+               (let ([text (format "~s" value)])
+                 (cons (make-option (opening text) text text hint 'plain value #f) out)) out)]
+            [else (let ([text (edoc:type-spelling type value)])
+                    (cons (make-option (opening (unquoted text)) text text hint 'plain value #f) out))])))
       '() (edoc:type-completions type token)))
 
   (define (documented-symbols)
@@ -390,14 +405,8 @@
                        [label (edoc:edoc-template sym formals)]
                        [text (string-append "(" name)]
                        [insert (if (null? formals) label text)])
-                  (cons (make-option text insert label (edoc:signature-summary sig) 'editor #f) out)))))
-          '() (let ([literals (edoc:type-literals)])
-                ;; a type's derived literal produces its values by definition
-                ;; and adds nothing to them; a constructor written by hand,
-                ;; (buffer name) or (head name . more), is a producer like any
-                (filter (lambda (entry)
-                          (not (and (memq (car entry) literals) (eq? (top-level-value (car entry)) (edoc:type-literal (car entry))))))
-                        (documented-symbols)))))))
+                  (cons (make-option text insert label (edoc:signature-summary sig) 'editor #f #f) out)))))
+          '() (documented-symbols)))))
 
   (define (variable-options type)
     ;; the top-level names whose current values the type accepts, alphabetically
@@ -409,7 +418,7 @@
                 (if (and value (guard (ex [else #f]) (edoc:type-accepts? type value)))
                   (let ([name (symbol->string sym)])
                     (cons (make-option name name name
-                            (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor #f)
+                            (if (procedure? value) (completion-hint sym) (edoc:type-spelling type value)) 'editor #f #f)
                           out))
                   out)))
             '() (environment-symbols (interaction-environment))))))
@@ -426,16 +435,15 @@
             [else (loop (cdr a) (cdr b) (- n 1))])))
 
   (define (quoted-part text)
-    ;; the text after its first quote, a literal opening's value part, ~/ in
-    ;; (file "~/ say; #f without one
+    ;; The string contents after its opening quote.
     (let find ([i 0])
       (cond [(>= i (string-length text)) #f]
             [(char=? (string-ref text i) #\") (substring text (+ i 1) (string-length text))]
             [else (find (+ i 1))])))
 
   (define (value-part text)
-    ;; the value in a candidate's text: after the opening quote of a literal
-    ;; or of a string spelling, (file "~/ or "~/; a bare value is all of it,
+    ;; The value after the opening quote of a string
+    ;; spelling; a bare value is all of it,
     ;; a quote within a name notwithstanding
     (if (and (> (string-length text) 0) (memv (string-ref text 0) '(#\( #\")))
         (or (quoted-part text) text)
@@ -445,8 +453,9 @@
     ;; ((option . fragments) ...) for an argument context, best first, or #f
     ;; when the type offers nothing the token matches: the token aligns with
     ;; a candidate's text as it would with a symbol, so (bu matches both
-    ;; (buffer "a.txt") and (head:current-buffer), and name matches no formal
-    (let* ([type (car context)] [token (cadddr context)] [in-string? (car (cddddr context))]
+    ;; quoted buffer references and their producers; formals are not keys.
+    (let* ([type (car context)] [in-string? (car (cddddr context))]
+           [token (if (eq? in-string? #t) (cadddr context) (unquoted (cadddr context)))]
            [all (append (value-options type token in-string?)
                         (if in-string? '() (producer-options type))
                         (if in-string? '() (variable-options type)))])
@@ -494,11 +503,24 @@
     ;; matches, as for symbols, and that leaves the cursor at a typed
     ;; argument: an extension opening a string after an operator nobody
     ;; documents, (hea" say, would strand it
-    (let ([type (car context)] [start (cadr context)] [end (caddr context)] [token (cadddr context)] [in-string? (car (cddddr context))])
+    (let* ([type (car context)] [start (cadr context)] [end (caddr context)] [in-string? (car (cddddr context))]
+           [token (if (eq? in-string? #t) (cadddr context) (unquoted (cadddr context)))])
+      (define quote-query?
+        (or (eq? in-string? 'quoted)
+          (and (not (eq? in-string? 'data))
+            (for-all (lambda (entry) (string:prefix? "'" (option-insert (car entry)))) options))))
+      (define (query-insert text) (if quote-query? (string-append "'" text) text))
       (define (typed-still? text)
-        (and (argument-context (string-append (substring s 0 start) text (substring s end (string-length s)))
-                               (+ start (string-length text)))
-             #t))
+        (let* ([text (query-insert text)]
+               [next (argument-context (string-append (substring s 0 start) text (substring s end (string-length s)))
+                       (+ start (string-length text)))])
+          ;; Normalization must not step into a constructor's argument and
+          ;; change a portable value's candidate domain without user input.
+          (and next (or (not (edoc:type-portable? type)) (equal? type (car next)))
+            ;; A label resembling Scheme data must not normalize into the
+            ;; other search domain. The user can enter a datum prefix explicitly.
+            (not (and (exists (lambda (entry) (option-named? (car entry))) options)
+                   (string:prefix? "(" (unquoted text)))))))
       (define (sole-insert option)
         ;; a sole value whole: a string value still completing on, a
         ;; directory say, open to continue into, else closed at its dead end
@@ -506,9 +528,9 @@
           (if (and (string? value) (not (eq? in-string? #t)) (not (dead-end? type value)))
               (option-text option)
               (option-insert option))))
-      (define (literal-common)
+      (define (string-common)
         ;; the openings' common prefix when its value part extends the
-        ;; token, (file "/ over the root's entries say, else #f
+        ;; token, "/ over the root's entries say, else #f
         (let* ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))]
                [value-part (quoted-part common)])
           (and value-part (string:prefix? token value-part) common)))
@@ -516,28 +538,23 @@
         ;; the inserts as the candidates' texts spell them
         (cond
           [(null? (cdr options)) (list (sole-insert (car (car options))))]
-          ;; a string or bare token becoming a value's spelling: the openings'
-          ;; common prefix when its value extends the token, as inside a string;
-          ;; else the spellings themselves, for Tab to cycle through
-          [(memq in-string? '(literal inside))
-           (or (let ([common (literal-common)]) (and common (list common)))
-               (map (lambda (entry) (option-insert (car entry))) options))]
-          [in-string?
+          [(eq? in-string? #t)
            (let ([common (string:common-prefix (map (lambda (entry) (option-text (car entry))) options))])
              (list (if (and (> (string-length common) (string-length token)) (string:prefix? token common)) common token)))]
           ;; a bare token the values alone match, / over the root's entries
-          ;; say, opens their literal as a string would; with a symbol among
+          ;; say, opens a string; with a symbol among
           ;; the matches it extends as symbols do
-          [(and (for-all (lambda (entry) (option-value (car entry))) options) (literal-common)) => list]
+          [(and (for-all (lambda (entry) (option-value (car entry))) options) (string-common)) => list]
           [else
            (let ([seen (make-hashtable string-hash string=?)])
-             (fuzzy:expansions token
-                               (fold-right (lambda (entry out)
-                                             (let ([text (option-text (car entry))])
-                                               (if (hashtable-ref seen text #f) out
-                                                 (begin (hashtable-set! seen text #t) (cons text out)))))
-                                 '() options)
-                               typed-still?))]))
+             (map query-insert
+               (fuzzy:expansions token
+                                 (fold-right (lambda (entry out)
+                                               (let ([text (option-text (car entry))])
+                                                 (if (hashtable-ref seen text #f) out
+                                                   (begin (hashtable-set! seen text #t) (cons text out)))))
+                                   '() options)
+                                 typed-still?)))]))
       ;; inside a string the inserts are what the literal holds, a quote or a
       ;; backslash in a name escaped, as the token was read
       (let ([inserts (bare-inserts)])
@@ -554,7 +571,8 @@
       (style:fill-range! styles 0 (string-length label) face)
       (for-each
         (lambda (fragment)
-          (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
+          (let ([offset (if (and (not (option-named? option)) (string:prefix? "'" label)) 1 0)])
+            (style:fill-range! styles (+ offset (cadr fragment)) (+ offset (cadr fragment) (caddr fragment)) (list face 'mark))))
         fragments)
       (completion:make-candidate (option-insert option) text styles (vector label hint)
         (and (option-value option)
@@ -578,7 +596,7 @@
     (let* ([context (argument-context text pos)] [options (and context (typed-options context))])
       (and options (typed-inserts text context options))))
 
-  (edoc "The span Tab replaces at a typed argument position, (start . end) character offsets, or #f: the token, or the whole string when it expands into a literal."
+  (edoc "The span Tab replaces at a typed argument position, (start . end) character offsets, or #f: the token or the contents of an open string."
         (text string "the prompt input")
         (pos integer "the cursor position")
         (returns (or pair #f)))
@@ -711,7 +729,8 @@
                             (lambda (s pos)
                               (define (symbols)
                                 (let ([range (symbol-range s pos)])
-                                  (if (or (not range) (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
+                                  (if (or (not range) (data-position? (call-frames (substring s 0 (car range))))
+                                        (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
                                     (let* ([part (substring s (car range) (cdr range))]
                                            ;; Symbols go in as they are: the matcher keeps each one
                                            ;; prepared across keystrokes.
@@ -728,7 +747,7 @@
                                 (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
                                 (cond [(pair? targets)
                                        (set! kind "receiver")
-                                       (let ([literals (map (lambda (r) (format "(model ~a)" (cadar r))) targets)])
+                                       (let ([literals (map (lambda (r) (edoc:value-expression (car r))) targets)])
                                          (values pos pos (if (null? (cdr literals)) literals '(""))
                                            (map (lambda (r text)
                                                   (completion:make-candidate text (format "~a  ~a" (list-ref r 5) text) #f)) targets literals)))]
@@ -747,6 +766,10 @@
                                 (if (not context) '()
                                   (list (cons 'type (car context)) (cons 'token (cadddr context))
                                     (cons 'literal? (car (cddddr context)))
+                                    ;; Numbers outside strings denote themselves;
+                                    ;; a preview never evaluates an expression.
+                                    (cons 'value (and (not (eq? (car (cddddr context)) #t))
+                                                   (string->number (unquoted (cadddr context)))))
                                     (cons 'editor (and window (head:window-editor window)))
                                     (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))))))) window))
 
@@ -945,48 +968,64 @@
                     tokens)
            (length tokens))))
 
-  ;; An unclosed form: its opening bracket, its operator (the token string,
-  ;; #f for a datum that is not a symbol, pending before any), the completed
-  ;; data after the operator, and whether a quote or quasiquote covers it.
-  (define-record-type frame (fields opener operator arguments quoted?))
+  ;; The Scheme lexer handles comments, escapes and vector openers. Synthetic
+  ;; frames for reader abbreviations disappear after their single datum.
+  ;; Mode is a quasiquote depth, or literal under an ordinary quote.
+  (define-record-type frame (fields opener operator arguments mode start expected))
   (define closers '((#\( . #\)) (#\[ . #\]) (#\{ . #\})))
 
+  (define (frame-quoted? f)
+    (or (not (frame-opener f)) (not (eqv? (frame-mode f) 0))))
+
+  (define (quotation-frame? f)
+    (and (not (eq? (frame-mode f) 'literal)) (= (frame-arguments f) 0)
+      (member (frame-operator f) '("quote" "quasiquote" "unquote" "unquote-splicing"))))
+
+  (define (next-mode stack)
+    (if (null? stack) 0
+      (let* ([f (car stack)] [mode (frame-mode f)])
+        (cond [(eq? mode 'literal) mode]
+          [(not (quotation-frame? f)) mode]
+          [(equal? (frame-operator f) "quasiquote") (+ mode 1)]
+          [(member (frame-operator f) '("unquote" "unquote-splicing")) (max 0 (- mode 1))]
+          [(= mode 0) 'literal]
+          [else mode]))))
+
+  (define (data-position? stack) (not (eqv? (next-mode stack) 0)))
+
+  (define (next-type stack)
+    (and (pair? stack)
+      (let ([f (car stack)])
+        (cond [(quotation-frame? f) (frame-expected f)]
+          [(data-position? stack) (element-type (frame-expected f))]
+          [(string? (frame-operator f))
+           (argument-type (string->symbol (frame-operator f)) (frame-arguments f))]
+          [else #f]))))
+
   (define (call-frames text)
-    ;; The unclosed forms in text, innermost first. A trailing partial atom
-    ;; counts as a datum; a quoted atom is a datum without a symbol.
-    (define n (string-length text))
-    (define (atom-end i)
-      (if (or (>= i n)
-              (memv (string-ref text i)
-                    '(#\space #\tab #\newline #\( #\) #\[ #\] #\{ #\} #\" #\' #\` #\,)))
-          i
-          (atom-end (+ i 1))))
-    (define (string-end j)
-      (cond [(>= j n) n]
-            [(char=? (string-ref text j) #\\) (string-end (+ j 2))]
-            [(char=? (string-ref text j) #\") (+ j 1)]
-            [else (string-end (+ j 1))]))
-    (let loop ([i 0] [stack '()] [quote-next? #f])
-      (if (>= i n)
-          stack
-          (let ([c (string-ref text i)])
-            (cond
-              [(memv c '(#\space #\tab #\newline)) (loop (+ i 1) stack quote-next?)]
-              [(memv c '(#\' #\`)) (loop (+ i 1) stack #t)]
-              [(char=? c #\,)
-               (loop (+ i (if (and (< (+ i 1) n) (char=? (string-ref text (+ i 1)) #\@)) 2 1)) stack quote-next?)]
-              [(assv c closers)
-               (loop (+ i 1)
-                     (cons (make-frame c 'pending 0
-                             (or quote-next? (and (pair? stack) (frame-quoted? (car stack)))))
-                           stack)
-                     #f)]
-              [(memv c '(#\) #\] #\}))
-               (loop (+ i 1) (if (pair? stack) (count-datum (cdr stack) #f) stack) #f)]
-              [(char=? c #\") (loop (string-end (+ i 1)) (count-datum stack #f) #f)]
+    (let ([in (open-input-string text)])
+      (let loop ([stack '()])
+        ;; Incomplete strings/escaped identifiers leave the preceding context.
+        (guard (ex [else stack])
+          (let-values ([(kind value from to) (read-token in)])
+            (case kind
+              [(eof) stack]
+              [(quote)
+               (if (eq? value 'datum-comment)
+                 (begin (read in) (loop stack))
+                 (loop (cons (make-frame #f (symbol->string value) 0 (next-mode stack) from (next-type stack)) stack)))]
+              [(lparen lbrack vparen vu8paren)
+               (loop (cons (make-frame (if (eq? kind 'lbrack) #\[ #\() 'pending 0
+                             (if (and (memq kind '(vparen vu8paren)) (eqv? (next-mode stack) 0)) 'literal (next-mode stack))
+                             from (next-type stack)) stack))]
+              [(rparen rbrack)
+               (loop (if (pair? stack) (count-datum (cdr stack) #f) stack))]
               [else
-               (let ([j (atom-end (+ i 1))])
-                 (loop j (count-datum stack (and (not quote-next?) (substring text i j))) #f))])))))
+               (cond [(and (= (- to from) 1) (char=? (string-ref text from) #\{))
+                      (loop (cons (make-frame #\{ 'pending 0 (next-mode stack) from (next-type stack)) stack))]
+                 [(and (= (- to from) 1) (char=? (string-ref text from) #\}))
+                  (loop (if (pair? stack) (count-datum (cdr stack) #f) stack))]
+                 [else (loop (count-datum stack (and (eq? kind 'atomic) (symbol? value) (symbol->string value))))])]))))))
 
   (define (count-datum frames token)
     ;; A completed datum fills the innermost form's operator slot, else is one
@@ -994,10 +1033,11 @@
     (if (null? frames)
         frames
         (let ([f (car frames)])
-          (cons (if (eq? (frame-operator f) 'pending)
-                    (make-frame (frame-opener f) token 0 (frame-quoted? f))
-                    (make-frame (frame-opener f) (frame-operator f) (+ (frame-arguments f) 1) (frame-quoted? f)))
-                (cdr frames)))))
+          (if (not (frame-opener f)) (count-datum (cdr frames) #f)
+            (cons (make-frame (frame-opener f)
+                    (if (eq? (frame-operator f) 'pending) token (frame-operator f))
+                    (if (eq? (frame-operator f) 'pending) 0 (+ (frame-arguments f) 1))
+                    (frame-mode f) (frame-start f) (frame-expected f)) (cdr frames))))))
 
   (edoc "The input to continue with after a sole completion ends at pos: inside a string, a typed value at its dead end closes the literal and settles on, one that completes further stays open; a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, a quoted form, text after pos or an input that does not read leaves the cursor where it is."
         (text string "the prompt input")
@@ -1345,15 +1385,18 @@
                        (or (null? vals)
                          (and (null? (cdr vals))
                               (eq? (car vals) (void)))))]
+           [expressions (and (not failed?) (map edoc:value-expression vals))]
+           [expression (and expressions (for-all string? expressions)
+                         (if (= (length expressions) 1) (car expressions)
+                           (string-append "(values" (apply string-append (map (lambda (s) (string-append " " s)) expressions)) ")")))]
            [result (if failed?
                        (if (eq? (evaluation:status outcome) 'interrupted) "interrupted"
                          (format "error: ~a" (kernel:condition-text (evaluation:condition outcome))))
-                       (string:join (map (lambda (v) (format "~s" v)) vals)
-                                    ", "))]
+                       (or expression (string:join (map (lambda (v) (format "~s" v)) vals) ", ")))]
            [spoke? (and void?
                         (let ([now (echo:text)])
                           (and (string? now) (> (string-length now) 0) (not (equal? now (hashtable-ref observations outcome #f))))))])
-      (let* ([copied? (and (eval-copy-result) (not failed?) (not void?))]
+      (let* ([copied? (and (eval-copy-result) expression (not void?))]
              [result-record
               (log:add! 'eval:report! (cons destination (if void? "#<void>" result)) #f)])
         (when copied? (edit:copy-text! result))
@@ -1371,19 +1414,19 @@
   (define (evaluate-span! start end label)
     ;; the buffer text between two positions, evaluated and reported as
     ;; the exchange it is: the expression, then its result
-    (let ([text (expression:text (head:buffer-lines (head:current-buffer)) start end)])
+    (let ([text (expression:text (head:buffer-lines (head:current-buffer-mirror)) start end)])
       (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
       (void)))
 
   (edoc "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result; the C-x C-e of Emacs.")
   (define (eval-last-expression!)
-    (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer)) (head:point))])
+    (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
       (unless start (error 'eval:last-expression! "no expression before point"))
       (evaluate-span! start end "(eval:last-expression!)")))
 
   (edoc "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result; the C-M-x of Emacs.")
   (define (eval-top-level-form!)
-    (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer)) (head:point))])
+    (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
       (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
       (evaluate-span! start end "(eval:top-level-form!)")))
 
@@ -1403,7 +1446,7 @@
     ;; own top level.  The expression is logged (eval:report!, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let* ([window (head:current-window)] [buffer (head:current-buffer)] [receivers (current-receivers)]
+    (let* ([window (head:current-window)] [buffer (head:current-buffer-mirror)] [receivers (current-receivers)]
            [s (prompt:read! "λ" initial '(scheme 1 ())
                 '((multiline? . #t) (profile scheme 1 ()) (editing-policy scheme-input 1) (mode . "scheme-prompt")))])
       (unless s (echo:set-text! "Quit"))

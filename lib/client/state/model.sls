@@ -5,6 +5,7 @@
   (export available? commit! create! ids metadata reference? retire! snapshot snapshots subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
+          (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:))
   (define mirrors (make-eqv-hashtable)) ; n -> (watermark available? envelope)
@@ -12,17 +13,12 @@
   (define active? #f)
   (define subscribers (kernel:make-registry car))
 
-  (edoc "Whether a value is a tagged model reference; this checks its spelling, not availability."
-        (value any "candidate identity") (returns boolean))
-  (define (reference? value)
-    (and (list? value) (= (length value) 2) (eq? (car value) 'model)
-      (integer? (cadr value)) (exact? (cadr value)) (> (cadr value) 0)))
+  (define reference? handle:model?)
 
-  (edoc-type model "a model reference, spelled (model number); operations validate existence and kind"
+  (edoc-type model "a (model number) datum; operations validate existence and kind"
     (predicate reference?)
     (portable #t) (within list)
-    (complete (lambda (partial) (map (lambda (row) (cons (car row) (symbol->string (cadr row)))) (metadata))))
-    (write (lambda (id) (format "(model ~a)" (cadr id)))))
+    (complete (lambda (partial) (map (lambda (row) (list (car row) #f (symbol->string (cadr row)))) (metadata)))))
   (define (number id)
     (unless (reference? id)
       (error 'model "expected (model positive-integer)" id))

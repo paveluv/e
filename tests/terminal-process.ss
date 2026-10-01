@@ -274,7 +274,7 @@
            (set! id (vt:open! first (format "exec scheme-script ~a" child) (current-directory) 3 24))
            (set! owner (store:property id 'app))
            (set! views (map (lambda (who)
-                              (let ([v (view:create! who (list 'buffer id) 'terminal 1 '() '(partial #t))])
+                              (let ([v (view:create! who id 'terminal 1 '() '(partial #t))])
                                 (view:claim! who v) (cons who v))) (list first second)))
            (set! subscription
              (store:subscribe! id
@@ -343,9 +343,9 @@
            ;; One PTY, two views in one head and another head. The latest
            ;; admitted input owns geometry; ownership generations fence input
            ;; queued by a released mount even after the same actor reclaims it.
-           (let* ([a (view:create! first (list 'buffer id) 'terminal 1 '() '())]
-                  [b (view:create! first (list 'buffer id) 'terminal 1 '() '())]
-                  [c (view:create! second (list 'buffer id) 'terminal 1 '() '())]
+           (let* ([a (view:create! first id 'terminal 1 '() '())]
+                  [b (view:create! first id 'terminal 1 '() '())]
+                  [c (view:create! second id 'terminal 1 '() '())]
                   [sizes (test:recorder)] [token #f])
              (define (witness v) (list v (view:generation (view:snapshot v))))
              (define (input who witness size)

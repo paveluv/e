@@ -15,7 +15,7 @@
       (integer? (cadr id)) (exact? (cadr id)) (> (cadr id) 0)))
   (define (endpoint id)
     (if (buffer? id)
-      (and (store:exists? (cadr id)) (list (cons 'id id)))
+      (and (store:exists? id) (list (cons 'id id)))
       (model:snapshot id)))
   (define (producer? p) (and (list? p) (= (length p) 2) (or (id? (car p)) (buffer? (car p))) (symbol? (cadr p))))
   (define (edges? xs)
@@ -251,7 +251,7 @@
               (unless (hashtable-contains? texts id)
                 (hashtable-set! texts id
                   (guard (ex [else #f])
-                    (let-values ([(lines revision) (store:snapshot (cadr id))])
+                    (let-values ([(lines revision) (store:snapshot id)])
                       (list (cons 'id id) (cons 'revision revision) (cons 'value lines))))))
               (hashtable-ref texts id #f))
             (let* ([result (port:resolve id name edges get text)]
@@ -260,7 +260,7 @@
               (if (and (for-all (lambda (r row) (equal? r (caddr row))) models (cadr packet))
                     (for-all (lambda (p) (let ([r (hashtable-ref texts p #f)])
                                            (guard (ex [else #f])
-                                             (if r (= (field r 'revision) (store:revision (cadr p))) (not (store:exists? (cadr p)))))))
+                                             (if r (= (field r 'revision) (store:revision p)) (not (store:exists? p))))))
                       (vector->list (hashtable-keys texts))))
                 (list (car result) (cadr result)
                   (cons (list (field top 'id) (field top 'revision)) (caddr result)))

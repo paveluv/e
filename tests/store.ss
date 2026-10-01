@@ -55,10 +55,18 @@
 
      (define b (store:create! alice "notes" '("alpha" "bravo" "charlie")))
 
-     (check 'created (store:exists? b) #t)
-     (check 'named (store:buffer-name b) "notes")
-     (check 'found (store:find-named "notes") b)
-     (check 'listed (and (memv b (store:buffer-list)) #t) #t)
+     (let* ([ref (read (open-string-input-port (format "~s" b)))]
+            [metadata (store:metadata (list ref))])
+       (check 'buffer-references-round-trip-without-numeric-or-model-aliases
+         (list (store:exists? ref) (store:buffer-name ref) (store:find-named "notes")
+           (and (member ref (store:buffer-list)) #t)
+           (map (lambda (wrong) (test:raises? (lambda () (store:exists? wrong))))
+             (list (cadr ref) (list 'model (cadr ref)))))
+         (list #t "notes" b #t '(#t #t)))
+       (set-car! (cdr ref) 999999)
+       (check 'metadata-owns-its-reference
+         (let ([row (car (cadr metadata))]) (list (car row) (cdr (assq 'id (cadr row)))))
+         (list b b)))
      (check 'content (map (lambda (n) (store:line b n)) '(0 1 2))
             '("alpha" "bravo" "charlie"))
      (check 'fresh-revision (store:revision b) 0)
@@ -229,7 +237,7 @@
            (check (list kind 'claims-own-names-and-events)
                   (list (list-sort string<? (map store:buffer-name ids))
                         (length (events))
-                        (for-all (lambda (event) (eqv? (cadr event) (store:find-named (caddr event)))) (events))
+                        (for-all (lambda (event) (equal? (cadr event) (store:find-named (caddr event)))) (events))
                         (store:find-named base))
                   (list (map (lambda (n) (format "~a<~a>" base n)) '(3 4 5 6)) 4 #t hidden))
            (check 'self-rename-keeps-its-claim (store:rename! bot (car ids) name) name)
@@ -257,7 +265,7 @@
             [ids (test:parallel 4 (lambda (i) (store:publish! producer key "published" '("body") facts)))]
             [id (car ids)])
        (check 'one-publication-under-contention
-              (list (for-all (lambda (other) (= other id)) ids)
+              (list (for-all (lambda (other) (equal? other id)) ids)
                     (store:publication producer "page") (store:revision id) (length (events)))
               (list #t id 0 1))
        (string-set! key 0 #\X)
@@ -936,7 +944,7 @@
      (define observer
        (store:subscribe! ordered
          (lambda (event)
-           (delivered (list (caddr event) (cadddr event))))))
+           (delivered (list (cadr event) (caddr event) (cadddr event))))))
      ;; Registrations run newest first: the blocker precedes observer.
      (define blocker
        (store:subscribe! ordered
@@ -947,15 +955,17 @@
      (define completed (test:worker (lambda () (edit! alice ordered 0 0 0 0 2 '("x")))))
      (test:await 'delivery-entered entered)
      (define queued-author (fresh-author))
-     (define second-result (edit! queued-author ordered 1 0 0 0 2 '("y")))
+     (define queued-reference (list 'buffer (cadr ordered)))
+     (define second-result (edit! queued-author queued-reference 1 0 0 0 2 '("y")))
      (damage-author! queued-author)
+     (set-car! (cdr queued-reference) 999999)
      (define while-blocked (delivered))
      (release #t)
      (check 'concurrent-writer-commits second-result '(applied 2))
      (check 'blocked-writer-finishes (completed) '(applied 1))
      (check 'callbacks-do-not-race while-blocked '())
-     (check 'events-follow-commit-order-with-owned-actors
-            (delivered) (list (list 1 alice) '(2 (agent "writer"))))
+     (check 'events-follow-commit-order-with-owned-identities
+            (delivered) (list (list ordered 1 alice) (list ordered 2 '(agent "writer"))))
      (store:unsubscribe! blocker)
      (store:unsubscribe! observer)
 
@@ -1330,7 +1340,7 @@
                            (lambda () (store:visit! (list 'head (number->string worker)) "visit" '("seed")
                                         (list (cons 'file path) '(base . "seed\n") '(trailing . #t)))) list)))]
             [id (caar results)]
-            [one? (and (for-all (lambda (result) (= id (car result))) results)
+            [one? (and (for-all (lambda (result) (equal? id (car result))) results)
                        (= 1 (length (filter cadr results)))
                        (equal? '(create) (map car (events))))])
        (store:edit! alice id 0 (span 0 0 0 0) '("later "))
@@ -1352,7 +1362,7 @@
          (let-values ([(next created?) (store:visit! bot "next visit" '("") (list (cons 'file path)))])
            (store:delete! alice next)
            (check 'file-visitors-share-admission-and-preserve-existing-work
-             (list one? reused kept? invalid? created? (not (= id next))
+             (list one? reused kept? invalid? created? (not (equal? id next))
                    (store:find-file path) (store:find-file "/tmp/retargeted-visit.txt"))
              (list #t (list id #f) #t #t #t #t #f id))))
        (store:unsubscribe! token)
@@ -1523,8 +1533,13 @@
      (check 'splice-empty-buffer (spliced 0 3 '()) '(""))
 
      ;; Saved data is untrusted input, but gaps and old revisions are valid.
-     (let ([state '(2 8 "saved" #("text") ((file . "/tmp/file") (base . "disk\n") (stamp 10 . 999999999)
-                                           (trailing . #t) (mode . "scheme") (read-only . #f) (modified-at . 123)))])
+     (let ([state
+            '((buffer 2)
+              8
+              "saved"
+              #("text")
+              ((file . "/tmp/file") (base . "disk\n") (stamp 10 . 999999999) (trailing . #t)
+               (mode . "scheme") (read-only . #f) (modified-at . 123)))])
        (check 'saved-store-validation
          (map (lambda (entry) (apply store:valid-import? entry))
            (list (list 20 (list state)) '(1 ())
@@ -1535,25 +1550,25 @@
                               (list (cons* '(trashed 5 (human alice)) '(backup "/tmp/f" (10 . 5) "sha256:0") (list-ref state 4))))))
              (list 2 (list state)) (list 0 '())
              (list 20 (list state state))
-             (list 20 (list state (cons 3 (cdr state))))
-             '(20 ((2 -1 "saved" #("text") ())))
-             '(20 ((2 1.0 "saved" #("text") ())))
-             '(20 ((2 8 "" #("text") ())))
-             '(20 ((2 8 "saved" #() ())))
-             '(20 ((2 8 "saved" #("two\nlines") ())))
-             '(20 ((2 8 "saved" #("text") ((modified . #t)))) )
-             '(20 ((2 8 "saved" #("text") ((read-only . yes)))) )
-             '(20 ((2 8 "saved" #("text") ((stamp 10 . 1000000000)))))
-             '(20 ((2 8 "saved" #("text") ((file . "/a") (file . "/b")))))
-             '(20 ((2 8 "saved" #("text") ((wrap . 3)))))
-             '(20 ((2 8 "saved" #("text") ((backup "/tmp/f" 10 "sum")))))
-             '(20 ((2 8 "saved" #("text") ((backup "" #f "sum")))))
+             (list 20 (list state (cons '(buffer 3) (cdr state))))
+             '(20 (((buffer 2) -1 "saved" #("text") ())))
+             '(20 (((buffer 2) 1.0 "saved" #("text") ())))
+             '(20 (((buffer 2) 8 "" #("text") ())))
+             '(20 (((buffer 2) 8 "saved" #() ())))
+             '(20 (((buffer 2) 8 "saved" #("two\nlines") ())))
+             '(20 (((buffer 2) 8 "saved" #("text") ((modified . #t)))) )
+             '(20 (((buffer 2) 8 "saved" #("text") ((read-only . yes)))) )
+             '(20 (((buffer 2) 8 "saved" #("text") ((stamp 10 . 1000000000)))))
+             '(20 (((buffer 2) 8 "saved" #("text") ((file . "/a") (file . "/b")))))
+             '(20 (((buffer 2) 8 "saved" #("text") ((wrap . 3)))))
+             '(20 (((buffer 2) 8 "saved" #("text") ((backup "/tmp/f" 10 "sum")))))
+             '(20 (((buffer 2) 8 "saved" #("text") ((backup "" #f "sum")))))
              ;; a journal rides as a sixth element: entries newest first below the revision, then groups
-             '(20 ((2 8 "saved" #("text") () (((8 (human alice) ((batch . 1)) ((0 0 0 0) ("") ("t")) #f ())) ()))))
-             '(20 ((2 8 "saved" #("text") () (bogus))))
-             '(20 ((2 8 "saved" #("text") () (((9 (human alice) () ((0 0 0 0) ("") ("t")) #f ())) ()))))
-             '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) #t #f #t))))))
-             '(20 ((2 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) yes #f #t))))))))
+             '(20 (((buffer 2) 8 "saved" #("text") () (((8 (human alice) ((batch . 1)) ((0 0 0 0) ("") ("t")) #f ())) ()))))
+             '(20 (((buffer 2) 8 "saved" #("text") () (bogus))))
+             '(20 (((buffer 2) 8 "saved" #("text") () (((9 (human alice) () ((0 0 0 0) ("") ("t")) #f ())) ()))))
+             '(20 (((buffer 2) 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) #t #f #t))))))
+             '(20 (((buffer 2) 8 "saved" #("text") () (() ((1 (human alice) k "label" (8) yes #f #t))))))))
          (append '(#t #t #t #t) (make-list 16 #f) '(#t #f #f #t #f))))
      ;; Backups: a buffer born in the trash takes a name no buffer holds, the
      ;; trash's included, and a file keeps backups-kept versions, the oldest
@@ -1581,9 +1596,9 @@
             [gap (store:create! alice "gone" '(""))])
        (store:delete! alice gap)
        (let-values ([(next-id states) (store:export)])
-         (let ([saved (assv id states)] [before (call-with-values (lambda () (store:snapshot-state id)) list)])
+         (let ([saved (assoc id states)] [before (call-with-values (lambda () (store:snapshot-state id)) list)])
            (check 'export-preserves-identities-without-runtime-facts
-             (list (> next-id gap) (cadr saved) (list-ref saved 3) (assv omitted states)
+             (list (> next-id (cadr gap)) (cadr saved) (list-ref saved 3) (assoc omitted states)
                    (assq 'transient (list-ref saved 4)) (assq 'modified (list-ref saved 4))
                    (cdr (assq 'modified-at (list-ref saved 4))) (assq 'wrap (list-ref saved 4)))
              (list #t (store:revision id) '#("kept") #f #f #f (store:property id 'modified-at) '(wrap . #f)))
@@ -1597,7 +1612,7 @@
          (store:edit! alice id r (span 0 0 0 0) '("J") (list 'jk "journal" (cons 'labels '((batch . (j 1))))))
          (store:undo! alice id)
          (let-values ([(next-id states) (store:export)])
-           (let* ([saved (assv id states)] [journal (list-ref saved 5)]
+           (let* ([saved (assoc id states)] [journal (list-ref saved 5)]
                   [text (call-with-string-output-port (lambda (port) (write states port)))])
              (check 'export-carries-the-journal
                (list (length saved) (map car (car journal)) (caddr (cadr (car journal)))
@@ -1609,7 +1624,7 @@
                      ;; an undone group's parts are its inverses, ready for redo
                      (list (list (+ r 1) 'jk "journal" (list (+ r 2)) #f)) #t #t))))
          (let-values ([(next-id states) (store:export (lambda (state) (append (list-head state 4) (list (list-ref state 4)))))])
-           (check 'a-converted-state-carries-no-journal (length (assv id states)) 5))))
+           (check 'a-converted-state-carries-no-journal (length (assoc id states)) 5))))
 
      ;; All writers share the final lifetime guard. Keep this last:
      ;; Reloading from disk: the disk's text becomes the baseline and the
@@ -1722,7 +1737,7 @@
        '(#t #t #t ()))
      (check 'pending-conflicts-travel-with-the-journal
             (let-values ([(next-id states) (store:export)])
-              (let ([saved (assv notes states)])
+              (let ([saved (assoc notes states)])
                 (list (store:valid-import? next-id states)
                       (map car (filter (lambda (c) (not (list-ref c 6))) (caddr (list-ref saved 5)))))))
             (list #t (map car (store:conflicts notes))))
@@ -2013,7 +2028,7 @@
              (store:resolve! alice id (caar (store:conflicts id)) 'mine)
              (store:set-property! alice id 'base (string-append mine "\n"))))
          (let* ([state (unbox (kernel:persistent-cell 'store (lambda () #f)))]
-                [retained (field (hashtable-ref (field state 'buffers) id #f) 'conflicts)])
+                [retained (field (hashtable-ref (field state 'buffers) (cadr id) #f) 'conflicts)])
            (store:undo! alice id)
            (check 'only-undoable-settlements-remain-in-memory
              (list (length retained) (map (lambda (c) (list-ref c 5)) (store:conflicts id)))

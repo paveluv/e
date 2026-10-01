@@ -16,7 +16,7 @@
      (dynamic-wind void
        (lambda ()
          (environment:restore!)
-         (let* ([output (cadr (get (value job) 'output))]
+         (let* ([output (get (value job) 'output)]
                 [fresh (environment:evaluate! '(head "restored") env (get (value env) 'generation) "transient-binding")])
            (test:await 'restored-worker (lambda () (eq? (get (value fresh) 'status) 'error)))
            (test:check 'portable-history-and-output-survive-with-fresh-native-bindings

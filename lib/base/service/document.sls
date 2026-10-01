@@ -48,15 +48,15 @@
               (apply-disk! actor id path (cons revision facts) disk identity replace?)))))))
 
   (edoc "Reload a document from its file in the base, merging local edits as one undoable action without erasing earlier history. Refuse if its reviewed text or file facts changed during I/O. Returns status and detail, applied with (revision conflicts)."
-        (actor actor "requesting actor") (id integer "buffer identity"))
+        (actor actor "requesting actor") (id buffer "buffer identity"))
   (define (reload! actor id) (reload-document! actor id #f))
 
   (edoc "Replace a document with its file's text in the base as one undoable action, settling pending conflicts. Refuse if its reviewed text or file facts changed during I/O. Returns status and detail, applied with the revision."
-        (actor actor "requesting actor") (id integer "buffer identity"))
+        (actor actor "requesting actor") (id buffer "buffer identity"))
   (define (reread! actor id) (reload-document! actor id #t))
 
   (edoc "Check a document's disk content against its baseline. An unchanged stamp avoids reading; equal content updates only the reviewed stamp. Unreadable or unvisited files return false. A true result is a hint to request a fresh guarded reload, not permission to overwrite a later state."
-        (actor actor "requesting actor") (id integer "buffer identity") (returns boolean))
+        (actor actor "requesting actor") (id buffer "buffer identity") (returns boolean))
   (define (check! actor id)
     (activity:call-with
       (lambda ()
@@ -194,7 +194,7 @@
                       (list 'saved message)))))))))))
 
   (edoc "Save a shared document in the base, merging external edits undoably and backing up overwritten bytes. File facts, name and an adopted mode commit together; newer text remains dirty. Returns (saved message), (unchanged message), (refused message) or (failed message); a failed save can already have written bytes. Hooks belong to the caller."
-        (actor actor "requesting actor") (id integer "document identity")
+        (actor actor "requesting actor") (id buffer "document identity")
         (path string "canonical target") (adoption list "(reviewed-first-line detected-mode-name-or-false), used for Save As")
         (returns list))
   (define (save! actor id path adoption)

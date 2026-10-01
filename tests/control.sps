@@ -10,7 +10,7 @@
     (lambda (kind)
       (let* ([single? (eq? kind 'entry)] [before (if single? '("a") '("a" "b"))]
              [source (store:create! head:ui-actor "normalization" before)]
-             [id (view:create! head:ui-actor (list 'buffer source) kind 1 '((policy control-prefix 1))
+             [id (view:create! head:ui-actor source kind 1 '((policy control-prefix 1))
                    (if single? '((0 . 1) (0 . 1)) '((1 . 1) (1 . 1) (0 . 0) #f)))])
         (define (line) (text-source:lines (text-source:lookup source)))
         (define (insert-text) (if single? (entry:insert! id "x") (insert! id "x")))
@@ -29,7 +29,7 @@
 
 ;; Composition exercises real entry actions, command references and captures.
 (let* ([actor head:ui-actor] [source (store:create! actor "control text" '("original"))]
-       [filter (control:create-filter! actor (list 'buffer source) "Filter:" "[ready]")]
+       [filter (control:create-filter! actor source "Filter:" "[ready]")]
        [entry (cadr (assq 'entry (view:children (view:snapshot filter))))]
        [button (view:create! actor #f 'action-text 1
                  (list '(text . "Replace") '(enabled . #t) (list 'commands (list 'activate entry 'insert '("new")))) '())]
@@ -50,6 +50,14 @@
   (define (enable! value)
     (let ([r (model:snapshot enabled)])
       (model:commit! actor (list (list enabled (cdr (assq 'revision r)) '() value)))))
+  (let* ([ref (list 'buffer (cadr source))]
+         [mirror (text-source:make ref '#("original") 0)] [copy (text-source:id mirror)])
+    (set-car! (cdr ref) 999999) (set-car! (cdr copy) 999999)
+    (check 'text-mirror-owns-its-reference-and-rejects-other-resource-kinds
+      (list (text-source:id mirror)
+        (test:raises? (lambda () (text-source:forget! (list 'model (cadr source)))))
+        (eq? mirror (text-source:lookup source)))
+      (list source #t #t)))
   (control:init!)
   (port:register! '(model control-enabled 1) '((output enabled boolean (value))))
   (view:arrange! actor (list (list root 0 (list (list 'filter filter 'fit) (list 'button button 'fit)) '())) '())
@@ -132,7 +140,7 @@
 ;; Exact-revision proposals must refuse even endpoint edits, which ordinary
 ;; range rebasing intentionally accepts. Successful replacements remain undoable.
 (let* ([actor head:ui-actor] [source (store:create! actor "entry proposal" '("abc"))]
-       [id (view:create! actor (list 'buffer source) 'entry 1 '() '((0 . 3) (0 . 3)))])
+       [id (view:create! actor source 'entry 1 '() '((0 . 3) (0 . 3)))])
   (widget:mount! id 'entry-proposal)
   (widget:prepare! id 20 1)
   (let-values ([(old revision) (store:snapshot source)])
@@ -156,7 +164,7 @@
     (lambda (remount?)
       (let* ([actor head:ui-actor]
              [source (store:create! actor "independent entry" '("abc") '((internal . #t)))]
-             [id (view:create! actor (list 'buffer source) 'entry 1 '() '((0 . 3) (0 . 3)))]
+             [id (view:create! actor source 'entry 1 '() '((0 . 3) (0 . 3)))]
              [fired? #f])
         (widget:mount! id 'independent-entry)
         (let ([mirror (text-source:lookup source)]

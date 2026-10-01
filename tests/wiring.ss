@@ -79,7 +79,7 @@
 
      (define (mirror-agrees?)
        (read-editor
-         '(let* ([b (head:current-buffer)] [id (head:buffer-store-id b)])
+         '(let* ([b (head:current-buffer-mirror)] [id (head:buffer-store-id b)])
             (and (= (head:buffer-line-count b) (store:line-count id))
                  (for-all (lambda (i) (string=? (head:buffer-line b i) (store:line id i)))
                    (iota (head:buffer-line-count b)))))))
@@ -101,7 +101,7 @@
      (check 'undo-mirrors (mirror-agrees?) #t)
 
      ;; -- a foreign actor's edit reaches the screen ---------------------------
-     (send! "\x1b;xstore:edit! (quote (agent tester)) (head:buffer-store-id (head:current-buffer)) (store:revision (head:buffer-store-id (head:current-buffer))) (text:make-span 0 0 0 0) (list \"AGENT \")\r")
+     (send! "\x1b;xstore:edit! (quote (agent tester)) (head:buffer-store-id (head:current-buffer-mirror)) (store:revision (head:buffer-store-id (head:current-buffer-mirror))) (text:make-span 0 0 0 0) (list \"AGENT \")\r")
      (await! 'foreign-edit-lands-on-screen (lambda () (screen-has? 0 "AGENT ")))
      (check 'foreign-edit-mirrors (mirror-agrees?) #t)
      (send! "\x5;!")                   ; C-e then a character
@@ -122,18 +122,18 @@
 
      ;; the wake path: a worker-thread edit appears with NO keypress. Awaiting
      ;; only drains output, so the wake alone paints.
-     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 100000000 0)) (store:edit! (quote (agent background)) (head:buffer-store-id (head:current-buffer)) (store:revision (head:buffer-store-id (head:current-buffer))) (text:make-span 0 0 0 0) (list \"WOKEN \")))\r")
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 100000000 0)) (store:edit! (quote (agent background)) (head:buffer-store-id (head:current-buffer-mirror)) (store:revision (head:buffer-store-id (head:current-buffer-mirror))) (text:make-span 0 0 0 0) (list \"WOKEN \")))\r")
      (await! 'foreign-edit-appears-without-a-keypress (lambda () (screen-has? 0 "WOKEN ")))
 
      ;; wake coalescing: a racing burst of foreign edits must land on
      ;; the screen in full -- a wake arriving mid-paint is not lost
-     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 100000000 0)) (let ([id (head:buffer-store-id (head:current-buffer))]) (let loop ([i 0]) (when (< i 30) (store:edit! (quote (agent burst)) id (store:revision id) (text:make-span 0 0 0 0) (list \"x\")) (loop (+ i 1))))))\r")
+     (send! "\x1b;xfork-thread (lambda () (sleep (make-time (quote time-duration) 100000000 0)) (let ([id (head:buffer-store-id (head:current-buffer-mirror))]) (let loop ([i 0]) (when (< i 30) (store:edit! (quote (agent burst)) id (store:revision id) (text:make-span 0 0 0 0) (list \"x\")) (loop (+ i 1))))))\r")
      (await! 'racing-burst-lands-without-a-lost-wake (lambda () (screen-has? 0 (make-string 30 #\x))))
 
      ;; UI summaries remain coalesced: adoption of a rival's new text flushes
      ;; the three-keystroke burst with its own revision range.
      (send! "\x5;xyz")
-     (send! "\x1b;xlet ([id (head:buffer-store-id (head:current-buffer))]) (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
+     (send! "\x1b;xlet ([id (head:buffer-store-id (head:current-buffer-mirror))]) (store:edit! (quote (agent rival)) id (store:revision id) (text:make-span 0 0 0 0) (list \"r\"))\r")
      (check 'ui-burst-coalesced-on-the-audit-stream
        (read-editor
          '(and (exists (lambda (entry) (string:prefix? "ui: 3 edits i" (log:format-entry entry)))
@@ -209,7 +209,7 @@
               '((0 #("31" "31" "1" #f)
                  #(("https://surface.example" "wide") ("https://surface.example" "wide") #f #f)
                  ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4))
-            (head:show-buffer! (head:adopt-store-buffer! id))
+            (head:show-buffer-mirror! (head:adopt-store-buffer! id))
             (head:window-line-numbers-set! (head:current-window) #f)
             id)))
      (check 'surface-paints-real-shared-text-and-cell-links
@@ -220,22 +220,24 @@
           (fork-thread
             (lambda ()
               (sleep (make-time 'time-duration 100000000 0))
-              (surface:publish! ,surface-id (car (surface:snapshot ,surface-id)) 0
+              (surface:publish! ',surface-id (car (surface:snapshot ',surface-id)) 0
                 '((0 #("32" "32" "1" #f)
-                   #(("https://updated.example" #f) ("https://updated.example" #f) #f #f)
-                   ((clusters (1 . 2) (2 . 1) (1 . 1))))) #f '(1 4)))) #t))
+                   #(("https://updated.example" #f)
+                     ("https://updated.example" #f) #f #f)
+                   ((clusters (1 . 2) (2 . 1) (1 . 1)))))
+                #f '(1 4)))) #t))
      (await! 'surface-only-worker-wakes-idle-head
        (lambda () (equal? (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1)
                           '("https://updated.example" #f))))
-     (read-editor `(begin (head:show-buffer! (buffer "*scratch*"))
-                          (edit:kill-buffer! (head:buffer-of-store-id ,surface-id)) #t))
+     (read-editor `(begin (head:show-buffer! (store:find-named "*scratch*"))
+                          (edit:kill-buffer! ',surface-id) #t))
 
      ;; One live describe page exercises the source/companion boundary and
      ;; head-app reloads and core refusal. Fresh commands resolve the exports;
      ;; retaining an old procedure inside this driver would test old code.
      (check 'describe-widget-refreshes-visible-page-and-keeps-receiver
        (read-editor
-         '(let* ([request-window (head:current-window)] [request-buffer (head:current-buffer)]
+         '(let* ([request-window (head:current-window)] [request-buffer (head:current-buffer-mirror)]
                  [receiver (describe:show! 'markdown:view!)]
                  [host (head:find-tool-buffer (format "*describe:~a*" receiver))]
                  [root (head:buffer-fact host 'widget-id #f)]
@@ -255,7 +257,7 @@
               (let ([stable? (= revision (store:revision receiver))])
                 (kernel:reload-module! "markdown") (kernel:reload-module! "describe")
                 (document!) (refresh!)
-                (let ([result (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer))
+                (let ([result (list (eq? request-window (head:current-window)) (eq? request-buffer (head:current-buffer-mirror))
                                 updated stable? (equal? body (widget:descendant root 'app 'body 'text))
                                 (caddr (reference:page head:ui-actor receiver))
                                 (store:line receiver 0))])
@@ -275,7 +277,7 @@
               (call-with-output-file ,probe
                 (lambda (p)
                   (write (list (head:quitting?) (pair? (store:buffer-list))
-                           (integer? (store:create! head:ui-actor "after quit" '("kept")))) p))
+                           (store:exists? (store:create! head:ui-actor "after quit" '("kept")))) p))
                 'replace))) #t))
      (define mouse-before-quit (bytevector? (vt:emulator-mouse-input mirror 35 2 2 #f)))
      (delete-file probe)

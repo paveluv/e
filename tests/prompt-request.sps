@@ -4,18 +4,18 @@
   (define other '(head "other-requests"))
   (define (get r k) (cdr (assq k r)))
   (define (value id) (get (model:snapshot id) 'value))
-  (define (draft id) (cadr (get (value id) 'draft)))
+  (define (draft id) (get (value id) 'draft))
   (define (new actor parent text)
     (prompt-request:create! actor parent #f text '((origin model 999)) '(head-symbols 1)))
   (define request (new owner #f "alpha"))
   (define source (draft request))
   (define borrowed (store:create! owner "persistent-repl-draft" '("keep")))
-  (define independent (prompt-request:create! other #f (list 'buffer borrowed) "" '() #f))
+  (define independent (prompt-request:create! other #f borrowed "" '() #f))
   (check 'prompt-drafts-are-authored-but-not-catalogue-or-recovery-documents
     (list (store:line source 0) (store:property source 'internal)
       (store:property source 'audience)
       (let-values ([(next states) (store:export)])
-        (and (not (assv source states)) (assv borrowed states) #t))
+        (and (not (assoc source states)) (assoc borrowed states) #t))
       (let-values ([(next states) (model:export)])
         (not (exists (lambda (r) (member (get r 'id) (list request independent))) states))))
     '("alpha" #t ((head "requests")) #t #t))
@@ -33,9 +33,9 @@
   (check 'prompt-accepted-text-is-a-snapshot
     (get (value request) 'outcome) '(1 #("alpha!") ((origin model 999))))
   (let* ([host (view:create! owner #f 'column 1 '() '())]
-         [target (view:create! owner (list 'buffer borrowed) 'entry 1 '() '((0 . 0) (0 . 0)))]
+         [target (view:create! owner borrowed 'entry 1 '() '((0 . 0) (0 . 0)))]
          [root (view:create! owner request 'column 1 '() '() request)]
-         [child (view:create! owner (list 'buffer source) 'entry 1
+         [child (view:create! owner source 'entry 1
                   (list (list 'commands (list 'accepted target 'insert '()))) '((0 . 0) (0 . 0)) root)])
     (view:arrange! owner (list (list root 0 (list (list 'entry child '(grow 1))) '())) '())
     (let* ([copy (view:fork! owner root)] [copied-child (cadar (view:children (view:snapshot copy)))]
@@ -98,11 +98,11 @@
       '((#f #f #f) (#f #f #f))))
   ;; Closing a parent after its read but before a child's allocation must
   ;; fail the unchanged ancestor witness and release the new draft.
-  (let* ([parent (new owner #f "outer")] [before (list-sort < (store:buffer-list))]
+  (let* ([parent (new owner #f "outer")] [before (list-sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list))]
          [watch (store:subscribe! #f
                   (lambda (event) (when (eq? (car event) 'create) (prompt-request:cancel! owner parent))))])
     (check 'prompt-parent-cancellation-fences-child-creation
-      (list (new owner parent "too late") (list-sort < (store:buffer-list))) (list #f before))
+      (list (new owner parent "too late") (list-sort (lambda (a b) (< (cadr a) (cadr b))) (store:buffer-list))) (list #f before))
     (store:unsubscribe! watch)
     (prompt-request:close! owner parent))
   (let* ([parent (new owner #f "outer\n")] [child (new owner parent "inner")])

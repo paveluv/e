@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service search-request)
   (export close! close-owner! configure! create!)
-  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
+  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core handle) handle:) (prefix (core kernel) kernel:)
           (prefix (core work-queue) work-queue:) (prefix (foundation string) string:)
           (prefix (foundation text) text:) (prefix (state model) model:)
           (prefix (state store) store:) (prefix (state view) view:))
@@ -12,7 +12,7 @@
   (define (fields? v keys) (and (list? v) (for-all pair? v) (equal? (map car v) keys)))
   (define (request? v)
     (and (fields? v '(target document basis sequence start needle fold? visible direction summary? overlap?))
-      (model:reference? (get v 'target)) (natural? (get v 'document)) (> (get v 'document) 0)
+      (model:reference? (get v 'target)) (handle:buffer? (get v 'document))
       (natural? (get v 'basis)) (natural? (get v 'sequence)) (position? (get v 'start))
       (string? (get v 'needle)) (not (string:search (get v 'needle) "\n" 0 (string-length (get v 'needle))))
       (boolean? (get v 'fold?)) (memq (get v 'direction) '(next previous)) (boolean? (get v 'summary?)) (boolean? (get v 'overlap?))
@@ -33,12 +33,12 @@
   (define (available? actor request)
     (let ([d (view:snapshot (get request 'target))])
       (and d (eq? (view:kind d) 'editor)
-        (equal? (view:source d) (list 'buffer (get request 'document)))
+        (equal? (view:source d) (get request 'document))
         (store:visible? actor (get request 'document)))))
   (define (references origin request)
     (fold-left (lambda (out id) (if (member id out) out (cons id out))) '()
-      (list (get origin 'target) (list 'buffer (get origin 'document))
-        (get request 'target) (list 'buffer (get request 'document)))))
+      (list (get origin 'target) (get origin 'document)
+        (get request 'target) (get request 'document))))
   (define (change r value)
     (list (get r 'id) (get r 'revision) (filter values (cons (get value 'draft) (references (get value 'origin) (get value 'request)))) value))
   (define (replace v key value) (map (lambda (p) (if (eq? (car p) key) (cons key value) p)) v))
@@ -49,9 +49,17 @@
   (define (create! actor request draft?)
     (unless (and (descriptor:head? actor) (request? request) (boolean? draft?) (available? actor request))
       (error 'create! "invalid or unavailable search target"))
-    (let ([draft (and draft? (list 'buffer (store:create! actor "<search>" (list (get request 'needle))
-                                             (list '(internal . #t) '(disposable . #t) (cons 'audience (list actor))))))])
-      (guard (ex [else (when draft (store:delete! actor (cadr draft))) (raise ex)])
+    (let ([draft
+           (and draft?
+             (store:create!
+               actor
+               "<search>"
+               (list (get request 'needle))
+               (list
+                 '(internal . #t)
+                 '(disposable . #t)
+                 (cons 'audience (list actor)))))])
+      (guard (ex [else (when draft (store:delete! actor draft)) (raise ex)])
         (model:create! actor 'search-request 1 actor 'transient (filter values (cons draft (references request request)))
           (map cons '(owner draft origin generation request status result) (list actor draft request 0 request 'pending #f))))))
 
@@ -78,7 +86,7 @@
             (case status [(stale) (retry)]
               [(applied) (view:retire-scope! actor id)
                (let ([draft (get (get r 'value) 'draft)])
-                 (when (and draft (store:exists? (cadr draft))) (store:delete! actor (cadr draft))))]))))))
+                 (when (and draft (store:exists? draft)) (store:delete! actor draft)))]))))))
 
   (edoc "Close all transient search requests belonging to a departing head."
         (actor actor "departing request owner"))
@@ -197,4 +205,4 @@
       (store:subscribe! #f
         (lambda (event)
           (let-values ([(ids jobs) (with-mutex lock (hashtable-entries active))])
-            (vector-for-each (lambda (id job) (when (= (cadr event) (get (cadr job) 'document)) (schedule! id))) ids jobs)))))))
+            (vector-for-each (lambda (id job) (when (equal? (cadr event) (get (cadr job) 'document)) (schedule! id))) ids jobs)))))))

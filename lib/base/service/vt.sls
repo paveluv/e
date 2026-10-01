@@ -3332,7 +3332,7 @@
                (and (terminal-state-alive state) (datum:copy (terminal-state-owner state)))))
         (instances))))
   (define (instance id)
-    (find (lambda (state) (eqv? id (terminal-state-buffer state))) (instances)))
+    (find (lambda (state) (equal? id (terminal-state-buffer state))) (instances)))
   (define (fact facts key fallback)
     (cond [(assq key facts) => cdr] [else fallback]))
   (define (size? size)
@@ -3356,7 +3356,7 @@
         (wake! state))))
 
   (edoc "Close a terminal by its buffer id, ending its process."
-        (id integer "the buffer id"))
+        (id buffer "the buffer id"))
   (define (close! id)
     (activity:call-with
       (lambda ()
@@ -3398,7 +3398,7 @@
     (and lease
       (let ([d (view:snapshot (cadr lease))])
         (and d (eq? (view:kind d) 'terminal) (= (view:schema d) 1)
-             (equal? (view:source d) (list 'buffer (terminal-state-buffer state)))
+             (equal? (view:source d) (terminal-state-buffer state))
              (equal? (view:owner d) (car lease)) (= (view:generation d) (caddr lease))))))
   (define (sender-lease state from data)
     (let* ([witness (fact data 'view #f)]
@@ -3427,7 +3427,7 @@
 
   (define (valid-message? state message)
     (and (list? message) (= (length message) 5) (actor:identity? (cadr message))
-         (eqv? (caddr message) (terminal-state-buffer state))
+         (equal? (caddr message) (terminal-state-buffer state))
          (let ([what (cadddr message)] [data (list-ref message 4)])
            (case (car message)
              [(input) (and (string? what) (input-data? data what))]
@@ -3680,14 +3680,16 @@
                   (wake! state)
                   (loop))))))))
 
-  (edoc "Open a terminal running a command, or the shell, in a directory at a size; its buffer id."
-        (from head "the opening head")
-        (command (or string #f) "the command line, or #f for the shell")
-        (directory directory "the working directory")
-        (rows integer "the rows")
-        (cols integer "the columns")
-        (scheme (list-of any) "the color scheme, at most one")
-        (returns integer))
+  (edoc
+    "Open a terminal running a command, or the shell, in a directory at a size; its buffer id."
+    (from head "the opening head")
+    (command
+      (or string #f)
+      "the command line, or #f for the shell")
+    (directory directory "the working directory")
+    (rows integer "the rows") (cols integer "the columns")
+    (scheme (list-of any) "the color scheme, at most one")
+    (returns buffer))
   (define (open! from command directory rows cols . scheme)
     (activity:call-with
       (lambda ()

@@ -270,7 +270,7 @@
     (let ([app (active-app)] [target (default-subject)])
       (if app (begin (when target (request! app target)) (page! app 'down) default-root)
         (let ([root (ensure! target)])
-          (if (head:popup? (head:current-window)) (window:pop-up-or-reuse! (widget:host root))
+          (if (head:popup? (head:current-window)) (window:pop-up-or-reuse! root)
             (begin (window:show-widget! (head:popup) root) (head:show-popup! (head:popup-default-rows)))) root))))
 
   (edoc "Page the visible default inspector up, or show it when hidden.")

@@ -48,7 +48,7 @@
      (define (write-disk! text) (file:write! path (file:lines text) (file:ends-in-newline? text)))
      (define (lines) (vector->list (head:buffer-lines b)))
      (define (resolve-all! . side)
-       (let* ([id (head:buffer-store-id (head:current-buffer))] [draft (conflict-review:create! head:ui-actor (list id))]
+       (let* ([id (head:buffer-store-id (head:current-buffer-mirror))] [draft (conflict-review:create! head:ui-actor (list id))]
               [get (lambda (r k) (cdr (assq k r)))] [r (model:snapshot draft)]
               [groups (list (cons id (store:conflicts id)))])
          (conflict-review:choose! head:ui-actor draft (get r 'revision) groups (if (null? side) 'disk (car side)))
@@ -60,7 +60,7 @@
      (define (contains? s part) (and (string:search s part 0 (string-length s)) #t))
      (write-disk! "alpha\nbeta\ngamma\n")
      (visit-file! path)
-     (define b (head:current-buffer))
+     (define b (head:current-buffer-mirror))
      (check 'the-file-is-visited (lines) '("alpha" "beta" "gamma"))
 
      ;; the buffer changes line 0 and the end of line 2; the disk changes
@@ -78,7 +78,7 @@
      (define rev (car (car conflicts)))
      (check 'a-conflict-completes-with-both-sides-in-its-hint
        (let ([offered (edoc:type-completions 'conflict "")])
-         (list (map car offered) (contains? (cdr (car offered)) "mine \"ALPHA\"")))
+         (list (map car offered) (contains? (caddr (car offered)) "mine \"ALPHA\"")))
        (list (list rev) #t))
 
      (check 'settlement-writes-mine-with-an-undoable-conflict-label
@@ -118,7 +118,7 @@
      (define path2 (string-append dir "/typed.txt"))
      (file:write! path2 (file:lines "abcdefgh\n") #t)
      (visit-file! path2)
-     (define t (head:current-buffer))
+     (define t (head:current-buffer-mirror))
      (head:goto! '(0 . 4))
      (dispatch:key! "BACKSPACE")
      (dispatch:key! #\8)
@@ -131,7 +131,7 @@
      (check 'keeping-mine-writes-the-typed-replacement
        (list (delta-log:resolve! (car (car typed)) 'mine) (vector->list (head:buffer-lines t))) '(applied ("abc8efgh")))
      (delete-file path2)
-     (head:show-buffer! b)
+     (head:show-buffer-mirror! b)
 
      ;; the conflicts settled, the buffer's !! is gone and it is savable again
      (head:goto! '(0 . 0))
@@ -148,7 +148,7 @@
      (mode:register! "saved-text" '(".txt") '() #f)
      (file:write! path3 (file:lines "keep me\n") #t)
      (define scratch (head:new-buffer! "scratch-save"))
-     (head:show-buffer! scratch)
+     (head:show-buffer-mirror! scratch)
      (head:goto! '(0 . 0))
      (insert-text! "new text")
      (define (backups-of path) (filter (lambda (entry) (string=? (cadr entry) path)) (backups)))
@@ -168,7 +168,7 @@
        '(#t ("other.txt.bak<2>" "other.txt.bak")))
      (define (save-as-from! name text)
        (let ([b (head:new-buffer! name)])
-         (head:show-buffer! b)
+         (head:show-buffer-mirror! b)
          (head:goto! '(0 . 0))
          (insert-text! text)
          (save-file! path3)
@@ -179,13 +179,13 @@
        (list (file:read path3) (map car (backups-of path3)))
        '("fourth\n" ("other.txt.bak<3>" "other.txt.bak<2>" "other.txt.bak")))
      (check 'restore-brings-a-backup-back-as-a-buffer
-       (let* ([restored (restore! "other.txt.bak")])
-         (list (eq? restored (head:current-buffer)) (vector->list (head:buffer-lines restored)) (head:buffer-file restored)
-               (mode:name-of restored)
+       (let* ([restored (head:buffer-of-store-id (restore! "other.txt.bak"))])
+         (list (eq? restored (head:current-buffer-mirror)) (vector->list (head:buffer-lines restored)) (head:buffer-file restored)
+               (mode:name-of (head:buffer-store-id restored))
                (map car (backups-of path3))))
        '(#t ("keep me") #f "saved-text" ("other.txt.bak<3>" "other.txt.bak<2>")))
-     (for-each kill-buffer! (list (head:current-buffer) fourth third scratch))
-     (head:show-buffer! b)
+     (for-each kill-buffer! (map head:buffer-store-id (list (head:current-buffer-mirror) fourth third scratch)))
+     (head:show-buffer-mirror! b)
      (delete-file path3)
 
      ;; Backup creation is an observable store commit. A subscriber can
@@ -235,7 +235,7 @@
      (define path4 (string-append dir "/positions.txt"))
      (file:write! path4 (file:lines "one\ntwo\nthree\n") #t)
      (visit-file! path4)
-     (define pb (head:current-buffer))
+     (define pb (head:current-buffer-mirror))
      (file:write! path4 (file:lines "zero\none\ntwo\nthree\n") #t)
      ;; the write may share the visit's clock tick: the mtime hint is dropped
      ;; so the edit's disk check reads the content
@@ -245,8 +245,8 @@
        (begin (insert-text! "!") (head:before-frame!)
               (list (vector->list (head:buffer-lines pb)) (head:point)))
        '(("zero" "one" "tw!o" "three") (2 . 3)))
-     (kill-buffer! pb)
-     (head:show-buffer! b)
+     (kill-buffer! (head:buffer-store-id pb))
+     (head:show-buffer-mirror! b)
      (delete-file path4)
 
      ;; an edit made against the text as it stood before an external change
@@ -255,7 +255,7 @@
      (define path5 (string-append dir "/abcd.txt"))
      (file:write! path5 (file:lines "ABCD\n") #t)
      (visit-file! path5)
-     (define ab (head:current-buffer))
+     (define ab (head:current-buffer-mirror))
      (file:write! path5 (file:lines "A2BCD\n") #t)
      (head:buffer-facts-set! ab '((stamp . #f)))
      (head:goto! '(0 . 1))
@@ -275,8 +275,8 @@
            (list (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path5)) (file:read path5))
            '(refused "A2BCD\n")))
        (lambda () (kernel:retract-module! 'reload-save-hook)))
-     (kill-buffer! ab)
-     (head:show-buffer! b)
+     (kill-buffer! (head:buffer-store-id ab))
+     (head:show-buffer-mirror! b)
      (delete-file path5)
 
      (write-disk! "old old\ntail\n")
@@ -294,7 +294,7 @@
        (store:edit! head:ui-actor id 0 (text:make-span 0 0 0 5) '("mine"))
        (store:reload! head:ui-actor id '("disk tail") '((base . "disk tail") (trailing . #f)))
        (set! trunk (head:adopt-store-buffer! id))
-       (head:show-buffer! trunk)
+       (head:show-buffer-mirror! trunk)
        (store:edit! '(head "other") id (store:revision id) (text:make-span 0 0 0 0) '("foreign" ""))
        (let* ([draft (conflict-review:create! head:ui-actor (list id))]
               [r (model:snapshot draft)] [rev (cdr (assq 'revision r))])
@@ -303,8 +303,8 @@
            (list-ref (conflict-review:preview draft id) 3) '#("foreign" "mine tail"))
          (conflict-review:close! head:ui-actor draft (model:revision draft)))
        (resolve-all! 'disk)
-       (kill-buffer! trunk)
-       (head:show-buffer! b))
+       (kill-buffer! (head:buffer-store-id trunk))
+       (head:show-buffer-mirror! b))
 
      (write-disk! "alpha tail\n")
      (reread!)
@@ -335,7 +335,7 @@
                     [disk (car scenario)] [merged (cadr scenario)] [pending? (caddr scenario)])
                (file:write! target '#("alpha beta") #t)
                (visit-file! target)
-               (let ([b (head:current-buffer)])
+               (let ([b (head:current-buffer-mirror)])
                  (dynamic-wind void
                    (lambda ()
                      (replace-region-text! '(0 . 0) '(0 . 5) "ALPHA")
@@ -348,14 +348,14 @@
                        [(automatic) (replace-region-text! '(0 . 0) '(0 . 5) "Mine")]
                        [(reopen) (visit-file! target)]
                        [(save) (guard (ex [(kernel:refusal? ex) #f]) (save!))])
-                     (let* ([after (list (buffer-text b) (head:buffer-conflicted b))]
-                            [back (begin (undo!) (list (buffer-text b) (head:buffer-conflicted b)))]
-                            [again (begin (redo!) (list (buffer-text b) (head:buffer-conflicted b)))])
+                     (let* ([after (list (buffer-text (head:buffer-store-id b)) (head:buffer-conflicted b))]
+                            [back (begin (undo!) (list (buffer-text (head:buffer-store-id b)) (head:buffer-conflicted b)))]
+                            [again (begin (redo!) (list (buffer-text (head:buffer-store-id b)) (head:buffer-conflicted b)))])
                        (undo!) (save!)
                        (let* ([written (file:read target)]
-                              [earlier (begin (undo!) (buffer-text b))]
-                              [original (begin (undo!) (buffer-text b))]
-                              [replayed (begin (redo!) (redo!) (redo!) (list (buffer-text b) (head:buffer-conflicted b)))])
+                              [earlier (begin (undo!) (buffer-text (head:buffer-store-id b)))]
+                              [original (begin (undo!) (buffer-text (head:buffer-store-id b)))]
+                              [replayed (begin (redo!) (redo!) (redo!) (list (buffer-text (head:buffer-store-id b)) (head:buffer-conflicted b)))])
                          (check (list how disk 'reload-is-one-undoable-action-with-older-history)
                            (list after back again written earlier original replayed)
                            (list (list merged pending?) '("Mine beta\n" #f)

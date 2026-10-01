@@ -22,7 +22,7 @@
 
 (define (history-example:create!)
   (let* ([who head:ui-actor] [history (history:create! who 'persistent)]
-         [text (list 'buffer (store:create! who "history note" '("Text, evaluation and a connected table share one host.") '((internal . #t))))]
+         [text (store:create! who "history note" '("Text, evaluation and a connected table share one host.") '((internal . #t)))]
          [env (environment:create! who
                 (list (cons 'directory (current-directory)) '(roots) '(imports (chezscheme))) 'persistent)]
          [job (environment:evaluate! who env 1 "(+ 20 22)")]

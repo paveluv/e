@@ -2,7 +2,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service environment)
   (export cancel! close! completion create! evaluate! for-document! release! reset! restore! stop!)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core worker) worker:)
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core worker) worker:)
     (prefix (foundation datum) datum:) (prefix (foundation text) text:)
     (prefix (state model) model:) (prefix (state store) store:) (prefix (sys activity) activity:))
 
@@ -38,7 +38,7 @@
   (define (environment-value? v)
     (and (or (fields? v '(recipe generation status catalogue count notice))
              (and (fields? v '(recipe generation status catalogue count notice document))
-                  (natural? (get v 'document))))
+                  (handle:buffer? (get v 'document))))
       (natural? (get v 'generation)) (natural? (get v 'catalogue)) (natural? (get v 'count))
       (memq (get v 'status) '(idle running reset))
       (guard (ex [else #f]) (equal? (recipe (get v 'recipe)) (get v 'recipe)))))
@@ -103,7 +103,7 @@
       (when r (update! actor r (put (get r 'value) (cons 'generation next) (cons 'status 'reset)
                                  '(catalogue . 0) '(count . 0) (cons 'notice notice)))) old))
   (define (append-output! actor job channel chunk)
-    (let* ([r (record job 'evaluation-job)] [v (get r 'value)] [id (cadr (get v 'output))])
+    (let* ([r (record job 'evaluation-job)] [v (get r 'value)] [id (get v 'output)])
       (let-values ([(lines revision facts) (store:snapshot-state id)])
         (let* ([row (- (vector-length lines) 1)] [column (string-length (vector-ref lines row))]
                [runs (get v 'channels)]
@@ -124,7 +124,7 @@
           (unless ref (error 'resource "resource is not declared" name))
           (case (car ref)
             [(buffer)
-             (let ([state (store:state (cadr ref) #f '())])
+             (let ([state (store:state ref #f '())])
                (unless state (error 'resource "document is unavailable"))
                (case operation
                  [(read) (unless (null? args) (error 'resource "invalid read")) (list (caddr state) (cadr state))]
@@ -132,8 +132,14 @@
                   (unless (= (length args) 3) (error 'resource "invalid edit"))
                   (if (not (equal? (car args) (caddr state))) '(stale)
                     (call-with-values
-                      (lambda () (store:edit! actor (cadr ref) (car args) (text:datum->span (cadr args)) (caddr args)
-                                   (list (group-active g) "evaluation" (cons 'revision (car args))) 'any)) list))]
+                      (lambda ()
+                        (store:edit! actor ref (car args) (text:datum->span (cadr args))
+                          (caddr args)
+                          (list
+                            (group-active g)
+                            "evaluation"
+                            (cons 'revision (car args)))
+                          'any)) list))]
                  [else (error 'resource "operation requires a data model")]))]
             [(model)
              (let ([r (model:snapshot ref)])
@@ -246,9 +252,9 @@
   (define document-lock (make-mutex))
 
   (edoc "Get the persistent isolated environment for an explicit document. Changed recipes reset its generation and live bindings, preserving completed jobs. Concurrent heads share the same document environment."
-    (actor actor "caller") (document integer "owning document ID") (input list "environment recipe") (returns model) (public))
+    (actor actor "caller") (document buffer "owning document ID") (input list "environment recipe") (returns model) (public))
   (define (for-document! actor document input)
-    (let ([r (recipe input)] [scope (list 'buffer document)])
+    (let ([r (recipe input)] [scope document])
       (unless (store:exists? document) (error 'for-document! "document is unavailable" document))
       (kernel:call-with-deferred-deliveries
         (lambda () (with-mutex document-lock
@@ -287,9 +293,15 @@
            (admit g generation
              (lambda ()
                (let* ([r (record id 'environment)]
-                      [output (list 'buffer (store:create! actor "<evaluation>" '("")
-                                              (list '(internal . #t) '(read-only . #t)
-                                                (cons 'disposable (eq? (get r 'persistence) 'transient)))))]
+                      [output
+                       (store:create!
+                         actor
+                         "<evaluation>"
+                         '("")
+                         (list
+                           '(internal . #t)
+                           '(read-only . #t)
+                           (cons 'disposable (eq? (get r 'persistence) 'transient))))]
                       [job (model:create! actor 'evaluation-job 1 id (get r 'persistence) (list id output)
                              (map cons '(environment generation source status output channels result diagnostic projection)
                                (list id generation source 'queued output '() #f #f projection)))])
@@ -338,7 +350,7 @@
                                     (start! g)))
                                 (let-values ([(status row) (model:retire! actor id (get j 'revision))])
                                   (when (eq? status 'applied)
-                                    (when (store:exists? (cadr (get v 'output))) (store:delete! actor (cadr (get v 'output))))) #t)))))))))))
+                                    (when (store:exists? (get v 'output)) (store:delete! actor (get v 'output)))) #t)))))))))))
 
   (edoc "Read a bounded page of the last completed symbol catalogue. Return (generation catalogue count names), or false when the supplied basis changed. A running job keeps the preceding catalogue until its boundary."
     (id model "environment") (generation integer "namespace generation") (catalogue integer "catalogue revision")
@@ -362,7 +374,7 @@
                (lambda ()
                  (let ([old (reset-group! actor g "Environment closed")])
                    (for-each (lambda (j)
-                               (let ([output (cadr (get (get j 'value) 'output))])
+                               (let ([output (get (get j 'value) 'output)])
                                  (let-values ([(status row) (model:retire! actor (get j 'id) (get j 'revision))]) (void))
                                  (when (store:exists? output) (store:delete! actor output)))) (jobs id))
                    (let ([r (record id 'environment)])
@@ -376,7 +388,7 @@
     ;; Producer visibility is runtime policy; text recovery intentionally keeps
     ;; only document facts. Re-establish it from the owning recovered jobs.
     (for-each (lambda (id)
-                (let* ([r (record id 'evaluation-job)] [output (and r (cadr (get (get r 'value) 'output)))])
+                (let* ([r (record id 'evaluation-job)] [output (and r (get (get r 'value) 'output))])
                   (when (and output (store:exists? output))
                     (store:set-property! '(base e) output 'internal #t))))
       (model:ids 'evaluation-job))

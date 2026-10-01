@@ -84,8 +84,8 @@
   (define (projection item)
     (let* ([r (record item)] [v (and r (get r 'value '()))]
            [ref (and r (eq? (get r 'kind #f) 'history-item) (get v 'projection #f))])
-      (if (and ref (store:exists? (cadr ref)))
-        (let-values ([(lines revision facts) (store:snapshot-state (cadr ref))])
+      (if (and ref (store:exists? ref))
+        (let-values ([(lines revision facts) (store:snapshot-state ref)])
           (text:to-string lines (get facts 'trailing #f)))
         "[Text projection unavailable]")))
 
@@ -105,7 +105,7 @@
 
   (edoc "Register history composition, standard text/result recipes and named page commands." (public))
   (define (init!)
-    (register! 'text 1 (lambda (document) (edit:create-view! head:ui-actor (cadr document) '((read-only . #t)))))
+    (register! 'text 1 (lambda (document) (edit:create-view! head:ui-actor document '((read-only . #t)))))
     (register! 'result 1 (lambda (job) (eval:create-result-view! head:ui-actor job)))
     (widget:register! 'history 1
       (append (layout:container 'y)

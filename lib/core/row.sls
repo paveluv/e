@@ -2,13 +2,9 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (core row)
   (export attributes? columns? init! less? selectable? selection? source? valid?)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core port) port:) (prefix (foundation edoc) edoc:))
+  (import (chezscheme) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core port) port:) (prefix (foundation edoc) edoc:))
 
-  (edoc "Whether a value is a tagged row-source reference; the collection service checks liveness."
-        (value any "candidate") (returns boolean))
-  (define (source? value)
-    (and (list? value) (= (length value) 2) (eq? (car value) 'model)
-      (integer? (cadr value)) (exact? (cadr value)) (> (cadr value) 0)))
+  (define source? handle:model?)
   (edoc-type row-source "A tagged collection model reference." (predicate source?) (portable #t) (within list))
 
   (edoc "Whether a value identifies a row at a particular result generation."

@@ -18,16 +18,16 @@ vectors, strings, symbols, numbers, booleans, characters and bytevectors
 are accepted; cycles and runtime objects are refused. EOF between frames
 disconnects; partial or malformed frames close the connection.
 
-The current normal protocol version is **6**. Send
-`(hello 6 (head "name") fingerprint)` or
-`(hello 6 (agent "name") fingerprint)`, using the installation's
+The current normal protocol version is **7**. Send
+`(hello 7 (head "name") fingerprint)` or
+`(hello 7 (agent "name") fingerprint)`, using the installation's
 `kernel:fingerprint` string. The version and source fingerprint must match
 the running base. Older normal protocols are not negotiated. The fingerprint
 covers the installed base entry point and its imported source dependencies,
 excluding head-only sources. It checks source consistency and grants no
 permissions.
 
-A successful hello returns `(hello 6 actor capabilities)`. The base chooses
+A successful hello returns `(hello 7 actor capabilities)`. The base chooses
 the policy: heads default to all-buffer writes, agents to read-only sessions.
 Capabilities are `(read)` or `(read edit undo redo)`; the hello cannot grant
 itself access. Admission failures return `(error #f reason)` and close.
@@ -46,6 +46,13 @@ wire syntax. Request IDs are nonnegative exact integers. Replies use
 does not by itself close the connection. There is no implicit retry or replay
 protection: inspect current state after a lost connection before retrying an
 edit with an unknown outcome.
+
+Buffer IDs are tagged values such as `(buffer 17)`, including in replies,
+notifications, metadata and model references. They are never bare integers;
+request IDs, revisions and allocation counters remain integers. For example,
+`(request 1 snapshot (buffer 17))` reads that document. Scheme API calls quote
+the same reference: `(store:snapshot '(buffer 17))`. Renaming or trashing a
+buffer preserves its reference; deleting it makes the reference unavailable.
 
 | Message | Meaning |
 | --- | --- |

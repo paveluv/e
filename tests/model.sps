@@ -26,7 +26,7 @@
       (test:check 'ports-project-owned-values-and-preserve-false
         (list (port:project r 'files #f) (port:project r 'optional #f)
           (port:project r 'absent #f)
-          (test:raises? (lambda () (port:register! '(model invalid-port 1) '((input x buffer (value))))))
+          (test:raises? (lambda () (port:register! '(model invalid-port 1) '((input x (record buffer) (value))))))
           (test:raises? (lambda () (port:register! '(model invalid-port 1)
                                      '((output x string (value)) (input x string (value)))))))
         '((ready ("/tmp/a")) (ready #f) (unavailable contract) #t #t))

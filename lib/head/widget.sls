@@ -235,7 +235,7 @@
         [(not d) (values #f #f)]
         [(not id) (values #t #f)]
         [(eq? (car id) 'buffer)
-         (let ([source (text-source:lookup (cadr id))])
+         (let ([source (text-source:lookup id)])
            (if source
              (let ([rev (text-source:revision source)])
                (unless (and (node-mirrored n) (= rev (caar (node-mirrored n))))
@@ -373,7 +373,7 @@
                    [d (and r (eq? (field r 'kind #f) 'widget-view) (interaction:snapshot id))])
               (if d (map (lambda (p) (if (eq? (car p) 'value) (cons 'value d) p)) r) r)))
           (define (text id)
-            (let ([source (text-source:lookup (cadr id))])
+            (let ([source (text-source:lookup id)])
               (and source (list (cons 'id id) (cons 'revision (text-source:revision source)) (cons 'value (text-source:lines source))))))
           (let* ([r (get id)] [ds (and r (port:describe (port:key r)))]
                  [inputs (if ds
@@ -463,7 +463,7 @@
               (let* ([d (cdr row)] [source (source-id (car row) d)])
                 (cond [(not source) (unless d (set! ids (cons (car row) ids)))]
                   [(eq? (car source) 'buffer)
-                   (let* ([id (cadr source)] [old (assv id texts)] [basis (view:basis d)])
+                   (let* ([id source] [old (assoc id texts)] [basis (view:basis d)])
                      (set! texts (cons (cons id (if (and old (cdr old) basis) (min (cdr old) basis) (or basis (and old (cdr old)))))
                                    (if old (remq old texts) texts))))]
                   [(not (member source ids)) (set! ids (cons source ids))]))) tree)
@@ -475,7 +475,7 @@
           (for-each (lambda (p)
                       (apply text-source:open! head:ui-actor (car p) (if (cdr p) (list (cdr p)) '()))) texts)
           (mount-bundle-set! mount (connection:snapshot endpoints))
-          (for-each (lambda (id) (text-source:open! head:ui-actor (cadr id))) (cadddr (mount-bundle mount)))))
+          (for-each (lambda (id) (text-source:open! head:ui-actor id)) (cadddr (mount-bundle mount)))))
       (guard (ex [else (when (car tokens) (model:unsubscribe! (car tokens)))
                        (when (cadr tokens) (connection:unsubscribe! (cadr tokens)))
                        (when (caddr tokens) ((caddr tokens))) (raise ex)])

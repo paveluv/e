@@ -19,7 +19,7 @@
       (model:demanded? (job-query job)) (not ((job-cancelled? job)))))
   (define (active-records r)
     (let ([v (get r 'value)])
-      (map (lambda (d) (find (lambda (e) (= d (get e 'document))) (get v 'records))) (get v 'scope))))
+      (map (lambda (d) (find (lambda (e) (equal? d (get e 'document))) (get v 'records))) (get v 'scope))))
   (define columns '((buffer "Buffer" string) (revision "Rev" integer) (actor "Actor" datum)
                     (position "At" datum) (mine "Mine" string) (disk "Disk" string) (choice "Choice" symbol)))
   (define (prepare! job check!)
@@ -54,7 +54,7 @@
     (store:subscribe! #f
       (lambda (event)
         (for-each
-          (lambda (job) (when (memv (cadr event) (job-documents job)) (queue! job)))
+          (lambda (job) (when (member (cadr event) (job-documents job)) (queue! job)))
           (with-mutex lock (vector->list (hashtable-values jobs)))))))
   (define demand
     (model:observe-demand!
@@ -86,7 +86,7 @@
     (let* ([r (review (car selection) (cadr selection) basis)] [key (caddr selection)]
            [row (collection:lookup (car selection) (cadr selection) key '())]
            [e (and (eq? (car row) 'ready) (pair? (list-ref row 4))
-                (find (lambda (e) (= (car key) (get e 'document))) (active-records r)))])
+                (find (lambda (e) (equal? (car key) (get e 'document))) (active-records r)))])
       (unless e (error 'choose! "conflict row is unavailable"))
       (conflict-review:choose! actor (get r 'id) (get r 'revision)
         (list (list (car key) (assv (cadr key) (get e 'alternatives))))

@@ -15,10 +15,10 @@
          [source (collection:create-source! who '((name "Filename" string))
                    (list->vector (map (lambda (name) (list name (list (cons 'name name)) '())) filenames)) 'persistent)]
          [needle (store:create! who "widget filter" '("") '((internal . #t)))]
-         [query (collection:create! who source "" '() 'persistent (list source (list 'buffer needle)))]
+         [query (collection:create! who source "" '() 'persistent (list source needle))]
          [answer (store:create! who "widget answer" '(""))]
-         [filter (control:create-filter! who (list 'buffer needle) "Filter:" "")]
-         [output (view:create! who (list 'buffer answer) 'entry 1 '() '((0 . 0) (0 . 0)))]
+         [filter (control:create-filter! who needle "Filter:" "")]
+         [output (view:create! who answer 'entry 1 '() '((0 . 0) (0 . 0)))]
          [target (view:create! who #f 'example-file-choice 1
                    (list (list 'commands (list 'insert output 'insert '()))) '())]
          [table (table:create! who query '(name))]
@@ -32,6 +32,6 @@
               (list '(columns name) (list 'commands (list 'activate target 'pick '()))))
         (list root 0 (list (list 'table table '(grow 1))
                        (list 'answer output 'fit) (list 'undo undo 'fit) (list 'target target 'fit)) '())) '())
-    (connection:bind! who query (list (list query 'filter #f (list (list 'buffer needle) 'text))))
+    (connection:bind! who query (list (list query 'filter #f (list needle 'text))))
     (window:show-widget! (head:current-window) root)
     root))

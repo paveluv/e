@@ -6,6 +6,7 @@
   (export init! publish! rows snapshot subscribe! unsubscribe! withdraw!)
   (import (rnrs)
           (only (chezscheme) unbox make-mutex with-mutex void)
+          (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
           (prefix (state store) store:)
@@ -36,7 +37,9 @@
   (define (next-serial!)
     (let ([n (+ (state-serial data) 1)]) (state-serial-set! data n) n))
   (define (drain!) (kernel:drain-deliveries! (state-deliveries data)))
-  (define (frame-of id) (hashtable-ref (state-frames data) id #f))
+  (define (frame-of id)
+    (unless (handle:buffer? id) (error 'surface "expected a buffer reference" id))
+    (hashtable-ref (state-frames data) (cadr id) #f))
   (define (same-basis? frame basis)
     (equal? (and frame (frame-generation frame)) basis))
   (define (header frame)
@@ -79,7 +82,7 @@
         changes)))
 
   (edoc "Publish an app's surface frame for a buffer at a text revision: the changed rows, cursor and size, against the previous frame generation; applied with the generation, or stale."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the previous frame generation")
         (revision integer "the text revision")
         (changes list "the changed rows")
@@ -92,7 +95,7 @@
         ;; Coordinates describe the RESULT at revision, never a rebased patch:
         ;; omitted rows are explicitly retained, and removed rows must be dropped.
         ;; -> applied generation | stale frame-changed|text-changed.
-        (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)) (natural? revision))
+        (unless (and (handle:buffer? id) (or (not basis) (positive-integer? basis)) (natural? revision))
           (error 'publish! "expected buffer id, frame generation or #f, and text revision" id basis revision))
         (unless (and (list? size) (= (length size) 2) (for-all positive-integer? size)
                      (or (not cursor)
@@ -127,7 +130,7 @@
                                        (values 'applied (frame-generation old))
                                        (let* ([generation (next-serial!)]
                                               [frame (make-frame generation revision count table cursor size)])
-                                         (hashtable-set! (state-frames data) id frame)
+                                         (hashtable-set! (state-frames data) (cadr id) frame)
                                          (enqueue! (list 'surface id generation revision
                                                          (if (and old (= revision (frame-revision old)))
                                                              (list-sort < changed) 'all)
@@ -141,17 +144,17 @@
     ;; prevents a new frame from reusing a withdrawn generation (ABA).
     (and (frame-of id)
          (let ([generation (next-serial!)])
-           (hashtable-delete! (state-frames data) id)
+           (hashtable-delete! (state-frames data) (cadr id))
            (enqueue! (list 'surface id generation #f 'all #f #f))
            generation)))
 
   (edoc "Withdraw a buffer's surface frame, by generation."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (basis (or integer #f) "the frame generation"))
   (define (withdraw! id basis)
     (activity:call-with
       (lambda ()
-        (unless (and (positive-integer? id) (or (not basis) (positive-integer? basis)))
+        (unless (and (handle:buffer? id) (or (not basis) (positive-integer? basis)))
           (error 'withdraw! "expected buffer id and frame generation or #f" id basis))
         (let-values ([(status detail)
                       (with-mutex (state-lock data)
@@ -167,7 +170,7 @@
     (let ([frame (frame-of id)]) (and frame (store:exists? id) frame)))
 
   (edoc "A buffer's live frame header, (generation text-revision cursor size), or #f."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (returns (or list #f)))
   (define (snapshot id)
     ;; -> (generation text-revision cursor size), or #f. The revision can
@@ -176,7 +179,7 @@
       (let ([frame (live-frame id)]) (and frame (datum:copy (header frame))))))
 
   (edoc "Owned row data of a frame for [from, to), or #f when withdrawn or superseded."
-        (id integer "the buffer id")
+        (id buffer "the buffer id")
         (generation integer "the frame generation")
         (from integer "the first row")
         (to integer "the row after the last")
@@ -184,7 +187,7 @@
   (define (rows id generation from to)
     ;; Owned row data for [from,to), including (row . #f) for plain rows.
     ;; #f means withdrawn or superseded; never combine ranges across frames.
-    (unless (and (positive-integer? id) (positive-integer? generation)
+    (unless (and (handle:buffer? id) (positive-integer? generation)
                  (natural? from) (natural? to) (<= from to))
       (error 'rows "expected buffer id, generation, and ordered row range" id generation from to))
     (with-mutex (state-lock data)
@@ -198,15 +201,15 @@
                            (read (+ row 1))))))))))
 
   (edoc "Subscribe to a buffer's frame changes, or every buffer's with #f; the token unsubscribes."
-        (id (or integer #f) "the buffer, or #f for all")
+        (id (or buffer #f) "the buffer, or #f for all")
         (procedure procedure "the subscriber")
         (returns integer))
   (define (subscribe! id procedure)
-    (unless (and (or (not id) (positive-integer? id)) (procedure? procedure))
+    (unless (and (or (not id) (handle:buffer? id)) (procedure? procedure))
       (error 'subscribe! "expected buffer id or #f and a procedure" id procedure))
     (let ([token (with-mutex (state-lock data) (next-serial!))])
       (kernel:registry-add! (state-subscriptions data)
-        (make-subscription token id procedure (make-eqv-hashtable)))
+        (make-subscription token (datum:copy id) procedure (make-eqv-hashtable)))
       token))
 
   (edoc "Cancel a surface subscription by token."
@@ -229,8 +232,8 @@
     (let ([event
            (with-mutex (state-lock data)
              (let* ([pending (subscription-pending subscriber)]
-                    [event (hashtable-ref pending id #f)])
-               (hashtable-delete! pending id)
+                    [event (hashtable-ref pending (cadr id) #f)])
+               (hashtable-delete! pending (cadr id))
                event))])
       (when (and event (kernel:registry-find (state-subscriptions data) (lambda (entry) (eq? entry subscriber))))
         ((subscription-procedure subscriber) (datum:copy event)))))
@@ -239,12 +242,13 @@
     ;; Caller holds state-lock. One pending notice per subscriber/buffer;
     ;; merge changed rows and retain the latest complete header. This bounds
     ;; backlog while callbacks run, without introducing a frame timer.
-    (let ([id (cadr event)])
+    (let* ([id (datum:copy (cadr event))]
+           [event (cons* (car event) id (cddr event))])
       (for-each
         (lambda (subscriber)
-          (when (or (not (subscription-id subscriber)) (eqv? (subscription-id subscriber) id))
-            (let* ([pending (subscription-pending subscriber)] [old (hashtable-ref pending id #f)])
-              (hashtable-set! pending id (if old (merge-notice old event) event))
+          (when (or (not (subscription-id subscriber)) (equal? (subscription-id subscriber) id))
+            (let* ([pending (subscription-pending subscriber)] [old (hashtable-ref pending (cadr id) #f)])
+              (hashtable-set! pending (cadr id) (if old (merge-notice old event) event))
               (unless old
                 (kernel:enqueue-delivery! (state-deliveries data)
                   (lambda () (deliver! subscriber id)))))))
@@ -269,7 +273,7 @@
                       (with-mutex (state-lock data) (retire! (cadr event)))
                       (drain!)))))))
           (vector-for-each
-            (lambda (id) (unless (store:exists? id) (retire! id)))
+            (lambda (n) (let ([id (list 'buffer n)]) (unless (store:exists? id) (retire! id))))
             (hashtable-keys (state-frames data))))))
     (drain!)
     (void))

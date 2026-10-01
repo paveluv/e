@@ -34,7 +34,7 @@
     (let* ([request (new "draft" '(profile-origin))]
            [root (prompt:create! request '((profile fixture 1 ())) '())]
            [entry #f])
-      (define (text) (vector-ref (text-source:lines (text-source:lookup (cadr (field (field (model:snapshot request) 'value) 'draft)))) 0))
+      (define (text) (vector-ref (text-source:lines (text-source:lookup (field (field (model:snapshot request) 'value) 'draft))) 0))
       (widget:mount! root 'profile-fixture) (widget:pump!)
       (set! entry (widget:descendant root 'input 'entry))
       (let ([before hints])
@@ -102,7 +102,7 @@
                   (if (string=? text "none") '() '("alpha!" "alpha-beta!")))))))))
     (let* ([request (prompt-request:create! who #f #f "a" '(multiline) '(prompt-fixture 1 "a\nb\n"))]
            [root (prompt:create! request '((multiline? . #t)) '())]
-           [draft (cadr (field (field (model:snapshot request) 'value) 'draft))])
+           [draft (field (field (model:snapshot request) 'value) 'draft)])
       (widget:mount! root 'multiline-completion)
       (widget:prepare! root 30 5)
       (prompt:complete! root #f)
@@ -114,7 +114,7 @@
     (let* ([request (prompt-request:create! who #f #f "a" '(completion-origin) '(prompt-fixture 1 ()))]
            [root (prompt:create! request '() '())]
            [entry #f]
-           [draft (cadr (field (field (model:snapshot request) 'value) 'draft))])
+           [draft (field (field (model:snapshot request) 'value) 'draft)])
       (define (line) (vector-ref (text-source:lines (text-source:lookup draft)) 0))
       (define (show!) (widget:pump!) (widget:present! (list (list (widget:prepare! root 30 5) 0 0))))
       (widget:mount! root 'completion-prompt)
@@ -192,7 +192,7 @@
           (list (model:snapshot request) outcomes) (list #f before))
         (widget:unmount! root) (widget:unmount! receiver) (prompt:drain!)
         (view:retire! who receiver (field (model:snapshot receiver) 'revision)))) '(unmount reload))
-  (let ([answers '()] [original (head:current-window)] [buffer (head:current-buffer)] [requests '()])
+  (let ([answers '()] [original (head:current-window)] [buffer (head:current-buffer-mirror)] [requests '()])
     (define (start! text)
       (suspension:call! who void
         (lambda () (set! answers (cons (prompt:read! "Input:" text #f '()) answers))))
@@ -214,7 +214,7 @@
         (list answers (field (field (model:snapshot (cadr requests)) 'value) 'status)) '((#f) editing))
       (prompt:accept! outer) (settle!)
       (check 'linear-prompt-restores-host-and-retires-request-tree
-        (list answers (eq? original (head:current-window)) (eq? buffer (head:current-buffer)) (map model:snapshot requests))
+        (list answers (eq? original (head:current-window)) (eq? buffer (head:current-buffer-mirror)) (map model:snapshot requests))
         '(("outer" #f) #t #t (#f #f))))
     (start! "reload")
     (kernel:retract-module! 'prompt-host-fixture)
