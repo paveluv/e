@@ -153,7 +153,7 @@
      (check 'a-buffer-argument-offers-buffers-producers-and-variables
        (let ([offered (labels "(head:show-buffer! ")])
          (list (has? "(buffer \"*scratch*\")" offered) (has? "(head:current-buffer)" offered)
-               (has? "(head:fresh-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
+               (has? "(head:new-buffer! name)" offered) (has? "(head:new-local-buffer! name)" offered) (has? "myb" offered)
                ;; a typed token narrows, and the buffer's spelling leads
                (car (labels "(head:show-buffer! scr")) (has? "myb" (labels "(head:show-buffer! my"))
                ;; a token matches a candidate's own text, never the formals of its label
@@ -194,7 +194,7 @@
          '(#t "cba" #f ((type . choice) (value . "cba")))))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
-         (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
+         (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:new-buffer! name)" nested) (has? "myb" nested)
                (labels "(head:show-buffer! (curr") (extensions "(head:show-buffer! (curr")
                (extensions "(head:show-buffer! bu") (extensions "(head:show-buffer! (bu")
                ;; a variable holding a buffer keeps the token bare

@@ -99,9 +99,6 @@
      (head:buffer-fact-set! local-work 'modified #t)
      (head:buffer-read-only-set! local-work #t)
      (check 'local-read-only-work-is-protected (buffer-clean? local-work) #f)
-     (check 'snapshot-tools-declare-disposal
-            (head:buffer-fact (head:fresh-buffer! "state-generated") 'disposable #f) #t)
-
      ;; One sequence covers clock ownership and no-op/save preservation.
      ;; Actual changes must fall within UTC bounds.
      (define (utc-nanos)
@@ -377,7 +374,8 @@
              (define (own!)
                (if (not (eq? kind 'local))
                    (head:buffer-facts-set! b '((app . (app save-test)) (alive . #t) (read-only . #t)))
-                   (head:register-view! b void))
+                   (parameterize ([kernel:registering-module 'state-app-save-hook])
+                     (head:register-widget-host! b void void)))
                (set! before (state b)))
              (head:store-edit! b (text:make-span 0 0 0 0) '("output"))
              (dynamic-wind
@@ -390,7 +388,7 @@
                  (let* ([result (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))]
                         [unchanged? (and (equal? before (state b)) (not (file-exists? path)))])
                    (kernel:retract-module! 'state-app-save-hook)
-                   (if (eq? kind 'local) (head:detach-app! b) (head:buffer-fact-set! b 'alive #f))
+                   (unless (eq? kind 'local) (head:buffer-fact-set! b 'alive #f))
                    (let ([saved? (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))])
                      (list result unchanged? saved? (and (file-exists? path) (file:read path))))))
                (lambda ()

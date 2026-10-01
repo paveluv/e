@@ -1,125 +1,59 @@
-# App buffers
+# Apps
 
-An app buffer is a dynamic, read-only buffer that may handle user input. A
-view is an app without an input handler: it renders changing state but leaves
-keys to the ordinary editor.
+Apps are widget compositions: base models own their data and logical state,
+and heads render and route input through explicit views. The default window
+host presents an app under a name such as `<finder>` or `<buffet>`. Splitting
+a window forks its views while sharing the source; selection, scrolling and
+geometry stay independent. Widgets can also be nested without a window.
 
-Apps look like buffers, participate in the buffer list, may appear in any
-window, and carry `[]` in their status line. Local apps refresh while visible;
-shared apps publish text, facts, and rendition through the store and surface.
+Use the [widget API](WIDGETS.md) to build extensions. Define named actions,
+bind keys and pointer targets to those actions, and connect children through
+typed ports and explicit command targets. `C-x TAB` opens Bindings to inspect
+the active keymaps, pointer bindings and forwarding chains. Those same public
+commands can be called from M-x or scripts with an explicit view receiver.
 
-The legacy head-app adapter uses local buffers: generated text, modes, and presentation
-facts stay in this head.  They have no store id and do not appear in the
-store's buffer list or publish cursor marks. Git and log listings still use
-this adapter. Buffet, Finder, prompts, Markdown and Describe use
-[widget compositions](WIDGETS.md); their outer window slots are local, while
-models and logical interaction belong to the base. Describe's private
-Markdown source and terminal documents are readable through `store:`.
+`window:tool!` is the default host's entry point for a named composition;
+`window:show-widget!` places an existing root. These choose placement only.
+The old local-buffer registration, snapshot-output and per-window alternate
+text APIs have been removed. A widget does not render by replacing a local
+buffer. Source documents use `store:`, bounded row sets use `collection:`,
+and ordinary editor widgets provide text presentation and selection.
 
-## Registering an app
+Examples in `examples/widgets.e`, `examples/environments.e` and
+`examples/history.e` demonstrate connected controls, isolated evaluation,
+and dynamically created interactive content. Load an example in a head and
+call its documented entry point; no private event loop is required.
 
-```scheme
-(head:register-app! key-or-buffer refresh! handle-event!)
-```
+## Interaction and built-in apps
 
-A string is a stable tool key and its preferred initial buffer label.  If
-that label is already used, the local buffer receives a numbered label such
-as `<example 2>`. An ordinary buffer with the same name is preserved. Renaming
-the app changes its label; registering the same key again reuses the
-same local buffer and replaces its refresh and input handler.
-You can also pass an existing local buffer to attach the app directly
-to that identity. Shared buffers
-are refused by this head-app API.
-`refresh!` takes no arguments and updates the registered buffer with
-`head:view-replace!`. `handle-event!` receives one canonical
-event string, such as `"UP"`, `"RET"`, `"MOUSE-CLICK"`, or `"WHEEL-UP"`.
-For keyboard events it returns true when the app consumed the event; false
-lets the normal global key dispatcher handle it. A local app also hears
-`"MOUSE-MOVE"` while the pointer moves over its text, with the same position
-parameters as a click and the hovered window selected for the call, and
-`"MOUSE-LEAVE"` when the pointer moves off it; neither changes focus or
-settles the echo area, and shared apps do not receive them. For `"MOUSE-CLICK"`, returning
-the symbol `keep-focus` consumes the click but restores keyboard focus to the
-previously focused window. Any other result follows the normal rule that
-clicking app content focuses the app and places its cursor at the clicked
-position. Returning `ignore-click` consumes the click and restores both the
-previous focus and the app's previous point. If the handler returns false—or the buffer is a view with no
-handler—the press also starts an ordinary text selection, so dragging selects
-from the clicked cell even though the buffer is read-only.
-Drag and release belong to the window and buffer that accepted the press.
-An ignored click arms neither, and an action that opens another buffer cannot
-move that new buffer's point when the mouse button is released.
-Wheel events scroll the window under the pointer, keeping keyboard focus
-where it was. Leave them unhandled to use normal scrolling; do not map them
-to arrow-key actions. An app that maintains a separate row choice can call
-`(edit:page! direction 8)` and synchronize that choice with the resulting
-point, so its next refresh preserves the scroll. Paginated prompt lists
-scroll through pages and stop at either end.
-During clicks, drags, releases, and wheel events, `(head:app-event-buffer-position)`
-returns the unclamped zero-based `(row . character-column)` addressed by the
-pointer, using that window's presentation when it has one. It may lie beyond
-the buffer's last line, allowing an app to ignore
-empty viewport space. `(head:app-event-position)` is a one-based `(x . y)` cell
-position within the text viewport, excluding the scrollbar and line-number
-gutter. `(head:app-event-button)` is the raw xterm button code, including motion and
-modifier bits. These thread-local parameters are `#f` outside pointer
-delivery. `(head:app-event-focus)` is the window that had keyboard
-focus when the pointer event began: the app's own window is selected while
-its handler runs, so an app acting as a control panel for another window
-addresses this one instead. It is `#f` for keyboard events.
-Registrations belong to their module and disappear transactionally on unload
-or reload like modes, key bindings, and hooks.
-The local buffer and its facts remain, ready for the module to register
-the same tool key again.  Killing the buffer ends that tool instance;
-its next registration creates a new buffer.
+Input follows the focused widget's recursive keymap and capture chain.
+Pointer events target the hit widget within its clipped geometry. Wheel
+input scrolls the viewport under the pointer while preserving keyboard focus.
+Clickable text uses bold, muted dotted underlining on hover. A table's active
+keyboard choice uses bold text and a subtle blue background; pointer hover
+takes precedence without emphasizing an unfocused keyboard choice.
 
-`(head:view-replace! buffer lines [facts [placements [presentations]]])` installs a local
-rendering and its related state before repaint callbacks can run. `lines`
-is a line list or vector; `facts` is an optional alist. `placements` is an
-alist whose keys are windows showing this buffer, `mark`, `spot`,
-`(top . window)`, or `spot-top`, and whose values are `(row . column)`
-positions in the new rendering. Top placements use only the row and reset
-wrapped top segments. All positions are clamped into the new text; omitted
-ones keep their coordinates. Invalid input changes nothing. Changed facts
-invalidate painting even when the text is equal, as for a style change.
-When a window has a separate presentation, its point columns are clamped to
-that presentation; saved buffer positions and marks address the shared text.
-Pass computed positions and presentation facts in the replacement call:
-assigning old coordinates after it returns can overwrite a newer refresh
-performed by a callback. Workers schedule head changes with
-`head:run-on-main!`.
+- [Finder](FINDER.md) provides recursive path filtering, navigation, creation
+  and sortable metadata. Filesystem work belongs to base services.
+- [Buffet](BUFFERS.md#the-buffet-app) provides a shared name/path filter and
+  compound sorting over documents and named root views, including itself.
+  Each placement keeps its own selection and viewport. Buffer switching
+  follows the current sort; wheel input simply scrolls.
+- [Terminal](TERMINAL.md) combines a process source with an editor and capture
+  parent. C-] and the clickable capture indicator switch full/partial capture;
+  process exit leaves a read-only transcript with no capture.
+- Markdown, Describe, logs, Git, Bindings and conflict/rewrite review use the
+  same source/view protocol. Opening or settling a selection is an explicit
+  action, never a side effect of painting or hovering.
 
-For a local app with text selection disabled, `presentations` can supply an
-alist of `(window . lines)` entries. Each window must be live, show this app,
-and occur only once. Its lines must have the same count and logical row order
-as the shared text, but may fit columns and shorten labels for its own width.
-The shared text, window presentations and positions are installed together.
-Windows omitted from the list use the shared text; omitting the argument
-clears earlier presentations. Detachment, re-registration, switching buffers
-and replacing the source also retire old presentations.
+## Publishing terminal rendition
 
-`(head:window-lines window)` reads the text displayed in that window, and
-`(head:window-rendition window)` supplies its glyph geometry. Use them for
-window overlays and hit testing. Ordinary buffers use their existing text
-and rendition through the same accessors. Mode stylers receive the displayed
-row text. Buffer text queries continue to
-read the common rows; changing only a window's formatting does not create
-a content revision. The buffet uses this facility to share filtering
-and sorting while fitting each pane independently.
-
-Use `(head:call-with-display-update thunk)` when a display operation also
-switches windows or places the cursor. Nested scopes defer repaint
-notification until the complete operation is installed. A repaint callback
-may then start a new display operation without having its state overwritten
-by the outer one. This batches only repaint notification: it does not defer
-arbitrary callbacks, lock the head, or roll back changes on an exception.
-
-## Publishing shared rendition
+The following low-level surface API represents terminal grid rendition.
+Ordinary app layout belongs in head widgets, not shared cell vectors.
 
 `surface:` attaches presentation data to a store buffer. The head renders
 visible surfaced buffers automatically, keeping their ordinary mode.
-Shared apps can also declare input capture and cursor following as described
-below. The terminal uses this surface API. Describe publishes ordinary
+The terminal uses this surface API. Describe publishes ordinary
 Markdown source and uses independently fitted widget presentations.
 The terminal emulator provides an owned
 [`emulator-frame`](TERMINAL.md#scheme-api) containing text and complete
@@ -201,248 +135,3 @@ generation, and emits `(surface id generation #f all #f #f)`. Repeated
 withdrawal returns `applied #f`. It leaves the store text intact. Deleting
 the store buffer also retires its surface. Raw reads do not enforce
 audience permissions; consumers must apply the store's visibility rules.
-
-## Input capture and propagation
-
-Shared apps register an `app` actor endpoint and publish its identity in the
-buffer's `app` fact. They do not register a local head app. Set related facts
-in one `store:set-properties!` batch:
-
-| Fact | Meaning |
-| --- | --- |
-| `app` | An actor identity, such as `(app example)`. |
-| `alive` | Boolean; enables app input and cursor following while true. |
-| `capture` | `#f` or `()` for none, `all`, a list of event strings, or `(except "EVENT" ...)`. |
-| `status` | A short string or `#f`; remains visible after the app stops. |
-| `cursor-style` | `default`, `text`, `block`, `underline`, `bar`, their `blinking-` variants, or `#f`. |
-| `sticky-lines` | Nonnegative count of leading rows kept visible. |
-| `scrollbar`, `wrap` | The same presentation preferences described below. |
-| `manages-viewport` | Boolean; declares a live grid at the transcript's tail. |
-
-The head checks current audience, liveness, capture, and keymap context before
-forwarding input through `actor:send!`. The receiver gets owned plain data:
-
-```scheme
-(input (head "name") buffer-id "MOUSE-CLICK"
-  ((point 8 . 1) (cell 8 . 2) (viewport 3 . 1) (button . 0)
-   (size 20 80) (color-scheme . dark) (revision . 12) (generation . 34)))
-```
-
-`point` is a zero-based buffer character position; `cell` projects that
-position through the displayed surface. `viewport` and `button` are the
-pointer parameters above, or `#f` for keys. `size` is the addressed window's
-content grid `(rows cols)`, excluding chrome. `color-scheme` is the head's
-`dark`, `light`, or unknown `#f` theme. `revision` and `generation`
-identify the adopted text and rendition; generation is `#f` without a frame.
-A `"PASTE"` event additionally contains `(paste . "text")`. The producer
-decides how to handle an input based on an older frame. No reply is needed
-to decide capture; an unreachable or failing endpoint declines delivery.
-
-Each window initially follows the shared surface cursor. Editor commands
-and mouse navigation pause following; captured input resumes it. Focus and
-blur reports and capture toggles preserve the current preference.
-Extensions can set the preference
-with `(head:follow-app! window boolean)`; `(head:app-following? window)` reports
-whether it is active. Following uses the same prepared surface generation
-as painting, even when the cursor moves offscreen.
-
-With `manages-viewport` true, the final `rows` text lines of surface size
-`(rows cols)` form the live grid, and the published cursor must lie there.
-Following windows anchor at that grid and clip around the cursor when smaller. Other apps use ordinary
-viewport scrolling. Inspection uses the editor's cursor visibility and shape;
-following uses the published ones. The producer's status remains unchanged;
-the head adds a window's capture control when its mode declares one.
-
-After layout, the focused head sends `(request actor buffer-id resize (rows
-cols))` when its size offer changes or focus/presence is refreshed. Repeated
-offers coalesce, and every input also carries its window size. The producer
-chooses which head controls its one grid; latest-typist ownership belongs in
-the producer. Set `alive` and `capture` false together and withdraw the surface
-on exit; the text remains an ordinary read-only transcript. Store facts and
-surface frames are separate publications, so fact changes do not identify a
-surface generation. Routine app operations are recorded in the store audit
-log without filling the echo area; explicit app messages still use the usual
-presentation path.
-
-App input is layered: an active prompt first, then the focused app, then e's
-global bindings, then the ordinary buffer fallback such as self-insertion.
-Most apps are partial: their handler consumes only their own controls and
-returns false for everything else. Thus `<buffet>` owns navigation and row
-activation while `M-x`, window commands, and other global bindings pass
-through naturally.
-
-An app's keys are bindings, not cases of its handler: the app registers a
-mode, binds each key in that mode's context to an exported command with an
-edoc, and `C-x TAB` lists them with their descriptions while `C-h k` and M-x
-reach them; `<finder>` and `<buffet>` are the models, and an agent drives them
-through the same commands. Typing that should feed the app, a filter say, is
-the context's `SELF-INSERT` binding, a call of the app's command with
-`head:typed-text`. The handler keeps only what is not a key: focus, the
-pointer and the wheel. A key that applies only in some state of the buffer,
-the delta log browser's conflict keys while its rows are a reload's
-conflicts, gets a state context through `mode:add-context!`.
-
-Legacy local apps give their handlers first refusal on keys left unbound by
-their mode context. Widget apps instead use recursive keymap and capture
-routing; see [Widgets](WIDGETS.md). A terminal capture parent intercepts input
-before its editor child and yields C-x and M-x in partial capture.
-
-Capture preferences belong to terminal views. Splits fork them and named-head
-resume retains them. `(terminal:toggle-capture! view)` changes the explicit
-view; the C-] binding and clickable ● / ◐ status control call that operation.
-Process exit removes capture without changing the terminal's identity or text.
-
-Status hints may also contain controls. `paint:add-buffer-status-hint!` receives
-a `(lambda (buffer active?) ...)` returning a string, `(text . style)` span, or
-list of spans. A zero-argument procedure in the style slot makes that text
-clickable; clicking focuses its window before calling it. Controls share the
-bold, muted dotted hover style and use terminal-cell geometry. A partially
-clipped label is inert. Other supported style slots are `#f`, `italic`, and `red`.
-
-The handler is optional. Thus these are equivalent:
-
-```scheme
-(head:register-view! "*example*" refresh!)
-(head:register-app! "*example*" refresh!)
-```
-
-Both display a local `<example>` buffer. The string is its stable tool
-key; changing the displayed label keeps that identity. Local renames
-retain angle brackets, and duplicate labels become `<example 2>`.
-
-Apps act on the selected window -- their own, when it is selected.  Use
-`head:show-buffer!` to show an app here, or `window:display!` to show it without
-leaving the current window.
-
-Table-like apps can request shared presentation chrome:
-
-```scheme
-(head:set-app-presentation! app-buffer 1 #t 'default 'default)
-```
-
-The second argument is the number of sticky leading rows. The third is either
-`#t` for a one-column vertical scrollbar on the configured side, `'left` or
-`'right` for a fixed side, `'auto` for a bar on the configured side only while
-the app's rows overflow the window, or `#f`. The optional fourth argument overrides
-soft wrapping with `#t` or `#f`; `default` (and omission) follows the ordinary
-window and global setting. A fifth argument selects `block`, `underline`,
-`bar`, or the normal `default` cursor; these explicit shapes are steady.
-`text` asks for the editor's own shape for editable text, for an app whose
-rows are typed into even though the buffer is read-only; a `default` app
-shows the read-only bar.
-
-`(head:set-app-cursor-visible! app-buffer #f)` hides the text cursor while
-retaining normal keyboard navigation and viewport following. It also accepts
-a predicate receiving the window. Viewport ownership is separate:
-`head:set-app-manages-viewport!` disables the editor's automatic following
-when the app positions its own viewport.
-
-`(head:set-app-selectable! app-buffer #f)` disables text selection and clears
-an existing mark. Keyboard commands and mouse gestures cannot activate a mark
-while it is disabled. Selection defaults to enabled and is independent of
-cursor visibility. Detaching the app restores ordinary text selection.
-
-Sticky rows, scrollbar geometry, cursor placement,
-mouse hit-testing, and scrolling are handled together by the head and the
-painter and apply to every window showing the app. The scrollbar is a position indicator:
-it is painted, not dragged -- the wheel, the keyboard, and clicks in the
-text scroll.
-
-Every status line shows its buffer's name, an app's too, `<conflicts>` say,
-never a label of the app's choosing. After the name, a buffer may own the
-rest of the line: `head:set-buffer-status!` takes a callback receiving the
-buffer, or the buffer and the window being painted when it accepts two
-arguments, and `head:set-app-status-position!` is the same call for an app
-buffer. A returned zero-based `(row . column)` projects the status position
-onto source text. A returned string follows the name in place of the state
-marker, coordinates and mode tag, the empty string leaving the name alone,
-while the window number and controls stay. Temporary prompts use this for
-completion counts and pages, the buffet and the finder show their names
-alone, the browsers the row of how many, and `<bindings>` the page each window
-is on. No status line or echo message names a key: `<bindings>` is the
-reference.
-Status text fits
-terminal cells, including wide characters, so window controls keep their
-positions. `#f` restores the default.
-
-The same bar is off for ordinary buffers by default; `(head:scrollbar #t)`
-enables it there. `(head:scrollbar-position 'left)` and `(head:scrollbar-position 'right)`
-select the global side, which defaults to the right. An app's explicit side
-overrides that position. `<buffet>` uses `auto`: its bar appears on the
-global side when the list is taller than its window and disappears when
-everything fits.
-
-## Windows
-
-There is no notion of an app's "target window": an app acts on the
-selected window, its own included.  A command that shows another buffer
-(`head:show-buffer!`) replaces the app in the window the user is in; one that
-wants the app to stay visible shows the buffer elsewhere
-(`window:display!`).  The window tree is the only source of windows, and
-the user's window commands and mouse gestures move between them as usual
-while an app is focused.
-Each window keeps its own point and viewport, including multiple
-windows showing the same app.
-
-## The finder
-
-`C-x C-f` opens `<finder>`: a local directory browser with incremental recursive
-path filtering, directory navigation, match counts and sortable metadata.
-It shares the buffet's sort-key cycling and column fitting. Its
-filter and sorting are shared within one head; the directory comes from the
-filter's leading path token. Formatting,
-selection and scrolling belong to each window. Filesystem work runs outside
-refresh callbacks and publishes only while its request and registration are
-still current. See [Finder](FINDER.md) for controls and search behavior.
-
-## The buffet
-
-`<buffet>` is the shared implementation of `C-x b` and `C-x C-b`: a live
-table of all buffers, including itself, with a name/path filter, ordered
-column sort keys, modification times, read-only flags, and a candidate
-preserved by buffer identity. Click headings or use F1–F6 to cycle sorting.
-Each window keeps its own candidate and point; the filter and sort belong
-to the local app. Its rows fit each window independently, with sticky filter
-and heading rows, elided paths, an automatic scrollbar, a hidden cursor and
-disabled text selection. See [Using the buffet](BUFFERS.md#the-buffet-app)
-for the complete keyboard, mouse and cancellation behavior. Wheel input
-in an unfocused pane runs the global `M-Shift-Up` / `M-Shift-Down` binding
-in the focused window, preserving focus. Its default alphabetical traversal
-and wraparound are independent of the table's filter, sorting and hovered
-row. Wheel input in the focused app browses rows without opening a buffer.
-
-Status-bar clicks always focus their window; app handlers cannot override
-them. `<buffet>` returns `keep-focus` for content clicks because the click's
-purpose is to switch a buffer, not to enter the app.
-
-The `active` face marks the document in the focused window. The `candidate`
-face marks a keyboard choice with bold text and a subtle blue background,
-almost black or white according to the theme. Unfocused files and buffers
-panes retain their choices without emphasizing those rows. Their hovered row
-uses `candidate-hover`, adding a muted dotted underline and taking precedence
-over the keyboard choice in that window. Other clickable text uses `hover`,
-with bold text and the underline while preserving its background: headings,
-breadcrumbs, completion labels, Git file rows and refresh, hyperlinks, and
-status-bar window controls. These faces can be
-customized like any other:
-
-```scheme
-(style:set! 'active '((background 31) (foreground white)))
-(style:set! 'candidate '(bold (foreground 208)))
-(style:set! 'candidate-hover '(bold (foreground 208) dotted-underline (underline-color 242)))
-(style:set! 'hover '(bold dotted-underline (underline-color 242)))
-```
-
-For a clickable app, register a highlighter that calls
-`(paint:hover-ranges hit [face])`. `hit` receives `(window row character-column)`
-and returns `(start end ...)` for the clickable label or `#f` for inert text.
-Use the same hit test as the click handler. The optional `face` procedure maps
-the returned hit to a face; the default is `hover`. The helper supplies window
-scope, excludes gutters and status bars, and uses the
-current viewport, including wrapping and wide characters. It does not move
-point or invoke the action. Keyboard input clears the pointer emphasis until
-another mouse report. Hyperlinks receive this feedback automatically.
-
-Refresh failures are logged under the `app` component and shown in the echo
-area. An unchanged failure is reported once instead of once per redraw; a
-successful refresh clears it so a later failure is reported again.

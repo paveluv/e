@@ -73,14 +73,11 @@
      (check 'old-text-stays-unchanged lines '#("alpha" "bravo"))
      (head:window-prow-set! (head:current-window) 1)
      (head:window-pcol-set! (head:current-window) 5)
-     (head:view-replace! local '("x"))
+     (head:buffer-lines-set! local '#("x"))
      (check 'replacement-clamps-point
             (cons (head:window-prow (head:current-window))
                   (head:window-pcol (head:current-window)))
             '(0 . 1))
-     (define revision (head:buffer-revision local))
-     (head:view-replace! local '("x"))
-     (check 'unchanged-view-keeps-revision (head:buffer-revision local) revision)
 
      (head:buffer-name-set! local "*renamed-local*")
      (check 'local-rename (head:buffer-name local) "<renamed-local>")

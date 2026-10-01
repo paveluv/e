@@ -761,9 +761,9 @@ whether there are unsaved changes.
 
 `(buffer "name")` looks up a live buffer; buffers print in that reusable form.
 `(window n)` looks up the window numbered n, and windows print as `(window n)`.
-`head:new-buffer!`, `head:new-local-buffer!`, `head:fresh-buffer!`, `head:show-buffer!`,
+`head:new-buffer!`, `head:new-local-buffer!`, `head:show-buffer!`,
 `window:display!`,
-`window:companion!`, `window:pop-up-or-reuse!`, `edit:kill-buffer!`,
+`window:pop-up-or-reuse!`, `edit:kill-buffer!`,
 `head:buffer-append!`, `mode:choose!`, and `head:buffer-read-only-set!` provide
 controlled mutation and display. `head:with-buffer` temporarily makes another
 buffer current, and `edit:call-as-one-edit!` groups mutations into coherent undo
@@ -909,16 +909,11 @@ Local labels share the head's buffer namespace.  A collision receives
 the local buffer yields the conflicting label.  `head:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
-`(head:tool-buffer! key)` returns or creates a local tool buffer under a
-stable string key; `(head:find-tool-buffer key)` only looks it up.
-Renaming the displayed buffer does not change its tool key.  App
-registration and `head:fresh-buffer!` use this same lookup, so a snapshot
-tool rebuilds its own buffer and preserves ordinary buffers with a
-matching label.  Killing a tool buffer removes that instance.
-Names supplied as `name`, `<name>`, or `*name*` get the local label
-`<name>`; tool keys retain the exact supplied string, so the key `"*log*"`
-identifies the tool displayed as `<log>`.  Use the displayed label with
-`buffer` and the key with `head:find-tool-buffer`.
+`window:tool!` retains a named widget composition in the default head host.
+Its stable tool key is separate from its displayed label, so renaming or a
+label collision does not replace its identity. `head:find-tool-buffer` is the
+outer host's lookup; extensions should use widget sources and views rather
+than local snapshot buffers. See [Apps](APPS.md) and [Widgets](WIDGETS.md).
 
 `head:buffer-fact` uses its fallback only for an absent fact; an explicit
 `#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`

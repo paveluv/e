@@ -89,14 +89,13 @@
                         (let-values ([(status rows) (view:arrange! head:ui-actor
                                                       (list (list id (cdr (assq 'revision r)) (view:children d) options)) '())])
                           (unless (eq? status 'applied) (error 'widget-buffer! "view changed before placement" status)))))
-                    (head:register-app! b
+                    (head:register-widget-host! b
                       (lambda ()
                         (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
                           (when w
                             (widget:set-active! id (eq? w (head:current-window)))
                             (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
-                              (head:view-replace! b (if (null? lines) '("") lines) '()
-                                (list (cons w '(0 . 0)) (cons (cons 'top w) '(0 . 0))))))))
+                              (head:replace-widget-frame! b w (if (null? lines) '("") lines))))))
                       (lambda (event)
                         (cond [(string=? event "BLUR") (widget:set-active! id #f) (widget:cancel! id 'blur) #t]
                           [(string=? event "FOCUS") (widget:set-active! id #t) (widget:key-scopes! id "") #t]

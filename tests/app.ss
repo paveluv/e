@@ -1,8 +1,6 @@
 #!/usr/bin/env scheme-script
 
-;; Local tools and apps: identity survives label changes and reload;
-;; a colliding ordinary buffer is never reused or overwritten.  Run
-;; from the repository root.
+;; Widget compositions and the default window host. Run from the repository root.
 
 (import (chezscheme))
 
@@ -48,229 +46,17 @@
      (define check test:check)
      (widget:init!) (edit:init!) (window:init!)
      (define refused? test:raises?)
-     (define (store-ids) (list-sort < (store:buffer-list)))
-
-     ;; Invalid registrations do not allocate or mutate anything.
-     (define initial-head (head:buffers))
-     (define initial-store (store-ids))
-     (check 'invalid-refresh-refused
-            (refused? (lambda () (head:register-view! "*bad-refresh*" #f))) #t)
-     (check 'invalid-handler-refused
-            (refused? (lambda () (head:register-app! "*bad-handler*" void #f))) #t)
-     (check 'invalid-name-refused
-            (refused? (lambda () (head:register-view! "" void))) #t)
-     (check 'invalid-registration-keeps-head (head:buffers) initial-head)
-     (check 'invalid-registration-keeps-store (store-ids) initial-store)
-     (check 'false-key-is-not-a-tool (head:find-tool-buffer #f) #f)
-
-     ;; Callers with an existing local identity can register it directly.
-     (define explicit (head:new-local-buffer! "explicit app"))
-     (check 'register-existing-local
-            (eq? explicit (head:register-view! explicit void)) #t)
-     (check 'registered-local-is-listed (and (memq explicit (head:buffers)) #t) #t)
-     (check 'register-existing-shared-refused
-            (refused? (lambda ()
-                        (head:register-view! (head:window-buffer (head:current-window)) void)))
-            #t)
-     (check 'rejected-shared-registration-keeps-flags
-            (head:buffer-read-only (head:window-buffer (head:current-window))) #f)
-
-     ;; A view never captures an ordinary buffer's label as identity.
-     (define ordinary (head:new-buffer! "<app-collision>"))
-     (head:buffer-lines-set! ordinary (vector "keep my work"))
-     (head:add-buffer! ordinary)
-     (define app (head:register-view! "*app-collision*" void))
-     (check 'app-gets-distinct-buffer (eq? app ordinary) #f)
-     (check 'app-local (head:buffer-store-id app) #f)
-     (check 'app-label-suffixed (head:buffer-name app) "<app-collision 2>")
-     (head:view-replace! app '("generated"))
-     (check 'ordinary-text-kept (buffer-text ordinary) "keep my work\n")
-     (check 'ordinary-flags-kept (head:buffer-read-only ordinary) #f)
-     (check 'app-is-read-only (head:buffer-read-only app) #t)
-     (check 'view-replacement-cannot-reset-shared-source
-            (refused? (lambda () (head:view-replace! ordinary '("bad")))) #t)
-     (check 'rejected-view-replacement-keeps-shared-source
-            (buffer-text ordinary) "keep my work\n")
-     (define app-basis (head:edit-basis app))
-     (check 'view-replacement-validates-all-facts
-            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong) (trailing . invalid))))) #t)
-     (check 'view-replacement-validates-placement-owner
-            (refused? (lambda ()
-                        (head:view-replace! app '("bad") '((custom . wrong))
-                          (list (cons (head:current-window) '(0 . 0)))))) #t)
-     (check 'view-replacement-requires-numeric-placements
-            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong)) '((mark . end))))) #t)
-     (check 'view-replacement-rejects-negative-positions
-            (refused? (lambda () (head:view-replace! app '("bad") '((custom . wrong)) '((spot -1 . 0))))) #t)
-     (check 'invalid-view-state-keeps-text-and-revision (head:edit-basis app) app-basis)
-     (check 'invalid-view-state-keeps-facts (head:buffer-fact app 'custom 'absent) 'absent)
-     (head:set-app-presentation! app 1 #t #f 'bar)
-     (head:buffer-name-set! app "renamed app")
-     (define calls 0)
-     (define again
-       (head:register-view! "*app-collision*"
-         (lambda () (set! calls (+ calls 1)))))
-     (check 'registration-after-rename-reuses-buffer (eq? again app) #t)
-     (check 'registration-keeps-renamed-label (head:buffer-name app) "<renamed app>")
-     (check 'registration-keeps-presentation (head:buffer-fact app 'sticky-lines #f) 1)
-     (check 'registration-replaces-handler
-            (length (filter (lambda (a) (eq? (head:app-buffer a) app))
-                            (head:registered-apps)))
-            1)
-     (head:show-buffer! app)
-     (head:refresh-visible-views!)
-     (check 'new-refresh-runs-once calls 1)
-     (head:detach-app! app)
-     (check 'detached-keeps-text (head:buffer-lines app) '#("generated"))
-     (check 'detached-is-ordinary (head:app-buffer? app) #f)
-     (check 'reattach-reuses-tool
-            (eq? (head:register-view! "*app-collision*" void) app) #t)
-
-     ;; An offscreen refresh must leave a valid selection and viewport
-     ;; when the user reopens the app, even if its text became shorter.
-     (head:view-replace! explicit '("first" "second" "third"))
-     (head:show-buffer! explicit)
-     (head:goto! '(2 . 5))
-     (set-mark-command!)
-     (head:window-top-set! (head:current-window) 2)
-     (head:show-buffer! app)
-     (head:view-replace! explicit '("x"))
-     (head:show-buffer! explicit)
-     (check 'shorter-view-clamps-saved-point (head:point) '(0 . 1))
-     (check 'shorter-view-clamps-selection (head:mark) '(0 . 1))
-     (check 'shorter-view-clamps-saved-viewport (head:window-top (head:current-window)) 0)
-     (head:set-app-selectable! explicit #f)
-     (define disabled-mark (head:mark))
-     (set-mark-command!)
-     (head:buffer-marked-set! explicit #t)
-     (check 'app-selection-opt-out-clears-and-refuses-marks
-       (list disabled-mark (head:mark) (head:buffer-selectable? explicit)) '(#f #f #f))
-     (head:set-app-selectable! explicit #t)
-     (set-mark-command!)
-     (head:goto! '(0 . 0))
-     (copy-region!)
-     (check 'shorter-view-selection-can-be-copied (head:mark) #f)
-     (head:show-buffer! app)
-
-     ;; One model can publish different row layouts to its windows. Geometry
-     ;; reads the same presentation, while resizing changes no source text.
-     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer)]
-            [b (head:register-view! "window presentation" void)]
-            [other (head:make-window b 0 0 0 0 0 4 41 20 'default)]
-            [source '("heading" "complete source row")]
-            [wide '#("wide heading" "界e\x301;Z")]
-            [narrow '#("heading" "e\x301;Z")]
-            [observed #f])
-       (head:show-buffer! b)
-       (head:set-layout-root! (head:make-layout-split 'right w other 2 1))
-       (head:set-app-selectable! b #f)
-       (head:set-repaint-hook!
-         (lambda () (set! observed (map head:window-lines (list w other)))))
-       (head:view-replace! b source '() '() (list (cons w wide) (cons other narrow)))
-       (check 'window-presentations-land-together-with-their-own-glyph-geometry
-         (list observed (buffer-text b)
-               (render:column (head:window-rendition w) 1 3)
-               (paint:column-at-cell other 1 #f 0 1)
-               (begin (head:goto! '(1 . 99)) (head:point))
-               (begin (beginning-of-line!) (end-of-line!) (head:point)))
-         (list (list wide narrow) "heading\ncomplete source row\n" 3 2 '(1 . 4) '(1 . 4)))
-       (let ([basis (head:edit-basis b)] [retained (head:window-lines other)]
-             [changed '#("wider heading" "界界e\x301;Z")])
-         (head:view-replace! b source '() '() (list (cons w changed) (cons other narrow)))
-         (check 'refitting-one-window-preserves-source-and-the-other-presentation
-           (list (equal? basis (head:edit-basis b)) (eq? retained (head:window-lines other))
-                 (head:window-lines w)) (list #t #t changed))
-         (check 'invalid-window-presentations-refuse-the-whole-update
-           (map (lambda (bad)
-                  (and (refused? (lambda () (head:view-replace! b '("bad" "source") '() '() bad)))
-                       (equal? basis (head:edit-basis b))
-                       (equal? changed (head:window-lines w)) (eq? retained (head:window-lines other))))
-             (list (list (cons w '("missing row")))
-                   (list (cons w wide) (cons w narrow))
-                   (list (cons w '("embedded\nnewline" "row")))
-                   (list (cons 'spot wide)))) '(#t #t #t #t)))
-       (head:detach-app! b)
-       (check 'detachment-and-source-replacement-retire-window-presentations
-         (list (map head:window-lines (list w other))
-               (begin (head:register-view! b void)
-                      (head:view-replace! b source '() '() (list (cons w wide) (cons other narrow)))
-                      (head:buffer-lines-set! b '#("replacement"))
-                      (map head:window-lines (list w other))))
-         (list (make-list 2 (list->vector source)) '(#("replacement") #("replacement"))))
-       (head:set-repaint-hook! paint:invalidate-screen-cache!)
-       (head:set-layout-root! root)
-       (head:show-buffer! was)
-       (head:forget-buffer! b))
-
-     ;; A shared label wins even when it arrives after the local tool.
-     (define collision
-       (store:create! '(agent test) "<renamed app>" '("shared")))
-     (head:sync-foreign-edits!)
-     (check 'foreign-create-displaces-local (head:buffer-name app) "<renamed app 2>")
-     (check 'foreign-label-resolves-to-store
-            (head:buffer-store-id (head:buffer-named "<renamed app>")) collision)
-     (check 'identity-after-foreign-collision
-            (eq? (head:register-view! "*app-collision*" void) app) #t)
-     (store:rename! '(agent test) collision "<renamed app 2>")
-     (head:sync-foreign-edits!)
-     (check 'foreign-rename-displaces-local
-            (head:buffer-name app) "<renamed app 2 2>")
-     (check 'ordinary-user-rename-avoids-store
-            (begin (head:buffer-name-set! app "<renamed app 2>") (head:buffer-name app))
-            "<renamed app 2 2>")
-
-     ;; Names are claimed on list entry as well as construction.
-     (define first (head:new-local-buffer! "pending"))
-     (define second (head:new-local-buffer! "pending"))
-     (head:show-buffer! first)
-     (head:show-buffer! second)
-     (check 'late-name-claim-keeps-first (head:buffer-name first) "<pending>")
-     (check 'late-name-claim-suffixes-second (head:buffer-name second) "<pending 2>")
-
-     ;; Snapshot tools share the same identity rule, never user text.
-     (define user-help (head:new-buffer! "*help*"))
-     (head:buffer-lines-set! user-help (vector "my notes"))
-     (head:buffer-read-only-set! user-help #t)
-     (head:add-buffer! user-help)
-     (define tool (head:fresh-buffer! "*help*"))
-     (check 'snapshot-is-local (head:buffer-store-id tool) #f)
-     (check 'snapshot-label-is-local (head:buffer-name tool) "<help>")
-     (check 'shared-tool-like-name-is-unchanged (head:buffer-name user-help) "*help*")
-     (check 'snapshot-preserves-user-text (head:buffer-lines user-help) '#("my notes"))
-     (check 'snapshot-preserves-user-dirty (head:buffer-modified user-help) #t)
-     (check 'snapshot-preserves-user-read-only (head:buffer-read-only user-help) #t)
-     (head:buffer-name-set! tool "help renamed")
-     (check 'snapshot-reuses-renamed-tool (eq? (head:fresh-buffer! "*help*") tool) #t)
-
-     ;; Refresh and kill use local lifecycle only.
-     (define events '())
-     (define subscription
-       (store:subscribe! #f (lambda (event) (set! events (cons event events)))))
-     (define before-local (store-ids))
-     (define transient (head:register-view! "*transient*" void))
-     (head:view-replace! transient '("one"))
-     (head:buffer-name-set! transient "transient renamed")
-     (kill-buffer! transient)
-     (check 'killed-tool-not-found (head:find-tool-buffer "*transient*") #f)
-     (check 'killed-app-not-registered (head:app-of transient) #f)
-     (check 'local-app-store-list-unchanged (store-ids) before-local)
-     (check 'local-app-no-store-events events '())
-     (define recreated (head:register-view! "*transient*" void))
-     (check 'killed-tool-gets-new-identity (eq? transient recreated) #f)
-     (store:unsubscribe! subscription)
+     ;; Host placement must not consume a shared document with the same label.
+     (let* ([ordinary (head:new-buffer! "<app-collision>")]
+            [id (view:create! head:ui-actor #f 'row 1 '((name . "<app-collision>")) '())]
+            [host (window:show-widget! (head:current-window) id)])
+       (check 'widget-placement-preserves-shared-label-and-identity
+         (list (eq? host ordinary) (head:buffer-name host) (head:buffer-store-id host)
+           (head:buffer-read-only ordinary)) '(#f "<app-collision 2>" #f #f))
+       (head:forget-buffer! host)
+       (view:retire! head:ui-actor id (model:revision id)))
 
      (include "tests/journal-widget.sps")
-
-     ;; Mouse routing needs the handler's focus decision, not only truth.
-     (let* ([previous (head:current-buffer)] [result #f]
-            [b (head:register-app! "dispatch-results" void (lambda (event) result))])
-       (head:show-buffer! b)
-       (check 'local-dispatch-preserves-focus-results
-         (map (lambda (value) (set! result value) (head:dispatch-app-event! "MOUSE-CLICK"))
-           '(#f #t keep-focus ignore-click))
-         '(#f #t keep-focus ignore-click))
-       (head:show-buffer! previous)
-       (head:forget-buffer! b))
 
      ;; The ordinary buffer path validates generated hyperlink ranges too.
      (let ([b (head:new-buffer! "*hyperlink-test*")])
