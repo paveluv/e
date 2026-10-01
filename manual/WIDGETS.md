@@ -236,6 +236,14 @@ and `bindings:copy!` use stable row/field/character anchors at the shown basis.
 Selection belongs to each listing view. `bindings:show!` and `bindings:open!`
 provide the default window placement and active-window following.
 
+`bindings:capture-key! inspector` inserts a temporary modal child to collect
+a chord through the normal event pump. Its prefix is ordinary view state;
+completion removes and retires the child, then publishes the key's resolution,
+forwarding chain, origin and shadowed/contextual meanings. Escape and C-g
+cancel. `bindings:press! reader key` is the same explicit operation used by
+input dispatch; it never executes the inspected command. `bindings:key!`
+provides default placement for C-h k. The former `describe:key!` is removed.
+
 Live facts are acquired only while an inspector is mounted. Mouse changes
 publish only the mouse section, reusing cached keyboard traces. Hovering over
 the inspector itself freezes that section, so reading and scrolling do not

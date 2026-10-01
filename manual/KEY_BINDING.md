@@ -4,9 +4,11 @@ Every keyboard command in e is resolved through a keymap. Built-in and
 extension-module bindings are defaults; bindings from `config.e` are user
 overrides and take priority regardless of registration or module reload order.
 
-Press `C-h k`, then a key or complete chord, to open `<help>`. The report shows
-the resolved global command, where it was defined, shadowed definitions, and
-any meanings the key has inside prompts, incremental search, or query-replace.
+Press `C-h k`, then a key or complete chord, to inspect it in `<bindings>`.
+The report follows the captured app's input route and shows its resolved
+command, forwarding trace, binding origin, shadowed definitions and other
+contextual meanings. Capture never executes the command; Escape or `C-g`
+cancels. `(bindings:key!)` opens this same capture from M-x.
 
 ## Inspecting bindings
 

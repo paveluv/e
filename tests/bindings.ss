@@ -80,6 +80,20 @@
        (check 'self-hover-and-wheel-preserve-subject-and-do-not-republish
          (list (= before (model:revision query)) (not (equal? at (anchor a)))) '(#t #t)))
      (for-each (lambda (size) (widget:prepare! root (car size) (cadr size))) '((0 0) (1 1) (5 2)))
+     (define executed 0)
+     (keymap:bind-default! 'global "C-c F11" (lambda () (set! executed (+ executed 1))))
+     (pump!) (bindings:capture-key! a) (pump!)
+     (dispatch:input! root '(key "C-c" #f)) (pump!)
+     (check 'key-inspector-keeps-a-prefix-in-ordinary-view-state
+       (view:state (interaction:snapshot (widget:descendant a 'reader))) '("C-c"))
+     (dispatch:input! root '(key "F11" #f)) (pump!)
+     (let ([rows (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)])
+       (check 'key-inspector-reports-resolution-without-executing-it
+         (list executed (not (assq 'reader (view:children (interaction:snapshot a))))
+           (contains? (text rows) "C-c F11") (contains? (text rows) "Resolved in global")) '(0 #t #t #t)))
+     (bindings:capture-key! a) (pump!) (dispatch:input! root '(key "C-g" #f)) (pump!)
+     (check 'key-capture-cancel-removes-only-the-reader
+       (list executed (not (assq 'reader (view:children (interaction:snapshot a))))) '(0 #t))
      (widget:unmount! root)
      (let ([before (model:revision query)])
        (keymap:bind-default! 'inspection-test "F12" edit:kill-line!) (head:before-frame!)

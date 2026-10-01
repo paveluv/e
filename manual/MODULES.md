@@ -394,7 +394,7 @@ suite runs it as `tests/lint.ss`, and the versioned hook
 clone has set `git config core.hooksPath tools/hooks`.
 
 Prompting is the exception, not a naming matter: a command that must wait
-for input, `describe:key!` reading a key or a save asking whether to
+for input, `prompt:read!` reading a response or a save asking whether to
 overwrite, declares `(prompts)` in its edoc. Otherwise the M-x API with typed
 completion does the asking, and a key that used to prompt opens M-x with the
 call typed up to its argument: `C-c a` gives `λ (edit:answer! `. Such keys

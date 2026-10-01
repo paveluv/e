@@ -1,7 +1,7 @@
 ;; Head-local binding discovery and fitting share symbolic character marks.
 (import (only (foundation edoc) elibrary))
 (elibrary (head binding-list)
-  (export anchor basis capture fit locate position)
+  (export anchor basis capture fit key-prefix? locate position)
   (import (except (chezscheme) trace) (prefix (foundation edoc) edoc:) (prefix (foundation string) string:)
     (prefix (foundation wire) wire:) (prefix (head keymap) keymap:) (prefix (head markdown-layout) markdown-layout:)
     (prefix (head mouse) mouse:) (prefix (head widget) widget:))
@@ -179,12 +179,28 @@
       (and root (widget:inspect root 256))))
   (define keyboard-cache (make-hashtable equal-hash equal?))
 
+  (edoc "Whether the selected input route needs another key for this chord. Reads keymaps without changing dispatch's pending chord."
+        (root (or model #f) "inspected root") (outer list "outer contexts") (sequence (list-of string) "nonempty normalized key sequence") (returns boolean) (effects internal))
+  (define (key-prefix? root outer sequence)
+    (let loop ([path (contexts root outer (car sequence))])
+      (and (pair? path)
+        (let ([prefix? (keymap:binding-prefix? (car path) sequence)])
+          (if (or prefix? (keymap:resolved-binding (car path) sequence)) (and prefix? #t) (loop (cdr path)))))))
+  (define (origin owned)
+    (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
+      (cond [(eq? owner 'config) "config.e (user override)"]
+        [owner (format "module ~a (~a)" owner kind)]
+        [(eq? kind 'default) "built-in default"] [else "current session (user override)"])))
+
   (edoc
     "Produce portable inspection rows and a truncation flag from captured head facts. Trace registered forwarding only; never invoke bound commands. Work and wire output stop at the listing budget."
     (basis list "captured local metadata")
     (pointer list "actions belonging to this basis")
+    (sequence (list-of list) "optional single key sequence to inspect")
     (returns list) (effects internal))
-  (define (capture basis pointer)
+  (define (capture basis pointer . sequence)
+    (unless (and (<= (length sequence) 1) (or (null? sequence) (and (pair? (car sequence)) (for-all string? (car sequence)))))
+      (error 'capture "expected at most one nonempty key sequence"))
     (call/cc (lambda (done)
                (let ([root (car basis)]
                      [outer (cadr basis)]
@@ -216,6 +232,25 @@
                              (car step) (cadr step) (spans (car step))))))
                      steps
                      (iota (length steps))))
+                 (when (pair? sequence)
+                   (let* ([keys (car sequence)] [all (keymap:sequence-bindings keys)]
+                          [path (contexts root outer (car keys))]
+                          [hit (exists (lambda (c) (keymap:resolved-binding c keys)) path)])
+                     (heading 'key (string-append "Key: " (keymap:sequence-text keys)))
+                     (if hit
+                       (begin
+                         (heading 'resolved (format "Resolved in ~a; ~a" (keymap:binding-context (cdr hit)) (origin hit)))
+                         (group 'resolved (list (keymap:sequence-text keys))
+                           (if root (describe-binding root (keymap:binding-context (cdr hit)) (cdr hit)) (trace (keymap:binding-action (cdr hit))))))
+                       (heading 'resolved "Resolved to: captured input, self-insert or undefined"))
+                     (heading 'other-bindings "Other contextual and shadowed bindings")
+                     (for-each (lambda (owned n)
+                                 (unless (or truncated? (eq? owned hit))
+                                   (let ([context (keymap:binding-context (cdr owned))])
+                                     (group (list 'alternative n) (list (symbol->string context))
+                                       (list (list (keymap:action-text (keymap:binding-action (cdr owned))) (origin owned)))))))
+                       all (iota (length all)))
+                     (done (list (reverse rows) truncated?))))
                  (heading 'mouse "Mouse bindings")
                  (for-each
                    (lambda (p)

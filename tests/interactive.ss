@@ -390,6 +390,12 @@
      (wait-for! 'the-listing-returns-to-the-buffers-keys
        (lambda () (and (find-cell "<bindings>") (not (find-cell "prompt keys")))) 5000)
      (evaluate '(begin (bindings:hide!) (window:delete-others!) #t))
+     (send! "\x8;k")
+     (wait-for! 'describe-key-uses-the-normal-pump (lambda () (find-cell "Describe key:")) 5000)
+     (send! "\x18;2")
+     (wait-for! 'describe-key-publishes-a-contextual-listing (lambda () (find-cell "Key: C-x 2")) 5000)
+     (check 'describing-split-does-not-split (= (evaluate '(length (head:windows))) 2))
+     (evaluate '(begin (bindings:hide!) #t))
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
      (send! (string-append "\x1b;xlist (appstring \"a\" \"b\"))\x1;" (make-string 10 (integer->char 6)) "\t"))

@@ -1,7 +1,7 @@
 ;; Live facts are captured in the head; the base owns the inspected listing.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps bindings)
-  (export copy! create! hide! init! inspect! open! page! page-up! select! show!)
+  (export capture-key! copy! create! hide! init! inspect! key! open! page! page-up! press! select! show!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (head binding-list) listing:)
           (prefix (head dispatch) dispatch:) (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head mode) mode:)
@@ -53,7 +53,7 @@
                  [basis (if available? (listing:basis root (cadr target) (caddr target) pointer) (list 'unavailable root))]
                  [full-basis (cons target basis)])
             (unless (equal? full-basis (session-basis s))
-              (let* ([capture (if available? (listing:capture basis pointer)
+              (let* ([capture (if available? (apply listing:capture basis pointer (list-tail target 4))
                                 '(((unavailable "[Inspected view unavailable]" () "" "" ())) #f))]
                      [parts (list (cons 'mouse (filter mouse-row? (car capture))) (cons 'listing (remp mouse-row? (car capture))))]
                      [changes (filter (lambda (p) (not (equal? p (assq (car p) (session-parts s))))) parts)]
@@ -167,6 +167,41 @@
                      [left (widget:act! scroll 'scroll delta)])
                 (when (= left delta) (widget:act! scroll 'scroll (if (positive? delta) -1000000000 1000000000)))))))
 
+  (edoc "Capture one key or chord through the ordinary event pump, then inspect it in this view. Escape or C-g cancels without running a binding."
+        (receiver id (view bindings)) (id model "inspector"))
+  (define (capture-key! id)
+    (let-values ([(source d inputs) (widget:context id)])
+      (unless (assq 'reader (view:children d))
+        (let* ([s (session! (view:source d) (get source 'value '()))]
+               [reader (view:create! head:ui-actor #f 'binding-reader 1
+                         (list '(modal . #t) (cons 'subject (list-head (session-subject s) 4))) '() id)])
+          (widget:arrange! (list (list id (get (model:snapshot id) 'revision 0)
+                                   (cons (list 'reader reader 'fit) (view:children d)) (view:options d))))))))
+  (define (finish-key! id sequence)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let* ([parent (view:parent d)] [app (interaction:snapshot parent)])
+        (when sequence (request! parent (append (get (view:options d) 'subject '()) (list sequence))))
+        (let-values ([(status changed)
+                      (widget:arrange! (list (list parent (get (model:snapshot parent) 'revision 0)
+                                               (remp (lambda (c) (equal? (cadr c) id)) (view:children app)) (view:options app))))])
+          (unless (eq? status 'applied) (refuse "Key inspection changed while closing its capture"))
+          ;; Arrangement flushes provisional input and releases its mirror.
+          ;; Read the resulting revision once for this explicit retirement.
+          (let ([r (caddar (cadr (model:snapshots (list id))))])
+            (when r (view:retire! head:ui-actor id (get r 'revision 0))))))))
+
+  (edoc "Deliver a normalized key to a key inspector's capture control; prefixes wait, completed chords show their bindings, and Escape/C-g cancel. The captured command never runs."
+        (id model "capture control") (key string "normalized key event"))
+  (define (press! id key)
+    (if (member key '("ESC" "C-g")) (finish-key! id #f)
+      (let-values ([(source d inputs) (widget:context id)])
+        (let* ([target (get (view:options d) 'subject '())] [root (car target)] [sequence (append (view:state d) (list key))])
+          (if (and (or (not root) (interaction:snapshot root)) (listing:key-prefix? root (cadr target) sequence))
+            (interaction:set-state! head:ui-actor id #f sequence)
+            (finish-key! id sequence))))))
+  (define (capture-event! id source d event)
+    (case (car event) [(key) (press! id (cadr event)) #t] [(text) #t] [else #f]))
+
   ;; The default placement is the only part that knows about windows.
   (define default-root #f)
   (define (active-app)
@@ -201,6 +236,12 @@
   (define (open!)
     (let* ([target (default-subject)] [root (ensure! target)]) (window:show-widget! (head:current-window) root) root))
 
+  (edoc "Capture a key or chord and show its contextual resolution, binding origin, forwarding trace and shadowed definitions in the default inspector. Return immediately; the ordinary event pump collects the keys.")
+  (define (key!)
+    (let ([root (show!)])
+      (let ([w (find (lambda (w) (and (equal? root (head:window-widget w)) (or (not (head:popup? w)) (> (head:popup-rows) 0)))) (head:windows))])
+        (when w (window:focus! w) (capture-key! (widget:descendant root 'app))))))
+
   (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening." (public))
   (define (hide!)
     (when default-root
@@ -214,6 +255,12 @@
     (widget:register! 'bindings 1
       (append (layout:container 'y) (list '(contexts . (widget-bindings)) (cons 'service service!) (cons 'release release!)
                                       (cons 'actions (list (cons 'inspect inspect!) (cons 'page page!))))))
+    (widget:register! 'binding-reader 1
+      (list '(focus . #t) '(capture . full)
+        (cons 'prepare (lambda (id source inputs) id))
+        (cons 'render (lambda (id d width height range) (list (string-append "Describe key: " (keymap:sequence-text (view:state d)) "…"))))
+        (cons 'measure (lambda (id d axis cross measure) (if (eq? axis 'y) '(1 1) '(1 30))))
+        (cons 'event capture-event!) (cons 'actions (list (cons 'press press!)))))
     (widget:register! 'binding-list 1
       (list (cons 'prepare (lambda (id source inputs)
                              (make-presentation (if (eq? (get source 'kind #f) 'inspection-rows)
@@ -226,6 +273,7 @@
         (cons 'anchor (lambda (data at width) (listing:anchor (fitted data width) at)))
         (cons 'locate (lambda (data anchor width) (listing:locate (fitted data width) anchor)))))
     (keymap:bind-default! "C-x TAB" show!) (keymap:bind-default! "C-x S-TAB" page-up!)
+    (keymap:bind-default! "C-h k" key!)
     (keymap:bind-default! 'widget-binding-list "M-w" (keymap:call copy! widget:target))
     (for-each (lambda (p) (keymap:bind-default! 'widget-bindings (car p) (keymap:call page! widget:target (cadr p))))
       '(("PAGEUP" up) ("PAGEDOWN" down) ("M-v" up) ("C-v" down)))
