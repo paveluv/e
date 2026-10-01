@@ -351,6 +351,13 @@
        (let ([before (line)])
          (check 'entry-overlap-refuses-without-losing-foreign-text
            (list (refused? (lambda () (entry:insert! a "lost"))) (string=? before (line))) '(#t #t)))
+       (entry:select! a (string-length (line)) (string-length (line)))
+       (widget:unmount! root)
+       (foreign! 0 (string-length (line)) '("restoredA"))
+       (text-source:forget! source)
+       (widget:mount! root 'entry-test) (show!)
+       (check 'remounted-entry-deletes-at-its-displayed-caret-after-hidden-edits
+         (list (refused? (lambda () (entry:delete! a 'backward))) (line)) '(#f "restored"))
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
          (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)

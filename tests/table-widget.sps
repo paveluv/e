@@ -107,6 +107,7 @@
           (and (list? anchor) (= (length anchor) 3) (equal? (caddr anchor) 70)))))
     (check 'table-wheel-scrolls-without-changing-selection (selection table) before))
   (let ([before (length activated)])
+    (widget:focus! root (widget:descendant list-view 'body 'rows))
     (show! 80)
     (widget:pointer! '(pointer move none ()) 2 2)
     (let ([f (show! 80)])
@@ -115,7 +116,8 @@
         '(#f candidate-hover #f)))
     (widget:pointer! '(pointer press primary ()) 2 2)
     (check 'table-row-click-uses-shown-key-and-explicit-command
-      (list (key table) (- (length activated) before)) '(71 1)))
+      (list (key table) (- (length activated) before) (widget:focused root))
+      (list 71 1 (widget:descendant table 'body 'rows))))
   (let* ([f (show! 80)] [line (car (widget:frame-lines f))]
          [column (string:search line "Size" 0 (string-length line))] [before (length activated)])
     (widget:pointer! '(pointer press primary ()) column 3)

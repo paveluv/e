@@ -3,6 +3,7 @@
 (elibrary (apps finder)
   (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
   (import (chezscheme) (prefix (core kernel) kernel:)
+          (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
           (prefix (head catalogue-host) catalogue-host:) (prefix (head edit) edit:)
           (prefix (head entry) entry:) (prefix (head head) head:)
@@ -202,17 +203,39 @@
        (let ([home (file:expand "~")]) (list (string-append home (substring text 1 (string-length text))) (+ caret (- (string-length home) 1))))]
       [(string:prefix? "\"" text) (list (string:insert text 1 "/") (if (positive? caret) (+ caret 1) caret))]
       [else (list (string-append "/" text) (+ caret 1))]))
+  (define (unconfirmed-start text context)
+    (and (eq? (get context 'status #f) 'ready)
+      (let* ([missing (get (get context 'details '()) 'missing #f)] [basis (get context 'input-filter "")]
+             [current (path-filter:parse text "")] [checked (path-filter:parse basis "")])
+        (and (pair? current) (pair? checked)
+          (not (and (not missing)
+                 (or (string=? (car current) (car checked))
+                   (string:prefix? (if (string:suffix? "/" (car current)) (car current) (string-append (car current) "/"))
+                     (car checked)))))
+          ;; Only complete unchanged components retain their confirmation.
+          ;; An edited component is tentative before its first query result.
+          (let ([common (string-length (string:common-prefix (list text basis)))])
+            (let loop ([at (if missing (min common (car missing)) common)])
+              (if (or (zero? at) (char=? (string-ref text (- at 1)) #\/)) at (loop (- at 1)))))))))
   (define (project-filter text context)
-    (let ([missing (and (equal? text (get context 'input-filter #f)) (get (get context 'details '()) 'missing #f))])
-      (let loop ([parts (glyph:clusters text)] [at 0] [quoted? #f] [escape? #f] [out '()])
+    (let ([start (unconfirmed-start text context)])
+      (let loop ([parts (glyph:clusters text)] [at 0] [quoted? #f] [escape? #f] [token-start? #t] [first? #t] [out '()])
         (if (null? parts) (reverse out)
           (let* ([end (+ at (caar parts))] [s (substring text at end)] [c (string-ref text at)]
-                 [separator? (and (char=? c #\space) (not quoted?))])
+                 [separator? (and (char=? c #\space) (not quoted?))]
+                 [closing? (and (char=? c #\") quoted? (not escape?))]
+                 [boundary? (or (and (char-whitespace? c) (not quoted?)) closing?)]
+                 [first? (and first? (not boundary?))])
             (loop (cdr parts) end
-              (if (and (char=? c #\") (not escape?)) (not quoted?) quoted?)
-              (and quoted? (char=? c #\\) (not escape?))
+              (if (and (char=? c #\") (not escape?) (or quoted? token-start?)) (not quoted?) quoted?)
+              (and quoted? (char=? c #\\) (not escape?)) boundary? first?
               (cons (list (if separator? " ∧ " (escaped s))
-                      (if (and missing (< at (cdr missing)) (> end (car missing))) '(italic) '())) out)))))))
+                      (if (and start first? (> end start)) '(italic) '())) out)))))))
+  (define (filter-projector)
+    (let ([known '()])
+      (lambda (text context)
+        (when (memq (get context 'status #f) '(ready unavailable)) (set! known context))
+        (project-filter text known))))
   (define (name-cell cell cells attrs)
     (if (not (eq? (car cell) 'ready)) '("")
       (let* ([raw (cadr cell)] [name (escaped raw)]
@@ -262,7 +285,7 @@
         (cons 'render (lambda (s d w h r) (if (zero? (car r)) (list (glyph:fit s w)) '())))
         (cons 'measure (lambda (s d axis cross child) (if (eq? axis 'y) '(1 1) (list 0 (glyph:cells s)))))
         (cons 'decorate (lambda (s d w h r) (if (zero? (car r)) (list (list (list 0 0 (min w (glyph:cells s)) 1) 'ghost)) '())))))
-    (entry:register-presentation! 'finder 1 project-filter)
+    (entry:register-presentation! 'finder 1 filter-projector)
     (edit:register-policy! 'rooted-path 1
       (lambda (lines positions)
         (let* ([text (vector-ref lines 0)] [results (map (lambda (p) (normalize-path text (cdr p))) positions)])

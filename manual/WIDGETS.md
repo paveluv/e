@@ -205,6 +205,10 @@ or `(drag primary ())` for gestures, and `keymap:call` with public commands
 and explicit targets for actions. The callback must only inspect local,
 bounded presentation state: no input dispatch, RPC, focus changes or model
 updates. Reuse this same binding lookup in the widget's gesture handler.
+An empty result also prevents automatic keyboard focus on a click there:
+blank padding, missing rows and disabled controls retain the previous
+focused child. The outer host can still receive focus. Controls without
+this callback retain focus-on-click throughout their allocation.
 Press/release ownership, cancellation and dragging remain input behavior;
 reading a binding never starts a gesture.
 
@@ -746,13 +750,22 @@ undoable edit. With a revision it refuses any intervening source edit,
 including endpoint insertions. This is the safe application boundary for an
 asynchronous completion proposal.
 
-An entry's `(presentation name schema)` option selects a pure formatter
-registered with `entry:register-presentation!`. The formatter receives raw
+An entry's `(presentation name schema)` option selects a factory
+registered with `entry:register-presentation!`. The zero-argument factory
+creates a formatter for that view and text source; it is discarded on
+unmount, source replacement or definition reload. The formatter receives raw
 text and its `context` input and returns one `(display roles)` pair per source
 grapheme. Rendering, caret, selection and pointer hits use the same mapping.
 Finder uses it for conjunction separators and italic missing path components;
 the source still contains ordinary spaces. Its `context` input is connected
 to the collection's `summary` output, without polling or copying result rows.
+The formatter may retain bounded presentation knowledge, but performs no I/O
+or model mutation. Finder keeps confirmed directory components normal and
+renders an edited path component and its descendants in italic immediately,
+including the first character of a new name. This tentative styling lasts
+until the base confirms that the path exists; a missing tail stays italic.
+Only the first filter token carries path styling. Existence checks remain
+in the base.
 An independent `(policy name schema)` option selects a logical text-edit
 normalizer registered with `edit:register-policy!`. It receives proposed line
 strings and logical result positions, returning both normalized values.
@@ -763,9 +776,11 @@ intended text and bypass this policy.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or
-its read-only flag. Undo is still available. Selections retain their actual
-edit basis: a concurrent disjoint edit rebases, and overlap refuses rather
-than overwriting unseen text. No operation switches the current editor buffer.
+its read-only flag. Undo is still available. Idle entries and editors advance
+their saved cursor and selection through known text changes, including on
+reopen after a restart. An edit already in progress retains its actual basis:
+a concurrent disjoint edit rebases, and overlap refuses rather than overwriting
+unseen text. No operation switches the current editor buffer.
 If the selection's history has expired, Home or End establishes a new caret
 at the corresponding endpoint; typing cannot silently reuse an unknown range.
 

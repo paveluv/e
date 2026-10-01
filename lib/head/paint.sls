@@ -1669,7 +1669,7 @@
                          [(blinking-block) "\x1b;[1 q"]
                          [(blinking-underline) "\x1b;[3 q"]
                          [(blinking-bar) "\x1b;[5 q"])]
-                      [widget-caret "\x1b;[6 q"]
+                      [widget-caret "\x1b;[1 q"]
                       ;; a bar where typing cannot land: a read-only buffer
                       [(head:buffer-read-only (head:window-buffer (head:current-window)))
                        "\x1b;[5 q"]

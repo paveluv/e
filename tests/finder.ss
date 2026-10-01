@@ -89,6 +89,12 @@
      (let ([before (chosen)])
        (press! "DOWN")
        (check 'finder-arrows-work-before-any-pointer-event (list (not (equal? before (chosen))) (equal? (widget:focused host) entry)) '(#t #t)))
+     (let ([caret (widget:caret (draw!))] [selected (chosen)])
+       (define click (widget:pointer! '(pointer press primary ()) 150 15))
+       (widget:pointer! '(pointer release primary ()) 150 15)
+       (check 'finder-blank-click-keeps-filter-caret-and-selection
+         (list click (equal? (widget:focused host) entry) (widget:caret (draw!)) (chosen))
+         (list (list host #t) #t caret selected)))
      (filter! (string-append root "/ needle"))
      (check 'finder-shares-base-hierarchy-and-safe-labels
        (list (length (keys)) (visible? "[5 matches]") (visible? " ∧ needle")) '(8 #t #t))
@@ -158,6 +164,56 @@
        (check 'missing-tail-and-creation-ghosts-use-italics
          (list (contains? (styled f 0 'italic) "new/inner 日本語/note.txt")
            (contains? (styled f 0 'ghost) "[0 matches]") (contains? (styled f 4 'ghost) "[create]")) '(#t #t #t)))
+     ;; Drive a real presentation with fixed query snapshots, so every
+     ;; pre-query and pending frame is tested without racing filesystem work.
+     (let* ([sample (path "missing")] [start (string-length (path ""))]
+            [ready (list '(status . ready) (cons 'input-filter sample) (list 'details (cons 'missing (cons start (string-length sample)))))]
+            [pending '((status . pending) (details))]
+            [source (store:create! head:ui-actor "path presentation" (list sample))]
+            [id (view:create! head:ui-actor (list 'buffer source) 'entry 1
+                  (list '(presentation finder 1) (cons 'context ready)) '((0 . 0) (0 . 0)))])
+       (define (show) (styled (widget:prepare! id 300 1) 0 'italic))
+       (define (context! context)
+         (interaction:flush!)
+         (interaction:arrange! head:ui-actor
+           (list (list id (get (model:snapshot id) 'revision) '() (list '(presentation finder 1) (cons 'context context))))
+           (list (list id (view:generation (interaction:snapshot id)))))
+         (widget:pump!))
+       (widget:mount! id 'path-presentation) (show)
+       (let ([directory (list '(status . ready) (cons 'input-filter (path "")) '(details (missing . #f)))])
+         (check 'new-component-is-italic-from-its-first-unconfirmed-frame
+           (map (lambda (case) (context! (cadr case)) (entry:set-text! id (car case)) (show))
+             (list (list (path "") directory) (list (path "A") directory) (list (path "A") pending)
+               (list (path "A") (list '(status . ready) (cons 'input-filter (path "A"))
+                                  (list 'details (cons 'missing (cons start (+ start 1))))))
+               (list (path "A") (list '(status . ready) (cons 'input-filter (path "A")) '(details (missing . #f))))
+               (list (format "~s" (path "with space/A"))
+                 (list '(status . ready) (cons 'input-filter (format "~s" (path "with space/"))) '(details (missing . #f))))))
+           '("" "A" "A" "A" "" "A")))
+       (check 'missing-path-style-survives-stale-and-pending-query-results
+         (map (lambda (case)
+                (context! (cadr case)) (entry:set-text! id (car case)) (show))
+           (list (list (path "missing-more") ready)
+             (list (path "missing-more/") pending) (list (path "miss") pending)
+             (list (path "miss extra") pending) (list (path "miss\"name extra") pending)
+             (list "/elsewhere/miss" pending)
+             (list sample (list '(status . ready) (cons 'input-filter sample) '(details (missing . #f))))
+             (list (string-append sample " extra") pending) (list (path "") pending)
+             (list (path "missing-again") pending)))
+         '("missing-more" "missing-more/" "miss" "miss" "miss\"name" "elsewhere/miss" "" "" "" "missing-again"))
+       (let* ([quoted (format "~s" (path "missing space"))]
+              [ready (list '(status . ready) (cons 'input-filter quoted)
+                       (list 'details (cons 'missing (cons (+ start 1) (- (string-length quoted) 1)))))]
+              [other (view:fork! head:ui-actor id)])
+         (context! ready) (entry:set-text! id quoted) (show)
+         (context! pending) (entry:set-text! id (string-append (format "~s" (path "missing space/file")) " extra"))
+         (widget:mount! other 'other-path-presentation)
+         (check 'missing-path-style-stops-at-quoted-token-and-stays-per-mount
+           (list (show) (styled (widget:prepare! other 300 1) 0 'italic)
+             (begin (widget:unmount! id) (widget:mount! id 'path-presentation) (show)))
+           '("missing space/file" "" ""))
+         (widget:unmount! other))
+       (widget:unmount! id))
      (check 'narrow-proposals-preserve-create-ghost (contains? (styled (draw! 20) 4 'ghost) "[create]") #t)
      (select! (list 'proposal (path "new/inner 日本語/note.txt") 'file))
      (press! "RIGHT")

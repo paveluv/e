@@ -711,7 +711,8 @@
             [id (view:create! head:ui-actor (list 'buffer source) 'entry 1 '() '((0 . 2) (0 . 0)))]
             [b (window:show-widget! w id)])
        (let ([output (painted paint:redraw!)])
-         (check 'entry-selection-reaches-the-window-painter (contains? output (style:code 'selection)) #t))
+         (check 'entry-selection-and-blinking-block-reach-the-window-painter
+           (list (contains? output (style:code 'selection)) (contains? output "\x1b;[1 q")) '(#t #t)))
        (entry:select! id 4 4)
        (widget:prepare! id 10 1) (painted paint:present-echo!)
        (check 'partial-paint-retains-shown-entry-caret (widget:caret (caar (widget:shown))) '(2 . 0))
@@ -727,7 +728,10 @@
        (head:show-buffer! b) (head:window-line-numbers-set! w #t)
        (paint:set-screen-cols! 100) (paint:set-screen-rows! 24)
        (let* ([other (window:split-right!)] [a (head:window-editor w)] [c (head:window-editor other)])
-         (window:focus! w) (painted paint:redraw!)
+         (window:focus! w)
+         (let ([running (painted (lambda () (parameterize ([paint:cursor-in-echo #t]) (paint:place-cursor!))))])
+           (check 'ordinary-editing-restores-blinking-block-after-evaluation
+             (list (contains? running "\x1b;[3 q") (contains? (painted paint:redraw!) "\x1b;[1 q")) '(#t #t)))
          (dispatch:key! "DOWN") (painted paint:redraw!)
          (check 'ordinary-split-uses-independent-editor-roots-and-wrapped-input
            (list (eq? b (head:window-buffer w)) (eq? b (head:window-buffer other))

@@ -29,22 +29,30 @@
   (define (selection source d)
     (text-source:rebase (state d) (changes source (or (view:basis d) (text-control:revision source)))))
   (define presentations (kernel:make-registry car))
+  (define projectors (make-hashtable equal-hash equal?))
   (define presentation-changes (kernel:registry-observe! presentations (lambda (removed added) (widget:invalidate!))))
 
-  (edoc "Register a pure entry projection: (text context) returns one (display roles) pair per source grapheme. Roles are symbols. Painting, caret, selection and mouse hits share this mapping; edits address the original text."
-        (name symbol "presentation name") (schema integer "positive version") (project procedure "pure grapheme formatter"))
-  (define (register-presentation! name schema project)
-    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? project))
+  (edoc "Register a factory for an entry's local presentation. It returns a (text context) formatter producing one (display roles) pair per source grapheme, without I/O or model mutation. Its cache lasts until the view is unmounted, rebound to another text source or its definition changes. Painting, caret, selection and mouse hits share this mapping."
+        (name symbol "presentation name") (schema integer "positive version") (make-project procedure "zero-argument formatter factory"))
+  (define (register-presentation! name schema make-project)
+    (unless (and (symbol? name) (integer? schema) (exact? schema) (> schema 0) (procedure? make-project))
       (error 'register-presentation! "invalid entry presentation"))
-    (kernel:registry-add! presentations (cons (list name schema) project)))
+    (kernel:registry-add! presentations (cons (list name schema) make-project)))
+  (define (projector id source definition)
+    (let ([old (hashtable-ref projectors id #f)])
+      (if (and old (eq? definition (car old)) (equal? source (cadr old))) (caddr old)
+        (let ([project ((cdr definition))])
+          (unless (procedure? project) (error 'entry "presentation factory must return a formatter"))
+          (hashtable-set! projectors id (list definition source project)) project))))
 
   (define (data id source inputs)
     (text-control:mirror source)
     (let* ([lines (text-control:lines source)] [line (if (single-line? lines) (vector-ref lines 0) "")]
-           [profile (assq 'presentation (view:options (interaction:snapshot id)))]
+           [d (interaction:snapshot id)] [profile (assq 'presentation (view:options d))]
            [definition (and profile (kernel:registry-find presentations (lambda (p) (equal? (cdr profile) (car p)))))]
            [context (assq 'context inputs)] [parts (glyph:clusters line)]
-           [display (and definition ((cdr definition) line (if (and context (eq? (cadr context) 'ready)) (caddr context) '())))])
+           [display (and definition ((projector id (view:source d) definition) line (if (and context (eq? (cadr context) 'ready)) (caddr context) '())))])
+      (unless definition (hashtable-delete! projectors id))
       (when (and profile (not definition)) (error 'entry "entry presentation is unavailable" (cdr profile)))
       (when (and definition
               (not (and (list? display) (= (length display) (length parts))
@@ -91,6 +99,12 @@
       (and points (> width 0) (> height 0) (cons (- (cdar points) (offset points width)) 0))))
   (define (context id)
     (text-control:context id 'entry))
+  (define (service! id frame)
+    (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
+      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref)))
+        (let-values ([(source d inputs) (widget:context id 'current)])
+          (when (single-line? (text-control:lines source))
+            (text-control:advance! id source d (state d) values))))))
 
   (edoc "Select a range in an entry's text source; caret and anchor are character indices, snapped to whole graphemes."
         (id model "entry view") (caret integer "active end") (anchor integer "fixed end"))
@@ -223,6 +237,8 @@
   (define (init!)
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
+        (cons 'service service!)
+        (cons 'release (lambda (id) (hashtable-delete! projectors id)))
         (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (+ 1 (cdr (car (reverse (caddr data)))))))))
         (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (list (cons 'insert insert!) (cons 'select select!) (cons 'move move!)

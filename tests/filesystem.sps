@@ -22,6 +22,13 @@
     (let retry ()
       (let-values ([(status ignored) (collection:configure! actor query (field (collection:summary query) 'revision) changes)])
         (when (eq? status 'stale) (retry)))) (ready query))
+  (define (complete! query)
+    (let ([intent (filesystem:complete! actor query (field (ready query) 'generation))] [result #f])
+      (test:await 'filesystem-completion
+        (lambda ()
+          (set! result (field (field (ready query) 'details) 'completion))
+          (and (pair? result) (eq? (car result) 'ready) (equal? (cadr result) intent))))
+      (caddr result)))
   (define (retire! id) (model:retire! actor id (field (model:snapshot id) 'revision)))
   (define source (filesystem:create-source! actor root #f 'persistent))
   (define q (collection:create! actor source (string-append root "/ needle") '() 'transient))
@@ -48,15 +55,25 @@
         (list (map (lambda (r) (caddr (assq 'size (caddr r)))) r)
           (equal? basis (field (ready q2) 'basis)) (field (ready q) 'count)) '((8 8) #t 8))))
   (let* ([old (field (ready q2) 'generation)]
-         [_ (change! q2 (list (cons 'filter (path "small/nested/needle-o"))))]
-         [v (ready q2)])
+         [_ (change! q2 (list (cons 'filter (path "small/nested/needle-o"))))])
     (test:check 'filesystem-old-generation-refuses-rows-and-completion
       (list (collection:range q2 old 0 1 '(name)) (filesystem:complete! actor q2 old)) '((stale) #f))
-    (let ([intent (filesystem:complete! actor q2 (field v 'generation))])
-      (test:await 'filesystem-completion
-        (lambda () (equal? (field (field (ready q2) 'details) 'completion) (list 'ready intent (path "small/nested/needle-only.txt"))))))
     (test:check 'filesystem-completion-keeps-filter-and-publishes-basis-bearing-proposal
-      (field (ready q2) 'filter) (path "small/nested/needle-o")))
+      (list (complete! q2) (field (ready q2) 'filter))
+      (map path '("small/nested/needle-only.txt" "small/nested/needle-o"))))
+  ;; A common suffix can begin with an unrelated directory's name. Tab
+  ;; must preserve the connecting rows too, not admit that empty sibling.
+  (let ([directories (map path '("small/empty" "large/empty"))])
+    (for-each (lambda (dir) (mkdir dir) (file:write! (string-append dir "/vt.sls") '#("") #f)) directories)
+    (filesystem:refresh! actor)
+    (change! q2 (list (cons 'filter (string-append root "/ vt.sls"))))
+    (let* ([before (map cadr (rows q2 '(name)))] [completed (complete! q2)]
+           [v (change! q2 (list (cons 'filter completed)))])
+      (test:check 'filesystem-completion-preserves-matches-and-connecting-rows
+        (list completed (field (field v 'details) 'matches) (equal? before (map cadr (rows q2 '(name)))))
+        (list (string-append root "/ empty/vt.sls") 2 #t)))
+    (for-each (lambda (dir) (delete-file (string-append dir "/vt.sls")) (delete-directory dir)) directories)
+    (filesystem:refresh! actor))
   (change! q2 (list (cons 'filter (path "missing/child.txt"))))
   (let* ([v (ready q2)] [r (rows q2 '(name))])
     (test:check 'filesystem-proposals-have-separate-identities-and-do-not-inflate-matches

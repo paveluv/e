@@ -116,10 +116,7 @@
                             (check!)
                             (or (directory:missing? e) (match? (directory:filter-path e))
                               (and (directory:directory? e)
-                                (or (let ([relative (string-append (directory:relative-path e (plan-root plan)) "/")])
-                                      (exists (lambda (key) (string:prefix? (string:fold-case relative) (string:fold-case key)))
-                                        (plan-keys plan)))
-                                  (and (directory:entry-count e) (positive? (directory:entry-count e)))
+                                (or (and (directory:entry-count e) (positive? (directory:entry-count e)))
                                   (and (not (directory:entry-link? e)) (or complete? (not (directory:entry-count e)))
                                     (not (directory:entry-complete? e))))))) inventory)]
            [entries (list->vector (tree shown '()))] [count 0]
