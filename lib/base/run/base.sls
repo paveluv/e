@@ -159,8 +159,6 @@
        (unless (<= 5 (length args) 6) (error 'wire "view-create expects optional resource owner"))
        (apply view:create! actor args)]
       [(view-retire) (control!) (arity 2)
-       (let ([d (view:snapshot (car args))])
-         (when (and d (view:owner d)) (error 'wire "unmount a view before retiring it")))
        (call-with-values (lambda () (apply view:retire! actor args)) list)]
       [(view-read) (arity 1) (view:snapshot (car args))]
       [(view-tree) (arity 1) (view:tree (car args))]
@@ -179,7 +177,6 @@
       [(catalogue-source) (control!) (head!) (arity 2) (apply catalogue:create-source! actor args)]
       [(catalogue-query) (control!) (head!) (arity 1) (apply catalogue:create-query! actor args)]
       [(catalogue-neighbor) (head!) (arity 3) (apply catalogue:neighbor actor args)]
-      [(catalogue-contribute) (control!) (head!) (arity 2) (apply catalogue:contribute! actor args)]
       [(filesystem-source) (control!) (arity 3) (apply filesystem:create-source! actor args)]
       [(filesystem-query) (control!) (arity 2) (apply filesystem:create-query! actor args)]
       [(filesystem-configure) (control!) (arity 3) (call-with-values (lambda () (apply filesystem:configure! actor args)) list)]
@@ -895,10 +892,6 @@
                                              [(watch watch-head)
                                               (unless (= (length message) 3) (error 'wire "watch takes no arguments"))
                                               (if (eq? (caddr message) 'watch) (watch!) (watch-head!))]
-                                             [(catalogue-attach)
-                                              (unless (and control? (= (length message) 3) (eq? (car (policy:session-actor session)) 'head))
-                                                (error 'wire "catalogue-attach requires an all-buffer head"))
-                                              (parameterize ([kernel:registering-module owner]) (catalogue:attach! (policy:session-actor session)))]
                                              [else
                                               ;; Capture only the id, not the entire request.
                                               ;; An answer may precede the ticket reply.

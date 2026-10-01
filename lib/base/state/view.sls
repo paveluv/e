@@ -107,7 +107,7 @@
                    (lambda (ids) (if owner (list (list (field owner 'id) (field owner 'revision) (field owner 'references) (value owner))) '())))])
         (unless ids (error 'create! "resource owner changed; retry")) (car ids))))
 
-  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing borrowed child subtrees as unowned roots, then releasing its explicitly owned resources and views scoped to its lifetime. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke scoped views on departure. Return status and current target envelope."
+  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing borrowed child subtrees as unowned roots, then releasing its explicitly owned resources and views scoped to its lifetime. Borrowed sources and command targets survive. Heads may retire unowned views or their own mounts; another head's mount refuses. Base resource owners may revoke scoped views on departure. Return status and current target envelope."
         (actor actor "resource owner") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision)
     (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'retire! "expected a revision"))
@@ -120,6 +120,8 @@
                         (let* ([d (need id)] [r (hashtable-ref read id #f)] [parent (descriptor:parent d)]
                                [subtree (walk get id fail)])
                           (unless (= revision (field r 'revision)) (fail 'stale))
+                          (when (and (descriptor:head? actor) (descriptor:owner d)
+                                  (not (equal? actor (descriptor:owner d)))) (fail 'owned))
                           (when parent
                             (let* ([p (need parent)] [root (root-of need parent fail)] [root-d (need root)])
                               (unless (member id (map cadr (descriptor:children p))) (fail 'invalid))

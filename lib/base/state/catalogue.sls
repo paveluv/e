@@ -1,43 +1,43 @@
 ;; One subscribed buffer inventory; collection providers own derived indexes.
 (import (only (foundation edoc) elibrary))
 (elibrary (state catalogue)
-  (export attach! contribute! create-query! create-source! neighbor)
+  (export create-query! create-source! neighbor)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core property) property:) (prefix (core row) row:)
-          (prefix (foundation datum) datum:) (prefix (foundation string) string:)
-          (prefix (foundation wire) wire:) (prefix (state actor) actor:)
+          (prefix (foundation string) string:)
+          (prefix (state actor) actor:)
           (prefix (state collection) collection:) (prefix (state connection) connection:) (prefix (state model) model:)
           (prefix (state store) store:))
 
   (define (get row key default) (cond [(assq key row) => cdr] [else default]))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
-  (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
-  (define attachments (kernel:make-registry car)) ; actor token contribution-table
   (define lock (make-mutex))
   (define ready (make-condition))
-  (define serial 0)
   (define changed? #t)
   (define running? #f)
   (define take-events #f)
   (define jobs (make-hashtable equal-hash equal?))
   (define job-order '())
-  (define watched-models (make-hashtable equal-hash equal?))
+  (define pending-views (make-hashtable equal-hash equal?))
+  (define reset-views? #t)
   (define inventory (make-eqv-hashtable)) ; worker-owned, metadata only
   (define orders (make-hashtable equal-hash equal?)) ; worker-owned, shared across filters
   (define rings (make-eq-hashtable)) ; ordered live list -> vector and key indexes
-  (define local-rows (make-hashtable equal-hash equal?)) ; semantic contribution snapshots
+  (define view-rows (make-hashtable equal-hash equal?)) ; id -> (row audience)
   (define (wake!) (with-mutex lock (set! changed? #t) (condition-signal ready)))
-  (define (attachment actor)
-    (kernel:registry-find attachments (lambda (a) (equal? (car a) actor))))
-  (define attachment-changes (kernel:registry-observe! attachments (lambda (removed added) (wake!))))
   (define model-changes
     (model:subscribe! #f
       (lambda (notice)
-        ;; Notices carry identities; never copy unrelated model values just
-        ;; to find out their kinds (a collection source may be enormous).
-        (when (with-mutex lock
-                (or (not (cadr notice)) (exists (lambda (id) (hashtable-contains? watched-models id)) (cadr notice))))
-          (wake!)))))
+        ;; Identify changed views without copying unrelated model payloads.
+        (let ([ids (cadr notice)])
+          (with-mutex lock
+            (if (not ids) (begin (set! reset-views? #t) (set! changed? #t))
+              (let ([kinds (model:metadata ids)])
+                (for-each (lambda (id)
+                            (case (cond [(assoc id kinds) => cadr] [else #f])
+                              [(widget-view #f) (hashtable-set! pending-views id #t) (set! changed? #t)]
+                              [(buffer-catalogue) (set! changed? #t)])) ids)))
+            (when changed? (condition-signal ready)))))))
   (define (recipe? v)
     (and (list? v) (for-all pair? v) (equal? (map car v) '(owner home epoch))
       (actor:identity? (get v 'owner #f)) (string? (get v 'home #f)) (natural? (get v 'epoch #f))))
@@ -49,47 +49,6 @@
                 (and r (= (get r 'schema 0) 1) (recipe? (get r 'value #f)) (model:available? id))))
       (model:ids 'buffer-catalogue)))
 
-  (edoc "Open this head attachment's temporary local-buffer contribution. The registering connection owns its lifetime; detach removes it."
-        (actor actor "head identity") (returns integer "attachment token"))
-  (define (attach! actor)
-    (unless (and (actor:identity? actor) (eq? (car actor) 'head)) (error 'attach! "expected head identity"))
-    (when (attachment actor) (error 'attach! "head already contributes"))
-    (let ([token (with-mutex lock (set! serial (+ serial 1)) serial)])
-      (kernel:registry-add! attachments (list (datum:copy actor) token (make-hashtable equal-hash equal?))) token))
-
-  (define (local-facts? facts)
-    (and (list? facts) (for-all pair? facts) (string? (get facts 'name #f))
-      (natural? (get facts 'version #f))
-      (let loop ([rest facts] [seen '()])
-        (or (null? rest)
-          (let ([p (car rest)])
-            (and (not (memq (car p) seen))
-              (case (car p)
-                [(name file mode) (string? (cdr p))] [(version lines modified-at) (natural? (cdr p))]
-                [(flags) (and (list? (cdr p)) (for-all (lambda (f) (memq f '(conflicted read-only))) (cdr p)))]
-                [else #f]) (loop (cdr rest) (cons (car p) seen))))))))
-
-  (edoc "Apply at most 256 local metadata changes within 64 KiB to an active attachment. Entries are (key facts-or-false): local numeric tokens carry raw facts; (model id) entries carry an empty list and borrow a base view's metadata. No generated rows or text are accepted."
-        (actor actor "head identity") (token integer "attachment token") (changes list "upserts and removals") (returns boolean))
-  (define (contribute! actor token changes)
-    (let ([changes (datum:copy changes)] [a (attachment actor)])
-      (unless (and (list? changes) (<= (length changes) 256) (<= (bytevector-length (wire:encode changes)) 65536)
-                (for-all (lambda (c)
-                           (and (list? c) (= (length c) 2)
-                             (if (row:source? (car c))
-                               (or (not (cadr c)) (null? (cadr c)))
-                               (and (natural? (car c)) (> (car c) 0) (or (not (cadr c)) (local-facts? (cadr c))))))) changes))
-        (error 'contribute! "invalid bounded local metadata"))
-      (and a (equal? token (cadr a))
-        (with-mutex lock
-          (and (eq? a (attachment actor))
-            (begin
-              (for-each (lambda (c)
-                          (unless (equal? (cadr c) (hashtable-ref (caddr a) (car c) #f))
-                            (set! changed? #t)
-                            (if (cadr c) (hashtable-set! (caddr a) (car c) (cadr c)) (hashtable-delete! (caddr a) (car c))))) changes)
-              (when changed? (condition-signal ready)) #t))))))
-
   (define (start!)
     (with-mutex lock
       (unless running?
@@ -98,7 +57,7 @@
         (let-values ([(token take) (store:watch! wake!)]) (set! take-events take))
         (set! running? #t) (fork-thread work!))))
 
-  (edoc "Create a buffer catalogue source for a head, with explicit home spelling for filtering. Inventories and local contributions are runtime state; only this small recipe persists."
+  (edoc "Create a buffer catalogue source for a head, with explicit home spelling for filtering. Shared document and named root-view inventories are rebuilt from base state; only this small recipe persists."
         (actor actor "owner/head") (home string "absolute home directory")
         (persistence (one-of transient persistent) "restart policy") (returns row-source))
   (define (create-source! actor home persistence)
@@ -168,22 +127,15 @@
           (filter values (map (lambda (k) (let ([v (if (and (eq? k 'file) backup) (car backup) (get m k #f))])
                                             (and (string? v) (cons k v)))) '(mode file))))
         (cond [trashed '((roles ghost))] [(get m 'modified #f) '((roles italic))] [else '()]))))
-  (define (contributions actor)
-    (let ([a (attachment actor)])
-      (if (not a) '()
-        (let ([entries (with-mutex lock (let-values ([(ks vs) (hashtable-entries (caddr a))]) (map cons (vector->list ks) (vector->list vs))))])
-          (filter values
-            (map (lambda (p)
-                   (if (row:source? (car p))
-                     (let* ([r (model:snapshot (car p))] [d (and r (get r 'value #f))])
-                       (and r (eq? (get r 'kind #f) 'widget-view) (descriptor:valid? d)
-                         (or (not (descriptor:owner d)) (equal? (descriptor:owner d) actor))
-                         (list (car p) (list (cons 'name (let ([name (get (descriptor:options d) 'name #f)])
-                                                           (if (string? name) name (format "<widget ~a>" (cadar p)))))
-                                         (cons 'version (descriptor:generation d)) '(flags) '(mode . "widget") '(archive . live)) '())))
-                     (list (list 'local actor (cadr a) (car p))
-                       (cons '(archive . live) (map (lambda (f) (if (eq? (car f) 'modified-at) (cons 'modified (cdr f)) f)) (cdr p)))
-                       (if (assq 'modified-at (cdr p)) '((roles italic)) '())))) entries))))))
+  (define (view-row id)
+    (let* ([r (model:snapshot id)] [d (and r (get r 'value #f))])
+      (and r (eq? (get r 'kind #f) 'widget-view) (descriptor:valid? d)
+        (not (descriptor:parent d))
+        (let* ([options (descriptor:options d)] [name (get options 'name #f)])
+          (and (string? name) (actor:audience? (get options 'audience 'all))
+            (list (list id (list (cons 'name name) (cons 'version (descriptor:generation d))
+                             '(flags) '(mode . "widget") '(archive . live)) '())
+              (get options 'audience 'all)))))))
   (define (cell r name) (assq name (cadr r)))
   (define (order-key r) (format "~s" (car r)))
   (define (ordered source sort cancelled?)
@@ -194,7 +146,8 @@
                       (filter values (map (lambda (m)
                                             (and (not (get m 'internal #f)) (actor:in-audience? actor (get m 'audience 'all)) (document m)))
                                        (vector->list (hashtable-values inventory))))
-                      (hashtable-ref local-rows actor '()))])
+                      (filter values (map (lambda (p) (and (actor:in-audience? actor (cadr p)) (car p)))
+                                       (vector->list (hashtable-values view-rows)))))])
           (define (fallback a b)
             (let ([a-name (cdr (cell a 'name))] [b-name (cdr (cell b 'name))])
               (or (string-ci<? a-name b-name)
@@ -249,10 +202,10 @@
                       (if (if (eq? direction 'forward) (< (vector-ref eligible mid) at) (<= (vector-ref eligible mid) at))
                         (search (+ mid 1) hi) (search lo mid)))))))
             '((sortable modified flags name lines mode file)))))))
-  (define (touch-sources! all? actors)
+  (define (touch-sources!)
     (for-each (lambda (id)
                 (let ([r (model:snapshot id)])
-                  (when (and r (or all? (member (get (get r 'value '()) 'owner #f) actors)))
+                  (when r
                     (let ([v (get r 'value '())])
                       (model:commit! '(base catalogue)
                         (list (list id (get r 'revision 0) (get r 'references '())
@@ -260,17 +213,19 @@
       (sources)))
   (define (work!)
     (let loop ([initial? #t])
-      (let-values ([(dirty? job)
+      (let-values ([(dirty? view-ids job)
                     (with-mutex lock
                       (let wait () (unless (or changed? (> (hashtable-size jobs) 0)) (condition-wait ready lock) (wait)))
                       (let ([dirty? changed?] [job (and (pair? job-order) (hashtable-ref jobs (car job-order) #f))])
                         (set! changed? #f)
                         (when job (hashtable-delete! jobs (car job-order)) (set! job-order (cdr job-order)))
-                        (values dirty? job)))])
+                        (let ([ids (and (not reset-views?) (vector->list (hashtable-keys pending-views)))])
+                          (set! reset-views? #f) (hashtable-clear! pending-views)
+                          (values dirty? ids job))))])
         (let* ([source-ids (sources)] [sources? (pair? source-ids)] [events (take-events)] [ids (and events (map car events))]
                [packet (and sources? (or initial? (not events) (pair? ids)) (if (or initial? (not events)) (store:metadata) (store:metadata ids)))]
-               [updated? initial?] [actors '()])
-          (unless sources? (hashtable-clear! inventory) (hashtable-clear! orders) (hashtable-clear! rings) (hashtable-clear! local-rows))
+               [updated? initial?])
+          (unless sources? (hashtable-clear! inventory) (hashtable-clear! orders) (hashtable-clear! rings) (hashtable-clear! view-rows))
           (when packet
             (when (or initial? (not events)) (hashtable-clear! inventory) (set! updated? #t))
             (for-each (lambda (p)
@@ -278,23 +233,18 @@
                           (unless (equal? m (hashtable-ref inventory (car p) #f))
                             (set! updated? #t)
                             (if m (hashtable-set! inventory (car p) m) (hashtable-delete! inventory (car p)))))) (cadr packet)))
-          (when dirty?
-            ;; Subscribe to a view's identity before reading its metadata.
-            ;; Contribution changes racing this capture leave another wake.
-            (with-mutex lock
-              (hashtable-clear! watched-models)
-              (for-each (lambda (id) (hashtable-set! watched-models id #t)) source-ids)
-              (for-each (lambda (a)
-                          (vector-for-each (lambda (key) (when (row:source? key) (hashtable-set! watched-models key #t)))
-                            (hashtable-keys (caddr a)))) (if sources? (kernel:registry-items attachments) '())))
-            (let ([owners (if sources? (unique (append (map car (kernel:registry-items attachments)) (vector->list (hashtable-keys local-rows)))) '())])
-              (for-each (lambda (actor)
-                          (let ([rows (list-sort (lambda (a b) (string<? (order-key a) (order-key b))) (contributions actor))])
-                            (unless (equal? rows (hashtable-ref local-rows actor '()))
-                              (set! actors (cons actor actors))
-                              (if (null? rows) (hashtable-delete! local-rows actor) (hashtable-set! local-rows actor rows))))) owners)))
-          (when (or updated? (pair? actors))
-            (hashtable-clear! orders) (hashtable-clear! rings) (touch-sources! updated? actors))
+          (when (and sources? (or dirty? initial?))
+            (when (or initial? (not view-ids))
+              (when (> (hashtable-size view-rows) 0) (set! updated? #t))
+              (hashtable-clear! view-rows))
+            (for-each (lambda (id)
+                        (let ([row (view-row id)])
+                          (unless (equal? row (hashtable-ref view-rows id #f))
+                            (set! updated? #t)
+                            (if row (hashtable-set! view-rows id row) (hashtable-delete! view-rows id)))))
+              (if (or initial? (not view-ids)) (model:ids 'widget-view) view-ids)))
+          (when updated?
+            (hashtable-clear! orders) (hashtable-clear! rings) (touch-sources!))
           (when job
             (if (procedure? job) (job)
               (let ([cancelled? (caddr job)] [publish! (cadddr job)])

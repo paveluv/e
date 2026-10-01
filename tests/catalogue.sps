@@ -65,17 +65,6 @@
         (list (keys query) (keys filtered)
           (list-ref (collection:seek query (field (field (collection:summary query) 'value) 'generation) 2 'forward 0) 3))
         (list expected (list (list 'buffer first)) 3))
-      (let ([token (parameterize ([kernel:registering-module 'catalogue-attachment]) (catalogue:attach! actor))])
-        (catalogue:contribute! actor token '((1 ((name . "catalogue/local") (version . 0) (flags) (mode . "app")))))
-        (expect query (cons (car expected) (cons (list 'local actor token 1) (cdr expected))))
-        (test:check 'catalogue-attachment-token-refuses-foreign-owner
-          (catalogue:contribute! other token '((1 #f))) #f)
-        (kernel:retract-module! 'catalogue-attachment)
-        (expect query expected)
-        (let ([fresh (parameterize ([kernel:registering-module 'catalogue-attachment]) (catalogue:attach! actor))])
-          (test:check 'catalogue-detached-token-cannot-mutate-replacement
-            (list (not (= token fresh)) (catalogue:contribute! actor token '((1 #f)))) '(#t #f)))
-        (kernel:retract-module! 'catalogue-attachment))
       (let ([v (version trash)])
         (store:rename! actor trash "catalogue/renamed")
         (test:check 'catalogue-rename-fences-restoration (act trash v 'restore) 'stale))

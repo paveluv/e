@@ -219,14 +219,19 @@
      (press! "C-x" "D")
      (test:check 'permanent-archive-delete (store:exists? (head:buffer-store-id b)) #f)
      (settle!)
-     (let ([local (head:register-view! "buffet-local" void)])
+     (let* ([picker (head:current-buffer)]
+            [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>")) '())]
+            [local (window:show-widget! (head:current-window) id)])
+       (head:show-buffer! picker) (head:before-frame!)
        (select! local)
        (let ([old (selection)] [basis (get (state) 'basis)])
+         (view:arrange! head:ui-actor (list (list id (model:revision id) '() '((name . "<buffet-local-renamed>")))) '())
          (head:buffer-name-set! local "<buffet-local-renamed>")
-         (test:check 'local-version-fences-retirement
+         (test:check 'view-generation-fences-retirement
            (test:raises? (lambda () (buffet:kill! (app) old basis))) #t))
        (select! local) (press! "C-k")
-       (test:check 'table-activation-retires-local-buffer (memq local (head:buffers)) #f)
+       (test:check 'table-activation-retires-view-and-placement
+         (list (model:snapshot id) (memq local (head:buffers))) '(#f #f))
        (settle!))
      (let* ([w (head:current-window)] [picker (head:current-buffer)]
             [other (window:split-right!)] [fork (head:buffer-fact (head:window-buffer other) 'widget-id #f)]
@@ -267,7 +272,7 @@
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.
      (define independent (buffet:create! '()))
-     (let ([transient (catalogue-host:create-source! 'transient)])
+     (let ([transient (catalogue:create-source! head:ui-actor "/home" 'transient)])
        (test:check 'transient-owner-cannot-orphan-a-persistent-filter
          (test:raises? (lambda () (catalogue:create-query! head:ui-actor transient))) #t)
        (model:retire! head:ui-actor transient (get (model:snapshot transient) 'revision)))

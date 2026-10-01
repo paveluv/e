@@ -17,7 +17,7 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
   (export add-buffer! add-buffer-kill-hook!
-    add-buffer-placement-hook! add-color-scheme-hook! add-local-buffer-hook!
+    add-buffer-placement-hook! add-color-scheme-hook!
     add-pre-redraw-hook! add-publication-hook!
     add-shutdown-hook! adopt-store! adopt-store-buffer!
     after-key! app-buffer app-buffer? app-cursor-style
@@ -572,10 +572,7 @@
   (edoc "Replace the seat's buffer list."
         (bs (list-of buffer) "the buffers, most recent first"))
   (define (set-buffers! bs)
-    (let ([old the-buffers])
-      (set! the-buffers bs)
-      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b bs))) old))
-      (for-each notify-local-buffer! (filter (lambda (b) (not (memq b old))) bs))))
+    (set! the-buffers bs))
 
   (edoc "Every live window, in layout order, as a fresh list."
         (returns (list-of window)))
@@ -1680,8 +1677,6 @@
                              (and (buffer-modified b) (not (buffer-modified-at b))))
                      (note-local-modification! b))
                    (when name (buffer-name-raw-set! b name))
-                   (when (or name (exists (lambda (p) (memq (car p) '(file mode modified modified-at conflicts read-only app widget-id internal))) updates))
-                     (notify-local-buffer! b))
                    #t))))))
 
   (edoc "The current truth of a buffer for save and discard decisions, shared text not yet adopted here included: (values text revision facts)."
@@ -1891,8 +1886,7 @@
       ;; Mark this legacy projection adopted before notifying other readers.
       (when (buffer-store-id b) (buffer-store-rev-set! b revision))
       (text-source:adopt! (buffer-source b) basis text revision changes)
-      (bump-buffer-revision! b)
-      (unless (or (buffer-store-id b) (buffer-fact b 'app #f)) (notify-local-buffer! b))))
+      (bump-buffer-revision! b)))
 
   (edoc "The adopted text, revision and exact changes since a basis. This legacy presentation adapter never fetches."
         (b buffer "the buffer") (basis (or integer #f) "earlier revision"))
@@ -2216,7 +2210,6 @@
           (reserve-store-name! (buffer-name b))
           (buffer-name-set! b (buffer-name b)))
       (set! the-buffers (append the-buffers (list b))))
-    (notify-local-buffer! b)
     b)
 
   (edoc "The live local tool buffer with a key, or #f."
@@ -3031,18 +3024,6 @@
 
   (define shutdown-hook-registry (kernel:make-registry))
   (define pre-redraw-hook-registry (kernel:make-registry))
-  (define local-buffer-hook-registry (kernel:make-registry))
-
-  (edoc "Observe legacy local-buffer membership and logical metadata changes on the head pump. Generated app text, cursor and layout changes are excluded; the callback must not wait for the base."
-        (proc procedure "(callback buffer present?)"))
-  (define (add-local-buffer-hook! proc)
-    (unless (procedure? proc) (error 'add-local-buffer-hook! "expected a procedure"))
-    (kernel:registry-add! local-buffer-hook-registry proc))
-
-  (define (notify-local-buffer! b)
-    (unless (buffer-store-id b)
-      (for-each (lambda (proc) (proc b (and (memq b the-buffers) #t)))
-        (kernel:registry-items local-buffer-hook-registry))))
 
   (edoc "Register a hook run with a buffer when this head forgets it."
         (proc procedure "(hook buffer)"))
@@ -3700,7 +3681,6 @@
       (call-with-display-update
         (lambda ()
           (set! the-buffers (remq b the-buffers))
-          (notify-local-buffer! b)
           (buffer-rendition-set! b #f)
           (kernel:registry-remove! app-registry (lambda (x) (eq? (app-buffer x) b)))
           (let ([fallback (or (find (lambda (b) (and (buffer-visible? b) (not (hashtable-ref (buffer-local-facts b) 'internal #f)))) the-buffers)

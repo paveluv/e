@@ -25,6 +25,7 @@
           (prefix (head paint) paint:)
           (prefix (head terminal-control) terminal:)
           (prefix (head widget) widget:)
+          (prefix (state model) model:)
           (prefix (state view) view:))
 
   (define (buffer-widget b)
@@ -79,6 +80,15 @@
                        [name (and options (assq 'name options))]
                        [b (head:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))])
                   (guard (ex [else (head:forget-buffer! b) (raise ex)])
+                    ;; A named root is the base's catalogue identity. This is
+                    ;; placement metadata, published once, never fitted text.
+                    (when (and d (not name))
+                      (let* ([r (caddar (cadr (model:snapshots (list id))))]
+                             [options (append (list (cons 'name (head:buffer-name b)))
+                                        (if (assq 'audience options) '() (list (list 'audience head:ui-actor))) options)])
+                        (let-values ([(status rows) (view:arrange! head:ui-actor
+                                                      (list (list id (cdr (assq 'revision r)) (view:children d) options)) '())])
+                          (unless (eq? status 'applied) (error 'widget-buffer! "view changed before placement" status)))))
                     (head:register-app! b
                       (lambda ()
                         (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
@@ -166,7 +176,7 @@
     (unless (and (<= (length identity) 1) (for-all string? identity)) (error 'tool! "expected at most one stable identity"))
     (let* ([key (string-append "*" (if (pair? identity) (car identity) name) "*")] [old (head:find-tool-buffer key)])
       (if old (buffer-widget (mount-buffer! old))
-        (let* ([options (list (cons 'name (string-append "<" name ">")) (cons 'tool-key key) '(recency . behind))]
+        (let* ([options (list (cons 'name (string-append "<" name ">")) (list 'audience head:ui-actor) (cons 'tool-key key) '(recency . behind))]
                [host (view:create! head:ui-actor #f 'window-tool 1 options '())]
                [app (build (list (list 'open host 'open-document '()) (list 'return host 'return '())))])
           (view:arrange! head:ui-actor (list (list host 0 (list (list 'app app '(grow 1))) options)) '())

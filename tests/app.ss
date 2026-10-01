@@ -20,7 +20,7 @@
              (prefix (state store) store:)
              (prefix (state model) model:)
              (prefix (state connection) connection:) (prefix (core port) port:)
-             (prefix (state collection) collection:) (prefix (head range) range:)
+             (prefix (state catalogue) catalogue:) (prefix (state collection) collection:) (prefix (head range) range:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
              (prefix (head widget) widget:) (prefix (head window) window:)

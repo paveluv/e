@@ -263,7 +263,7 @@
     (if (not ids) (rescan!)
       (let ([jobs (with-mutex lock (vector->list (hashtable-values desired)))])
         (for-each (lambda (p) (when (eq? (cadr p) 'collection) (schedule! (car p))))
-          (model:metadata (filter (lambda (id) (not (with-mutex lock (hashtable-contains? owned id)))) ids)))
+          (model:metadata (filter (lambda (id) (and (row:source? id) (not (with-mutex lock (hashtable-contains? owned id))))) ids)))
         (for-each (lambda (id)
                     (when (with-mutex lock (and (hashtable-contains? owned id) (not (hashtable-contains? desired id))))
                       (schedule! id))) ids)
