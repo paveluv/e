@@ -39,7 +39,8 @@
     (let* ([v (get (collection:summary (query id)) 'value)] [s (selected id)]
            [p (get (model:snapshot (preview id)) 'value)])
       (and (eq? (get v 'status) 'ready) s (= (cadr s) (get v 'generation))
-           (eq? (get p 'status) 'ready) (equal? s (cadr (get p 'basis))))))
+           (eq? (get p 'status) 'ready) (equal? s (cadr (get p 'basis)))
+           (equal? (caddr s) (view:state (interaction:snapshot (child id 'preview)))))))
   (define (await id) (test:await 'review-ready (lambda () (pump!) (ready id))))
   (view:arrange! actor (list (list root 0 (list (list 'a a '(grow 2)) (list 'b b '(grow 1)) (list 'c c '(grow 1)) (list 'copy copy '(grow 1))) '())) '())
   (widget:mount! root 'review-fixture)

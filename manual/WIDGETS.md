@@ -776,9 +776,11 @@ intended text and bypass this policy.
 
 The field accepts one line. Multiline paste is refused whole; an external
 multiline edit displays an explanatory ghost without changing the source or
-its read-only flag. Undo is still available. Selections retain their actual
-edit basis: a concurrent disjoint edit rebases, and overlap refuses rather
-than overwriting unseen text. No operation switches the current editor buffer.
+its read-only flag. Undo is still available. Idle entries and editors advance
+their saved cursor and selection through known text changes, including on
+reopen after a restart. An edit already in progress retains its actual basis:
+a concurrent disjoint edit rebases, and overlap refuses rather than overwriting
+unseen text. No operation switches the current editor buffer.
 If the selection's history has expired, Home or End establishes a new caret
 at the corresponding endpoint; typing cannot silently reuse an unknown range.
 

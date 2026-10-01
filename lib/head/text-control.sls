@@ -1,7 +1,7 @@
 ;; Guarded text commands and editing policies shared by authored controls.
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-control)
-  (export basis-text call-with-intent! context current? history! lines mirror pending? register-policy! revision submit! undo-scope)
+  (export advance! basis-text call-with-intent! context current? history! lines mirror pending? register-policy! revision submit! undo-scope)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:)
           (prefix (foundation text) text:)
           (prefix (head head) head:) (prefix (head interaction) interaction:)
@@ -88,6 +88,14 @@
   (define (basis-text source d)
     (text-source:basis-text (mirror source) (lines source) (revision source)
       (or (view:basis d) (revision source))))
+
+  (edoc "Advance an idle text view's logical anchors through its retained delta chain. Missing history leaves the state untouched. Admission owns settlement while a command is pending; service pumps must not supersede it."
+        (id model "text view") (source list "current source snapshot") (d list "current descriptor")
+        (positions list "logical anchors") (state procedure "rebased positions to portable view state"))
+  (define (advance! id source d positions state)
+    (when (and (not (pending? id)) (view:basis d) (not (= (view:basis d) (revision source))))
+      (let ([points (text-source:rebase positions (text-source:changes (mirror source) (view:basis d) (revision source)))])
+        (when points (interaction:set-state! head:ui-actor id (revision source) (state points))))))
 
   (edoc "Whether an invocation still addresses the same source and ownership generation."
         (id model "control") (source list "source snapshot") (d list "view descriptor") (returns boolean) (effects internal))

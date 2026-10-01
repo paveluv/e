@@ -125,13 +125,9 @@
         (when (or (not (mount-backend? (mounted id))) (mount-surface (mounted id)))
           (let-values ([(source d inputs) (widget:context id 'current)])
             (refresh-effects! id source)
-            ;; Idle views advance their logical anchors while the mirror still
-            ;; has the delta chain. Admission itself owns settlement; adoption
-            ;; callbacks must not manufacture a newer user interaction.
-            (when (and (not (following? inputs)) (not (text-control:pending? id)) (view:basis d) (not (= (view:basis d) (text-control:revision source))))
-              (let ([ps (points source d)])
-                (when ps (interaction:set-state! head:ui-actor id (text-control:revision source)
-                           (append ps (list (cadddr (editor-state:state d))))))))
+            (unless (following? inputs)
+              (text-control:advance! id source d (list-head (editor-state:state d) 3)
+                (lambda (ps) (append ps (list (cadddr (editor-state:state d)))))))
             (let* ([m (mounted id)] [document (text-source:id (text-control:mirror source))]
                    [name (option d 'mode (store:property document 'mode #f))] [mode (and name (mode:find name))]
                    [facts (cons (cons 'wrap (store:property document 'wrap 'default))

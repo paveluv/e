@@ -99,6 +99,12 @@
       (and points (> width 0) (> height 0) (cons (- (cdar points) (offset points width)) 0))))
   (define (context id)
     (text-control:context id 'entry))
+  (define (service! id frame)
+    (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
+      (when (and ref (eq? (car ref) 'buffer) (text-source:lookup (cadr ref)))
+        (let-values ([(source d inputs) (widget:context id 'current)])
+          (when (single-line? (text-control:lines source))
+            (text-control:advance! id source d (state d) values))))))
 
   (edoc "Select a range in an entry's text source; caret and anchor are character indices, snapped to whole graphemes."
         (id model "entry view") (caret integer "active end") (anchor integer "fixed end"))
@@ -231,6 +237,7 @@
   (define (init!)
     (widget:register! 'entry 1
       (list (cons 'prepare data) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
+        (cons 'service service!)
         (cons 'release (lambda (id) (hashtable-delete! projectors id)))
         (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) '(1 1) (list 1 (+ 1 (cdr (car (reverse (caddr data)))))))))
         (cons 'focus #t) (cons 'contexts '(widget-entry)) (cons 'event event!) (cons 'pointer-bindings pointer-bindings)

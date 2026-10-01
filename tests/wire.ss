@@ -1327,6 +1327,19 @@
        (call-with-restart-fixture
          (lambda (head control base original original-fingerprint
                    source-path source wire-path wire-source pid-path path temporary file hold restoring)
+           ;; A hidden Finder keeps its own cursor while another view edits
+           ;; their shared filter. Restart must rebase that saved cursor.
+           (head-read head
+             `(let* ([was (head:current-buffer)] [app (finder:open-directory! ,root)]
+                     [host (head:buffer-fact (head:current-buffer) 'widget-id #f)]
+                     [entry (widget:descendant app 'table 'filter 'entry)])
+                (entry:insert! entry "old")
+                (head:show-buffer! was) (widget:unmount! host)
+                (let ([other (view:fork! head:ui-actor entry)])
+                  (widget:mount! other 'filter-writer)
+                  (entry:set-text! other ,(string-append root "/A"))
+                  (widget:unmount! other)
+                  (view:retire! head:ui-actor other (cdr (assq 'revision (caddar (cadr (model:snapshots (list other)))))))) #t))
            ;; quitting asks nothing: the draft goes with the head, named in the exit notice
            (head-send! head "\x18;\x03;")
            (head-wait 'fixture-head-detaches head (lambda () (head-sees? head "e: detached")))
@@ -1341,6 +1354,13 @@
                (list (occurrences (vector-ref launcher 3) "Restart anyway?")
                      (> (occurrences (vector-ref launcher 3) "restart keeps shared text with undo/redo history") 0)
                      (head-read launcher '(head:buffer-file (head:current-buffer)))) (list 0 #t file))
+             (test:check 'restarted-hidden-finder-edits-the-restored-filter
+               (head-read launcher
+                 '(let* ([app (finder:open!)] [entry (widget:descendant app 'table 'filter 'entry)])
+                    (entry:delete! entry 'backward)
+                    (let-values ([(source d inputs) (widget:context entry 'current)])
+                      (vector-ref (cdr (assq 'value source)) 0))))
+               (string-append root "/"))
              (head-send! launcher "\x18;\x03;")
              (head-wait 'detach-before-lost-reply launcher (lambda () (head-sees? launcher "e: detached")))
              (sys:reap-terminal-process! (vector-ref launcher 0)))
@@ -2054,11 +2074,11 @@
                      (lambda () (and (head-sees? a "> REMOTE beta") (head-sees? a "[Unavailable widget"))))
                    (test:check 'widget-resume-preserves-state-and-missing-renderer
                      (head-read a `(list (view:state (interaction:snapshot ',first)) (widget:actions ',missing))) '(1 ()))
-                   (test:check 'nested-resume-restores-focus-and-logical-selection
+                   (test:check 'nested-resume-restores-focus-and-advances-logical-selection
                      (head-read a `(list (view:focus (interaction:snapshot ',root-view)) (view:state (interaction:snapshot ',right))
                                          (text-source:lines (text-source:lookup ,source))))
-                     (list right '((0 . 3) (0 . 1)) '#("off remote seed")))
-                   (test:check 'resumed-entry-retains-its-selection-basis-through-detached-edits
+                     (list right '((0 . 7) (0 . 5)) '#("off remote seed")))
+                   (test:check 'resumed-entry-edits-its-rebased-selection-after-detached-edits
                      (head-read a `(begin (entry:insert! ',right "X") (vector-ref (text-source:lines (text-source:lookup ,source)) 0)))
                      "off rXote seed")
                    (head-read a `(begin (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (head:buffer-fact b 'widget-id #f))) (head:buffers))) (for-each (lambda (b) (head:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (head:buffer-fact b (quote widget-id) #f))) (head:buffers)))
