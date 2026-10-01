@@ -1555,7 +1555,7 @@
                (let* ([environment (rpc temporary 'environment-create
                                      (list (cons 'directory root) '(roots) '(imports (chezscheme))) 'transient)]
                       [job (rpc temporary 'environment-evaluate environment 1
-                             (format "(display \"ready\") (let wait () (unless (file-exists? ~s) (sleep (make-time 'time-duration 5000000 0)) (wait))) 42" gate))])
+                             (format "(display \"ready\") (let wait () (unless (file-exists? ~s) (sleep (make-time 'time-duration 5000000 0)) (wait))) 42" gate) #f)])
                  (define (job-value)
                    (cdr (assq 'value (caddr (caadr (rpc head 'model-read (list job)))))))
                  (let ([output (cadr (cdr (assq 'output (job-value))))])

@@ -16,17 +16,25 @@
     (list (cons 'directory (current-directory)) '(roots) '(values (seed . 11))
       '(imports (chezscheme) (prefix (service resource) resource:))
       (list 'resources (cons 'shared (list 'buffer shared)))))
-  (define a (environment:create! alice recipe 'persistent))
+  (define a (environment:for-document! alice shared recipe))
   (define b (environment:create! bob recipe 'transient))
   (dynamic-wind void
     (lambda ()
       (test:check 'environments-are-lazy (test:child-pids) baseline)
+      (test:check 'document-environment-is-shared-across-heads
+        (environment:for-document! bob shared recipe) a)
       (let* ([first (run alice a "(define private (+ seed 1)) private")]
              [second (run bob a "(+ private 1)")]
              [independent (run bob b "private")])
         (test:check 'environment-jobs-are-ordered-shared-explicitly-and-isolated
           (list (result first) (result second) (get (done independent) 'status))
           '((value (12) "(12)") (value (13) "(13)") error)))
+      (let ([job (environment:evaluate! alice a (generation a)
+                   "(set! private (+ private 1)) (values private (lambda () private))"
+                   '(lambda (results) (list (car results) (procedure? (cadr results)))))])
+        (test:check 'projection-runs-inside-worker-after-one-evaluation
+          (list (result job) (result (run alice a "private")))
+          '((value ((13 #t)) "((13 #t))") (value (13) "(13)"))))
       (let* ([j (run bob a "(resource:edit! 'shared 0 '(0 3 0 3) '(\"!\")) (resource:edit! 'shared 0 '(0 0 0 0) '(\"bad\"))")]
              [outcome (result j)])
         (test:check 'broker-uses-job-actor-and-exact-revisions
@@ -42,7 +50,9 @@
             (let-values ([(next states) (store:export)]) (and (assv output states) #t))
             (environment:cancel! alice j))
           '(handle (#\e #\o #\r #\r #\t #\u) ok #t #t finished))
-        (environment:reset! alice a (generation a))
+        (environment:for-document! alice shared (append recipe '()))
+        (let ([changed (map (lambda (p) (if (eq? (car p) 'values) '(values (seed . 11) (extra . 1)) p)) recipe)])
+          (environment:for-document! bob shared changed))
         (test:check 'reset-fences-handles-and-catalogue
           (list (car (get (value j) 'result))
             (environment:completion a (car page) (cadr page) 0 256)
@@ -66,6 +76,9 @@
       (environment:close! bob b (generation b))
       (let ([saved (run alice a "(define transient-binding 9) (display \"retained\") '(portable)")])
         (done saved)
+        (let ([history (history:create! alice 'persistent)])
+          (history:append! alice history 0 (list 'result 1 saved) #f (list saved a))
+          (history:append! alice history 1 '(unregistered-example 1 (inert data)) #f '()))
         (environment:stop!)
         (let ([process (sys:open-process '("scheme" "--script" "tests/environment-recovery.sps"))])
           (dynamic-wind void

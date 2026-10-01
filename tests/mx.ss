@@ -21,6 +21,9 @@
              (prefix (head mode) mode:) (prefix (modes scheme-mode) scheme-mode:)
              (prefix (foundation edoc) edoc:) (prefix (head paint) paint:) (prefix (state store) store:)
              (prefix (head namespace) namespace:) (prefix (service environment) environment:)
+             (prefix (apps history-view) history-view:) (prefix (service history) history:)
+             (prefix (state collection) collection:) (prefix (state connection) connection:)
+             (prefix (head range) range:) (prefix (sys glyph) glyph:)
              (prefix (head control) control:) (prefix (head entry) entry:) (prefix (head layout) layout:))
 
      (define check test:check)

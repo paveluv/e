@@ -1161,6 +1161,18 @@ immediately. Jobs in one environment execute in submission order; different
 environments execute independently. Explicitly sharing the environment ID
 shares definitions and ordering. Opening or splitting a view starts no worker.
 
+`environment:for-document! actor document-id recipe` obtains one persistent
+environment associated with a document, shared across heads. A changed recipe
+resets its generation and native bindings while retaining completed jobs.
+Other documents have independent environments.
+
+An optional fifth argument to `environment:evaluate!` is a Scheme expression
+evaluating to a procedure that receives the final values list inside the worker.
+Its returned values become the job result. For example, a worksheet can pass
+`'render-result-comment` to its imported formatter. The source runs once, at
+top level; formatting happens afterward, so even native objects can be reduced
+to portable comment text. False preserves the ordinary result.
+
 The job contains its source, generation, status, structured diagnostic and
 result. `output` references ordinary read-only base text. `channels` records
 reverse-chronological `(channel row character)` run starts; channels are
@@ -1170,6 +1182,22 @@ in each job update. A result is `(value values preview)` or
 `(handle generation number preview)`; previews are bounded. A reset changes a
 retained handle to `(expired preview)`. A general live-object browser is not
 provided yet.
+
+`history:create!` and `history:append!` retain ordered references to text, jobs
+and explicit `(kind schema data)` presentation recipes. `history-view:create!`
+hosts a bounded page of independent child views; its second argument is the
+number of visible items (1–16). Previous/Next and M-p/M-n change its logical
+item anchor. Text and result presentations are built in; an extension can
+register another recipe with `history-view:register!`. Missing definitions
+show inert markers until registered. Recipes are never evaluated as Scheme.
+
+The current page's child interaction survives hiding or recovery. Moving an
+item off the page retires its disposable presentation; showing it again creates
+a new view over the same retained source. It never releases a borrowed job or
+environment. `history-view:projection` returns an item's explicitly supplied
+text for copy/export, or an unavailable marker; widget data never enters file
+bytes or text undo. `examples/history.e` constructs text, an evaluation result
+and a connected table/preview entirely at runtime, with no inner window.
 
 Within a worker, `resource:read` returns a declared resource's `(revision value)`.
 `resource:edit!` edits declared text using an exact revision and a logical span;
@@ -1218,7 +1246,7 @@ No arbitrary model traversal or implicit current-model alias is involved.
 Environment controls and result controls use this same receiver mechanism.
 
 Asynchronous completion sources may supply a local `basis` procedure and an
-idempotent `release` procedure as the fifth/sixth arguments to
+idempotent `release` procedure as the fourth/fifth arguments to
 `completion:make-source`. A changed basis refreshes visible choices and fences
 old selections even when the draft has not changed. Cleanup releases shared
 catalogue demand; painting reads only prepared completion data.

@@ -1,7 +1,7 @@
 ;; Native namespaces are supervised resources; their recipes and jobs are models.
 (import (only (foundation edoc) elibrary))
 (elibrary (service environment)
-  (export cancel! close! completion create! evaluate! release! reset! restore! stop!)
+  (export cancel! close! completion create! evaluate! for-document! release! reset! restore! stop!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core worker) worker:)
     (prefix (foundation datum) datum:) (prefix (foundation text) text:)
     (prefix (state model) model:) (prefix (state store) store:) (prefix (sys activity) activity:))
@@ -36,12 +36,15 @@
                   (named? (get r 'resources)) (for-all (lambda (p) (resource? (cdr p))) (get r 'resources)))
           (error 'create! "invalid environment recipe")) r)))
   (define (environment-value? v)
-    (and (fields? v '(recipe generation status catalogue count notice))
+    (and (or (fields? v '(recipe generation status catalogue count notice))
+             (and (fields? v '(recipe generation status catalogue count notice document))
+                  (natural? (get v 'document))))
       (natural? (get v 'generation)) (natural? (get v 'catalogue)) (natural? (get v 'count))
       (memq (get v 'status) '(idle running reset))
       (guard (ex [else #f]) (equal? (recipe (get v 'recipe)) (get v 'recipe)))))
   (define (job? v)
-    (and (fields? v '(environment generation source status output channels result diagnostic))
+    (and (or (fields? v '(environment generation source status output channels result diagnostic))
+             (fields? v '(environment generation source status output channels result diagnostic projection)))
       (model:reference? (get v 'environment)) (natural? (get v 'generation))
       (string? (get v 'source)) (resource? (get v 'output))
       (memq (get v 'status) '(queued running ok error cancelled reset))))
@@ -139,7 +142,7 @@
                  [(read) (unless (null? args) (error 'resource "invalid read")) (list (get r 'revision) (get r 'value))]
                  [(commit)
                   (unless (= (length args) 2) (error 'resource "invalid commit"))
-                  (when (memq (get r 'kind) '(environment evaluation-job widget-view collection buffer-catalogue
+                  (when (memq (get r 'kind) '(history history-item environment evaluation-job widget-view collection buffer-catalogue
                                                connection-topology connection-bindings prompt-request))
                     (error 'resource "use the model's owning service"))
                   (call-with-values (lambda () (model:commit! actor
@@ -179,7 +182,8 @@
           (catalogue! initial)
           (admit g generation (lambda () (group-initialized?-set! g (eq? (cadr initial) 'ok)))))
         (let* ([result (if (and initial (not (eq? (cadr initial) 'ok))) initial
-                         (request (list 'evaluate (get (get j 'value) 'source))))]
+                         (request (list 'evaluate (get (get j 'value) 'source)
+                                    (cond [(assq 'projection (get j 'value)) => cdr] [else #f]))))]
                [value (caddr result)])
           (catalogue! result)
           (admit g generation
@@ -239,23 +243,57 @@
       (model:create! actor 'environment 1 'session persistence (map cdr (get r 'resources))
         (list (cons 'recipe r) '(generation . 1) '(status . idle) '(catalogue . 0) '(count . 0) '(notice . #f)))))
 
+  (define document-lock (make-mutex))
+
+  (edoc "Get the persistent isolated environment for an explicit document. Changed recipes reset its generation and live bindings, preserving completed jobs. Concurrent heads share the same document environment."
+    (actor actor "caller") (document integer "owning document ID") (input list "environment recipe") (returns model) (public))
+  (define (for-document! actor document input)
+    (let ([r (recipe input)] [scope (list 'buffer document)])
+      (unless (store:exists? document) (error 'for-document! "document is unavailable" document))
+      (kernel:call-with-deferred-deliveries
+        (lambda () (with-mutex document-lock
+                     (let ([existing (find (lambda (id)
+                                             (let ([r (record id 'environment)])
+                                               (and r (equal? (assq 'document (get r 'value)) (cons 'document document)))))
+                                       (model:ids 'environment))])
+                       (if (not existing)
+                         (model:create! actor 'environment 1 'session 'persistent (cons scope (map cdr (get r 'resources)))
+                           (list (cons 'recipe r) '(generation . 1) '(status . idle) '(catalogue . 0) '(count . 0) '(notice . #f)
+                             (cons 'document document)))
+                         (let* ([g (group-for existing)]
+                                [old (admit g (group-generation g)
+                                       (lambda ()
+                                         (if (equal? r (get (get (record existing 'environment) 'value) 'recipe)) #f
+                                           (let* ([old (reset-group! actor g "Environment recipe changed; live bindings were reset")]
+                                                  [current (record existing 'environment)])
+                                             (let-values ([(status rows) (model:commit! actor
+                                                                           (list (list existing (get current 'revision) (cons scope (map cdr (get r 'resources)))
+                                                                                   (put (get current 'value) (cons 'recipe r)))))])
+                                               (unless (eq? status 'applied) (error 'for-document! "environment changed outside its owner"))) old))))])
+                           (when old (worker:close! old)) existing))))))))
+
   (edoc "Submit Scheme source in environment order and return its job model immediately. The job survives head detachment. Generation mismatch refuses without creating work."
     (actor actor "submitting actor") (id model "environment") (generation integer "expected namespace generation")
-    (source string "Scheme forms") (returns model) (receiver id (model environment)))
-  (define (evaluate! actor id generation source)
-    (unless (string? source) (error 'evaluate! "expected source text"))
-    (let ([g (group-for id)])
-      (unless g (error 'evaluate! "environment is unavailable"))
-      (admit g generation
-        (lambda ()
-          (let* ([r (record id 'environment)]
-                 [output (list 'buffer (store:create! actor "<evaluation>" '("")
-                                         (list '(internal . #t) '(read-only . #t)
-                                           (cons 'disposable (eq? (get r 'persistence) 'transient)))))]
-                 [job (model:create! actor 'evaluation-job 1 id (get r 'persistence) (list id output)
-                        (map cons '(environment generation source status output channels result diagnostic)
-                          (list id generation source 'queued output '() #f #f)))])
-            (group-queue-set! g (append (group-queue g) (list job))) (start! g) job)))))
+    (source string "Scheme forms") (projection datum "optional procedure expression receiving the final values list inside the worker; false preserves values")
+    (returns model) (receiver id (model environment)))
+  (define evaluate!
+    (case-lambda
+      [(actor id generation source) (evaluate! actor id generation source #f)]
+      [(actor id generation source projection)
+       (unless (string? source) (error 'evaluate! "expected source text"))
+       (let ([projection (datum:copy projection)])
+         (let ([g (group-for id)])
+           (unless g (error 'evaluate! "environment is unavailable"))
+           (admit g generation
+             (lambda ()
+               (let* ([r (record id 'environment)]
+                      [output (list 'buffer (store:create! actor "<evaluation>" '("")
+                                              (list '(internal . #t) '(read-only . #t)
+                                                (cons 'disposable (eq? (get r 'persistence) 'transient)))))]
+                      [job (model:create! actor 'evaluation-job 1 id (get r 'persistence) (list id output)
+                             (map cons '(environment generation source status output channels result diagnostic projection)
+                               (list id generation source 'queued output '() #f #f projection)))])
+                 (group-queue-set! g (append (group-queue g) (list job))) (start! g) job)))))]))
 
   (edoc "Cancel a queued job without changing definitions. A running job resets its entire environment generation and reaps the worker; committed external effects remain. Return queued, reset or finished."
     (actor actor "caller") (id model "job") (returns symbol) (receiver id (model evaluation-job)))

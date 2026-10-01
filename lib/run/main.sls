@@ -269,7 +269,7 @@
         (reverse
           (kernel:load-modules!
             '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "environment" "eval" "extension" "finder" "git-view"
-              "glyph" "head" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
+              "glyph" "head" "history" "history-view" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
               "namespace" "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "render" "scheme-format"
               "conflict-review" "conflict-source" "review-preview" "rewrite" "rewrite-source" "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "widget" "window"))))
       (load-config!)

@@ -55,6 +55,7 @@
               (completion-state:choose! s (car shown) "private-name") #f))
           (completion-state:finish! s))
         ((completion:source-release b)))
+      (include "tests/history.sps")
       (let* ([view (eval:create-result-view! who job)] [fork (view:fork! who view)]
              [children (test:child-pids)]
              [draft (list 'buffer (store:create! who "model prompt" '("(+ private-name 1)") '((internal . #t))))]
