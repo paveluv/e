@@ -100,13 +100,8 @@
         (values (lambda (mapped)
                   (query-spec (mapped (field v 'source)) (field v 'filter) (field v 'sort) (field r 'persistence)
                     (map mapped (get v 'owned '())) (mapped (field r 'scope)))) mapping rollback))))
-  (define (retire-query! actor id)
-    (let retry ()
-      (let ([r (model:snapshot id)])
-        (when r
-          (let-values ([(status row) (model:retire! actor id (field r 'revision))])
-            (when (eq? status 'stale) (retry)))))))
-  (define lifecycle (view:register-resource-kind! 'collection 1 copy-query! retire-query!))
+  (define lifecycle (view:register-resource-kind! 'collection 1 copy-query!
+                      (lambda (r) (get (field r 'value) 'owned '()))))
   (define (validate-sort! sortable sort)
     (unless (and (list? sort)
               (let loop ([rest sort] [seen '()])

@@ -16,11 +16,11 @@
          [root (prompt:create! request '((label . "A question long enough to wrap: yes or no?") (choices . "yn")) '())])
     (widget:mount! root 'question-fixture) (widget:prepare! root 18 6)
     (widget:focus! root (widget:descendant root 'input 'entry))
-    (for-each (lambda (event) (dispatch:input! root event))
+    (for-each (lambda (event) (routing:input! root event))
       '((key "UP") (text "ny" paste) (text "x" typed) (key "RET")))
     (check 'question-refuses-navigation-unlisted-input-and-multiple-answers
       (field (field (model:snapshot request) 'value) 'status) 'editing)
-    (dispatch:input! root '(key "Y" "Y"))
+    (routing:input! root '(key "Y" "Y"))
     (check 'question-captures-one-case-insensitive-answer
       (cadr (field (field (model:snapshot request) 'value) 'outcome)) '#("Y"))
     (widget:unmount! root) (prompt:drain!))
@@ -72,8 +72,8 @@
         (field (field (model:snapshot first) 'value) 'status)) (list a #t 'editing))
     (widget:prepare! host 32 8)
     (widget:focus! host (widget:descendant a 'input 'entry))
-    (dispatch:input! host '(text "!" typed))
-    (dispatch:input! host '(key "RET"))
+    (routing:input! host '(text "!" typed))
+    (routing:input! host '(key "RET"))
     (widget:pump!)
     (check 'prompt-named-outcome-is-deferred (list outcomes (field (field (model:snapshot first) 'value) 'status)) '(() accepted))
     (prompt:drain!)
@@ -81,7 +81,7 @@
       outcomes '((accepted (1 #("!one") (first-origin)))))
     (prompt:accept! a) (widget:pump!) (prompt:drain!)
     (widget:focus! host (widget:descendant b 'input 'entry))
-    (dispatch:input! host '(key "C-g")) (widget:pump!) (prompt:drain!)
+    (routing:input! host '(key "C-g")) (widget:pump!) (prompt:drain!)
     (check 'prompt-capture-cancels-multiline-input-without-affecting-other-outcomes
       outcomes '((cancelled (second-origin)) (accepted (1 #("!one") (first-origin)))))
     (widget:unmount! fork) (widget:unmount! host) (prompt:drain!)
@@ -120,9 +120,9 @@
       (widget:mount! root 'completion-prompt)
       (set! entry (widget:descendant root 'input 'entry))
       (show!) (widget:focus! root entry) (entry:select! entry 1 1)
-      (show!) (dispatch:input! root '(key "TAB")) (show!)
+      (show!) (routing:input! root '(key "TAB")) (show!)
       (check 'embedded-prompt-normalizes-authored-text (list (line) factory-origins) '("alpha!" ((completion-origin))))
-      (dispatch:input! root '(key "TAB")) (show!)
+      (routing:input! root '(key "TAB")) (show!)
       (let* ([binding (cadr (assoc '(click primary ()) (widget:pointer-bindings 1 0)))] [before lookups])
         (widget:prepare! root 30 5) (widget:pointer-bindings 2 0)
         (check 'completion-paint-and-hit-discovery-do-not-query-provider (list lookups extensions) (list before 1))
@@ -130,7 +130,7 @@
         (check 'embedded-completion-rejects-stale-mouse-binding
           (list (keymap:run! binding) (line)) '(#f "none")))
       (entry:set-text! entry "a") (show!)
-      (dispatch:input! root '(key "TAB")) (dispatch:input! root '(key "TAB")) (show!)
+      (routing:input! root '(key "TAB")) (routing:input! root '(key "TAB")) (show!)
       (widget:pointer! '(pointer press primary ()) 15 0)
       (check 'embedded-completion-mouse-chooses-current-value (line) "alpha-beta!")
       (kernel:retract-module! 'prompt-completion-fixture) (widget:pump!) (prompt:drain!)
@@ -192,12 +192,12 @@
           (list (model:snapshot request) outcomes) (list #f before))
         (widget:unmount! root) (widget:unmount! receiver) (prompt:drain!)
         (view:retire! who receiver (field (model:snapshot receiver) 'revision)))) '(unmount reload))
-  (let ([answers '()] [original (head:current-window)] [buffer (head:current-buffer-mirror)] [requests '()])
+  (let ([answers '()] [original (seat:current-window)] [buffer (seat:current-buffer-mirror)] [requests '()])
     (define (start! text)
       (suspension:call! who void
         (lambda () (set! answers (cons (prompt:read! "Input:" text #f '()) answers))))
       (widget:pump!)
-      (let* ([root (head:window-widget (head:popup))]
+      (let* ([root (seat:window-widget (seat:popup))]
              [receiver (cadr (car (reverse (view:children (interaction:snapshot root)))))]
              [request (view:source (interaction:snapshot receiver))])
         (set! requests (cons request requests))
@@ -214,7 +214,7 @@
         (list answers (field (field (model:snapshot (cadr requests)) 'value) 'status)) '((#f) editing))
       (prompt:accept! outer) (settle!)
       (check 'linear-prompt-restores-host-and-retires-request-tree
-        (list answers (eq? original (head:current-window)) (eq? buffer (head:current-buffer-mirror)) (map model:snapshot requests))
+        (list answers (eq? original (seat:current-window)) (eq? buffer (seat:current-buffer-mirror)) (map model:snapshot requests))
         '(("outer" #f) #t #t (#f #f))))
     (start! "reload")
     (kernel:retract-module! 'prompt-host-fixture)

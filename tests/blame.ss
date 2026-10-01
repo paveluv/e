@@ -10,10 +10,11 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
-     (import (except (head edit) init!) (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+     (import (except (head edit) init!) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:) (prefix (state store) store:) (prefix (foundation text) text:)
              (prefix (head layout) layout:) (prefix (state view) view:) (prefix (core kernel) kernel:) (prefix (service log) log:)
              (prefix (foundation string) string:) (prefix (test) test:))
@@ -130,7 +131,7 @@
      (move! a '(0 . 0))
      (at-point!)
      (check 'blame-names-the-rival-at-point
-       (list (equal? (ranges a) (ranges b)) (not (head:buffer-of-store-id id))
+       (list (equal? (ranges a) (ranges b)) (not (seat:buffer-of-store-id id))
          (exists (lambda (entry)
                    (let ([text (log:format-entry entry)])
                      (and (string:search text "(agent rival) wrote this at revision" 0 (string-length text)) #t)))

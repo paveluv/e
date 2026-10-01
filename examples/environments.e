@@ -44,5 +44,5 @@
          [root (view:create! head:ui-actor #f 'row 1 '() '())])
     (view:arrange! head:ui-actor
       (list (list root 0 (list (list 'first a '(grow 1)) (list 'second b '(grow 1)) (list 'third c '(grow 1))) '())) '())
-    (window:show-widget! (head:current-window) root)
+    (window:show-widget! (seat:current-window) root)
     (list root shared independent)))

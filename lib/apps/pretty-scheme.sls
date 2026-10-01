@@ -20,10 +20,10 @@
           init! (rename (pretty-scheme-rainbow! rainbow!)))
   (import (chezscheme)
           (prefix (head edit) edit:)
-          (prefix (head head) head:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head seat) seat:)
           (prefix (head text-control) text-control:)
           (prefix (head widget) widget:)
           (prefix (service doc) doc:)
@@ -299,7 +299,7 @@
     (if id
       (let-values ([(source d) (text-control:context id 'editor)])
         (edit:insert! id (closing (text-control:basis-text source d) (car (view:state d)))))
-      (edit:insert-text! (closing (head:buffer-lines (head:current-buffer-mirror)) (head:point)))))
+      (edit:insert-text! (closing (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point)))))
 
   (define (toggle-mode! name)
     (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
@@ -352,8 +352,8 @@
     (paint:add-status-hint!
       (lambda ()
         (and (pretty-buffer?)
-             (let* ([p (head:point)]
-                    [s (head:buffer-line (head:current-buffer-mirror) (car p))]
+             (let* ([p (seat:point)]
+                    [s (seat:buffer-line (seat:current-buffer-mirror) (car p))]
                     [c (and (< (cdr p) (string-length s))
                             (string-ref s (cdr p)))])
                (and c (memv c '(#\( #\) #\[ #\]))

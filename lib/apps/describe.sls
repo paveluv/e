@@ -17,13 +17,13 @@
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head mode) mode:)
+          (prefix (head seat) seat:)
           (prefix (head style) style:)
           (prefix (head widget) widget:)
           (prefix (head window) window:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service reference) reference:)
-          (prefix (state store) store:)
           (prefix (state view) view:))
 
   ;;; Fetching --------------------------------------------------------------------
@@ -80,11 +80,11 @@
       (if (not id)
         (edit:set-message! (format "No documentation for ~a" name))
         (begin
-          (head:adopt-store-buffer! id)
+          (seat:adopt-store-buffer! id)
           (let* ([root (window:tool! "describe" (lambda (commands) (create-page! id commands)) (format "describe:~a" id))]
                  [b (catalogue-host:resolve! root)])
             (if (window:pop-up-or-reuse! root) (edit:set-message! "")
-              (edit:set-message! (format "~a: see ~a" name (head:buffer-name b)))))))
+              (edit:set-message! (format "~a: see ~a" name (seat:buffer-name b)))))))
       id))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
@@ -92,8 +92,6 @@
   (define-syntax describe
     (syntax-rules ()
       [(_ name) (describe! 'name)]))
-
-
 
 
   ;;; The symbol at point ---------------------------------------------------------
@@ -105,9 +103,9 @@
   (define (symbol-at-point)
     ;; The symbol the cursor is on -- or just after, as at the end of a
     ;; word -- in the current buffer; #f when point is not at one.
-    (let* ([b (head:current-buffer-mirror)]
-           [p (head:point)]
-           [s (head:buffer-line b (car p))]
+    (let* ([b (seat:current-buffer-mirror)]
+           [p (seat:point)]
+           [s (seat:buffer-line b (car p))]
            [n (string-length s)]
            [on? (lambda (i)
                   (and (>= i 0) (< i n)
@@ -208,20 +206,20 @@
          (("procedure" . "(mode:add-extension! mode extension)")) "void"
          ("(head mode)") mode "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
-        ((head:set-app-cursor-visible!)
-         (("procedure" . "(head:set-app-cursor-visible! buffer visibility)")) "buffer"
+        ((seat:set-app-cursor-visible!)
+         (("procedure" . "(seat:set-app-cursor-visible! buffer visibility)")) "buffer"
          ("(head head)") head "App buffers" #f
          "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
-        ((head:set-app-presentation!)
-         (("procedure" . "(head:set-app-presentation! buffer sticky-lines head:scrollbar [wrap cursor-style])"))
+        ((seat:set-app-presentation!)
+         (("procedure" . "(seat:set-app-presentation! buffer sticky-lines seat:scrollbar [wrap cursor-style])"))
          "buffer" ("(head head)") head "App buffers" #f
          "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
-        ((head:buffer-window-size)
-         (("procedure" . "(head:buffer-window-size buffer)")) "pair or #f"
+        ((seat:buffer-window-size)
+         (("procedure" . "(seat:buffer-window-size buffer)")) "pair or #f"
          ("(head head)") head "App buffers" #f
          "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
-        ((head:add-buffer-kill-hook!)
-         (("procedure" . "(head:add-buffer-kill-hook! procedure)")) "unspecified"
+        ((seat:add-buffer-kill-hook!)
+         (("procedure" . "(seat:add-buffer-kill-hook! procedure)")) "unspecified"
          ("(head head)") head "Buffer lifecycle" #f
          "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
         ((head:add-shutdown-hook!)

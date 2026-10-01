@@ -8,6 +8,7 @@
 (eval
   '(begin
      (import (prefix (core extension) extension:) (prefix (core kernel) kernel:)
+             (prefix (core operation) operation:) (prefix (state actor) actor:)
              (prefix (foundation string) string:) (prefix (sys sys) sys:)
              (prefix (test) test:))
 
@@ -38,14 +39,61 @@
             ((unbox (kernel:persistent-cell 'extension-test-init (lambda () #f))) ',name))))
      (define (helper value)
        `(library (collection helper) (export value) (import (rnrs)) (define (value) ,value)))
+     (define (support generation)
+       `(library (operation-support) (export generation) (import (chezscheme)) (define generation ,generation)))
+     (define (allow! admission) (void))
 
      (mkdir scratch)
      (for-each (lambda (name) (mkdir (path name)))
        '("installation" "objects" "empty" "plugin" "plugin/lib" "deps" "deps/collection" "deps/other"
-         "failed" "failed/lib" "conflict" "conflict/lib" "conflict/lib/core" "shadow"))
+         "failed" "failed/lib" "conflict" "conflict/lib" "conflict/lib/core" "shadow"
+         "operations" "operations/lib" "operations/lib/base" "operations/lib/client"))
      (dynamic-wind
        void
        (lambda ()
+         (call-with-output-file (path "operations/lib/operation-probe.sls")
+           (lambda (out) (display (call-with-input-file "tests/operation-probe.sps" get-string-all) out)))
+         (put "operations/lib/base/operation-support.sls" (support 1))
+         (put "operations/lib/client/operation-support.sls" (support 100))
+         (let ([snapshot (lambda (admit!)
+                           (actor:call-as '(head "operation test")
+                             (lambda () (operation:dispatch! 'operation-probe:snapshot
+                                          '(() (actor integer datum)) '() admit! #f))))])
+           (test:check 'operation-definitions-load-only-explicitly
+             (test:raises? (lambda () (snapshot allow!))) #t)
+           (test:check 'operation-registration-rolls-back-with-failed-initialization
+             (list
+               (test:raises? (lambda () (kernel:call-with-registration-update
+                                          (lambda () (extension:load! (path "operations") "operation-probe")
+                                            (error 'fixture "abort")))))
+               (test:raises? (lambda () (snapshot allow!)))) '(#t #t))
+           (extension:load! (path "operations") "operation-probe")
+           (test:check 'operation-registration-requires-owner-contract-and-admission
+             (parameterize ([kernel:registering-module 'operation-probe])
+               (map test:raises?
+                 (list
+                   (lambda () (operation:register! 'operation-probe:bad kernel:call-with-registration-update 'control))
+                   (lambda () (operation:register! 'other:bad kernel:loaded-modules 'read))
+                   (lambda () (operation:register! 'operation-probe:bad kernel:loaded-modules 'anything)))))
+             '(#t #t #t))
+           (let* ([value (string-copy "owned")]
+                  [ack (operation:dispatch! 'operation-probe:remember! '((datum) #f) (list value) allow! #f)])
+             (string-set! value 0 #\X)
+             (test:check 'operation-owns-input-and-keeps-context-and-result-arity
+               (list ack (snapshot allow!)) '((completed) (values (head "operation test") 1 "owned"))))
+           (test:check 'operation-refuses-bad-contract-values-and-unsupported-results
+             (map test:raises?
+               (list (lambda () (operation:dispatch! 'operation-probe:remember! '((datum) #f) (list void) allow! #f))
+                     (lambda () (operation:dispatch! 'operation-probe:remember! '((datum) #f) '() allow! #f))
+                     (lambda () (operation:dispatch! 'operation-probe:remember! '((integer) #f) '(1) allow! #f))
+                     (lambda () (operation:dispatch! 'operation-probe:broken '(((one-of native count throw zero)) ()) '(native) allow! #f))
+                     (lambda () (operation:dispatch! 'operation-probe:broken '(((one-of native count throw zero)) ()) '(count) allow! #f))
+                     (lambda () (operation:dispatch! 'operation-probe:broken '(((one-of native count throw zero)) ()) '(throw) allow! #f))))
+             '(#t #t #t #t #t #t))
+           (put "operations/lib/base/operation-support.sls" (support 2))
+           (test:check 'operation-pins-definition-across-reload-at-admission
+             (list (snapshot (lambda (class) (kernel:reload-module! (kernel:source-library (path "operations/lib/base/operation-support.sls"))))) (snapshot allow!))
+             '((values (head "operation test") 1 "owned") (values (head "operation test") 2 "owned"))))
          (put "deps/collection/helper.sls" (helper 1))
          (put "deps/collection/middle.sls"
            '(library (collection middle) (export value) (import (rnrs) (prefix (collection helper) helper:))

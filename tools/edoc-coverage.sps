@@ -84,7 +84,7 @@
         [(and (pair? t) (list? t))
          (case (car t)
            [(one-of record) #f]
-           [(or list-of) (exists unknown-type? (cdr t))]
+           [(or list-of values) (exists unknown-type? (cdr t))]
            [else #t])]
         [else #t]))
 
@@ -114,7 +114,7 @@
                  [(edefine) (list (cons (if (pair? (cadr form)) (car (cadr form)) (cadr form)) 'documented))]
                  [(edefine-record-type)
                   (map (lambda (n) (cons n 'documented)) (record-names (cons 'define-record-type (cons (cadr form) (cdddr form)))))]
-                 [(define)
+                 [(define define-operation)
                   (let ([target (cadr form)])
                     (cond [(pair? target) (list (cons (car target) 'procedure))]
                           [(and (pair? (cddr form)) (pair? (caddr form)) (eq? (car (caddr form)) 'attach-name!)
@@ -489,7 +489,7 @@
                 (cond [(symbol? (car args)) (bind! (list (car args))) (when (pair? (cdr args)) (bind! (binding-names (cadr args))) (init! (cadr args)))]
                       [else (bind! (binding-names (car args))) (init! (car args))])
                 (walk-all args))]
-             [(define)
+             [(define define-operation)
               (when (pair? args)
                 (cond [(pair? (car args))
                        (bind! (list (caar args))) (bind-formals! (cdar args))
@@ -549,7 +549,7 @@
               [entries
                (cond
                  [(not (pair? form)) '()]
-                 [(memq (car form) '(define edefine))
+                 [(memq (car form) '(define define-operation edefine))
                   (let* ([target (cadr form)]
                          [rest (if (eq? (car form) 'edefine)
                                    (filter (lambda (f) (not (edoc-annotation? f))) (cddr form))

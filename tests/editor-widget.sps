@@ -14,7 +14,7 @@
   (publish "31") (widget:mount! id 'surface-editor)
   (let ([before (shown)])
     (store:edit! actor source (store:revision source) (text:make-span 0 0 0 3) '("new"))
-    (head:sync-foreign-edits! source) (widget:pump!)
+    (seat:sync-foreign-edits! source) (widget:pump!)
     (check 'editor-keeps-text-and-style-coherent-across-publication-gap (shown) before)
     (publish "32") (widget:pump!)
     (check 'editor-adopts-complete-surface-packet
@@ -38,7 +38,7 @@
     (widget:unmount! view)))
 
 ;; Two widths share text and the existing renderer, but never interaction.
-(let* ([actor head:ui-actor] [ambient (head:current-buffer-mirror)]
+(let* ([actor head:ui-actor] [ambient (seat:current-buffer-mirror)]
        [source (store:create! actor "nested editor" '("abcdefghijklmno" "a界éz" "" "last") '((mode . "editor-test")))]
        [a (create-view! actor source '())] [b (create-view! actor source '((wrap . #f)))]
        [root (view:create! actor #f 'row 1 '() '())] [calls 0])
@@ -48,7 +48,7 @@
   (define (body f n) (list-ref (widget:frame-children f) n))
   (define (face f x y) (vector-ref (widget:frame-styles f y (list-ref (widget:frame-lines f) y)) x))
   (define (text) (let-values ([(lines revision) (store:snapshot source)]) lines))
-  (define (key token) (dispatch:input! root (list 'key token)))
+  (define (key token) (routing:input! root (list 'key token)))
   (mode:register! "editor-test" '() '() #f #f
     (lambda (source row line) (set! calls (+ calls 1)) (make-vector (string-length line) 'keyword)))
   (view:arrange! actor (list (list root 0 (list (list 'narrow a '(grow 1)) (list 'wide b '(grow 2))) '())) '())
@@ -57,7 +57,7 @@
     (check 'editor-nests-at-independent-widths
       (list (map glyph:cells (map car (map widget:frame-lines (list narrow wide))))
         (substring (cadr (widget:frame-lines narrow)) 0 6)
-        (eq? ambient (head:current-buffer-mirror)) (not (head:buffer-of-store-id source)))
+        (eq? ambient (seat:current-buffer-mirror)) (not (seat:buffer-of-store-id source)))
       '((10 17) "klmno " #t #t))
     (show! 27)
     (check 'editor-warm-frame-does-not-repeat-mode-analysis calls before))
@@ -110,15 +110,15 @@
   (undo! a)
   (check 'editor-inactive-host-ends-the-typing-group (store:line source 2) "ABE")
   (undo! a)
-  (let* ([other (head:new-buffer! "grouped editor")]
-         [other-id (head:buffer-store-id other)] [batch #f])
+  (let* ([other (seat:new-buffer! "grouped editor")]
+         [other-id (seat:buffer-store-id other)] [batch #f])
     (call-as-one-edit! "Mixed edits"
       (lambda ()
         (set! batch (current-batch))
         (insert! a "G")
-        (head:with-buffer-mirror other (insert-text! "x"))
+        (seat:with-buffer-mirror other (insert-text! "x"))
         (call-as-one-edit! "Nested label"
-          (lambda () (insert! a "H") (head:with-buffer-mirror other (insert-text! "y"))))))
+          (lambda () (insert! a "H") (seat:with-buffer-mirror other (insert-text! "y"))))))
     (check 'one-edit-scope-covers-nested-and-current-window-commands
       (list (cadar (store:undo-labels source)) (cadar (store:undo-labels other-id))
         (for-all (lambda (row) (equal? batch (cdr (assq 'batch (caddr row)))))
@@ -186,7 +186,7 @@
   (store:set-property! actor source 'read-only #t)
   (select! a '(1 . 0) '(2 . 3)) (key "M-w")
   (check 'editor-copy-read-only-reversed-region-without-retargeting
-    (list (copy-text) (cadddr (state a)) (eq? ambient (head:current-buffer-mirror)) (store:line source 1)) '("abc\ndef" #f #t "abc"))
+    (list (copy-text) (cadddr (state a)) (eq? ambient (seat:current-buffer-mirror)) (store:line source 1)) '("abc\ndef" #f #t "abc"))
   (select! a '(1 . 0) '(2 . 3))
   (check 'editor-refused-cut-keeps-clipboard (list (refused? (lambda () (key "C-w"))) (copy-text)) '(#t "abc\ndef"))
   (store:set-property! actor source 'read-only #f)
@@ -202,7 +202,7 @@
   (let ([before (text)])
     (insert! a "T")
     (let ([typed (text)])
-      (dispatch:input! root '(text "P\r\nQ\r" paste))
+      (routing:input! root '(text "P\r\nQ\r" paste))
       (let ([pasted (text)])
         (insert! a "U")
         (check 'editor-paste-normalizes-newlines-and-isolates-undo
@@ -268,7 +268,7 @@
   (widget:pump!) (show! 27)
   (key ")")
   (check 'editor-mode-binding-uses-its-own-source
-    (list (store:line source 0) (eq? ambient (head:current-buffer-mirror))
+    (list (store:line source 0) (eq? ambient (seat:current-buffer-mirror))
       (cadar (cadr (widget:key-scopes root "")))) '("[foo]" #t (pretty-scheme-depth scheme widget-editor)))
   (keymap:bind-default! 'scheme "C-c x" (keymap:call move! widget:target 'start))
   (key "C-c")

@@ -16,7 +16,7 @@
 
 (define (source-definition x)
   ;; (name . initializer), making procedure shorthand explicit.
-  (and (pair? x) (memq (car x) '(define edefine))
+  (and (pair? x) (memq (car x) '(define define-operation edefine))
     (pair? (cdr x))
     (let* ([target (cadr x)]
            [body (filter (lambda (x) (not (and (pair? x) (eq? (car x) 'edoc)))) (cddr x))])

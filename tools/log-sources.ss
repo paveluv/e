@@ -71,7 +71,7 @@
       (let ([p (parts x)])
         (cond
           [(and (pair? p) (eq? (datum (car p)) 'begin)) (for-each top (cdr p))]
-          [(and (pair? p) (eq? (datum (car p)) 'define))
+          [(and (pair? p) (memq (datum (car p)) '(define define-operation)))
            (let* ([target (datum (cadr p))] [name (if (pair? target) (car target) target)])
              (for-each (lambda (x) (walk x (qualified name))) (cddr p)))]
           [else (walk x #f)])))

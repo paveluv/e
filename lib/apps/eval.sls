@@ -37,7 +37,6 @@
           (prefix (only (foundation scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (foundation string) string:)
           (prefix (head completion) completion:)
-          (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head edit) edit:)
           (prefix (head expression) expression:)
@@ -49,6 +48,8 @@
           (prefix (head namespace) namespace:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head routing) routing:)
+          (prefix (head seat) seat:)
           (prefix (head style) style:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
@@ -56,7 +57,9 @@
           (prefix (service log) log:)
           (prefix (service prompt-request) prompt-request:)
           (prefix (only (service reference) signatures) reference:)
-          (prefix (state model) model:) (prefix (state view) view:) (prefix (sys glyph) glyph:))
+          (prefix (state model) model:)
+          (prefix (state view) view:)
+          (prefix (sys glyph) glyph:))
 
   (define (model-value id kind)
     (let ([r (model:snapshot id)])
@@ -224,7 +227,7 @@
     ;; position: the argument's type, the range and text of the token being
     ;; completed, and where it sits: #t inside a string literal, else #f.
     ;; At the operator position
-    ;; of a nested form, (head:show-buffer! (bu, the token is the form's
+    ;; of a nested form, (seat:show-buffer! (bu, the token is the form's
     ;; opening and the type is the enclosing argument's: whatever the form
     ;; produces has to serve it. Quoted data offers only values, recursively
     ;; using list element types; quoted replaces the value's own outer quote,
@@ -577,8 +580,8 @@
       (completion:make-candidate (option-insert option) text styles (vector label hint)
         (and (option-value option)
           (list (cons 'type type) (cons 'value (option-value option)) '(literal? . #t)
-            (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))
-            (cons 'editor (and window (head:window-editor window))))))))
+            (cons 'document (and window (seat:buffer-store-id (seat:window-buffer window))))
+            (cons 'editor (and window (seat:window-editor window))))))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -697,7 +700,7 @@
           (and r (receiver-matches r receivers))))))
 
   (define (current-receivers)
-    (let* ([root (head:window-widget (head:current-window))] [d (and root (interaction:snapshot root))])
+    (let* ([root (seat:window-widget (seat:current-window))] [d (and root (interaction:snapshot root))])
       (if d (widget:receivers (or (view:focus d) root)) '())))
 
   (define (validate-receivers! text receivers)
@@ -719,7 +722,7 @@
     ;; The status line describes the last lookup. It must not query a type's
     ;; live directory again while painting (some directories live at the base).
     (define kind (if typed? "symbol" "editor symbol"))
-    (define window (if (null? origin) (head:current-window) (car origin)))
+    (define window (if (null? origin) (seat:current-window) (car origin)))
     (define receivers (if (and (pair? origin) (pair? (cdr origin))) (cadr origin) (current-receivers)))
     (define (eligible? sym)
       (and (keep? sym)
@@ -770,18 +773,18 @@
                                     ;; a preview never evaluates an expression.
                                     (cons 'value (and (not (eq? (car (cddddr context)) #t))
                                                    (string->number (unquoted (cadddr context)))))
-                                    (cons 'editor (and window (head:window-editor window)))
-                                    (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))))))) window))
+                                    (cons 'editor (and window (seat:window-editor window)))
+                                    (cons 'document (and window (seat:buffer-store-id (seat:window-buffer window))))))))) window))
 
   (define (completion-at-window source window)
     (if (not window) source
-      (let ([buffer (head:window-buffer window)])
+      (let ([buffer (seat:window-buffer window)])
         (define (scope proc)
           (if (not (procedure? proc)) proc
             (lambda arguments
-              (unless (and (memq window (head:windows)) (eq? buffer (head:window-buffer window)))
+              (unless (and (memq window (seat:windows)) (eq? buffer (seat:window-buffer window)))
                 (error 'completion-at-window "the completion origin is no longer displayed"))
-              (head:with-window window (apply proc arguments)))))
+              (seat:with-window window (apply proc arguments)))))
         (completion:make-source (scope (completion:source-lookup source))
           (scope (completion:source-settle source)) (scope (completion:source-kind source))
           (completion:source-basis source) (completion:source-release source)
@@ -1414,19 +1417,19 @@
   (define (evaluate-span! start end label)
     ;; the buffer text between two positions, evaluated and reported as
     ;; the exchange it is: the expression, then its result
-    (let ([text (expression:text (head:buffer-lines (head:current-buffer-mirror)) start end)])
+    (let ([text (expression:text (seat:buffer-lines (seat:current-buffer-mirror)) start end)])
       (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
       (void)))
 
   (edoc "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result; the C-x C-e of Emacs.")
   (define (eval-last-expression!)
-    (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
+    (let-values ([(start end) (expression:backward (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
       (unless start (error 'eval:last-expression! "no expression before point"))
       (evaluate-span! start end "(eval:last-expression!)")))
 
   (edoc "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result; the C-M-x of Emacs.")
   (define (eval-top-level-form!)
-    (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
+    (let-values ([(start end) (expression:top-level (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
       (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
       (evaluate-span! start end "(eval:top-level-form!)")))
 
@@ -1446,12 +1449,12 @@
     ;; own top level.  The expression is logged (eval:report!, which
     ;; also carries the history); the result shows in the echo area,
     ;; transiently like any message, and lands in the log with it.
-    (let* ([window (head:current-window)] [buffer (head:current-buffer-mirror)] [receivers (current-receivers)]
+    (let* ([window (seat:current-window)] [buffer (seat:current-buffer-mirror)] [receivers (current-receivers)]
            [s (prompt:read! "λ" initial '(scheme 1 ())
                 '((multiline? . #t) (profile scheme 1 ()) (editing-policy scheme-input 1) (mode . "scheme-prompt")))])
       (unless s (echo:set-text! "Quit"))
       (when (and s (> (string-length s) 0) (not (string=? s "(")) (not (string=? s initial)))
-        (unless (and (memq window (head:windows)) (eq? buffer (head:window-buffer window)))
+        (unless (and (memq window (seat:windows)) (eq? buffer (seat:window-buffer window)))
           (raise (condition (kernel:make-refusal) (make-message-condition "The command's origin is no longer displayed"))))
         (validate-receivers! s receivers)
         ;; Keep the prompt on screen while its expression evaluates --
@@ -1479,8 +1482,8 @@
     ;; Resolve it once during provider creation, before focus moves. Previews
     ;; retain this actual window, never look up a possibly reused slot later.
     (let ([root (cond [(assq 'view origin) => cdr] [else #f])])
-      (if root (find (lambda (w) (equal? root (head:window-widget w))) (head:windows))
-        (cond [(assq 'window origin) => (lambda (p) (head:window-numbered (cdr p)))] [else #f]))))
+      (if root (find (lambda (w) (equal? root (seat:window-widget w))) (seat:windows))
+        (cond [(assq 'window origin) => (lambda (p) (seat:window-numbered (cdr p)))] [else #f]))))
 
   (define (input-offset text p)
     (+ (cdr p) (fold-left + 0 (map (lambda (line) (+ 1 (string-length line))) (list-head (string:lines text) (car p))))))
@@ -1542,4 +1545,4 @@
     (keymap:bind-default! "C-M-x" eval-top-level-form!)
     (keymap:bind-default! "M-x" eval-prompt!)
     ;; keys bound with keymap:prefill open this prompt with their text
-    (dispatch:set-prompt-opener! eval-prompt-with!)))
+    (routing:set-prompt-opener! eval-prompt-with!)))

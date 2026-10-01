@@ -128,7 +128,7 @@ absent. `<log base:audit-store-event!>` shows the operation's actor and compact 
 `(create id name)`, `(rename id name)`, `(delete id)`, `(property id key)`,
 `(reset id revision)`, or `(edit id revision span [history-origin])`.
 Edit records omit text payloads; undo/redo keep their existing origin data.
-These records are quiet. `head:flush-ui-audit!` contributes `ui: …` summaries with the
+These records are quiet. `seat:flush-ui-audit!` contributes `ui: …` summaries with the
 revision range of a typing burst, and local resync diagnostics. Their time
 of presentation is separate from the base's operation order.
 

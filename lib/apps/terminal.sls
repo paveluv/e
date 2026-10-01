@@ -17,6 +17,7 @@
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head seat) seat:)
           (prefix (head terminal-control) control:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
@@ -27,7 +28,7 @@
         (buffer* (list-of buffer) "the terminal buffer reference, at most one") (public))
   (define (terminal-close! . buffer*)
     (unless (<= (length buffer*) 1) (error 'terminal-close! "expected at most one buffer"))
-    (let* ([id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (head:current-buffer))]
+    (let* ([id (if (pair? buffer*) (edoc:type-value 'buffer (car buffer*)) (seat:current-buffer))]
            [owner (and id (store:property id 'app #f))])
       (when (and owner (eq? (cadr owner) 'terminal)) (vt:close! id)))
     (void))
@@ -40,21 +41,21 @@
   (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
         (command* (list-of string) "the command line to run, at most one; the shell by default"))
   (define (terminal! . command*)
-    (let* ([prior (head:current-buffer-mirror)] [path (head:buffer-file prior)] [id #f] [buffer #f])
+    (let* ([prior (seat:current-buffer-mirror)] [path (seat:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
                     (vt:close! id)
                     (when (store:exists? id) (store:delete! head:ui-actor id)))
-                  (when (eq? (head:current-buffer-mirror) buffer) (head:show-buffer-mirror! prior))
+                  (when (eq? (seat:current-buffer-mirror) buffer) (seat:show-buffer-mirror! prior))
                   (raise ex)])
         (paint:window-layout)
-        (let ([w (head:current-window)])
+        (let ([w (seat:current-window)])
           (set! id (vt:open! head:ui-actor (and (pair? command*) (car command*))
                      (if path (file:directory-part path) (current-directory))
-                     (max 1 (head:window-size w)) (head:window-content-width w)
+                     (max 1 (seat:window-size w)) (seat:window-content-width w)
                      (head:host-color-scheme))))
-        (set! buffer (head:adopt-store-buffer! id))
-        (head:show-buffer-mirror! buffer)
+        (set! buffer (seat:adopt-store-buffer! id))
+        (seat:show-buffer-mirror! buffer)
         (void))))
 
   (edoc "Install the terminal app: its mode with the keys of its context, color scheme and clipboard capabilities, the C-c t binding and its describe entries." (public))

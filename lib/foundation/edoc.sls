@@ -383,7 +383,7 @@
             [(and (pair? t) (list? t))
              (case (car t)
                [(one-of record) #t]
-               [(or list-of) (for-all known? (cdr t))]
+               [(or list-of values) (for-all known? (cdr t))]
                [else #t])]
             [else #t]))
     (when (pair? spec)
@@ -506,7 +506,10 @@
        (let ([t (syntax->datum #'type)] [notes (syntax->datum #'notes)])
          (unless (and (list? notes) (for-all string? notes))
            (syntax-violation who "edoc notes must be strings" x clause))
-         (unless (meta-type-ok? known-types t)
+         (unless (if (and (eq? (syntax->datum #'head) 'returns)
+                          (list? t) (pair? t) (eq? (car t) 'values))
+                     (for-all (lambda (t) (meta-type-ok? known-types t)) (cdr t))
+                     (meta-type-ok? known-types t))
            (syntax-violation who "unknown edoc type" x #'type)))]
       [_ (syntax-violation who "expected an edoc clause (name type note ...)" x clause)]))
 
@@ -606,11 +609,8 @@
                 (loop #'rest seen returns?)]
                [((head type . notes) . rest)
                 (identifier? #'head)
-                (let ([t (syntax->datum #'type)] [notes (syntax->datum #'notes)] [name (syntax->datum #'head)])
-                  (unless (and (list? notes) (for-all string? notes))
-                    (syntax-violation who "edoc notes must be strings" x #'(head type . notes)))
-                  (unless (meta-type-ok? known-types t)
-                    (syntax-violation who "unknown edoc type" x #'type))
+                (let ([t (syntax->datum #'type)] [name (syntax->datum #'head)])
+                  (check-clause-shape! who x #'(head type . notes))
                   (cond
                     [(eq? name 'returns)
                      (when returns?
@@ -883,7 +883,7 @@
         ;; (kind names . details) for a definition form, or #f
         (define (define? f) (head-is? f 'define))
         (syntax-case form ()
-          [(d (name . formals) body ...) (and (define? form) (identifier? #'name))
+          [(d (name . formals) body ...) (and (or (define? form) (head-is? form 'define-operation)) (identifier? #'name))
            (list 'procedure (list #'name) (list #'formals))]
           [(d name expression) (and (define? form) (identifier? #'name))
            (syntax-case #'expression []
@@ -974,8 +974,10 @@
                                        [(syntax forwarding) (list (car (cadr info)))]
                                        [(record condition) (list (car (cadr info)))]
                                        [else '()])))
-                                 documented))])
-                    (with-syntax ([(query-registration ...)
+                                 documented))]
+                         [operation-id (car (generate-temporaries '(operation-implementation)))])
+                    (with-syntax ([operation-implementation operation-id]
+                                  [(query-registration ...)
                                    (apply append
                                      (map (lambda (entry)
                                             (let ([doc (cadr entry)] [info (car entry)])
@@ -986,6 +988,12 @@
                                   [(form ...)
                                    (map (lambda (form)
                                           (syntax-case form ()
+                                            [(d (name . formals) body ...) (head-is? form 'define-operation)
+                                             (begin
+                                               (unless (syntax->list #'formals)
+                                                 (syntax-violation who "base operations require fixed positional arguments" form))
+                                               (with-syntax ([op operation-id])
+                                                 #'(define name (op name formals (described-procedure (lambda formals body ...))))))]
                                             [(d (name . formals) body ...) (head-is? form 'define)
                                              #'(define name (described-procedure (lambda formals body ...)))]
                                             [(d name value) (and (head-is? form 'define)
@@ -1018,10 +1026,14 @@
                                           documented))]
                                   [(attachment ...) (attachment-forms attachments by-name)]
                                   [(tmp) (generate-temporaries '(edocs))])
-                      #'(library name exports imports
-                          form ...
-                          query-registration ...
-                          (define tmp (begin registration ... record-registration ... forward-registration ... attachment ... (void)))))))]
+                      (with-syntax ([imports (if (exists (lambda (form) (head-is? form 'define-operation)) kept)
+                                               (syntax-case #'imports []
+                                                 [(i spec ...) #'(i spec ... (rename (only (core operation) implementation) (implementation operation-implementation)))])
+                                               #'imports)])
+                        #'(library name exports imports
+                            form ...
+                            query-registration ...
+                            (define tmp (begin registration ... record-registration ... forward-registration ... attachment ... (void))))))))]
                [(edoc-form? (car forms))
                 (syntax-case (car forms) ()
                   [(_ summary clause ...) (string? (syntax->datum #'summary))

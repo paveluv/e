@@ -7,12 +7,13 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (core kernel) kernel:)
              (prefix (head expression) expression:)
@@ -25,10 +26,10 @@
      (define check test:check)
      (widget:init!) (edit:init!) (window:init!)
      (define (fresh name lines)
-       (let ([b (head:new-buffer! name)])
-         (head:buffer-lines-set! b (list->vector lines))
-         (head:show-buffer-mirror! b)
-         (head:goto! '(0 . 0))
+       (let ([b (seat:new-buffer! name)])
+         (seat:buffer-lines-set! b (list->vector lines))
+         (seat:show-buffer-mirror! b)
+         (seat:goto! '(0 . 0))
          b))
      (define (spans->list text) (map vector->list (expression:spans text)))
 
@@ -43,65 +44,65 @@
      ;; motion crosses whole expressions, strings and quotes included, and
      ;; stays inside the enclosing one
      (fresh "expressions" '("(define (f x)" "  (+ x 1))" "'(a b) \"s)\" ; c" "z"))
-     (define (after thunk) (guard (ex [(kernel:refusal? ex) (void)]) (thunk)) (head:point))
+     (define (after thunk) (guard (ex [(kernel:refusal? ex) (void)]) (thunk)) (seat:point))
      (check 'forward-crosses-top-level-expressions-then-stops
        (map after (list forward-expression! forward-expression! forward-expression! forward-expression! forward-expression!))
        '((1 . 10) (2 . 6) (2 . 11) (3 . 1) (3 . 1)))
      (check 'backward-crosses-them-back-then-stops
        (map after (list backward-expression! backward-expression! backward-expression! backward-expression! backward-expression!))
        '((3 . 0) (2 . 7) (2 . 0) (0 . 0) (0 . 0)))
-     (head:goto! '(1 . 6))
+     (seat:goto! '(1 . 6))
      (check 'inside-a-list-motion-stays-inside-it
-       (list (after backward-expression!) (begin (head:goto! '(1 . 6)) (after forward-expression!)) (after forward-expression!))
+       (list (after backward-expression!) (begin (seat:goto! '(1 . 6)) (after forward-expression!)) (after forward-expression!))
        '((1 . 5) (1 . 8) (1 . 8)))
-     (head:goto! '(0 . 3))
+     (seat:goto! '(0 . 3))
      (check 'inside-an-atom-motion-crosses-the-atom
-       (list (after forward-expression!) (begin (head:goto! '(0 . 5)) (after backward-expression!)))
+       (list (after forward-expression!) (begin (seat:goto! '(0 . 5)) (after backward-expression!)))
        '((0 . 7) (0 . 1)))
 
      ;; up, down and over lists, the edges of top-level forms, marks, kills,
      ;; a transposition and an indentation, all on the same spans
      (scheme-mode:init!)
      (define lists (fresh "lists" '("(define (f x)" "  (+ x 1))" "(g 1 2)" "")))
-     (head:goto! '(1 . 5))
+     (seat:goto! '(1 . 5))
      (check 'up-leaves-the-enclosing-lists-then-stops
        (map after (list up-expression! up-expression! up-expression!)) '((1 . 2) (0 . 0) (0 . 0)))
      (check 'down-enters-the-next-lists-then-stops
        (map after (list down-expression! down-expression! down-expression!)) '((0 . 1) (0 . 9) (0 . 9)))
-     (head:goto! '(0 . 0))
+     (seat:goto! '(0 . 0))
      (check 'next-list-skips-atoms-then-stops
        (map after (list next-list! next-list! next-list!)) '((1 . 10) (2 . 7) (2 . 7)))
      (check 'previous-list-comes-back-then-stops
        (map after (list previous-list! previous-list! previous-list!)) '((2 . 0) (0 . 0) (0 . 0)))
-     (head:goto! '(1 . 5))
+     (seat:goto! '(1 . 5))
      (check 'beginning-and-end-of-form-walk-the-top-level-forms
        (list (after beginning-of-form!) (after beginning-of-form!) (after end-of-form!) (after end-of-form!) (after end-of-form!))
        '((0 . 0) (0 . 0) (1 . 10) (2 . 7) (2 . 7)))
-     (head:goto! '(1 . 5))
+     (seat:goto! '(1 . 5))
      (mark-form!)
-     (check 'mark-form-selects-the-top-level-form (list (head:point) (head:mark)) '((0 . 0) (1 . 10)))
-     (head:goto! '(2 . 1))
+     (check 'mark-form-selects-the-top-level-form (list (seat:point) (seat:mark)) '((0 . 0) (1 . 10)))
+     (seat:goto! '(2 . 1))
      (mark-expression!) (mark-expression!) (mark-expression!)
-     (check 'mark-expression-extends-by-one-expression-each-time (list (head:point) (head:mark)) '((2 . 1) (2 . 6)))
-     (head:goto! '(2 . 3))
+     (check 'mark-expression-extends-by-one-expression-each-time (list (seat:point) (seat:mark)) '((2 . 1) (2 . 6)))
+     (seat:goto! '(2 . 3))
      (transpose-expressions!)
      (check 'transpose-swaps-the-expressions-around-point
-       (list (head:buffer-line lists 2) (head:point)) '("(1 g 2)" (2 . 4)))
-     (head:goto! '(2 . 1))
+       (list (seat:buffer-line lists 2) (seat:point)) '("(1 g 2)" (2 . 4)))
+     (seat:goto! '(2 . 1))
      (kill-expression!)
      (head:set-last-command! kill-expression!)
      (kill-expression!)
-     (check 'kill-expression-accumulates-forward (list (head:buffer-line lists 2) (head:copy-text)) '("( 2)" "1 g"))
-     (head:goto! '(2 . 4))
+     (check 'kill-expression-accumulates-forward (list (seat:buffer-line lists 2) (seat:copy-text)) '("( 2)" "1 g"))
+     (seat:goto! '(2 . 4))
      (head:set-last-command! kill-expression!)
      (backward-kill-expression!)
-     (check 'moving-point-ends-kill-accumulation (list (head:buffer-line lists 2) (head:copy-text)) '("" "( 2)"))
+     (check 'moving-point-ends-kill-accumulation (list (seat:buffer-line lists 2) (seat:copy-text)) '("" "( 2)"))
      (define indenting (fresh "indenting" '("(define (h)" "(+ 1" "2))" "")))
-     (head:with-buffer-mirror indenting (mode:choose! "scheme"))
-     (head:goto! '(0 . 0))
+     (seat:with-buffer-mirror indenting (mode:choose! "scheme"))
+     (seat:goto! '(0 . 0))
      (indent-expression!)
      (check 'indent-expression-indents-the-lines-below-the-first
-       (list (head:buffer-line indenting 0) (head:buffer-line indenting 1) (head:buffer-line indenting 2))
+       (list (seat:buffer-line indenting 0) (seat:buffer-line indenting 1) (seat:buffer-line indenting 2))
        '("(define (h)" "  (+ 1" "    2))"))
 
      ;; the long Control-Meta spellings parse, so the default bindings install
@@ -112,18 +113,18 @@
      ;; evaluation of the expression before point and of the top-level form around it
      (fresh "evaluations" '("(define ex-forty 40)" "(list 1 (+ 2 3) 4)" "(+ ex-forty 2)" ""))
      (define (last-eval) (log:datum (car (log:entries 'eval:report!))))
-     (head:goto! '(0 . 20))
+     (seat:goto! '(0 . 20))
      (eval:last-expression!)
-     (head:goto! '(1 . 15))
+     (seat:goto! '(1 . 15))
      (eval:last-expression!)
      (check 'last-expression-evaluates-the-expression-before-point (last-eval) '("(+ 2 3)" . "5"))
-     (head:goto! '(2 . 14))
+     (seat:goto! '(2 . 14))
      (eval:last-expression!)
      (check 'a-definition-evaluated-before-point-took-effect (last-eval) '("(+ ex-forty 2)" . "42"))
-     (head:goto! '(1 . 9))
+     (seat:goto! '(1 . 9))
      (eval:top-level-form!)
      (check 'top-level-form-evaluates-the-form-around-point (last-eval) '("(list 1 (+ 2 3) 4)" . "'(1 5 4)"))
-     (head:goto! '(3 . 0))
+     (seat:goto! '(3 . 0))
      (eval:top-level-form!)
      (check 'top-level-form-after-the-last-takes-the-last (last-eval) '("(+ ex-forty 2)" . "42"))
      (fresh "nothing" '(""))
@@ -131,6 +132,6 @@
 
      ;; *scratch* speaks Scheme once the mode is registered (it was, above)
      (check 'scratch-has-scheme-mode-by-default
-       (mode:name-of (head:buffer-store-id (head:buffer-named "*scratch*"))) "scheme")
+       (mode:name-of (seat:buffer-store-id (seat:buffer-named "*scratch*"))) "scheme")
 
      (test:finish! 'expression)))

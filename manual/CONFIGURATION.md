@@ -97,7 +97,7 @@ an attached head can run, and the policy API are in
 
 ## Scrolling and presentation
 
-`(paint:input-delay 8)` gives input-triggered frames an 8 ms preparation budget
+`(tui:input-delay 8)` gives input-triggered frames an 8 ms preparation budget
 by default. Command execution and rendering count toward that budget; the
 editor waits only for any unused time before publishing the frame. This
 reduces scrolling jitter from variable rendering costs in all modes and
@@ -144,9 +144,9 @@ assignments and other Scheme effects that ran before the error remain applied.
 (mode:add-extension! "scheme" ".foo")
 (mode:indent-on-tab! "scheme" #f)
 (paint:wrap-lines #f)
-(head:scrollbar #t)
-(head:scrollbar-position 'right)
-(head:line-numbers #f)
+(seat:scrollbar #t)
+(seat:scrollbar-position 'right)
+(seat:line-numbers #f)
 (edit:undo-scope 'all) ; include other actors' changes; default is 'mine
 (scheme-format:width 100)
 (style:set! 'editor '((foreground 135) bold))

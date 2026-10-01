@@ -65,6 +65,24 @@
       (lambda () (kernel:registry-observe! readers (lambda (removed added) (defer-refresh!))))))
   (define contracts
     (kernel:call-with-runtime-registrations (lambda () (port:observe! defer-refresh!))))
+  ;; Buffer inputs are dependencies too. Refresh only readers whose acquired
+  ;; text changed; the old window host must not be needed to update a mirror.
+  (define texts
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (client:subscribe! 'changed
+          (lambda (changes)
+            ;; The store cache must see this invalidation before a reader
+            ;; reacquires text. Subscriber registration order is not authority.
+            (client:enqueue!
+              (lambda ()
+                (for-each
+                  (lambda (reader)
+                    (let ([ids (cadr (port:dependencies (cadr reader) (edges) get))])
+                      (when (and (kernel:registry-find readers (lambda (current) (eq? reader current)))
+                              (pair? ids) (or (not changes) (exists (lambda (id) (assoc id changes)) ids)))
+                        ((caddr reader)))))
+                  (kernel:registry-items readers)))))))))
 
   (edoc "Acquire endpoint dependency mirrors before rendering; callbacks run after adoption on the existing client pump."
         (ids list "endpoints") (procedure procedure "zero-argument invalidation") (returns any))

@@ -7,12 +7,13 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:))
 
@@ -20,47 +21,47 @@
      (widget:init!) (edit:init!) (window:init!)
      (define path (format "/tmp/e-trash-~a-~a.txt" (get-process-id) (random 1000000)))
      (call-with-output-file path (lambda (p) (display "on disk\n" p)))
-     (define (text b) (vector->list (head:buffer-lines b)))
+     (define (text b) (vector->list (seat:buffer-lines b)))
 
      ;; issue #7: open, kill, open again
      (visit-file! path)
-     (define first (head:current-buffer-mirror))
-     (define first-id (head:buffer-store-id first))
-     (define name (head:buffer-name first))
+     (define first (seat:current-buffer-mirror))
+     (define first-id (seat:buffer-store-id first))
+     (define name (seat:buffer-name first))
      (insert-text! "unsaved ")
-     (kill-buffer! (head:buffer-store-id first))
+     (kill-buffer! (seat:buffer-store-id first))
      (visit-file! path)
-     (define fresh (head:current-buffer-mirror))
+     (define fresh (seat:current-buffer-mirror))
      (check 'a-visit-after-a-kill-reads-the-disk-into-a-fresh-buffer-under-the-plain-name
-       (list (and (head:buffer-store-id fresh) (not (equal? (head:buffer-store-id fresh) first-id)))
-             (text fresh) (head:buffer-name fresh) (map car (trash)))
+       (list (and (seat:buffer-store-id fresh) (not (equal? (seat:buffer-store-id fresh) first-id)))
+             (text fresh) (seat:buffer-name fresh) (map car (trash)))
        (list #t '("on disk") name (list (string-append name "<2>"))))
 
      (check 'the-store-stays-saveable-with-a-trashed-namesake
        (let-values ([(next states) (store:export)]) (store:valid-import? next states)) #t)
      ;; a second kill of the same name: the trash lists the newest first
      (insert-text! "second ")
-     (kill-buffer! (head:buffer-store-id fresh))
+     (kill-buffer! (seat:buffer-store-id fresh))
      (check 'the-trash-holds-both-kills-under-distinct-names (map car (trash)) (list name (string-append name "<2>")))
 
      ;; restore! takes the newest; the next restore! the older, under a unique name
-     (define newest (head:buffer-of-store-id (restore! name)))
-     (define older (head:buffer-of-store-id (restore! (string-append name "<2>"))))
+     (define newest (seat:buffer-of-store-id (restore! name)))
+     (define older (seat:buffer-of-store-id (restore! (string-append name "<2>"))))
      (check 'restore-brings-both-back-under-their-distinct-names
-       (list (equal? (head:buffer-store-id newest) (head:buffer-store-id fresh)) (text newest) (head:buffer-name newest)
-             (equal? (head:buffer-store-id older) first-id) (text older) (head:buffer-name older)
-             (equal? (head:buffer-file older) (head:buffer-file newest)) (trash) (eq? (head:current-buffer-mirror) older))
+       (list (equal? (seat:buffer-store-id newest) (seat:buffer-store-id fresh)) (text newest) (seat:buffer-name newest)
+             (equal? (seat:buffer-store-id older) first-id) (text older) (seat:buffer-name older)
+             (equal? (seat:buffer-file older) (seat:buffer-file newest)) (trash) (eq? (seat:current-buffer-mirror) older))
        (list #t '("second on disk") name #t '("unsaved on disk") (string-append name "<2>") #t '() #t))
 
      (check 'permanent-deletion-refuses-live-or-missing-names
        (map (lambda (name) (test:raises? (lambda () (delete-trashed! name))))
-         (list (head:buffer-name older) "not-in-trash")) '(#t #t))
-     (kill-buffer! (head:buffer-store-id older))
-     (delete-trashed! (head:buffer-name older))
+         (list (seat:buffer-name older) "not-in-trash")) '(#t #t))
+     (kill-buffer! (seat:buffer-store-id older))
+     (delete-trashed! (seat:buffer-name older))
      (check 'permanent-deletion-removes-history-but-keeps-the-file-and-live-namesake
        (list (store:exists? first-id) (trash) (text newest)
              (call-with-input-file path get-string-all)
-             (test:raises? (lambda () (restore! (head:buffer-name older)))))
+             (test:raises? (lambda () (restore! (seat:buffer-name older)))))
        '(#f () ("second on disk") "on disk\n" #t))
 
      (delete-file path)

@@ -17,7 +17,7 @@ evaluations.
 the label `λ`, and evaluates it:
 
 ```scheme
-λ (store:buffer-name (head:current-buffer))
+λ (store:buffer-name (seat:current-buffer))
 λ (define answer 42)
 λ answer
 ```
@@ -117,8 +117,8 @@ match inserts that symbol, closes the list, and settles the same way:
 a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
 argument, and a completed last argument closes the form. A closed form is then
-settled as an argument of its parent, so `(head:window-index (head:curr` Tab
-yields `(head:window-index (head:current-window))`. Optional and rest parameters,
+settled as an argument of its parent, so `(seat:window-index (head:curr` Tab
+yields `(seat:window-index (seat:current-window))`. Optional and rest parameters,
 syntax, unbound names, quoted or quasiquoted forms, and text after the
 cursor all leave the input alone, and Tab says `[No symbol]`; a symbol
 nothing matches stays as typed, with `[No match]`. Comments and character literals
@@ -143,11 +143,11 @@ inserts just the symbol. The prompt's help row counts the matches and names
 what they are, such as `12 matches of file` or `4 matches of symbol`.
 
 At a documented argument, Tab offers values of its type, compatible producers
-and variables. `(head:show-buffer! ` offers buffer names with their portable
+and variables. `(seat:show-buffer! ` offers buffer names with their portable
 references, file paths, modes and modified state beside them. Typing `scr` finds `*scratch*`; selecting
 it inserts `'(buffer 17)` (with its actual ID). Explicit `'(buffer` input searches
 reference spellings instead. No name lookup is hidden in the inserted value.
-`(head:current-buffer)` and `(edit:new-buffer! name)` are compatible producers;
+`(seat:current-buffer)` and `(edit:new-buffer! name)` are compatible producers;
 head mirror constructors are not. A variable holding a reference is offered
 by its variable name.
 
@@ -155,8 +155,8 @@ Tab uses the same fuzzy matcher for names and symbols, extending a filter
 without changing its matches and inserting the actual value when one remains.
 Readable labels never become alternative values. Producer formals are shown
 for guidance and do not participate in matching. The operator position of a
-nested form takes the enclosing argument's type: `(head:show-buffer! (cu`
-completes to `(head:current-buffer)` rather than to every
+nested form takes the enclosing argument's type: `(seat:show-buffer! (cu`
+completes to `(seat:current-buffer)` rather than to every
 symbol. Inside quoted data, completion offers values without another quote,
 never producer calls or variables. A `(list-of T)` argument completes its
 elements as `T`, recursively: `(extension:load! "x" "y" '("../sch` lists
@@ -258,7 +258,7 @@ whole current buffer:
 Another buffer or region is evaluated under a scope form:
 
 ```scheme
-(head:with-buffer (store:find-named "scratch.scm") (eval:run!))
+(seat:with-buffer (store:find-named "scratch.scm") (eval:run!))
 (edit:with-region (region:make (store:find-named "scratch.scm") '(10 . 0) '(18 . 0))
   (eval:run!))
 ```

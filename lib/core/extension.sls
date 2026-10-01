@@ -4,8 +4,8 @@
 (elibrary (core extension)
   (export load!)
   (import (chezscheme)
+          (prefix (core endpoint) endpoint:)
           (prefix (core kernel) kernel:)
-          (prefix (core startup) startup:)
           (prefix (foundation string) string:)
           (prefix (sys path) path:)
           (prefix (sys sys) sys:))
@@ -34,7 +34,7 @@
          (let ([message (condition-message ex)])
            (and (string:prefix? "library " message) (string:suffix? " not found" message)))))
 
-  (edoc "Load an entry module from a local repository's lib directory, managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional, one directory or a list; relative repository paths use the installation, relative library roots use the repository."
+  (edoc "Load an entry module from a local repository, selecting lib/base or lib/client before shared lib and managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional, one directory or a list; relative repository paths use the installation, relative library roots use the repository."
         (repository directory "the extension checkout")
         (entry string "its module name, such as worksheet-mode")
         (roots (or directory (list-of directory)) "additional R6RS source roots, one or several") (public))
@@ -43,8 +43,6 @@
       [(repository entry) (load! repository entry '())]
       [(repository entry roots)
        (define root-list (if (string? roots) (list roots) roots))
-       (when (eq? (startup:mode) 'base)
-         (error 'extension:load! "load head extensions from config.e" repository))
        (unless (and (string? entry) (> (string-length entry) 0)
                     (for-all (lambda (c) (or (char-alphabetic? c) (char-numeric? c) (memv c '(#\- #\_))))
                       (string->list entry)))
@@ -58,7 +56,9 @@
                      (string-append checkout "/lib"))]
               [existing (library-directories)]
               [cache (cdar existing)]
-              [requested (cons lib (map (lambda (root) (directory "library root" root checkout)) root-list))]
+              [implementation (string-append lib "/" (symbol->string endpoint:runtime))]
+              [requested (append (if (file-directory? implementation) (list implementation) '())
+                           (cons lib (map (lambda (root) (directory "library root" root checkout)) root-list)))]
               [combined
                (fold-left
                  (lambda (all root)

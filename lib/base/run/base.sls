@@ -5,6 +5,7 @@
   (import (chezscheme)
           (prefix (core daemon) daemon:)
           (prefix (core kernel) kernel:)
+          (prefix (core operation) operation:)
           (prefix (core property) property:)
           (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
@@ -33,6 +34,7 @@
           (prefix (service review-preview) review-preview:)
           (prefix (service rewrite) rewrite:)
           (prefix (service rewrite-source) rewrite-source:)
+          (prefix (service root-binding) root-binding:)
           (prefix (service sandbox) sandbox:)
           (prefix (service search-request) search-request:)
           (prefix (service session) session:)
@@ -51,7 +53,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "collection" "composition" "connection" "daemon" "datum" "diff" "doc" "document" "endpoint" "environment" "extension" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "operation" "path" "policy" "port" "row"
       "change-preview" "conflict-review" "conflict-source" "git" "git-source" "history" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -101,6 +103,7 @@
                 (unless (null? failures) (raise (cdar failures))))
               (let ([result (kernel:load-config! 'base)])
                 (when (condition? result) (raise result)))
+              (root-binding:resume! #f)
               ;; the trash expires by age: at startup, then at each daily rotation
               (store:expire-trash! '(base e))))
           (thunk))
@@ -135,7 +138,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(history history-item change-preview widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+      (when (memq kind '(history history-item change-preview widget-view composition-binding collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -202,7 +205,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(history history-item change-preview connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+             [(history history-item change-preview connection-topology connection-bindings prompt-request search-request widget-view composition-binding environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
@@ -450,6 +453,13 @@
        (arity 1)
        (doc:call-with-entries (car args) (lambda () (map doc:to-datum (reference:entries))))]
       [(reference-url) (arity 1) (reference:browser-url (doc:from-datum (car args)))]
+      [(invoke)
+       (arity 3)
+       (activity:call-with
+         (lambda ()
+           (when (policy:revoked? session) (error 'wire "the session is revoked"))
+           (operation:dispatch! (car args) (cadr args) (caddr args)
+             (lambda (admission) (when (eq? admission 'control) (control!))) session)))]
       [else (error 'wire "unknown request" operation)]))
 
   ;; One participation list linearizes both admission and departure. A head
@@ -907,6 +917,7 @@
                 (when registered?
                   (prompt-request:close-owner! (policy:session-actor session))
                   (search-request:close-owner! (policy:session-actor session))
+                  (root-binding:resume! session)
                   (view:release-owner! (policy:session-actor session)))
                 (policy:revoke! session))
               (kernel:retract-module! owner)))

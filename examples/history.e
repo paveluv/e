@@ -1,5 +1,5 @@
 ;; (history-example:create!) returns a nested composition, with no window.
-;; (window:show-widget! (head:current-window) (history-example:create!)) hosts it.
+;; (window:show-widget! (seat:current-window) (history-example:create!)) hosts it.
 (import (prefix (core port) port:))
 (port:register! '(view history-choice-preview 1)
   '((input selection (or row-selection #f) (options selection))))

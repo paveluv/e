@@ -41,7 +41,7 @@
       (widget:present! (list (list f 0 0)))
       (widget:focus! root a)
       (let ([piece (vector-ref (state a) 1)])
-        (dispatch:input! root '(key "LEFT"))
+        (routing:input! root '(key "LEFT"))
         (check 'tetris-keymap-invokes-the-public-action
           (vector-ref (state a) 1) (tetris:move piece -1 0)))
       (let ([piece (vector-ref (state a) 1)])

@@ -40,7 +40,8 @@
        (and (string:search text needle 0 (string-length text)) #t))
      (define (start-head)
        ;; Chez invokes libraries lazily; a reference must stay in the scope.
-       (eval '(begin (import (prefix (head head) head:)) head:ui-actor)))
+       (eval '(begin (import (prefix (head head) head:) (prefix (head seat) seat:))
+                (seat:initialize!) head:ui-actor)))
 
      ;; One lifecycle driver for both streams, including a caller-owned port
      ;; that must remain usable until every callback and capture reader ends.
@@ -170,7 +171,7 @@
                (store:create! '(agent startup) "after import" '("alive"))
                (eval '(head:before-frame!))
                (test:check 'root-subscription-and-marks-stay-live
-                 (list (eval '(map head:buffer-name (head:buffers)))
+                 (list (eval '(map seat:buffer-name (seat:buffers)))
                        (store:mark expected (store:find-named "*scratch*") 'point))
                  ;; a buffer in this head's audience alone shows in square brackets
                  (list (if (eq? kind 'named)

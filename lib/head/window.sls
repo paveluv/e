@@ -23,7 +23,9 @@
           (prefix (head layout) layout:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
+          (prefix (head seat) seat:)
           (prefix (head terminal-control) terminal:)
+          (prefix (head tui) tui:)
           (prefix (head widget) widget:)
           (prefix (state model) model:)
           (prefix (state view) view:))
@@ -31,7 +33,7 @@
   (define (buffer-widget b)
     ;; Widget hosts are local. Placement and cleanup also see shared buffers
     ;; after deletion, when their base-owned facts no longer exist.
-    (and (not (head:buffer-store-id b)) (head:buffer-fact b 'widget-id #f)))
+    (and (not (seat:buffer-store-id b)) (seat:buffer-fact b 'widget-id #f)))
 
   (define mounted '()) ; window-hosted roots only; embedded hosts manage themselves
   (define presentations (kernel:make-registry car))
@@ -50,12 +52,12 @@
     ;; Run after placement/actions, so hiding the invoking app cannot release
     ;; its context midway through a command. Work depends on mounted windows,
     ;; not on the number of retained buffers or views.
-    (let ([visible (map head:window-widget (head:windows))])
+    (let ([visible (map seat:window-widget (seat:windows))])
       (for-each (lambda (p) (unless (member (car p) visible) (widget:unmount! (car p)))) mounted)
       (set! mounted (filter (lambda (p) (member (car p) visible)) mounted))))
 
   (define (mount-window! w)
-    (let ([id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
+    (let ([id (and (seat:buffer-store-id (seat:window-buffer w)) (seat:window-widget w))])
       ;; A document remains the actual window buffer. The window is merely
       ;; an opaque host slot for its retained editor view.
       (for-each (lambda (p)
@@ -68,64 +70,68 @@
         (unless (assoc id mounted)
           (widget:mount! id w)
           (set! mounted (cons (cons id w) mounted))
-          (widget:prepare! id (if (paint:window-wrapped? w) (paint:wrap-width w) (head:window-content-width w)) (head:window-size w)))
-        (widget:set-active! id (eq? w (head:current-window))))))
+          (widget:prepare! id (if (paint:window-wrapped? w) (paint:wrap-width w) (seat:window-content-width w)) (seat:window-size w)))
+        (widget:set-active! id (eq? w (seat:current-window))))))
 
   (define (widget-buffer! id)
-    (cond [(find (lambda (b) (equal? id (buffer-widget b))) (head:buffers))
+    (cond [(find (lambda (b) (equal? id (buffer-widget b))) (seat:buffers))
            => values]
       [else (kernel:call-with-runtime-registrations
               (lambda ()
-                (let* ([d (view:snapshot id)] [options (if d (view:options d) '())]
+                (let* ([row (car (cadr (model:snapshots (list id))))] [r (caddr row)]
+                       [d (and (cadr row) r (eq? 'widget-view (cdr (assq 'kind r))) (= 3 (cdr (assq 'schema r))) (cdr (assq 'value r)))]
+                       [options (if d (view:options d) '())]
                        [name (and options (assq 'name options))]
-                       [b (head:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))])
-                  (guard (ex [else (head:forget-buffer! b) (raise ex)])
-                    ;; A named root is the base's catalogue identity. This is
-                    ;; placement metadata, published once, never fitted text.
-                    (when (and d (not name))
-                      (let* ([r (caddar (cadr (model:snapshots (list id))))]
-                             [options (append (list (cons 'name (head:buffer-name b)))
-                                        (if (assq 'audience options) '() (list (list 'audience head:ui-actor))) options)])
-                        (let-values ([(status rows) (view:arrange! head:ui-actor
-                                                      (list (list id (cdr (assq 'revision r)) (view:children d) options)) '())])
-                          (unless (eq? status 'applied) (error 'widget-buffer! "view changed before placement" status)))))
-                    (head:register-widget-host! b
+                       [b (seat:new-local-buffer! (if name (cdr name) (format "widget ~a" (cadr id))))])
+                  (guard (ex [else (seat:forget-buffer! b) (raise ex)])
+                    ;; Explicit default-window placement opts a view into the
+                    ;; catalogue once. Labels on nested controls do not do so;
+                    ;; an explicit opt-out survives placement too.
+                    (when d
+                      (let ([next (append (if name '() (list (cons 'name (seat:buffer-name b))))
+                                    (if (assq 'catalogue options) '() '((catalogue . #t)))
+                                    (if (or name (assq 'audience options)) '() (list (list 'audience head:ui-actor))) options)])
+                        (unless (equal? next options)
+                          (let-values ([(status rows) (view:arrange! head:ui-actor
+                                                        (list (list id (cdr (assq 'revision r)) (view:children d) next)) '())])
+                            (unless (eq? status 'applied) (error 'widget-buffer! "view changed before placement" status))))))
+                    (seat:register-widget-host! b
                       (lambda ()
-                        (let ([w (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))])
+                        (let ([w (find (lambda (w) (eq? (seat:window-buffer w) b)) (seat:windows))])
                           (when w
-                            (widget:set-active! id (eq? w (head:current-window)))
-                            (let ([lines (widget:frame-lines (widget:prepare! id (head:window-content-width w) (head:window-size w)))])
-                              (head:replace-widget-frame! b w (if (null? lines) '("") lines))))))
+                            (widget:set-active! id (eq? w (seat:current-window)))
+                            (let ([lines (widget:frame-lines (widget:prepare! id (seat:window-content-width w) (seat:window-size w)))])
+                              (seat:replace-widget-frame! b w (if (null? lines) '("") lines))))))
                       (lambda (event)
                         (cond [(string=? event "BLUR") (widget:set-active! id #f) (widget:cancel! id 'blur) #t]
                           [(string=? event "FOCUS") (widget:set-active! id #t) (widget:key-scopes! id "") #t]
                           [else #f])))
-                    (head:buffer-fact-set! b 'resume-kind 'widget)
-                    (head:buffer-fact-set! b 'widget-id id)
-                    (head:buffer-fact-set! b 'mode "widget")
-                    (for-each (lambda (key) (let ([p (assq key options)]) (when p (head:buffer-fact-set! b key (cdr p))))) '(tool-key recency))
-                    (head:set-app-presentation! b 0 #f #f)
-                    (head:set-app-cursor-visible! b #f)
-                    (head:set-app-selectable! b #f)
-                    (head:set-app-manages-viewport! b #t)
-                    (head:set-app-status-position! b (lambda (b) "")) b))))]))
+                    (seat:buffer-fact-set! b 'resume-kind 'widget)
+                    (seat:buffer-fact-set! b 'widget-id id)
+                    (seat:buffer-fact-set! b 'mode "widget")
+                    (for-each (lambda (key) (let ([p (assq key options)]) (when p (seat:buffer-fact-set! b key (cdr p))))) '(tool-key recency))
+                    (seat:set-app-presentation! b 0 #f #f)
+                    (seat:set-app-cursor-visible! b #f)
+                    (seat:set-app-selectable! b #f)
+                    (seat:set-app-manages-viewport! b #t)
+                    (seat:set-app-status-position! b (lambda (b) "")) b))))]))
 
   (edoc "Show a widget tree in an existing window. Simultaneous additional placements fork views while sharing sources; hidden roots are reused."
         (w window "outer host") (id model "root view id") (returns (record buffer)))
   (define (show-widget! w id)
-    (let ([origin (catalogue-host:reference (head:window-buffer w))])
-      (head:set-window-buffer! w (widget-buffer! id))
-      (let* ([b (head:window-buffer w)] [actual (buffer-widget b)] [d (interaction:snapshot actual)])
+    (let ([origin (catalogue-host:reference (seat:window-buffer w))])
+      (seat:set-window-buffer! w (widget-buffer! id))
+      (let* ([b (seat:window-buffer w)] [actual (buffer-widget b)] [d (interaction:snapshot actual)])
         (when (and d (eq? (view:kind d) 'window-tool))
           (unless (equal? origin actual)
             (interaction:set-state! head:ui-actor actual #f (list (cons 'origin origin))))
-          (widget:set-active! actual (eq? w (head:current-window)))
-          (widget:prepare! actual (head:window-content-width w) (head:window-size w)))
-        (head:window-buffer w))))
+          (widget:set-active! actual (eq? w (seat:current-window)))
+          (widget:prepare! actual (seat:window-content-width w) (seat:window-size w)))
+        (seat:window-buffer w))))
 
   (define (tool-window id)
     (let ([slot (widget:host id)])
-      (or (find (lambda (w) (eq? (head:window-buffer w) slot)) (head:windows))
+      (or (find (lambda (w) (eq? (seat:window-buffer w) slot)) (seat:windows))
         (error 'window "tool has no visible window" id))))
 
   (edoc "Open a semantic document reference through an explicit window-tool host. Inactive panel clicks use the previously focused window and preserve its focus; keyboard actions use the tool's own window."
@@ -139,8 +145,8 @@
                                                         [(point) (and (pair? (cdr p)) (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) (list (cadr p) (cddr p))))]
                                                         [(presentation) (symbol? (cdr p))] [else #f]))) (car preferences)))))
       (error 'open-document! "expected at most one preference list"))
-    (let* ([own (tool-window id)] [event-target (head:app-event-focus)]
-           [target (if (and event-target (memq event-target (head:windows))) event-target own)]
+    (let* ([own (tool-window id)] [event-target (seat:app-event-focus)]
+           [target (if (and event-target (memq event-target (seat:windows))) event-target own)]
            [b (catalogue-host:resolve! ref)] [options (if (pair? preferences) (car preferences) '())]
            [point (assq 'point options)] [presentation (assq 'presentation options)]
            [factory (and presentation (kernel:registry-find presentations (lambda (p) (eq? (car p) (cdr presentation)))))])
@@ -151,11 +157,11 @@
         (for-each (lambda (w)
                     (if factory
                       (show-widget! w
-                        (tool! (format "~a ~a" (car factory) (head:buffer-name b))
-                          (lambda (commands) ((cdr factory) (or (head:buffer-store-id b) (error 'open-document! "presentation needs a source document"))
+                        (tool! (format "~a ~a" (car factory) (seat:buffer-name b))
+                          (lambda (commands) ((cdr factory) (or (seat:buffer-store-id b) (error 'open-document! "presentation needs a source document"))
                                               commands (if point (cdr point) '(0 . 0))))
                           (format "~a:~s" (car factory) ref)))
-                      (head:with-window w (head:show-buffer-mirror! b) (when point (head:goto! (cdr point))))))
+                      (seat:with-window w (seat:show-buffer-mirror! b) (when point (seat:goto! (cdr point))))))
           (if (null? targets) (list target) targets)))))
 
   (edoc "Return an explicitly hosted tool to its saved origin, or the most recent surviving document."
@@ -164,18 +170,18 @@
     (let* ([w (tool-window id)] [d (interaction:snapshot id)] [p (assq 'origin (view:state d))]
            [origin (and p (cdr p) (catalogue-host:resolve! (cdr p)))]
            [b (or origin
-                (find (lambda (b) (not (eq? b (head:window-buffer w)))) (head:buffers)))])
-      (if (and (head:popup? w) (not origin)) (head:hide-popup!)
-        (when b (head:with-window w (head:show-buffer-mirror! b))))))
+                (find (lambda (b) (not (eq? b (seat:window-buffer w)))) (seat:buffers)))])
+      (if (and (seat:popup? w) (not origin)) (seat:hide-popup!)
+        (when b (seat:with-window w (seat:show-buffer-mirror! b))))))
 
   (edoc "Retain one named widget tool in this head. Build receives explicit open/return command bindings and returns an unmounted app root; hidden tools are reused. The returned outer view is mounted for the caller's action and can be shown or forked. Hidden mounts are released at the next frame."
         (name string "tool name without brackets") (build procedure "commands -> app view")
         (identity (list-of string) "optional stable identity distinct from its label") (returns list))
   (define (tool! name build . identity)
     (unless (and (<= (length identity) 1) (for-all string? identity)) (error 'tool! "expected at most one stable identity"))
-    (let* ([key (string-append "*" (if (pair? identity) (car identity) name) "*")] [old (head:find-tool-buffer key)])
+    (let* ([key (string-append "*" (if (pair? identity) (car identity) name) "*")] [old (seat:find-tool-buffer key)])
       (if old (buffer-widget (mount-buffer! old))
-        (let* ([options (list (cons 'name (string-append "<" name ">")) (list 'audience head:ui-actor) (cons 'tool-key key) '(recency . behind))]
+        (let* ([options (list (cons 'name (string-append "<" name ">")) '(catalogue . #t) (list 'audience head:ui-actor) (cons 'tool-key key) '(recency . behind))]
                [host (view:create! head:ui-actor #f 'window-tool 1 options '())]
                [app (build (list (list 'open host 'open-document '()) (list 'return host 'return '())))])
           (view:arrange! head:ui-actor (list (list host 0 (list (list 'app app '(grow 1))) options)) '())
@@ -185,7 +191,7 @@
     (let* ([d (interaction:snapshot id)] [app (cadr (assq 'app (view:children d)))])
       (when (assq 'current (widget:commands app))
         (widget:invoke! app 'current
-          (and (not (eq? (head:current-buffer-mirror) (widget:host id))) (catalogue-host:reference (head:current-buffer-mirror)))))))
+          (and (not (eq? (seat:current-buffer-mirror) (widget:host id))) (catalogue-host:reference (seat:current-buffer-mirror)))))))
 
   (define (init-widget-host!)
     ;; Definition reload keeps runtime mounts. Rediscover only at installation;
@@ -194,10 +200,10 @@
       (append (filter values
                 (map (lambda (b)
                        (let ([id (buffer-widget b)])
-                         (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (head:buffers)))
+                         (and id (guard (ex [else #f]) (and (eq? (widget:host id) b) (cons id b)))))) (seat:buffers)))
         (filter values (map (lambda (w)
-                              (let ([id (and (head:buffer-store-id (head:window-buffer w)) (head:window-widget w))])
-                                (and id (guard (ex [else #f]) (and (eq? (widget:host id) w) (cons id w)))))) (head:windows)))))
+                              (let ([id (and (seat:buffer-store-id (seat:window-buffer w)) (seat:window-widget w))])
+                                (and id (guard (ex [else #f]) (and (eq? (widget:host id) w) (cons id w)))))) (seat:windows)))))
     (widget:register! 'window-tool 1
       (append (layout:container 'y)
         (list (cons 'service tool-service!) (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!))))))
@@ -205,27 +211,27 @@
       (lambda (source row line)
         (let* ([id (mode:source-fact source 'widget-id #f)] [f (and id (widget:prepared id))])
           (and f (widget:frame-styles f row line)))) '(widget-id))
-    (head:add-buffer-placement-hook!
+    (seat:add-buffer-placement-hook!
       (lambda (w b peers)
-        (let ([id (buffer-widget b)] [old (buffer-widget (head:window-buffer w))])
-          (when (and old (not (eq? b (head:window-buffer w)))) (widget:cancel! old 'hidden))
-          (mount-buffer! (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (head:window-buffer other)))) peers))
+        (let ([id (buffer-widget b)] [old (buffer-widget (seat:window-buffer w))])
+          (when (and old (not (eq? b (seat:window-buffer w)))) (widget:cancel! old 'hidden))
+          (mount-buffer! (if (and id (exists (lambda (other) (and (not (eq? w other)) (eq? b (seat:window-buffer other)))) peers))
                            (begin (interaction:flush!) (widget-buffer! (view:fork! head:ui-actor id)))
                            b)))))
     (head:add-pre-redraw-hook! release-hidden!)
-    (head:set-window-mounter! mount-window!)
-    (head:set-editor-state-reader! (lambda (id) (let ([f (widget:prepared id)]) (and f (editor:frame-state f)))))
-    (head:set-point-mover!
+    (seat:set-window-mounter! mount-window!)
+    (seat:set-editor-state-reader! (lambda (id) (let ([f (widget:prepared id)]) (and f (editor:frame-state f)))))
+    (seat:set-point-mover!
       (lambda (w p)
-        (let ([id (and (head:window-widget w) (head:window-editor w))])
+        (let ([id (and (seat:window-widget w) (seat:window-editor w))])
           (and id (begin
-                    (let* ([root (head:window-widget w)] [d (interaction:snapshot root)])
+                    (let* ([root (seat:window-widget w)] [d (interaction:snapshot root)])
                       (when (eq? (view:kind d) 'terminal) (terminal:follow! root #f)))
                     (editor:move! id p) #t)))))
-    (head:add-buffer-kill-hook!
+    (seat:add-buffer-kill-hook!
       (lambda (b) (let ([id (buffer-widget b)])
                     (when id (widget:unmount! id) (set! mounted (remp (lambda (p) (equal? id (car p))) mounted))))))
-    (head:register-resume! 'widget
+    (seat:register-resume! 'widget
       (lambda (b positions) (values (list (buffer-widget b)) '()))
       (lambda (reference positions) (values (widget-buffer! (car reference)) '()))))
 
@@ -240,19 +246,19 @@
     ;; the current window while it shows an edit buffer: the window
     ;; settings, wrap and line numbers, are for text a user edits; an
     ;; app's buffer shows itself as the app decides
-    (when (head:app-buffer? (head:current-buffer-mirror)) (refuse! "Not an edit buffer"))
-    (head:current-window))
+    (when (seat:app-buffer? (seat:current-buffer-mirror)) (refuse! "Not an edit buffer"))
+    (seat:current-window))
 
   ;;; Focus -----------------------------------------------------------------------
 
   (define (ordinary-windows)
     ;; the ring of ordinary windows: the pop-up is never in it
-    (remq (head:popup) (head:layout-leaves (head:root))))
+    (remq (seat:popup) (seat:layout-leaves (seat:root))))
 
   (define (focus-ring)
     ;; the windows focus cycles through: the ordinary ones and the pop-up
     ;; while it is shown
-    (filter (lambda (w) (or (not (head:popup? w)) (> (head:popup-rows) 0))) (head:layout-leaves (head:root))))
+    (filter (lambda (w) (or (not (seat:popup? w)) (> (seat:popup-rows) 0))) (seat:layout-leaves (seat:root))))
 
   (define (next-in ring w)
     (let ([tail (cdr (or (memq w ring) (cons #f ring)))])
@@ -264,33 +270,33 @@
         (w window "the window to select")
         (returns boolean))
   (define (focus! w)
-    ;; All user-visible focus changes pass here; head:set-current! is
+    ;; All user-visible focus changes pass here; seat:set-current! is
     ;; the raw setter and tells no app.
     (let ([w (edoc:type-value 'window w)])
       (cond
-        [(not (and (memq w (head:windows)) (or (not (head:popup? w)) (> (head:popup-rows) 0)))) #f]
-        [(eq? w (head:current-window)) #t]
+        [(not (and (memq w (seat:windows)) (or (not (seat:popup? w)) (> (seat:popup-rows) 0)))) #f]
+        [(eq? w (seat:current-window)) #t]
         [else
-         (head:dispatch-app-event! "BLUR")
-         (let ([id (head:window-widget (head:current-window))])
+         (seat:dispatch-app-event! "BLUR")
+         (let ([id (seat:window-widget (seat:current-window))])
            (when id (widget:set-active! id #f) (widget:cancel! id 'blur)))
-         (head:set-current! w)
-         (head:dispatch-app-event! "FOCUS")
-         (let ([id (head:window-widget w)])
+         (seat:set-current! w)
+         (seat:dispatch-app-event! "FOCUS")
+         (let ([id (seat:window-widget w)])
            (when id (widget:set-active! id #t) (widget:key-scopes! id "")))
          #t])))
 
   (edoc "Select the next window in layout order, the pop-up among them while it is shown; the window now selected."
         (returns window))
   (define (focus-next!)
-    (focus! (next-in (focus-ring) (head:current-window)))
-    (head:current-window))
+    (focus! (next-in (focus-ring) (seat:current-window)))
+    (seat:current-window))
 
   (define (focus-direction! direction)
     ;; the layout lists the pop-up only while it is shown
     (let* ([layout (paint:window-layout)]
-           [current (head:current-window)]
-           [cursor (paint:window-screen-position current (head:window-prow current) (head:window-pcol current))]
+           [current (seat:current-window)]
+           [cursor (paint:window-screen-position current (seat:window-prow current) (seat:window-pcol current))]
            [cx (- (cdr cursor) 1)]
            [cy (- (car cursor) 1)])
       ;; Cast a ray from point. This matters in asymmetric trees: from a tall
@@ -298,7 +304,7 @@
       ;; stacked windows on the left receives focus.
       (define (distance entry)
         (let* ([w (car entry)]
-               [x0 (head:window-xoff w)] [x1 (+ x0 (head:window-width w) -1)]
+               [x0 (seat:window-xoff w)] [x1 (+ x0 (seat:window-width w) -1)]
                [y0 (cadr entry)] [y1 (+ y0 (caddr entry))])
           (case direction
             [(left) (and (< x1 cx) (<= y0 cy y1) (- cx x1))]
@@ -336,28 +342,28 @@
     ;; (below or right) unless first? asks for it above or to the left;
     ;; the new window, or #f without the room.
     (paint:window-layout)
-    (let* ([current (head:current-window)]
+    (let* ([current (seat:current-window)]
            [vertical? (eq? orientation 'below)]
-           [extent (if vertical? (+ (head:window-size current) 1) (head:window-width current))]
-           [minimum (if vertical? (+ (head:min-window-lines) 1) 20)]
+           [extent (if vertical? (+ (seat:window-size current) 1) (seat:window-width current))]
+           [minimum (if vertical? (+ (seat:min-window-lines) 1) 20)]
            [usable (- extent (if vertical? 0 1))])
-      (and (not (head:popup? current)) (>= usable (* 2 minimum))
+      (and (not (seat:popup? current)) (>= usable (* 2 minimum))
            (let* ([second (quotient usable 2)]
                   [first (- usable second)]
-                  [w (head:make-window b (head:window-top current) (head:window-topseg current)
-                                       (head:window-left current) (head:window-prow current) (head:window-pcol current)
+                  [w (seat:make-window b (seat:window-top current) (seat:window-topseg current)
+                                       (seat:window-left current) (seat:window-prow current) (seat:window-pcol current)
                                        (max 1 (- second 1)) 0 0
-                                       (head:window-wrap current))]
+                                       (seat:window-wrap current))]
                   [node (if first?
-                            (head:make-layout-split orientation w current first second)
-                            (head:make-layout-split orientation current w first second))])
-             (head:window-line-numbers-set! w (head:window-line-numbers current))
-             (head:replace-layout-window! current node)
+                            (seat:make-layout-split orientation w current first second)
+                            (seat:make-layout-split orientation current w first second))])
+             (seat:window-line-numbers-set! w (seat:window-line-numbers current))
+             (seat:replace-layout-window! current node)
              w))))
 
   (define (split! orientation first?)
     ;; Split only the selected leaf, as in Emacs, showing the same buffer.
-    (or (split-current-window! orientation (head:current-buffer-mirror) first?)
+    (or (split-current-window! orientation (seat:current-buffer-mirror) first?)
         (begin (message! "Not enough room to split") #f)))
 
   (edoc "Split the selected window into a stacked pair; the new window is below and shows the same buffer. The new window, or #f with a message when there is no room."
@@ -383,50 +389,50 @@
   (edoc "Move the boundary of the nearest enclosing stacked split."
         (delta integer "rows to give the selected side; negative takes them") (public))
   (define (resize! delta)
-    (let loop ([child (head:current-window)])
-      (let ([parent (head:layout-parent (head:root) child)])
+    (let loop ([child (seat:current-window)])
+      (let ([parent (seat:layout-parent (seat:root) child)])
         (cond
-          [(head:popup? child) (head:resize-popup! delta)]
-          [(and parent (head:popup? (head:layout-split-second parent)) (> (head:popup-rows) 0))
+          [(seat:popup? child) (seat:resize-popup! delta)]
+          [(and parent (seat:popup? (seat:layout-split-second parent)) (> (seat:popup-rows) 0))
            ;; the windows above grow at the shown pop-up's expense
-           (head:resize-popup! (- delta))]
-          [(or (not parent) (head:popup? (head:layout-split-second parent)))
+           (seat:resize-popup! (- delta))]
+          [(or (not parent) (seat:popup? (seat:layout-split-second parent)))
            (message! "No vertical split")]
-          [(eq? (head:layout-split-orientation parent) 'below)
-           (let ([signed (if (eq? child (head:layout-split-first parent)) delta (- delta))])
-             (head:layout-split-first-weight-set!
-               parent (max 1 (+ (head:layout-split-first-weight parent) signed)))
-             (head:layout-split-second-weight-set!
-               parent (max 1 (- (head:layout-split-second-weight parent) signed))))]
+          [(eq? (seat:layout-split-orientation parent) 'below)
+           (let ([signed (if (eq? child (seat:layout-split-first parent)) delta (- delta))])
+             (seat:layout-split-first-weight-set!
+               parent (max 1 (+ (seat:layout-split-first-weight parent) signed)))
+             (seat:layout-split-second-weight-set!
+               parent (max 1 (- (seat:layout-split-second-weight parent) signed))))]
           [else (loop parent)]))))
 
   (edoc "Close the selected window; its sibling subtree takes the space. The last window and the pop-up stay.")
   (define (delete!)
-    (let ([current (head:current-window)])
+    (let ([current (seat:current-window)])
       (cond
-        [(head:popup? current) (message! "The pop-up window stays")]
+        [(seat:popup? current) (message! "The pop-up window stays")]
         [(null? (cdr (ordinary-windows))) (message! "Only one window")]
         [else
          (let* ([next (next-window current)]
-                [parent (head:layout-parent (head:root) current)]
-                [sibling (if (eq? current (head:layout-split-first parent))
-                             (head:layout-split-second parent)
-                             (head:layout-split-first parent))])
-           (head:replace-layout-window! parent sibling)
+                [parent (seat:layout-parent (seat:root) current)]
+                [sibling (if (eq? current (seat:layout-split-first parent))
+                             (seat:layout-split-second parent)
+                             (seat:layout-split-first parent))])
+           (seat:replace-layout-window! parent sibling)
            (prune-links!)
            (focus! next))])))
 
   (edoc "Empty the pop-up, window 0: a buffer sent there, by a link say, gives way to the pane's own placeholder and the pane hides; the buffer stays in the list. The ↓ at the right of the pane's status line, where the other windows' × is, does the same.")
   (define (clear-pop-up!)
-    (head:hide-popup!))
+    (seat:hide-popup!))
 
   (edoc "Keep only the selected window, the pop-up hidden too; the links go with the other windows. The pop-up cannot be kept alone.")
   (define (delete-others!)
-    (if (head:popup? (head:current-window))
+    (if (seat:popup? (seat:current-window))
         (message! "The pop-up window stays")
         (begin
-          (head:set-layout-root! (head:current-window))
-          (head:hide-popup!)
+          (seat:set-layout-root! (seat:current-window))
+          (seat:hide-popup!)
           (prune-links!)))
     (void))
 
@@ -447,18 +453,18 @@
 
   (define (live-links)
     ;; the links whose windows are both in the layout
-    (let ([alive (head:layout-leaves (head:root))])
+    (let ([alive (seat:layout-leaves (seat:root))])
       (filter (lambda (l) (and (memq (car l) alive) (memq (cadr l) alive))) links)))
 
   (define (prune-links!)
     ;; the dead links forgotten, when a window closes or a link changes
     (set! links (live-links)))
 
-  (define (link-data l) (list (head:window-index (car l)) (head:window-index (cadr l)) (caddr l)))
+  (define (link-data l) (list (seat:window-index (car l)) (seat:window-index (cadr l)) (caddr l)))
 
   (define (live-window who w)
     (let ([w (edoc:type-value 'window w)])
-      (unless (memq w (head:layout-leaves (head:root))) (error who "not a live window" w))
+      (unless (memq w (seat:layout-leaves (seat:root))) (error who "not a live window" w))
       w))
 
   (edoc "Register a tag for links between windows, with a description for its completion; target is registered already, the window a chooser in the linked window opens its pick in."
@@ -475,7 +481,7 @@
         (tag window-link-tag "the tag, registered")
         (returns list))
   (define (link! w tag)
-    (let ([to (live-window 'link! w)] [from (head:current-window)])
+    (let ([to (live-window 'link! w)] [from (seat:current-window)])
       (unless (and (symbol? tag) (assq tag link-tags)) (error 'link! "not a registered link tag" tag))
       (when (eq? to from) (error 'link! "a window cannot link to itself"))
       (prune-links!)
@@ -492,7 +498,7 @@
         (w window "the window linked to")
         (tag (list-of window-link-tag) "the tag, at most one; all tags without") (public))
   (define (unlink! w . tag)
-    (let ([to (edoc:type-value 'window w)] [from (head:current-window)])
+    (let ([to (edoc:type-value 'window w)] [from (seat:current-window)])
       (set! links (remp (lambda (l) (and (eq? (car l) from) (eq? (cadr l) to) (or (null? tag) (eq? (caddr l) (car tag)))))
                         (live-links)))
       (void)))
@@ -502,7 +508,7 @@
         (w (list-of window) "the window, at most one; the current one without")
         (returns (list-of window)))
   (define (linked tag . w)
-    (let ([from (if (pair? w) (edoc:type-value 'window (car w)) (head:current-window))])
+    (let ([from (if (pair? w) (edoc:type-value 'window (car w)) (seat:current-window))])
       (map cadr (filter (lambda (l) (and (eq? (car l) from) (eq? (caddr l) tag))) (live-links)))))
 
   (edoc "Every live link between windows as data, (from to tag) by window indexes, in the order made."
@@ -521,14 +527,14 @@
     (unless (memq setting '(default #t #f))
       (error 'set-wrap! "expected default, #t or #f" setting))
     (let ([w (edit-window!)])
-      (head:window-wrap-set! w setting)
-      (head:window-left-set! w 0)
-      (head:window-goal-set! w #f)     ; the goal column changes meaning
+      (seat:window-wrap-set! w setting)
+      (seat:window-left-set! w 0)
+      (seat:window-goal-set! w #f)     ; the goal column changes meaning
       (message! (format "Wrap ~a" (if (paint:window-wrapped? w) "on" "off")))))
 
   (edoc "Toggle the line-number gutter of the current window, shown beside an edit buffer; an app's buffer shows itself.")
   (define (toggle-line-numbers!)
-    (set-line-numbers! (not (head:window-line-numbers? (edit-window!)))))
+    (set-line-numbers! (not (seat:window-line-numbers? (edit-window!)))))
 
   (edoc "Set the line-number gutter of the current window: #t, #f, or default for the head's line-numbers setting; it shows beside an edit buffer, an app's buffer shows itself."
         (setting (or boolean (one-of default)) "the window's setting"))
@@ -536,26 +542,26 @@
     (unless (memq setting '(default #t #f))
       (error 'set-line-numbers! "expected default, #t or #f" setting))
     (let ([w (edit-window!)])
-      (head:window-line-numbers-set! w setting)
-      (paint:invalidate-screen-cache!)
-      (message! (format "Line numbers ~a" (if (head:window-line-numbers? w) "on" "off")))))
+      (seat:window-line-numbers-set! w setting)
+      (tui:invalidate-screen-cache!)
+      (message! (format "Line numbers ~a" (if (seat:window-line-numbers? w) "on" "off")))))
 
   ;;; Placement -----------------------------------------------------------------------
 
   (define (window-showing b)
-    (find (lambda (w) (eq? (head:window-buffer w) b)) (head:windows)))
+    (find (lambda (w) (eq? (seat:window-buffer w) b)) (seat:windows)))
 
   (edoc "Show a buffer without leaving the current window: in the window already showing it, else the next window, else a fresh split below. The window, or #f when the screen has no room for one."
         (b (or buffer model) "shared document or mounted widget to show")
         (returns (or window #f)))
   (define (display! b)
     (let ([b (or (catalogue-host:resolve! b) (error 'display! "document is not available" b))])
-      (head:add-buffer! b)
+      (seat:add-buffer! b)
       (cond
         [(window-showing b)]
         [(pair? (cdr (ordinary-windows)))
-         (let ([w (next-window (head:current-window))])
-           (head:set-window-buffer! w b)
+         (let ([w (next-window (seat:current-window))])
+           (seat:set-window-buffer! w b)
            w)]
         [(split-current-window! 'below b #f)]
         [else #f])))
@@ -567,12 +573,12 @@
     ;; Help-like buffers never appropriate another leaf: the buffer stays a
     ;; reference beside the command that asked for it.
     (let ([b (or (catalogue-host:resolve! b) (error 'pop-up-or-reuse! "document is not available" b))])
-      (head:add-buffer! b)
+      (seat:add-buffer! b)
       (or (window-showing b)
-          (let ([anchor (if (head:popup? (head:current-window))
-                            (if (memq (head:previous-window) (ordinary-windows)) (head:previous-window) (car (ordinary-windows)))
-                            (head:current-window))])
-            (head:with-window anchor (split-current-window! 'below b #f))))))
+          (let ([anchor (if (seat:popup? (seat:current-window))
+                            (if (memq (seat:previous-window) (ordinary-windows)) (seat:previous-window) (car (ordinary-windows)))
+                            (seat:current-window))])
+            (seat:with-window anchor (split-current-window! 'below b #f))))))
 
   ;;; Registration -------------------------------------------------------------------
 

@@ -20,7 +20,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (sys tty)
-  (export character-event key-event-character mouse-reporting! paste-lines query-color-scheme!
+  (export character-event key-event-character mouse-reporting! paste-lines pointer-event query-color-scheme!
           read-event)
   (import (rnrs)
           (only (chezscheme) format char-ready?)
@@ -29,6 +29,17 @@
           (prefix (only (sys sys) terminal-output-port) sys:))
 
   ;;; Input-side negotiation ------------------------------------------------------
+
+  (edoc "Normalize an SGR mouse report to widget pointer or scroll data, without screen coordinates or host policy."
+        (phase char "SGR M or m") (bits integer "SGR button and modifier bits")
+        (clicks integer "click count") (returns list))
+  (define (pointer-event phase bits clicks)
+    (if (not (zero? (bitwise-and bits 64)))
+      (case (bitwise-and bits 3) [(0) '(scroll 0 -3 cells)] [(1) '(scroll 0 3 cells)]
+        [(2) '(scroll -3 0 cells)] [else '(scroll 3 0 cells)])
+      (list 'pointer (cond [(char=? phase #\m) 'release] [(not (zero? (bitwise-and bits 32))) 'move] [else 'press])
+        (case (bitwise-and bits 3) [(0) 'primary] [(1) 'middle] [(2) 'secondary] [else 'none])
+        (filter values (map (lambda (p) (and (not (zero? (bitwise-and bits (car p)))) (cdr p))) '((4 . shift) (8 . meta) (16 . control)))) clicks)))
 
   (edoc "Ask the terminal for its background color and color scheme without waiting; the input pump reads the reply.")
   (define (query-color-scheme!)

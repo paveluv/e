@@ -66,11 +66,11 @@ first hit is available.
 
 ```scheme
 (search:replace! "old" "new")
-(head:with-buffer (store:find-named "notes.md") (search:replace! "old" "new"))
+(seat:with-buffer (store:find-named "notes.md") (search:replace! "old" "new"))
 (edit:with-region (region:make (store:find-named "notes.md") '(0 . 0) '(4 . 0))
   (search:replace! "old" "new"))
-(for-each (lambda (b) (when (head:buffer-file b) (head:with-buffer b (search:replace! "old" "new"))))
-          (head:buffers))
+(for-each (lambda (b) (when (seat:buffer-file b) (seat:with-buffer b (search:replace! "old" "new"))))
+          (seat:buffers))
 ```
 
 Regions are ordinary data: `'(region (buffer 17) (0 . 0) (4 . 0))`.

@@ -53,7 +53,6 @@
   ;; no request. Bounded like the store's own delta log.
   (define chains (make-eqv-hashtable))
   (define chain-limit 256)
-  (define watching? #f)
 
   (define (remember-chain! id have changes)
     ;; changes: decoded, oldest first, ending at the current revision
@@ -101,8 +100,6 @@
   (edoc "Subscribe to invalidations from the base: (values token take), waking the head on changes."
         (wake thunk "run when something changes"))
   (define (watch! wake)
-    (client:set-wake! wake)
-    (unless watching? (client:request 'watch-head) (set! watching? #t))
     (client:watch! 'changed wake))
   (define unsubscribe! client:unsubscribe!)
 

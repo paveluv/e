@@ -81,9 +81,9 @@
     (begin (control:activate! (child (child a 'heading) 'settle))
       (list (store:line document 0) (store:conflicts document))) '("mine" ()))
   (check 'review-tiny-geometry-does-not-create-local-app-buffers
-    (let ([before (head:buffers)])
+    (let ([before (seat:buffers)])
       (for-each (lambda (size) (widget:prepare! root (car size) (cadr size))) '((0 0) (1 1) (4 2)))
-      (equal? before (head:buffers))) #t)
+      (equal? before (seat:buffers))) #t)
   (widget:unmount! root)
   (check 'hidden-review-releases-derived-demand
     (map (lambda (id) (list (model:demanded? (query id)) (model:demanded? (preview id)))) (list a b c)) '((#f #f) (#f #f) (#f #f)))

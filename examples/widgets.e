@@ -33,5 +33,5 @@
         (list root 0 (list (list 'table table '(grow 1))
                        (list 'answer output 'fit) (list 'undo undo 'fit) (list 'target target 'fit)) '())) '())
     (connection:bind! who query (list (list query 'filter #f (list needle 'text))))
-    (window:show-widget! (head:current-window) root)
+    (window:show-widget! (seat:current-window) root)
     root))

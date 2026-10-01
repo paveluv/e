@@ -63,11 +63,27 @@ top, `edit.sls`, the command layer, as the default app, and the other apps
 Feature modules compose the command API and the seams and, when necessary,
 narrowly scoped system facilities.
 
+`head` owns the input mailbox, frame scheduling, publication and diagnostics.
+`widget` supplies recursive views, while `tui` owns terminal modes, the frame
+shadow, row diff and synchronized output. Importing these libraries and
+registering widget definitions creates no document, window or popup.
+`tui:render!` accepts preparation and painting callbacks; it publishes widget
+placements only after successful output and uses the same input pacing as the
+default editor. `tui:enter!` and `tui:leave!` manage terminal modes independently
+of any root widget. Diagnostics use `head:report!`, with a log/stderr fallback
+when no composition supplies a display.
+
+The existing window policy is temporarily isolated in `seat`, initialized
+explicitly by the default launcher. Its buffer mirrors, window records and
+screen checkpoints are separate from the engine. `paint` composes that host's
+windows and echo area through `tui`; extensions do not need either adapter to
+mount a widget.
+
 `dispatch:key!` handles a key through the current app and keymaps. Incremental
 search is an entry composition routed through that ordinary event pump;
 the default host supplies its temporary input root and editor target.
 The command layer installs the loop's file opener, quit command and after-key
-hook through `head:set-file-opener!`, `head:set-quit-command!` and
+hook through `seat:set-file-opener!`, `seat:set-quit-command!` and
 `head:set-after-key!`. Commands and apps can use these head libraries without
 importing the runtime entrypoint `(main)`.
 
@@ -96,11 +112,19 @@ head through `head:wake-main!` or `head:run-on-main!`.
 
 `paint:redraw!` refreshes terminal size and window tiling before running that
 head preparation, including direct redraws during a prompt. Hooks can read
-`paint:screen-cols` and window widths for the current frame. A hook that
+`tui:screen-cols` and window widths for the current frame. A hook that
 presents a message may reenter redraw; publish its state before calling out.
 Preparation finishes before the frame's synchronized terminal update begins.
 An alternative `head:set-frame-hook!` callback owns the complete frame,
-including `head:before-frame!` after establishing geometry.
+including `head:before-frame!` after establishing geometry. It receives a
+`coalesce?` boolean, passed to `tui:render!`. `head:redraw!` uses this same
+hook for explicit frames; the pump also uses it for wakeups and deadlines.
+`head:set-key-handler!` selects the composition's keyboard adapter.
+Widget key/chord routing lives in `routing`; `dispatch` retains the temporary
+default window host's keyboard policy. The head drains its endpoint before
+composition preparation, so base events, actor messages and text invalidations
+continue to arrive without a window host. Text dependencies refresh after store
+cache invalidation, independent of subscriber registration order.
 
 Documentation data lives in `reference` and the module-entry registry in `doc`.
 Use `reference:lookup` for queries that need no browser; `describe` adds the
@@ -183,8 +207,10 @@ library and the third argument that supplies its root.
 Repeated loading is harmless. If initialization or a surrounding config
 fails, module membership and registrations roll back, allowing a corrected
 retry. Imported libraries and their search roots stay for the process's
-lifetime, as do arbitrary initializer effects. Load these head extensions
-from `config.e`, not `base-config.e`.
+lifetime, as do arbitrary initializer effects. Load head extensions from
+`config.e` and base extensions explicitly from `base-config.e`. Attaching a
+head does not rerun base configuration. When present, `lib/base` or `lib/client`
+precedes the checkout's shared `lib` root for the corresponding runtime.
 
 For example, put this in a separate checkout's `lib/greeting.sls`:
 
@@ -206,6 +232,57 @@ Load it with `(extension:load! "~/git/greeting" "greeting")`. Its command
 appears as `greeting:hello!` in completion and describe, and saving its source
 in e reloads its binding. Plain R6RS libraries are also supported; `elibrary`
 and `edoc` supply documentation beside the definitions without a second API.
+
+### Operations owned by the base
+
+A shared library can define a normal named procedure with `define-operation`.
+The base compiles its body; the client compiles a proxy with the same signature
+and edoc. Register it in `init!` with its qualified public name and the existing
+`read` or `control` admission class. Registration is replaced atomically with
+the module on reload; loading definitions creates no widgets or windows.
+
+```scheme
+(import (only (foundation edoc) elibrary))
+(elibrary (my-service)
+  (export caller init!)
+  (import (chezscheme)
+          (prefix (core operation) operation:))
+
+  (edoc "Return the identity of the authenticated caller."
+        (returns actor))
+  (define-operation (caller)
+    (let ()
+      (import (prefix (state actor) actor:))
+      (actor:current)))
+
+  (edoc "Register the service's base operations.")
+  (define (init!)
+    (operation:register! 'my-service:caller caller 'read)))
+```
+
+Load this same entry explicitly on both sides. Base-only imports can go inside
+the operation body: the client discards that body before expanding its imports.
+`(my-service:caller)` remains the ordinary API in M-x, scripts and bindings.
+The actor comes from the authenticated connection, never a client-supplied
+attribution override. `read` admits any active head or agent session;
+`control` requires an all-buffer head. Operations remain subject to the base's
+lifecycle barrier. Their domain implementation must enforce any finer resource
+ownership rules, just as other base services do.
+`operation:attachment` supplies the opaque connection identity within the base
+call when attachment-local ownership needs it; it is neither authority nor
+persistent model data.
+
+Contracts currently require one fixed positional signature with portable edoc
+types. Arguments and results are copied and checked; native objects, including
+procedures and conditions, cannot cross this boundary. `(returns T)` declares
+one value, `(returns (values T U))` two, and `(returns (values))` zero. Without a
+returns clause the implementation must return `(void)`; its proxy returns void
+after a completion acknowledgement. Implementation errors use the normal wire
+error reply. Changed contracts refuse until the client module is reloaded.
+Interrupted calls are never automatically replayed after reconnecting.
+
+Only explicitly registered operations can be invoked. Saved data and remote
+callers cannot load modules or evaluate arbitrary Scheme through this mechanism.
 
 Test an entry in a headless process using:
 
@@ -401,13 +478,13 @@ call typed up to its argument: `C-c a` gives `λ (edit:answer! `. Such keys
 are bound structurally, from the procedures themselves rather than spelled
 names: `(keymap:bind! "C-c a" (keymap:prefill edit:answer!))` opens M-x
 pre-filled, and `(keymap:bind! "C-x k" (keymap:call edit:kill-buffer!
-head:current-buffer))` calls the command on what the producers return when
+seat:current-buffer))` calls the command on what the producers return when
 the key is pressed. `C-h k` shows both as the call they make, by the names
 the top level gives the procedures, so a rename follows.
 
 A command acts on the current window, buffer or region, or takes its
 target as a required argument, never both; the scope forms retarget it for
-the extent of a body: `head:with-buffer`, `head:with-window` and
+the extent of a body: `seat:with-buffer`, `seat:with-window` and
 `edit:with-region`, dynamic and invisible to the apps. Each is one form
 with no procedure beside it, so M-x offers one spelling.
 `edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
@@ -470,7 +547,7 @@ open buffers that have none yet, so a file opened before its extension loads
 takes the mode when the extension registers it. A buffer that already has a
 mode, detected or chosen, keeps it and picks up only a reloaded record of the
 same name; `(mode:assign!)` re-detects the current buffer on request, and either
-command takes another buffer as a last argument or under `head:with-buffer`.
+command takes another buffer as a last argument or under `seat:with-buffer`.
 
 Completing types describe values and offer choices; they never create
 top-level constructors. Paths, mode names and key spellings remain strings,
@@ -482,7 +559,7 @@ registry. Operations validate their own arguments, and `edoc:type-accepts?`
 is available for generic typed tools.
 
 Buffer commands take `'(buffer id)` values. Resolve names explicitly with
-`store:find-named`, or select `head:current-buffer`. The temporary window
+`store:find-named`, or select `seat:current-buffer`. The temporary window
 adapter still accepts `(window n)` and numeric selectors such as
 `(window:focus! 2)` until windows have model identities.
 

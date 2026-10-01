@@ -6,6 +6,7 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
 
@@ -13,7 +14,7 @@
   '(begin
      (import (except (head edit) init!)
              (prefix (only (head edit) init!) edit:)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head catalogue-host) catalogue-host:)
              (prefix (state store) store:)
              (prefix (state model) model:)
@@ -32,7 +33,7 @@
              (prefix (test) test:)
              (prefix (state actor) actor:) (prefix (state surface) surface:) (prefix (head render) render:)
              (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
-             (prefix (head dispatch) dispatch:)
+             (prefix (head dispatch) dispatch:) (prefix (head routing) routing:)
              (prefix (head prompt) prompt:) (prefix (service prompt-request) prompt-request:)
              (prefix (head search-control) search-control:)
              (prefix (head prompt-host) prompt-host:) (prefix (head suspension) suspension:)
@@ -47,89 +48,89 @@
      (widget:init!) (edit:init!) (window:init!)
      (define refused? test:raises?)
      ;; Host placement must not consume a shared document with the same label.
-     (let* ([ordinary (head:new-buffer! "<app-collision>")]
+     (let* ([ordinary (seat:new-buffer! "<app-collision>")]
             [id (view:create! head:ui-actor #f 'row 1 '((name . "<app-collision>")) '())]
-            [host (window:show-widget! (head:current-window) id)])
+            [host (window:show-widget! (seat:current-window) id)])
        (check 'widget-placement-preserves-shared-label-and-identity
-         (list (eq? host ordinary) (head:buffer-name host) (head:buffer-store-id host)
-           (head:buffer-read-only ordinary)) '(#f "<app-collision 2>" #f #f))
-       (head:forget-buffer! host)
+         (list (eq? host ordinary) (seat:buffer-name host) (seat:buffer-store-id host)
+           (seat:buffer-read-only ordinary)) '(#f "<app-collision 2>" #f #f))
+       (seat:forget-buffer! host)
        (view:retire! head:ui-actor id (model:revision id)))
 
      (include "tests/journal-widget.sps")
 
      ;; The ordinary buffer path validates generated hyperlink ranges too.
-     (let ([b (head:new-buffer! "*hyperlink-test*")])
-       (head:with-buffer-mirror b (insert-text! "https://example.com/path"))
+     (let ([b (seat:new-buffer! "*hyperlink-test*")])
+       (seat:with-buffer-mirror b (insert-text! "https://example.com/path"))
        (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
          '((0 24 "https://example.com/path")))
-       (kill-buffer! (head:buffer-store-id b)))
+       (kill-buffer! (seat:buffer-store-id b)))
 
      ;; Two view identities share data, while geometry, selection and renderer
      ;; lifetime remain independent. Reuse the app fixture and its windows.
      (entry:init!)
      ;; Widget host hooks must leave shared buffers alone after their store
      ;; records disappear, whether hidden or still shown in a window.
-     (let* ([was (head:current-buffer-mirror)]
-            [shown (head:new-buffer! "deleted while shown")]
-            [hidden (head:new-buffer! "deleted while hidden")]
-            [ids (map head:buffer-store-id (list shown hidden))]
-            [errors (log:entries 'head:forget-buffer!)])
-       (head:show-buffer-mirror! shown)
+     (let* ([was (seat:current-buffer-mirror)]
+            [shown (seat:new-buffer! "deleted while shown")]
+            [hidden (seat:new-buffer! "deleted while hidden")]
+            [ids (map seat:buffer-store-id (list shown hidden))]
+            [errors (log:entries 'seat:forget-buffer!)])
+       (seat:show-buffer-mirror! shown)
        (for-each (lambda (id) (store:delete! '(base test) id)) ids)
-       (head:sync-foreign-edits!)
+       (seat:sync-foreign-edits!)
        (check 'widget-host-retirement-never-reads-deleted-shared-facts
-         (list (map head:buffer-of-store-id ids)
-               (and (not (memq (head:current-buffer-mirror) (list shown hidden))) #t)
-               (equal? errors (log:entries 'head:forget-buffer!)))
+         (list (map seat:buffer-of-store-id ids)
+               (and (not (memq (seat:current-buffer-mirror) (list shown hidden))) #t)
+               (equal? errors (log:entries 'seat:forget-buffer!)))
          '((#f #f) #t #t))
-       (head:show-buffer-mirror! was))
+       (seat:show-buffer-mirror! was))
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
-     (let* ([root (head:root)] [w (head:current-window)] [was (head:current-buffer-mirror)]
+     (let* ([root (seat:root)] [w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [owner (string-copy "widget-test-renderer")] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
             [first (view:create! head:ui-actor data 'probe 1 '() 0)]
             [second (view:create! head:ui-actor data 'probe 1 '() 0)]
-            [other (head:make-window was 0 0 0 0 0 2 7 24 'default)]
+            [other (seat:make-window was 0 0 0 0 0 2 7 24 'default)]
             [a (window:show-widget! w first)] [b (window:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
            (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
-       (define (refresh!) (for-each (lambda (buffer) ((head:app-refresh! (head:app-of buffer)))) (list a b)))
+       (define (refresh!) (for-each (lambda (buffer) ((seat:app-refresh! (seat:app-of buffer)))) (list a b)))
        (install!)
-       (head:show-buffer-mirror! a)
-       (head:set-layout-root! (head:make-layout-split 'right w other 1 2))
-       (head:window-width-set! w 12) (head:window-size-set! w 4)
-       (head:window-width-set! other 24) (head:window-size-set! other 2)
+       (seat:show-buffer-mirror! a)
+       (seat:set-layout-root! (seat:make-layout-split 'right w other 1 2))
+       (seat:window-width-set! w 12) (seat:window-size-set! w 4)
+       (seat:window-width-set! other 24) (seat:window-size-set! other 2)
        (refresh!)
        (let ([before model-checks])
          (refresh!)
          (check 'widget-warm-frame-reuses-its-owned-model-snapshot model-checks before))
        (check 'widget-host-bounds-and-cached-rendering
-         (list calls (map (lambda (window) (map glyph:cells (vector->list (head:window-lines window)))) (list w other)))
+         (list calls (map (lambda (window) (map glyph:cells (vector->list (seat:window-lines window)))) (list w other)))
          '(2 ((12 12 12 12) (24 24))))
        (interaction:set-state! head:ui-actor first 0 9)
        (check 'widget-action-uses-provisional-target-before-ack
          (list (call-with-values (lambda () (widget:act! first 'choose)) list)
                (view:state (view:snapshot first)) (view:state (interaction:snapshot second))) '((0 9) 0 0))
-       (head:checkpoint!)
+       (seat:checkpoint!)
        (check 'widget-lifecycle-checkpoint-fences-state (view:state (view:snapshot first)) 9)
        (model:commit! '(base test) (list (list data 0 '() "new")))
        (refresh!)
        (let ([before calls])
-         (head:window-width-set! other 8) (refresh!)
+         (seat:window-width-set! other 8) (refresh!)
          (check 'widget-resize-only-rerenders-affected-view (- calls before) 1))
        (kernel:retract-module! owner) (refresh!)
        (check 'widget-unavailable-renderer-keeps-mount-without-actions
-         (list (widget:actions first) (head:app-refresh-error (head:app-of a))) '(() #f))
+         (list (widget:actions first) (seat:app-refresh-error (seat:app-of a))) '(() #f))
        (install!) (refresh!)
        (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
-       (head:forget-buffer! a) (head:forget-buffer! b)
+       (seat:forget-buffer! a) (seat:forget-buffer! b)
        (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
          (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
-               (cdr (assq 'value (model:snapshot data))) (head:app-of a) (head:app-of b)) '((#f #f) "new" #f #f))
-       (head:set-layout-root! root) (head:show-buffer-mirror! was)
+               (cdr (assq 'value (model:snapshot data))) (seat:app-of a) (seat:app-of b)) '((#f #f) "new" #f #f))
+       (seat:set-layout-root! root) (seat:show-buffer-mirror! was)
        (kernel:retract-module! owner))
 
      ;; Tree mounts allocate no buffers. Reorder retains identity and state;
@@ -138,11 +139,11 @@
             [parent (view:create! head:ui-actor #f 'column 1 '() '())]
             [a (view:create! head:ui-actor data 'text 2 '() 0)]
             [b (view:create! head:ui-actor data 'text 2 '() 0)]
-            [count (length (head:buffers))])
+            [count (length (seat:buffers))])
        (view:arrange! head:ui-actor (list (list parent 0 (list (list 'a a 'fit) (list 'b b '(grow 1))) '())) '())
        (let ([m (widget:mount! parent 'slot)])
          (check 'recursive-mount-idempotent-with-no-adapter-buffers
-           (list (eq? m (widget:mount! parent 'slot)) (= count (length (head:buffers)))
+           (list (eq? m (widget:mount! parent 'slot)) (= count (length (seat:buffers)))
              (refused? (lambda () (widget:mount! parent 'another)))
              (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
          (widget:act! a 'move 1)
@@ -159,14 +160,14 @@
 
      ;; Additional window placement forks descriptors; reopening hidden roots
      ;; reuses their adapter and remembered interaction.
-     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
+     (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
             [id (view:create! head:ui-actor data 'text 2 '() 0)]
             [b (window:show-widget! w id)]
-            [other (head:make-window b 0 0 0 0 0 2 0 12 'default)]
-            [copy (head:window-buffer other)] [fork (head:buffer-fact copy 'widget-id #f)])
+            [other (seat:make-window b 0 0 0 0 0 2 0 12 'default)]
+            [copy (seat:window-buffer other)] [fork (seat:buffer-fact copy 'widget-id #f)])
        (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
-       (head:show-buffer-mirror! was)
+       (seat:show-buffer-mirror! was)
        (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
        (widget:unmount! id)
        (check 'explicitly-unmounted-adapter-remounts-on-show
@@ -174,15 +175,15 @@
        (actor:checkpoint! head:ui-actor
          `(screen 4 1 (split right 1 1 (window 1 0 0 0 default #t #f default) (window 2 0 0 0 default #t #f default))
             (((widget ,id) #f ()))))
-       (head:resume!)
-       (let* ([windows (filter (lambda (w) (not (head:popup? w))) (head:windows))]
-              [ids (map (lambda (w) (head:buffer-fact (head:window-buffer w) 'widget-id #f)) windows)])
+       (seat:resume!)
+       (let* ([windows (filter (lambda (w) (not (seat:popup? w))) (seat:windows))]
+              [ids (map (lambda (w) (seat:buffer-fact (seat:window-buffer w) 'widget-id #f)) windows)])
          (check 'resume-resolves-duplicate-widget-placements-before-installing-layout
            (list (length ids) (equal? (car ids) (cadr ids))
                  (map (lambda (id) (view:source (view:snapshot id))) ids))
            (list 2 #f (list data data))))
-       (window:delete-others!) (head:show-buffer-mirror! was)
-       (for-each (lambda (b) (when (head:buffer-fact b 'widget-id #f) (head:forget-buffer! b))) (head:buffers)))
+       (window:delete-others!) (seat:show-buffer-mirror! was)
+       (for-each (lambda (b) (when (seat:buffer-fact b 'widget-id #f) (seat:forget-buffer! b))) (seat:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
      (let* ([events '()] [owner 'routing-fixture] [capturing? #f]
@@ -207,7 +208,7 @@
                                 [(cancel) (record! id 'cancel) #t]
                                 [else #f])))))))
        (define (show!) (widget:present! (list (list (widget:prepare! root 10 2) 0 0))))
-       (define (key! key) (dispatch:input! root (list 'key key (and (= 1 (string-length key)) key))))
+       (define (key! key) (routing:input! root (list 'key key (and (= 1 (string-length key)) key))))
        (define (take) (let ([out (reverse events)]) (set! events '()) out))
        (install-leaf! #f)
        (widget:register! 'route-row 1
@@ -237,16 +238,16 @@
          (list (map (lambda (binding) (car (keymap:call-action-arguments (cadr binding)))) (widget:pointer-bindings 1 0)) (take))
          (list (list a a row) '()))
        (key! "C-x")
-       (check 'chord-start-returns-without-reading-input (dispatch:pending?) #t)
+       (check 'chord-start-returns-without-reading-input (routing:pending?) #t)
        (key! "a") (key! "C-x") (key! "b") (key! "F1") (key! "F2") (key! "z")
-       (dispatch:input! root '(text "z z" paste))
+       (routing:input! root '(text "z z" paste))
        (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
          (list (list 'leaf a) (list 'parent-chord row) (list 'parent row) (list 'capture row) (list 'shortcut a) (list "z z" a)))
        (set! capturing? #t)
        (check 'capture-discovery-precedes-child-bindings-without-dispatch
          (list (keymap:call-action-arguments (cadr (assoc '(click primary ()) (widget:pointer-bindings 1 0)))) (take))
          (list (list row 'record 'captured) '()))
-       (key! "z") (dispatch:input! root '(text "paste" paste))
+       (key! "z") (routing:input! root '(text "paste" paste))
        (key! "C-x") (key! "a")
        (widget:pointer! '(pointer press primary ()) 1 0)
        (widget:pointer! '(scroll 0 3 cells) 1 0)
@@ -293,13 +294,13 @@
             [a (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
             [b (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
             [root (view:create! head:ui-actor #f 'row 1 '() '())]
-            [ambient (head:current-buffer-mirror)])
+            [ambient (seat:current-buffer-mirror)])
        (define (line) (let-values ([(text rev) (store:snapshot source)]) (vector-ref text 0)))
        (define (show!) (widget:present! (list (list (widget:prepare! root 20 1) 0 0))))
        (define (foreign! start end replacement)
          (let-values ([(text rev) (store:snapshot source)])
            (store:edit! '(agent "entry-test") source rev (text:make-span 0 start 0 end) replacement))
-         (head:sync-foreign-edits! source))
+         (seat:sync-foreign-edits! source))
        (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
        (widget:mount! root 'entry-test) (show!)
        (entry:move! a 'right) (entry:move! a 'right) (entry:move! a 'right)
@@ -327,10 +328,10 @@
        (check 'entry-drag-selects-whole-wide-and-combining-graphemes
          (view:state (interaction:snapshot b)) '((0 . 4) (0 . 1)))
        (widget:focus! root a) (show!)
-       (dispatch:input! root '(key "TAB" #f))
+       (routing:input! root '(key "TAB" #f))
        (check 'entry-tab-uses-host-traversal (view:focus (interaction:snapshot root)) b)
-       (dispatch:input! root '(key "S-TAB" #f))
-       (dispatch:input! root '(text "Q" paste))
+       (routing:input! root '(key "S-TAB" #f))
+       (routing:input! root '(text "Q" paste))
        (check 'entry-paste-replaces-selection-once (line) "a界Qz")
        (entry:undo! a) (entry:redo! a)
        (check 'entry-uses-existing-undo-redo (line) "a界Qz")
@@ -361,7 +362,7 @@
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
          (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)
-               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (head:current-buffer-mirror))) '(#f #f #t #t))
+               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (seat:current-buffer-mirror))) '(#f #f #t #t))
        (widget:unmount! root) (widget:invalidate!))
 
      (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
@@ -396,15 +397,15 @@
            '("default" "first" #t)))
        (widget:unmount! root) (widget:invalidate!))
 
-     (model:register-kind! 'widget-view 3 string?)
-     (let* ([id (model:create! head:ui-actor 'widget-view 3 'session 'persistent '() "future descriptor")]
-            [previous (head:current-buffer-mirror)] [b (window:show-widget! (head:current-window) id)])
-       (head:show-buffer-mirror! b)
-       ((head:app-refresh! (head:app-of b)))
+     (model:register-kind! 'widget-view 4 string?)
+     (let* ([id (model:create! head:ui-actor 'widget-view 4 'session 'persistent '() "future descriptor")]
+            [previous (seat:current-buffer-mirror)] [b (window:show-widget! (seat:current-window) id)])
+       (seat:show-buffer-mirror! b)
+       ((seat:app-refresh! (seat:app-of b)))
        (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
          (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
          '(() #f "future descriptor"))
-       (head:forget-buffer! b) (head:show-buffer-mirror! previous))
+       (seat:forget-buffer! b) (seat:show-buffer-mirror! previous))
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")

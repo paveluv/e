@@ -6,10 +6,11 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
-     (import (prefix (head head) head:)
+     (import (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
              (prefix (core kernel) kernel:)
@@ -105,15 +106,15 @@
 
      ;; Pause after head adoption and let a writer commit before publication.
      ;; Reset's normal repaint hook provides the barrier without a test hook.
-     (define b (head:window-buffer (head:current-window)))
-     (define hid (head:buffer-store-id b))
-     (define w (head:current-window))
-     (head:store-reset! b '("abcdef"))
-     (head:window-pcol-set! w 4)
-     (head:buffer-mark-col-set! b 1)
-     (head:buffer-marked-set! b #t)
-     (define w2 (head:make-window b 0 0 0 0 2 12 80 80 'default))
-     (head:set-windows! (list w w2))
+     (define b (seat:window-buffer (seat:current-window)))
+     (define hid (seat:buffer-store-id b))
+     (define w (seat:current-window))
+     (seat:store-reset! b '("abcdef"))
+     (seat:window-pcol-set! w 4)
+     (seat:buffer-mark-col-set! b 1)
+     (seat:buffer-marked-set! b #t)
+     (define w2 (seat:make-window b 0 0 0 0 2 12 80 80 'default))
+     (seat:set-windows! (list w w2))
      (head:before-frame!)
      (store:reset! bot hid '("abcdef"))
      (define reset-revision (store:revision hid))
@@ -130,14 +131,14 @@
              (lambda () (written #t))))))
      (dynamic-wind
        (lambda ()
-         (head:set-repaint-hook!
+         (seat:set-repaint-hook!
            (lambda ()
-             (when (and armed? (= (head:buffer-store-rev b) reset-revision))
+             (when (and armed? (= (seat:buffer-store-rev b) reset-revision))
                (set! armed? #f)
                (adopted #t)
                (test:await 'mark-write written)))))
        (lambda () (head:before-frame!))
-       (lambda () (head:set-repaint-hook! (lambda () (void)))))
+       (lambda () (seat:set-repaint-hook! (lambda () (void)))))
      (check 'writer-crossed-publication-barrier (writer) 'done)
      (check 'stale-publication-keeps-rebased-point (store:mark head:ui-actor hid 'point) '(0 . 5))
      (check 'stale-publication-keeps-rebased-region
@@ -148,18 +149,18 @@
                                (store:marks head:ui-actor hid))))
             '((0 . 3) (0 . 5)))
      (head:before-frame!)
-     (check 'retry-follows-the-new-text-once (head:buffer-lines b) '#("Qabcdef"))
+     (check 'retry-follows-the-new-text-once (seat:buffer-lines b) '#("Qabcdef"))
      (check 'retry-keeps-head-and-published-point-in-agreement
-            (list (head:window-pcol w) (store:mark head:ui-actor hid 'point)) '(5 (0 . 5)))
+            (list (seat:window-pcol w) (store:mark head:ui-actor hid 'point)) '(5 (0 . 5)))
      (check 'retry-keeps-head-and-published-region-in-agreement
-            (list (head:buffer-mark-col b) (ends (store:mark head:ui-actor hid 'region)))
+            (list (seat:buffer-mark-col b) (ends (store:mark head:ui-actor hid 'region)))
             '(2 ((0 . 2) (0 . 5))))
 
      ;; Failed updates/removals remain pending even without new input or
      ;; another text event.  A store outage must not advance the diff cache.
-     (head:window-pcol-set! w 6)
-     (head:window-pcol-set! w2 1)
-     (head:buffer-marked-set! b #f)
+     (seat:window-pcol-set! w 6)
+     (seat:window-pcol-set! w2 1)
+     (seat:buffer-marked-set! b #f)
      (define store-cell (kernel:persistent-cell 'store (lambda () (error 'mark-test "missing store"))))
      (define saved-store (unbox store-cell))
      (dynamic-wind
@@ -177,22 +178,22 @@
                     (store:marks head:ui-actor hid)) #f)
 
      ;; Publication failure is isolated per buffer; other windows progress.
-     (define other-buffer (head:new-buffer! "other-window-marks"))
-     (head:add-buffer! other-buffer)
-     (head:store-reset! other-buffer '("xyz"))
-     (define other-id (head:buffer-store-id other-buffer))
-     (define w3 (head:make-window other-buffer 0 0 0 0 2 12 80 80 'default))
-     (head:set-windows! (list w w2 w3))
-     (head:window-pcol-set! w 100)
+     (define other-buffer (seat:new-buffer! "other-window-marks"))
+     (seat:add-buffer! other-buffer)
+     (seat:store-reset! other-buffer '("xyz"))
+     (define other-id (seat:buffer-store-id other-buffer))
+     (define w3 (seat:make-window other-buffer 0 0 0 0 2 12 80 80 'default))
+     (seat:set-windows! (list w w2 w3))
+     (seat:window-pcol-set! w 100)
      (head:before-frame!)
      (check 'invalid-head-position-does-not-replace-old-mark (store:mark head:ui-actor hid 'point) '(0 . 6))
      (check 'other-buffer-publishes-despite-failure
             (map cdr (store:marks head:ui-actor other-id)) '((0 . 2)))
-     (head:window-pcol-set! w 1)
+     (seat:window-pcol-set! w 1)
      (head:before-frame!)
      (check 'corrected-buffer-retries (store:mark head:ui-actor hid 'point) '(0 . 1))
      (store:set-mark! head:ui-actor other-id 'custom '(0 . 1))
-     (head:set-windows! (list w w2))
+     (seat:set-windows! (list w w2))
      (head:before-frame!)
      (check 'window-removal-keeps-unmanaged-actor-marks
             (store:marks head:ui-actor other-id) '((custom . (0 . 1))))
@@ -203,7 +204,7 @@
      (store:set-mark! head:ui-actor other-id '(point . 901) '(0 . 0))
      (store:set-mark! head:ui-actor other-id 'region (text:make-span 0 0 0 1))
      (store:set-mark! bot other-id 'point '(0 . 2))
-     (head:resume!)
+     (seat:resume!)
      (head:before-frame!)
      (check 'resume-reconciles-abandoned-window-and-region-names-across-buffers
        (list (store:mark head:ui-actor hid '(point . 900))

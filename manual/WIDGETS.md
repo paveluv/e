@@ -90,9 +90,13 @@ borrowed and remain intact.
 A view declares private model resources in its `owned` option. Their model
 scope names that view. `view:fork!` copies them and remaps sources and internal
 connections; `view:retire!` releases them through their base kind's registered
-lifecycle. Borrowed sources remain shared. Base services register copy and
-release procedures with `view:register-resource-kind!`; copy preparation must
-provide rollback for output allocated before the guarded model transaction.
+lifecycle. Borrowed sources remain shared. Base services register
+`(view:register-resource-kind! kind schema prepare ownership)`.
+Copy preparation provides rollback for output allocated before the guarded
+model transaction. `ownership` is a pure function from the resource envelope
+to its owned model and output-buffer references. Individual and composition
+disposal use this same declaration. Native workers observe their model's
+retirement to cancel work and release process-local caches.
 
 For a private collection query, pass its owning view after the owned resource
 list to `collection:create!`. Its base provider registers source copying with
@@ -328,10 +332,22 @@ Compound sorts apply to live rows; archives follow in separate newest-first
 sections. The sortable columns are `modified`, `flags`, `name`, `lines`,
 `mode` and `file`. Timestamps are raw nanoseconds, flags are `buffer-flag`
 enumerations, and paths keep their absolute identity. Format them in the head.
-Widgets have no Lines value. Named root views are listed directly from base
-state; nested children are excluded. A root's `name` option supplies its label
-and its optional `audience` option restricts visibility, as for documents.
-The default window host names its roots and limits tools to their head.
+Widgets have no Lines value. Views opt into the base catalogue with
+`(catalogue . #t)` in their options, a string `name`, and an optional `audience`
+restricting visibility as for documents. Membership is independent of containment:
+an app can remain listed inside a window, while a named filter or status control
+stays private. Omitting `catalogue`, or setting it to `#f`, keeps a view unlisted.
+For example:
+
+```scheme
+(view:create! head:ui-actor #f 'row 1
+  '((name . "<my-app>") (catalogue . #t)) '())
+```
+
+The default window host names and lists explicitly placed views once, preserving
+an explicit opt-out. Its tools restrict their audience to their head. Saved view
+envelopes upgrade to schema 3: formerly listed named roots retain membership;
+named children stay private. A widget's own kind/schema contract is unchanged.
 
 For an editable shared filter, use a persistent source and
 `(catalogue:create-query! actor source)`, which returns `(query filter-reference)`.
@@ -344,8 +360,10 @@ persistent query so restart cannot leave saved resources without their owner.
 switching, without fetching archive rows or maintaining a head-side comparator.
 
 Rows have stable keys: `(buffer id)` for shared documents, a base `(model id)`
-for named root views. Hidden views retain their identity across detach and
-restart. Retiring a view removes its entry while preserving borrowed sources.
+for listed views. Hidden views retain their identity across detach and
+restart. Retiring a view removes its entry and unlinks its parent while preserving
+borrowed sources. Released children keep their explicit membership; becoming a
+root never exposes a previously private control.
 `catalogue-host:reference` and `catalogue-host:resolve!` are default window
 placement adapters; a retained view without a placement can be mounted with
 `window:show-widget!`. There is no head contribution stream or local-token
@@ -362,7 +380,7 @@ the witness. Restoration retains history and uses the usual unique-name
 policy; permanent deletion requires an archive and never deletes a disk file.
 Validate the query basis at dispatch as well. A refusal refreshes the view
 without retrying the action. The host still retires displayed buffers through
-`head:forget-buffer!`, which moves windows to surviving buffers.
+`seat:forget-buffer!`, which moves windows to surviving buffers.
 
 ## Prepared collections
 
@@ -568,7 +586,7 @@ After restarting the base, evaluate in a head:
     'session 'persistent '() "first\nsecond\nthird"))
 (define first (view:create! (actor:current) data 'text 2 '() 0))
 (define second (view:create! (actor:current) data 'text 2 '() 0))
-(window:show-widget! (head:current-window) first)
+(window:show-widget! (seat:current-window) first)
 (window:show-widget! (window:split-right!) second)
 ```
 
@@ -667,6 +685,88 @@ Later rectangles replace earlier ones where they overlap. `caret` receives
 The host clips and composes both with the text. Only the active root's focused
 descendant supplies the displayed caret. These are head presentation callbacks;
 cell coordinates never enter a base model or view state.
+
+## Composition bindings
+
+`composition:acquire!` takes a nonempty profile name on an authenticated head
+connection. It returns two values: that named head's persistent binding model
+envelope and coherent `(view . descriptor)` rows. Its `value` contains
+`profile`, an attachment token, `initialized?`, `root` and `cleanup`. An uninitialized
+binding differs from an initialized empty root (`#f`). Reconnecting keeps the
+saved root and renews its view generations; repeating acquisition on the same
+connection is idempotent.
+
+`composition:admit!` takes the acquired envelope, a candidate root or `#f`,
+the candidate's prepared descriptor rows, and a disposition. Use `'retire`
+to discard the old presentation, a persistent owner already referencing it
+to retain it, or `#f` when no different old root is replaced.
+Descriptor order does not matter. Admission atomically updates the binding
+and claims the candidate while releasing or retiring the old graph. The
+candidate tree must use persistent, supported view descriptors; its widget
+kinds may be unavailable to a head and render as placeholders.
+
+The result is three values: status, binding envelope (or `#f` when no binding
+was read by the failed transaction), and coherent descriptor rows. Only
+`applied` admits the replacement. A stale binding, changed preparation,
+unavailable retainer or conflicting mount cannot partially replace a root.
+The caller adopts the returned rows without claiming the tree again.
+Generic client model writes cannot create, change or retire these bindings.
+
+Retirement closes the old presentation models, their scopes and explicitly
+owned models in that same transaction. A concurrent scoped allocation makes
+admission stale; allocation into a retired scope refuses. The candidate cannot
+borrow resources being retired. Borrowed documents, services, jobs and
+environments stay outside this ownership closure.
+
+Owned output buffers remain referenced in the binding's `cleanup` list until
+the head releases its old mount and calls `(composition:finish! binding)`.
+This returns status and the updated binding. Another replacement returns
+`pending` while cleanup remains, so abandoned roots cannot accumulate.
+Cleanup is idempotent, and resumes automatically when its attachment departs
+or the base recovers. A late finalizer from a previous attachment cannot
+clean up a newer attachment's pending work. Earlier supported binding
+snapshots acquire an empty cleanup list during recovery.
+
+These are base admission operations. They do not mount, render or dispose of
+head resources, and the ordinary launcher still uses the existing window host.
+
+## Installing a head root
+
+Load `root` to use a fullscreen composition through the existing head pump:
+
+```scheme
+(kernel:load-module! "root")
+(define saved (root:acquire! "my-composition"))
+;; Build a persistent, unparented view, or reuse the root in saved's value.
+(root:install! saved candidate 'retire)
+```
+
+`root:acquire!` selects a named profile without constructing an editor or
+presenting anything. `root:current` returns its local binding snapshot with no
+wire request. `root:install!` accepts that expected snapshot, a view or `#f`,
+and the same disposition as `composition:admit!`. It returns status and the
+admitted binding. Use a fresh `root:current` for a later replacement, because
+finishing cleanup can advance the binding after this call returns.
+
+Installation acquires candidate demand and prepares its first projection before
+admission. It neither claims a second live mount nor publishes provisional
+selection changes. Pending data can use its normal pending display; unavailable
+definitions use inert placeholders. Preparation or admission failure releases
+candidate subscriptions and caches while preserving the previous display.
+The caller still owns any canonical candidate resources it created.
+
+Successful admission pins the previous frame until the installing command
+returns to the pump. At that boundary the head adopts the returned ownership
+generations, cancels old input, releases the previous mount and completes
+disposal. Only successfully flushed output makes the new hit map usable. Failed
+output disables input until a successful redraw; recovery retains the admitted
+root. Preparation, resize and painting share the normal TUI row diff, frame
+pacer and synchronized-output transaction. Keyboard routing adds no implicit
+global editor bindings. An empty root presents a blank screen and hidden cursor.
+
+These APIs are the composition engine's installation path. Startup scripts and
+automatic restoration through that path are still being integrated; the ordinary
+launcher continues to start the existing window host.
 
 ## Connected state
 
@@ -861,7 +961,7 @@ or short to exercise clipping; click either entry to edit their common source.
         (list overlay 0 (list (list 'content column '(grow 1))) '())
         (list scroll 0 (list (list 'content overlay '(grow 1))) '()))
   '())
-(window:show-widget! (head:current-window) scroll)
+(window:show-widget! (seat:current-window) scroll)
 ```
 
 The caller creates the source. Mounting, splitting or closing views never
@@ -961,7 +1061,7 @@ are not searched. `widget:receivers` reads this structure from local mirrors;
 `widget:receiver-live?` checks a captured identity and ownership generation.
 Custom prompt hosts pass these rows in the origin's `receivers` field.
 
-`dispatch:input!` accepts a root and normalized `(key token text-fallback)`
+`routing:input!` accepts a root and normalized `(key token text-fallback)`
 or `(text string source)` input. Optional trailing contexts belong to the
 outer host. Paste uses the text path alone. Chords advance one event at a
 time, and focus, definition or binding changes invalidate their pending

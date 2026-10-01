@@ -2,14 +2,23 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (apps buffet)
   (export choose! create! delete! init! kill! next! open! previous!)
-  (import (chezscheme) (prefix (foundation string) string:)
-          (prefix (head catalogue-host) catalogue-host:) (prefix (head control) control:)
-          (prefix (head entry) entry:) (prefix (head head) head:)
-          (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
-          (prefix (head layout) layout:) (prefix (head table) table:)
-          (prefix (head widget) widget:) (prefix (head window) window:)
-          (prefix (service file) file:) (prefix (state catalogue) catalogue:)
-          (prefix (state collection) collection:) (prefix (state store) store:)
+  (import (chezscheme)
+          (prefix (foundation string) string:)
+          (prefix (head catalogue-host) catalogue-host:)
+          (prefix (head control) control:)
+          (prefix (head entry) entry:)
+          (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
+          (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:)
+          (prefix (head seat) seat:)
+          (prefix (head table) table:)
+          (prefix (head widget) widget:)
+          (prefix (head window) window:)
+          (prefix (service file) file:)
+          (prefix (state catalogue) catalogue:)
+          (prefix (state collection) collection:)
+          (prefix (state store) store:)
           (prefix (state view) view:))
 
   (define (get xs key fallback) (cond [(assq key xs) => cdr] [else fallback]))
@@ -70,7 +79,7 @@
       (unless (eq? (caddr row) 'live) (archive! row 'restore))
       (widget:invoke! id 'open (car row))))
 
-  (edoc "Trash a selected live shared document, delete disposable output, or retire a named root view; stale versions refuse. Every displaying window gets the ordinary fallback."
+  (edoc "Trash a selected live shared document, delete disposable output, or retire a listed view; stale versions refuse. Every displaying window gets the ordinary fallback."
         (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
   (define (kill! id selection basis)
     (let* ([row (selected-row id selection basis)] [ref (car row)])
@@ -78,7 +87,7 @@
       (if (eq? (car ref) 'buffer)
         (let ([b (catalogue-host:resolve! ref)])
           (archive! row 'trash)
-          (when b (head:forget-buffer! b)))
+          (when b (seat:forget-buffer! b)))
         (unless (catalogue-host:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
 
   (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
@@ -93,13 +102,13 @@
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
         (returns model "Buffet view"))
   (define (open!)
-    (let* ([was (head:current-buffer-mirror)] [host (default!)]
+    (let* ([was (seat:current-buffer-mirror)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
-                                                (not (equal? (head:buffer-fact b 'tool-key #f) "*buffet*")))) (head:buffers)) was)]
-           [b (window:show-widget! (head:current-window) host)]
-           [host (head:buffer-fact b 'widget-id #f)] [app (child host 'app)]
+                                                (not (equal? (seat:buffer-fact b 'tool-key #f) "*buffet*")))) (seat:buffers)) was)]
+           [b (window:show-widget! (seat:current-window) host)]
+           [host (seat:buffer-fact b 'widget-id #f)] [app (child host 'app)]
            [table (child app 'table)] [entry (child (child table 'filter) 'entry)])
-      (head:show-buffer-mirror! b)
+      (seat:show-buffer-mirror! b)
       (entry:delete! entry 'all)
       (widget:focus! host entry)
       (widget:pump!)
@@ -108,12 +117,12 @@
 
   (define (switch! direction)
     (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
-           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (head:current-buffer-mirror)) direction)]
+           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (seat:current-buffer-mirror)) direction)]
            [b (and ref (catalogue-host:resolve! ref))])
       (when ref
         (cond [(not b) (window:open-document! host ref)]
-          [(equal? (head:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
-          [else (head:show-buffer-mirror! b)]))))
+          [(equal? (seat:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
+          [else (seat:show-buffer-mirror! b)]))))
 
   (edoc "Switch to the next live document in Buffet's unfiltered compound order, wrapping at the end.")
   (define (next!) (switch! 'next))

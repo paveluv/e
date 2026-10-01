@@ -26,6 +26,23 @@
           (prefix (foundation datum) datum:)
           (prefix (sys activity) activity:))
 
+  (define (directory-entries kind)
+    (fold-right
+      (lambda (entry out)
+        (if (or (not kind) (eq? (cadr entry) kind))
+            (cons (list (car entry) #f (let ([c (list-ref entry 4)]) (and (string? c) c))) out)
+            out))
+      '() (attached)))
+
+  (edoc-type actor "an actor identity datum: (kind name more ...)"
+    (predicate identity:valid?) (portable #t) (within list)
+    (complete (lambda (partial) (directory-entries #f))))
+
+  (edoc-type head "a head identity datum: (head name more ...)"
+    (predicate (lambda (v) (and (identity:valid? v) (eq? (car v) 'head))))
+    (complete (lambda (partial) (directory-entries 'head)))
+    (portable #t) (within actor))
+
   ;;; Registration ----------------------------------------------------------
 
   (define-record-type registration

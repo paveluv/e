@@ -129,10 +129,13 @@
                                         (cons 'subject (if old (format "~a → ~a" old path) path)))
                                       '((depth . 1))))) (git:commit-files repo hash)))))) (git:log repo 20))))
   (define (publish-patch! v lines revision facts)
-    (let ([publication (get facts 'publication)] [request (assq 'git-request facts)])
-      (and request (equal? (cdr request) (stamp v))
-        (store:publish! producer (cadr publication) "<git-patch>" lines
-          (cons request patch-facts) (list (get v 'document) revision (cons 'publication publication) request)))))
+    ;; A completed worker must not interleave with selection's document
+    ;; invalidation. Only publication is serialized, never the Git process.
+    (with-mutex selection-lock
+      (let ([publication (get facts 'publication)] [request (assq 'git-request facts)])
+        (and request (equal? (cdr request) (stamp v))
+          (store:publish! producer (cadr publication) "<git-patch>" lines
+            (cons request patch-facts) (list (get v 'document) revision (cons 'publication publication) request))))))
   (define (start! source query cancelled? publish)
     (unless (and (string=? (get query 'filter) "") (null? (get query 'sort))) (error 'start! "Git history retains commit order"))
     (let* ([id (get query 'id)] [v (get source 'value)] [document (get v 'document)] [publication-basis #f])

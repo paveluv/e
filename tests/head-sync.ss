@@ -7,10 +7,11 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
-     (import (prefix (head head) head:)
+     (import (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head checkpoint) checkpoint:)
        (prefix (core publication) publication:)
              (prefix (state store) store:)
@@ -24,35 +25,35 @@
      (define check test:check)
      (store:log-retention 256)   ; the bound these checks exercise
 
-     (define b (head:window-buffer (head:current-window)))
-     (define id (head:buffer-store-id b))
-     (define w (head:current-window))
+     (define b (seat:window-buffer (seat:current-window)))
+     (define id (seat:buffer-store-id b))
+     (define w (seat:current-window))
      (define bot '(agent sync-test))
-     (define (head:point) (cons (head:window-prow w) (head:window-pcol w)))
+     (define (seat:point) (cons (seat:window-prow w) (seat:window-pcol w)))
      (define (edit! span replacement)
        (store:edit! bot id (store:revision id) span replacement))
 
-     (head:buffer-lines-set! b '#("aaa" "bbb" "ccc"))
-     (head:window-prow-set! w 1)
-     (head:window-pcol-set! w 2)
-     (head:window-top-set! w 1)
-     (head:buffer-spot-row-set! b 2)
-     (head:buffer-spot-col-set! b 2)
-     (head:buffer-spot-top-set! b 2)
+     (seat:buffer-lines-set! b '#("aaa" "bbb" "ccc"))
+     (seat:window-prow-set! w 1)
+     (seat:window-pcol-set! w 2)
+     (seat:window-top-set! w 1)
+     (seat:buffer-spot-row-set! b 2)
+     (seat:buffer-spot-col-set! b 2)
+     (seat:buffer-spot-top-set! b 2)
      (head:before-frame!)
 
      (edit! (text:make-span 0 0 0 0) '("new" ""))
      (head:before-frame!)
-     (check 'cursor-follows-content (head:point) '(2 . 2))
-     (check 'viewport-follows-content (head:window-top w) 2)
+     (check 'cursor-follows-content (seat:point) '(2 . 2))
+     (check 'viewport-follows-content (seat:window-top w) 2)
      (check 'saved-position-follows-content
-            (cons (head:buffer-spot-row b) (head:buffer-spot-col b)) '(3 . 2))
-     (check 'saved-viewport-follows-content (head:buffer-spot-top b) 3)
-     (check 'published-point-agrees (store:mark head:ui-actor id 'point) (head:point))
+            (cons (seat:buffer-spot-row b) (seat:buffer-spot-col b)) '(3 . 2))
+     (check 'saved-viewport-follows-content (seat:buffer-spot-top b) 3)
+     (check 'published-point-agrees (store:mark head:ui-actor id 'point) (seat:point))
      (check 'text-and-revision-agree
             (let-values ([(text revision) (store:snapshot id)])
-              (and (eq? text (head:buffer-lines b))
-                   (= revision (head:buffer-store-rev b))))
+              (and (eq? text (seat:buffer-lines b))
+                   (= revision (seat:buffer-store-rev b))))
             #t)
 
      ;; A reset clears the log, but a reader crosses it whole: the queued
@@ -60,17 +61,17 @@
      ;; diff of the two texts, and the post-reset edit follows, so the point
      ;; is carried, not clamped; its line replaced whole, it collapses to the
      ;; replacement's end, ab|cdef -> Xab|cdef -> text| -> YZtext|.
-     (head:buffer-lines-set! b '#("abcdef"))
-     (head:window-prow-set! w 0)
-     (head:window-pcol-set! w 2)
-     (head:window-top-set! w 0)
+     (seat:buffer-lines-set! b '#("abcdef"))
+     (seat:window-prow-set! w 0)
+     (seat:window-pcol-set! w 2)
+     (seat:window-top-set! w 0)
      (head:before-frame!)
      (edit! (text:make-span 0 0 0 0) '("X"))
      (store:reset! bot id '("text"))
      (edit! (text:make-span 0 0 0 0) '("YZ"))
      (head:before-frame!)
-     (check 'reset-adopts-current-text (head:buffer-lines b) '#("YZtext"))
-     (check 'reset-carries-the-point-across-its-line-diff (head:point) '(0 . 6))
+     (check 'reset-adopts-current-text (seat:buffer-lines b) '#("YZtext"))
+     (check 'reset-carries-the-point-across-its-line-diff (seat:point) '(0 . 6))
      (check 'reset-publishes-the-carried-point
             (store:mark head:ui-actor id 'point) '(0 . 6))
 
@@ -79,53 +80,53 @@
      (do ([i 0 (+ i 1)]) ((= i 257))
        (edit! (text:make-span 0 0 0 0) '("x")))
      (head:before-frame!)
-     (check 'truncated-history-does-not-replay-partial-history (head:point) '(0 . 6))
+     (check 'truncated-history-does-not-replay-partial-history (seat:point) '(0 . 6))
      (check 'truncated-history-adopts-current-revision
-            (head:buffer-store-rev b) (store:revision id))
+            (seat:buffer-store-rev b) (store:revision id))
      (check 'truncated-history-adopts-all-text
-            (string-length (vector-ref (head:buffer-lines b) 0)) 263)
+            (string-length (vector-ref (seat:buffer-lines b) 0)) 263)
 
      (store:reset! bot id '(""))
      (head:before-frame!)
-     (check 'resync-clamps-into-shorter-text (head:point) '(0 . 0))
-     (check 'resync-clamps-saved-viewport (head:buffer-spot-top b) 0)
+     (check 'resync-clamps-into-shorter-text (seat:point) '(0 . 0))
+     (check 'resync-clamps-saved-viewport (seat:buffer-spot-top b) 0)
 
      ;; An explicit baseline reset also invalidates publication.  A
      ;; subscriber can edit after reset before the head adopts its snapshot;
      ;; unchanged numeric head coordinates must still replace the store's
      ;; cursor that followed that subscriber's insertion.
-     (head:buffer-lines-set! b '#("abcdef"))
-     (head:window-pcol-set! w 2)
+     (seat:buffer-lines-set! b '#("abcdef"))
+     (seat:window-pcol-set! w 2)
      (head:before-frame!)
      (define reset-token
        (store:subscribe! id
          (lambda (event)
            (when (eq? (car event) 'reset)
              (edit! (text:make-span 0 0 0 0) '("Q"))))))
-     (head:buffer-lines-set! b '#("abcdef"))
+     (seat:buffer-lines-set! b '#("abcdef"))
      (store:unsubscribe! reset-token)
      (head:before-frame!)
-     (check 'explicit-reset-adopts-the-subscribers-text (head:buffer-lines b) '#("Qabcdef"))
-     (check 'explicit-reset-keeps-clamped-coordinates (head:point) '(0 . 2))
+     (check 'explicit-reset-adopts-the-subscribers-text (seat:buffer-lines b) '#("Qabcdef"))
+     (check 'explicit-reset-keeps-clamped-coordinates (seat:point) '(0 . 2))
      (check 'explicit-reset-republishes-unchanged-coordinates
-            (store:mark head:ui-actor id 'point) (head:point))
+            (store:mark head:ui-actor id 'point) (seat:point))
 
      ;; Derived readers follow this head's adopted source, for either
      ;; owner. Repaint/fact changes are not content revisions, and a
      ;; store writer may be ahead of the text the head has adopted.
      (define (since source basis)
-       (call-with-values (lambda () (head:snapshot-since source basis)) list))
+       (call-with-values (lambda () (seat:snapshot-since source basis)) list))
      (for-each
        (lambda (local?)
-         (let ([source ((if local? head:new-local-buffer! head:new-buffer!) "source-history")])
-           (head:add-buffer! source)
-           (head:buffer-lines-set! source '#("alpha" "middle" "omega"))
-           (let* ([initial (head:edit-basis source)] [basis (caddr initial)])
-             (head:bump-buffer-revision! source)
-             (head:buffer-fact-set! source 'custom 'changed)
-             (check 'repaint-and-facts-preserve-content-basis (head:edit-basis source) initial)
-             (head:store-edit! source (text:make-span 0 0 0 0) '("before" ""))
-             (head:store-edit! source (text:make-span 3 5 3 5) '("!"))
+         (let ([source ((if local? seat:new-local-buffer! seat:new-buffer!) "source-history")])
+           (seat:add-buffer! source)
+           (seat:buffer-lines-set! source '#("alpha" "middle" "omega"))
+           (let* ([initial (seat:edit-basis source)] [basis (caddr initial)])
+             (seat:bump-buffer-revision! source)
+             (seat:buffer-fact-set! source 'custom 'changed)
+             (check 'repaint-and-facts-preserve-content-basis (seat:edit-basis source) initial)
+             (seat:store-edit! source (text:make-span 0 0 0 0) '("before" ""))
+             (seat:store-edit! source (text:make-span 3 5 3 5) '("!"))
              (let* ([snapshot (since source basis)] [changes (caddr snapshot)])
                (check 'source-chain-is-complete (map car changes) (list (+ basis 1) (+ basis 2)))
                (check 'source-chain-preserves-unchanged-middle
@@ -141,14 +142,14 @@
                         (car initial) changes)
                       (car snapshot))
                (check 'source-snapshot-keeps-adopted-vector
-                      (eq? (car snapshot) (head:buffer-lines source)) #t)
+                      (eq? (car snapshot) (seat:buffer-lines source)) #t)
                (check 'same-source-basis-is-empty (caddr (since source (cadr snapshot))) '())
                (check 'future-source-basis-is-unavailable (caddr (since source (+ (cadr snapshot) 1))) #f)
                (set-car! (car changes) -1)
                (check 'source-history-read-does-not-expose-its-list
                       (caar (caddr (since source basis))) (+ basis 1)))
              (unless local?
-               (let ([snapshot (since source basis)] [id (head:buffer-store-id source)])
+               (let ([snapshot (since source basis)] [id (seat:buffer-store-id source)])
                  (store:edit! bot id (store:revision id) (text:make-span 0 0 0 0) '("ahead" ""))
                  (check 'unadopted-store-text-does-not-leak-into-source-read
                         (since source basis) snapshot)
@@ -162,15 +163,15 @@
                         (length (caddr (since source basis))) 3)
                  (head:before-frame!)
                  (check 'adopted-reset-extends-source-chain-across-its-line-diff (length (caddr (since source basis))) 4)))
-             (head:buffer-lines-set! source '#("new baseline"))
-             (head:store-edit! source (text:make-span 0 0 0 0) '("suffix" ""))
+             (seat:buffer-lines-set! source '#("new baseline"))
+             (seat:store-edit! source (text:make-span 0 0 0 0) '("suffix" ""))
              (check 'reset-with-new-edits-never-returns-a-partial-chain
                     (caddr (since source basis)) #f)
-             (let ([basis (caddr (head:edit-basis source))])
+             (let ([basis (caddr (seat:edit-basis source))])
                (do ([i 0 (+ i 1)]) ((= i 256))
-                 (head:store-edit! source (text:make-span 0 0 0 0) '("x")))
+                 (seat:store-edit! source (text:make-span 0 0 0 0) '("x")))
                (check 'source-history-retains-256-changes (length (caddr (since source basis))) 256)
-               (head:store-edit! source (text:make-span 0 0 0 0) '("x"))
+               (seat:store-edit! source (text:make-span 0 0 0 0) '("x"))
                (check 'expired-source-basis-is-unavailable (caddr (since source basis)) #f)
                (check 'retained-source-suffix-still-complete
                       (length (caddr (since source (+ basis 1)))) 256)))))
@@ -182,13 +183,13 @@
        (lambda (read!)
          (let* ([id (store:create! bot "bridge-history" '("alpha" "middle" "omega")
                       '((base . "alpha\nmiddle\nomega") (trailing . #f)))]
-                [source (head:adopt-store-buffer! id)])
-           (head:add-buffer! source)
-           (head:store-edit! source (text:make-span 1 6 1 6) '("!"))
-           (let ([basis (head:edit-basis source)])
+                [source (seat:adopt-store-buffer! id)])
+           (seat:add-buffer! source)
+           (seat:store-edit! source (text:make-span 1 6 1 6) '("!"))
+           (let ([basis (seat:edit-basis source)])
              (read! bot id '("ALPHA" "middle" "OMEGA") '((base . "ALPHA\nmiddle\nOMEGA") (trailing . #f)))
              (head:before-frame!)
-             (let-values ([(text revision changes) (head:snapshot-since source (caddr basis))])
+             (let-values ([(text revision changes) (seat:snapshot-since source (caddr basis))])
                (check 'source-history-keeps-multiple-steps-and-revision-jumps
                  (and changes (> (length changes) 1)
                       (equal? text (fold-left
@@ -201,16 +202,16 @@
      ;; Rename commits before changing the head; local tools yield to the
      ;; accepted shared label, and failures leave the cached name intact.
      (define hidden-name (store:create! bot "claimed" '("") '((audience))))
-     (define named (head:new-buffer! "claimed"))
-     (define rival (head:new-buffer! "claimed"))
-     (head:buffer-name-set! rival "claimed")
+     (define named (seat:new-buffer! "claimed"))
+     (define rival (seat:new-buffer! "claimed"))
+     (seat:buffer-name-set! rival "claimed")
      (check 'shared-construction-and-rename-adopt-store-claims
-            (list (head:buffer-name named) (head:buffer-name rival)) '("claimed<2>" "claimed<3>"))
-     (define rename-tool (let ([b (head:new-local-buffer! "shared-rename")]) (head:buffer-fact-set! b 'tool-key "shared-rename") (head:add-buffer! b)))
-     (head:buffer-name-set! named "<shared-rename>")
+            (list (seat:buffer-name named) (seat:buffer-name rival)) '("claimed<2>" "claimed<3>"))
+     (define rename-tool (let ([b (seat:new-local-buffer! "shared-rename")]) (seat:buffer-fact-set! b 'tool-key "shared-rename") (seat:add-buffer! b)))
+     (seat:buffer-name-set! named "<shared-rename>")
      (check 'accepted-shared-name-displaces-local-label
-            (list (head:buffer-name named) (head:buffer-name rename-tool)
-                  (eq? (head:find-tool-buffer "shared-rename") rename-tool))
+            (list (seat:buffer-name named) (seat:buffer-name rename-tool)
+                  (eq? (seat:find-tool-buffer "shared-rename") rename-tool))
             '("<shared-rename>" "<shared-rename 2>" #t))
      (define store-cell (kernel:persistent-cell 'store (lambda () (error 'head-sync "missing store"))))
      (define saved-store (unbox store-cell))
@@ -218,18 +219,18 @@
        (lambda () (set-box! store-cell #f))
        (lambda ()
          (check 'rename-failure-is-reported
-                (test:raises? (lambda () (head:buffer-name-set! named "uncommitted"))) #t))
+                (test:raises? (lambda () (seat:buffer-name-set! named "uncommitted"))) #t))
        (lambda () (set-box! store-cell saved-store)))
      (check 'failed-rename-does-not-change-presentation
-            (head:buffer-name named) "<shared-rename>")
+            (seat:buffer-name named) "<shared-rename>")
 
      ;; A rename subscriber can advance lifecycle and reenter a frame before
      ;; the call returns. Reconcile the canonical current record, even when
      ;; hiding and readmitting has retired the record passed to the setter.
      (for-each
        (lambda (kind)
-         (let* ([source (head:new-buffer! (format "rename-~a" kind))]
-                [id (head:buffer-store-id source)]
+         (let* ([source (seat:new-buffer! (format "rename-~a" kind))]
+                [id (seat:buffer-store-id source)]
                 [pending (format "pending-~a" kind)]
                 [final (format "final-~a" kind)]
                 [token
@@ -243,22 +244,22 @@
                        (head:before-frame!)
                        (when (eq? kind 'readmit)
                          (store:drop-property! bot id 'audience)
-                         (head:adopt-store-buffer! id)
+                         (seat:adopt-store-buffer! id)
                          (store:rename! bot id final)))))]
                 [visible? (and (memq kind '(rename readmit)) #t)])
-           (head:set-window-buffer! w source)
-           (head:buffer-name-set! source pending)
+           (seat:set-window-buffer! w source)
+           (seat:buffer-name-set! source pending)
            (store:unsubscribe! token)
-           (let ([current (head:buffer-of-store-id id)])
+           (let ([current (seat:buffer-of-store-id id)])
              (check (list kind 'rename-adopts-current-lifecycle)
-                    (list (and current (head:buffer-name current))
+                    (list (and current (seat:buffer-name current))
                           (eq? current source) (store:exists? id)
-                          (eq? (head:window-buffer w) source))
+                          (eq? (seat:window-buffer w) source))
                     (list (and visible? final) (eq? kind 'rename)
                           (not (eq? kind 'delete)) (eq? kind 'rename)))
              (head:before-frame!)
              (check 'queued-rename-cannot-resurrect-retired-records
-                    (eq? (head:buffer-of-store-id id) current) #t))))
+                    (eq? (seat:buffer-of-store-id id) current) #t))))
        '(rename hide delete readmit))
 
      ;; Audience is a head lifecycle fact. Initial/private content never
@@ -277,47 +278,47 @@
                         (map (lambda (key) (store:property (cadr event) key 'missing))
                           '(base trailing mode mode-auto wrap modified))))
                 (store:edit! bot (cadr event) 0 (text:make-span 0 7 0 7) '(" subscriber"))
-                (head:adopt-store-buffer! (cadr event))]
+                (seat:adopt-store-buffer! (cadr event))]
                ;; All subscribers finish create before this edit callback;
                ;; the head has queued creation, but create! has not returned.
                [(edit)
                 (head:before-frame!)
-                (set! created-during-callback (head:buffer-of-store-id (cadr event)))])))))
+                (set! created-during-callback (seat:buffer-of-store-id (cadr event)))])))))
      (define initial-lines (vector "initial"))
      (define initial-facts
        (list (cons 'base (string-copy "initial")) '(trailing . #f) '(mode . #f) '(mode-auto . #f) '(wrap . #f)))
-     (define constructed (head:new-buffer! "reentrant construction" initial-lines initial-facts))
+     (define constructed (seat:new-buffer! "reentrant construction" initial-lines initial-facts))
      (store:unsubscribe! creation-token)
      (vector-set! initial-lines 0 "lost")
      (string-set! (cdar initial-facts) 0 #\X)
-     (head:add-buffer! constructed)
+     (seat:add-buffer! constructed)
      (check 'shared-construction-publishes-owned-inputs-and-reuses-reentrant-adoption
             (list creation-state (eq? constructed created-during-callback)
-                  (head:buffer-lines constructed)
-                  (head:buffer-base constructed) (length (store:history (head:buffer-store-id constructed)))
-                  (length (filter (lambda (b) (equal? (head:buffer-store-id b) (head:buffer-store-id constructed)))
-                                  (head:buffers))))
+                  (seat:buffer-lines constructed)
+                  (seat:buffer-base constructed) (length (store:history (seat:buffer-store-id constructed)))
+                  (length (filter (lambda (b) (equal? (seat:buffer-store-id b) (seat:buffer-store-id constructed)))
+                                  (seat:buffers))))
             '(((#("initial") 0) ("initial" #f #f #f #f #f)) #t #("initial subscriber") "initial" 1 1))
      (define other '(head "other"))
      (define private
        (store:create! head:ui-actor "<private>" '("seed")
                       (list (cons 'audience (list other)) '(wrap . #f))))
-     (define local-tool (let ([b (head:new-local-buffer! "private")]) (head:buffer-fact-set! b 'tool-key "private") (head:add-buffer! b)))
+     (define local-tool (let ([b (seat:new-local-buffer! "private")]) (seat:buffer-fact-set! b 'tool-key "private") (seat:add-buffer! b)))
      (head:before-frame!)
      (check 'private-creation-is-invisible
-            (list (head:buffer-of-store-id private) (head:adopt-store-buffer! private)
-                  (head:buffer-name local-tool)) '(#f #f "<private>"))
-     (define renaming-tool (let ([b (head:new-local-buffer! "private-renamed")]) (head:buffer-fact-set! b 'tool-key "private-renamed") (head:add-buffer! b)))
+            (list (seat:buffer-of-store-id private) (seat:adopt-store-buffer! private)
+                  (seat:buffer-name local-tool)) '(#f #f "<private>"))
+     (define renaming-tool (let ([b (seat:new-local-buffer! "private-renamed")]) (seat:buffer-fact-set! b 'tool-key "private-renamed") (seat:add-buffer! b)))
      (store:rename! bot private "<private-renamed>")
      (head:before-frame!)
      (check 'hidden-rename-does-not-reserve-local-labels
-            (head:buffer-name renaming-tool) "<private-renamed>")
+            (seat:buffer-name renaming-tool) "<private-renamed>")
      (define adoptions 0)
-     (head:set-adopt-hook!
+     (seat:set-adopt-hook!
        (lambda (source)
          (set! adoptions (+ adoptions 1))
          (check 'adoption-is-canonical-before-callbacks
-                (eq? source (head:adopt-store-buffer! (head:buffer-store-id source))) #t)))
+                (eq? source (seat:adopt-store-buffer! (seat:buffer-store-id source))) #t)))
      (define retained #f)
      (store:edit! bot private 0 (text:make-span 0 0 0 4) '("kept"))
      (define history (store:history private))
@@ -328,27 +329,27 @@
            (store:set-property! author private 'audience audience)
            (head:before-frame!)
            (check 'audience-transition
-                  (and (head:buffer-of-store-id private) #t) visible?)
+                  (and (seat:buffer-of-store-id private) #t) visible?)
            (if visible?
                (begin
-                 (let ([current (head:buffer-of-store-id private)])
+                 (let ([current (seat:buffer-of-store-id private)])
                    (when retained
                      (check 'retired-record-cannot-duplicate-readoption
-                            (test:raises? (lambda () (head:add-buffer! retained))) #t))
+                            (test:raises? (lambda () (seat:add-buffer! retained))) #t))
                    (set! retained current))
-                 (head:set-window-buffer! w retained)
+                 (seat:set-window-buffer! w retained)
                  (head:before-frame!)
                  (check 'readmitted-content-and-facts
-                        (list (head:buffer-lines retained) (head:buffer-fact retained 'wrap 'missing)
+                        (list (seat:buffer-lines retained) (seat:buffer-fact retained 'wrap 'missing)
                               (store:mark head:ui-actor private 'point))
                         '(#("kept") #f (0 . 0))))
                (check 'retirement-preserves-store-and-rejects-redisplay
                       (list (store:line private 0) (store:mark bot private 'point)
                             (equal? (store:history private) history)
                             (store:mark head:ui-actor private 'point)
-                            (eq? (head:window-buffer w) retained)
-                            (test:raises? (lambda () (head:add-buffer! retained)))
-                            (test:raises? (lambda () (head:set-window-buffer! w retained))))
+                            (eq? (seat:window-buffer w) retained)
+                            (test:raises? (lambda () (seat:add-buffer! retained)))
+                            (test:raises? (lambda () (seat:set-window-buffer! w retained))))
                       '("kept" (0 . 1) #t #f #f #t #t)))))
        (list (list bot 'all #t) (list head:ui-actor '() #f)
              (list head:ui-actor (list head:ui-actor) #t)
@@ -360,35 +361,35 @@
      (store:set-property! bot private 'audience '())
      (head:before-frame!)
      (check 'coalesced-transitions-read-current-truth
-            (list adoptions (head:buffer-of-store-id private) (head:buffer-name local-tool))
+            (list adoptions (seat:buffer-of-store-id private) (seat:buffer-name local-tool))
             '(2 #f "<private>"))
      ;; Dropping the fact restores the default. A detection callback may
      ;; itself hide the buffer and reenter a frame without resurrection.
      (define cleanups 0)
-     (head:add-buffer-kill-hook!
+     (seat:add-buffer-kill-hook!
        (lambda (source)
-         (when (equal? (head:buffer-store-id source) private)
+         (when (equal? (seat:buffer-store-id source) private)
            (set! cleanups (+ cleanups 1)))))
-     (head:set-adopt-hook!
+     (seat:set-adopt-hook!
        (lambda (source)
          (store:set-property! head:ui-actor private 'audience '())
          (head:before-frame!)))
      (store:drop-property! head:ui-actor private 'audience)
      (head:before-frame!)
      (check 'callback-retirement-is-not-resurrected-or-repeated
-            (list (head:buffer-of-store-id private) cleanups (store:exists? private)) '(#f 1 #t))
-     (head:set-adopt-hook! (lambda (source) (void)))
+            (list (seat:buffer-of-store-id private) cleanups (store:exists? private)) '(#f 1 #t))
+     (seat:set-adopt-hook! (lambda (source) (void)))
 
      ;; A lifecycle burst can exceed the retained invalidation set. Rescan
      ;; both current inventory and old head records, so deleted/hidden ids
      ;; retire while newly visible sources and local tools keep their identity.
-     (let* ([deleted (head:new-buffer! "overflow-deleted")]
-            [hidden (head:new-buffer! "overflow-hidden")]
+     (let* ([deleted (seat:new-buffer! "overflow-deleted")]
+            [hidden (seat:new-buffer! "overflow-hidden")]
             [fresh (store:create! bot "overflow-fresh" '("latest"))])
        (head:before-frame!)
-       (let ([adopted (head:buffer-of-store-id fresh)])
-         (store:delete! bot (head:buffer-store-id deleted))
-         (store:set-property! bot (head:buffer-store-id hidden) 'audience '())
+       (let ([adopted (seat:buffer-of-store-id fresh)])
+         (store:delete! bot (seat:buffer-store-id deleted))
+         (store:set-property! bot (seat:buffer-store-id hidden) 'audience '())
          (do ([i 0 (+ i 1)]) ((= i 257))
            (let ([id (store:create! bot "temporary" '(""))]) (store:delete! bot id)))
          (store:rename! bot fresh "overflow-renamed")
@@ -396,85 +397,85 @@
          (store:create! bot "overflow-new" '("created after overflow"))
          (head:before-frame!)
          (check 'overflow-adopts-current-inventory-and-retires-stale-records
-           (list (head:buffer-of-store-id (head:buffer-store-id deleted))
-                 (head:buffer-of-store-id (head:buffer-store-id hidden))
-                 (eq? adopted (head:buffer-of-store-id fresh))
-                 (head:buffer-name adopted) (head:buffer-lines adopted)
-                 (head:buffer-lines (head:buffer-of-store-id (store:find-named "overflow-new")))
-                 (eq? local-tool (head:find-tool-buffer "private")))
+           (list (seat:buffer-of-store-id (seat:buffer-store-id deleted))
+                 (seat:buffer-of-store-id (seat:buffer-store-id hidden))
+                 (eq? adopted (seat:buffer-of-store-id fresh))
+                 (seat:buffer-name adopted) (seat:buffer-lines adopted)
+                 (seat:buffer-lines (seat:buffer-of-store-id (store:find-named "overflow-new")))
+                 (eq? local-tool (seat:find-tool-buffer "private")))
            '(#f #f #t "overflow-renamed" #("after overflow") #("created after overflow") #t))))
 
      ;; With no visible alternative, retirement creates a fresh scratch
      ;; without stealing the hidden scratch's still-reserved store label.
-     (define last-visible (head:new-buffer! "*scratch*<last>"))
-     (head:set-buffers! (list last-visible))
-     (head:set-window-buffer! w last-visible)
-     (store:set-property! head:ui-actor (head:buffer-store-id last-visible) 'audience '())
+     (define last-visible (seat:new-buffer! "*scratch*<last>"))
+     (seat:set-buffers! (list last-visible))
+     (seat:set-window-buffer! w last-visible)
+     (store:set-property! head:ui-actor (seat:buffer-store-id last-visible) 'audience '())
      (head:before-frame!)
      (check 'last-visible-buffer-gets-a-visible-fallback
-            (list (= (length (head:buffers)) 1)
-                  (store:visible? head:ui-actor (head:buffer-store-id (head:window-buffer w)))
-                  (eq? (head:window-buffer w) last-visible)
-                  (store:exists? (head:buffer-store-id last-visible)))
+            (list (= (length (seat:buffers)) 1)
+                  (store:visible? head:ui-actor (seat:buffer-store-id (seat:window-buffer w)))
+                  (eq? (seat:window-buffer w) last-visible)
+                  (store:exists? (seat:buffer-store-id last-visible)))
             '(#t #t #f #t))
 
      ;; A document's placements own separate retained views, even while one
      ;; switches away. The window adapters and explicit descriptor agree.
-     (let* ([source (head:new-buffer! "independent selections" '#("alpha" "beta") '())]
-            [other (head:new-buffer! "other document")]
-            [one (head:current-window)])
-       (head:set-window-buffer! one source)
-       (head:window-pcol-set! one 2)
-       (head:buffer-mark-col-set! source 1)
-       (head:buffer-marked-set! source #t)
-       (head:window-wrap-set! one #f)
-       (let* ([first (head:window-editor one)]
-              [two (head:make-window source 0 0 0 0 2 10 0 40 'default)]
-              [second (head:window-editor two)])
-         (head:set-layout-root! (head:make-layout-split 'right one two 1 1))
-         (head:with-window two
-           (head:window-prow-set! two 1)
-           (head:buffer-marked-set! source #f))
-         (head:set-window-buffer! one other)
-         (head:set-window-buffer! one source)
+     (let* ([source (seat:new-buffer! "independent selections" '#("alpha" "beta") '())]
+            [other (seat:new-buffer! "other document")]
+            [one (seat:current-window)])
+       (seat:set-window-buffer! one source)
+       (seat:window-pcol-set! one 2)
+       (seat:buffer-mark-col-set! source 1)
+       (seat:buffer-marked-set! source #t)
+       (seat:window-wrap-set! one #f)
+       (let* ([first (seat:window-editor one)]
+              [two (seat:make-window source 0 0 0 0 2 10 0 40 'default)]
+              [second (seat:window-editor two)])
+         (seat:set-layout-root! (seat:make-layout-split 'right one two 1 1))
+         (seat:with-window two
+           (seat:window-prow-set! two 1)
+           (seat:buffer-marked-set! source #f))
+         (seat:set-window-buffer! one other)
+         (seat:set-window-buffer! one source)
          (check 'placements-retain-independent-view-state
-           (list (equal? first second) (equal? first (head:window-editor one))
+           (list (equal? first second) (equal? first (seat:window-editor one))
              (view:state (interaction:snapshot first)) (view:state (interaction:snapshot second)))
            '(#f #t ((0 . 2) (0 . 1) (0 . 0) #t) ((1 . 2) (0 . 1) (0 . 0) #f)))
          (check 'placement-wrap-preference-survives-switching
-           (list (head:window-wrap one) (head:window-wrap two)) '(#f default))
-         (head:checkpoint!)
+           (list (seat:window-wrap one) (seat:window-wrap two)) '(#f default))
+         (seat:checkpoint!)
          (let ([state (actor:checkpoint head:ui-actor)])
            (check 'checkpoint-retains-views-not-copied-window-anchors
              (list (cadr state)
                (exists (lambda (entry)
                          (exists (lambda (p) (or (integer? (car p)) (pair? (car p)))) (caddr entry))) (list-ref state 4)))
              '(6 #f)))
-         (head:set-layout-root! one)
+         (seat:set-layout-root! one)
          (check 'closed-placement-releases-ownership
            (list (view:owner (view:snapshot second)) (and (interaction:snapshot first) #t)) '(#f #t))))
 
      ;; Resume follows the saved basis, not the fresh process's initial
      ;; cache. The table covers rebasing, old versions and unavailable views.
-     (let ([b (head:new-buffer! "resume positions")])
-       (head:set-buffers! (list b))
-       (head:set-layout-root! (head:current-window))
-       (head:set-window-buffer! (head:current-window) b)
+     (let ([b (seat:new-buffer! "resume positions")])
+       (seat:set-buffers! (list b))
+       (seat:set-layout-root! (seat:current-window))
+       (seat:set-window-buffer! (seat:current-window) b)
        (for-each
          (lambda (kind expected)
-           (head:store-reset! b '("zero" "middle" "last"))
-           (let ([w (head:current-window)] [id (head:buffer-store-id b)])
-             (head:window-prow-set! w 1)
-             (head:window-pcol-set! w 3)
-             (head:window-top-set! w 1)
-             (head:buffer-mark-row-set! b 2)
-             (head:buffer-mark-col-set! b 2)
-             (head:buffer-marked-set! b #t)
-             (head:buffer-spot-row-set! b 2)
-             (head:buffer-spot-col-set! b 4)
-             (head:buffer-spot-top-set! b 1)
-             (head:set-copy-text! (string-copy "saved kill"))
-             (head:checkpoint!)
+           (seat:store-reset! b '("zero" "middle" "last"))
+           (let ([w (seat:current-window)] [id (seat:buffer-store-id b)])
+             (seat:window-prow-set! w 1)
+             (seat:window-pcol-set! w 3)
+             (seat:window-top-set! w 1)
+             (seat:buffer-mark-row-set! b 2)
+             (seat:buffer-mark-col-set! b 2)
+             (seat:buffer-marked-set! b #t)
+             (seat:buffer-spot-row-set! b 2)
+             (seat:buffer-spot-col-set! b 4)
+             (seat:buffer-spot-top-set! b 1)
+             (seat:set-copy-text! (string-copy "saved kill"))
+             (seat:checkpoint!)
              (case kind
                [(missing-provider)
                 (let ([state (actor:checkpoint head:ui-actor)])
@@ -488,15 +489,15 @@
              ;; A fresh placement has its own editor view. Mutating w here
              ;; would now change the saved view itself, not just a throwaway
              ;; process-local coordinate as it did before view-owned state.
-             (let ([fresh (head:make-window b 0 0 0 0 0 20 0 80 'default)])
-               (head:set-layout-root! fresh)
-               (head:set-current! fresh))
+             (let ([fresh (seat:make-window b 0 0 0 0 0 20 0 80 'default)])
+               (seat:set-layout-root! fresh)
+               (seat:set-current! fresh))
              ;; the copy buffer is the base's, so the resume leaves its text as it stands
-             (head:set-copy-text! "as the base has it")
+             (seat:set-copy-text! "as the base has it")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
                (check (list 'resume-from-saved-revision kind)
-                 (list (head:resume!)
-                       (map cdr (head:buffer-placements b)) (head:buffer-marked b) (head:copy-text)
+                 (list (seat:resume!)
+                       (map cdr (seat:buffer-placements b)) (seat:buffer-marked b) (seat:copy-text)
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
                  (list #t expected #t "as the base has it" #t)))))
          '(edit reset expired missing-provider)
@@ -505,10 +506,10 @@
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
        ;; The unchanged-frame comparison owns its data too.
-       (head:set-copy-text! "Xaved kill")
-       (head:checkpoint!)
+       (seat:set-copy-text! "Xaved kill")
+       (seat:checkpoint!)
        (check 'the-copy-text-lives-in-the-base-not-the-checkpoint
-         (list (store:line (head:buffer-store-id (head:copy-buffer)) 0)
+         (list (store:line (seat:buffer-store-id (seat:copy-buffer)) 0)
                (exists (lambda (entry)
                          (let ([reference (car entry)])
                            (and (pair? reference) (eq? (car reference) 'local) (equal? (cadr reference) "<copy>"))))
@@ -628,7 +629,7 @@
                  (call/cc
                    (lambda (done)
                      (head:set-frame-hook!
-                       (lambda ()
+                       (lambda (coalesce?)
                          (set! outer-callback? (or outer-callback? (head:in-main-pump)))
                          (head:before-frame!)
                          (if (finished?) (done #t)

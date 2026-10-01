@@ -30,15 +30,14 @@
           (rename (mode-row-styles row-styles)) source source-fact source-lines (rename (mode-styles styles)))
   (import (rnrs)
           (only (chezscheme) record-writer)
-          (only (chezscheme)
-                make-weak-eq-hashtable eq-hashtable-ref eq-hashtable-set!
-                list-head vector-copy void)
+          (only (chezscheme) make-weak-eq-hashtable eq-hashtable-ref
+            eq-hashtable-set! list-head vector-copy void)
           (prefix (core kernel) kernel:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
-          (prefix (head head) head:)
           (prefix (head render) render:)
+          (prefix (head seat) seat:)
           (prefix (state store) store:))
 
   ;; Mode callbacks receive explicit text and only the facts they declare.
@@ -251,14 +250,14 @@
   (define (scratch-mode b)
     ;; *scratch*, the editor's notepad, speaks Scheme without a file name
     ;; to say so, as Emacs's *scratch* speaks Lisp
-    (and (not (head:buffer-file b))
-         (string:prefix? "*scratch*" (head:buffer-name b))
+    (and (not (seat:buffer-file b))
+         (string:prefix? "*scratch*" (seat:buffer-name b))
          (find-mode "scheme")))
 
   (define (detected-mode b)
-    (or (detect-mode (or (head:buffer-file b)
-                       (head:buffer-fact b 'source-file #f))
-          (head:buffer-line b 0))
+    (or (detect-mode (or (seat:buffer-file b)
+                       (seat:buffer-fact b 'source-file #f))
+          (seat:buffer-line b 0))
         (scratch-mode b)))
 
   (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
@@ -275,8 +274,8 @@
 
   (define (the-buffer b)
     (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
-    (if (null? b) (head:current-buffer-mirror)
-      (or (head:adopt-store-buffer! (edoc:type-value 'buffer (car b)))
+    (if (null? b) (seat:current-buffer-mirror)
+      (or (seat:adopt-store-buffer! (edoc:type-value 'buffer (car b)))
         (error 'mode "buffer is not visible" (car b)))))
 
   (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
@@ -296,7 +295,7 @@
   (edoc "The keymap context of a buffer's mode, named after it, or false."
         (b (record buffer) "the buffer") (returns (or symbol #f)))
   (define (key-context b)
-    (let ([name (head:buffer-fact b 'mode #f)]) (and name (find-mode name) (string->symbol name))))
+    (let ([name (seat:buffer-fact b 'mode #f)]) (and name (find-mode name) (string->symbol name))))
 
   ;; A context a buffer has by its state rather than its mode: merge while
   ;; its text holds conflict markers, say.  The app binding keys in it
@@ -321,7 +320,7 @@
   (edoc "Read a mode's inherited key contexts, nearest first. The legacy buffer adapter also prepends its state contexts."
         (source any "resolved mode, false, or legacy buffer") (returns (list-of symbol)))
   (define (key-contexts source)
-    (if (head:buffer? source) (append (state-contexts-of source) (key-contexts (find-mode (head:buffer-fact source 'mode #f))))
+    (if (seat:buffer? source) (append (state-contexts-of source) (key-contexts (find-mode (seat:buffer-fact source 'mode #f))))
       (let loop ([m source] [out '()])
         (if (not m) (reverse out)
           (loop (and (mode-parent m) (find-mode (mode-parent m))) (cons (string->symbol (mode-name m)) out))))))
@@ -338,12 +337,12 @@
         (returns (or (record mode) #f)))
   (define (mode-of . b)
     (unless (<= (length b) 1) (error 'mode-of "expected at most one buffer"))
-    (let ([n (if (null? b) (head:buffer-fact (head:current-buffer-mirror) 'mode #f)
+    (let ([n (if (null? b) (seat:buffer-fact (seat:current-buffer-mirror) 'mode #f)
                (store:property (edoc:type-value 'buffer (car b)) 'mode #f))])
       (and n (find-mode n))))
 
   (define (set-mode-of! b m . auto?)
-    (head:buffer-facts-set! b
+    (seat:buffer-facts-set! b
       (cons (cons 'mode (and m (mode-name m)))
             (if (pair? auto?) (list (cons 'mode-auto (car auto?))) '()))))
 
@@ -495,15 +494,15 @@
     ;; plain text until it returns. Readers resolve that name on every use;
     ;; only newly successful detection needs to change shared facts.
     (for-each (lambda (b)
-                (when (and (not (head:buffer-fact b 'mode #f)) (head:buffer-mode-auto b))
+                (when (and (not (seat:buffer-fact b 'mode #f)) (seat:buffer-mode-auto b))
                   (let ([m (detected-mode b)])
                     (when m (set-mode-of! b m #t)))))
-              (head:buffers)))
+              (seat:buffers)))
 
   ;;; The head's adopt hook -------------------------------------------------------
 
   ;; a foreign buffer adopted with no mode fact yet gets detection,
   ;; recorded as the shared fact
-  (define adopt-hooked (head:set-adopt-hook! assign-mode!))
+  (define adopt-hooked (seat:set-adopt-hook! assign-mode!))
 
 ) ;; library (mode)

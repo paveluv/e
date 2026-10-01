@@ -7,6 +7,7 @@
           (prefix (core startup) startup:)
           (prefix (foundation datum) datum:)
           (prefix (foundation string) string:)
+          (prefix (service root-binding) root-binding:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
           (prefix (state model) model:)
@@ -23,6 +24,8 @@
   (define archives '())
   (define rejected-archive #f)
   (define notice-pending? #f)
+
+  (define (upgrade-model r) (root-binding:upgrade (view:upgrade r)))
 
   (define (upgrade value)
     ;; Session 3 tags document identities. Convert only fields owned by a
@@ -107,7 +110,7 @@
                          (or (not restoring?)
                              (and (model:valid-import? (cadr models) (cddr models))
                                   (guard (ex [else #f])
-                                    (model:valid-import? (cadr models) (map view:upgrade (cddr models))))))))))
+                                    (model:valid-import? (cadr models) (map upgrade-model (cddr models))))))))))
          (integer? (caddr value)) (exact? (caddr value)) (>= (caddr value) 0)
          (list? (list-ref value 4)) (pair? (list-ref value 4))
          (eq? (car (list-ref value 4)) 'buffers)
@@ -151,7 +154,7 @@
          ;; unexpected import error aborts this startup with session intact.
          (store:import! (cadddr value) (cdr (list-ref value 4)))
          (if (= (length value) 7)
-             (let ([models (list-ref value 6)]) (model:import! (cadr models) (map view:upgrade (cddr models))))
+             (let ([models (list-ref value 6)]) (model:import! (cadr models) (map upgrade-model (cddr models))))
              (model:import! 1 '()))
          (actor:import! (cdr (list-ref value 5)))]
         [bytes

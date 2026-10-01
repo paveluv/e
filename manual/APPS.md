@@ -36,7 +36,7 @@ takes precedence without emphasizing an unfocused keyboard choice.
 - [Finder](FINDER.md) provides recursive path filtering, navigation, creation
   and sortable metadata. Filesystem work belongs to base services.
 - [Buffet](BUFFERS.md#the-buffet-app) provides a shared name/path filter and
-  compound sorting over documents and named root views, including itself.
+  compound sorting over documents and explicitly listed views, including itself.
   Each placement keeps its own selection and viewport. Buffer switching
   follows the current sort; wheel input simply scrolls.
 - [Terminal](TERMINAL.md) combines a process source with an editor and capture
@@ -113,8 +113,8 @@ matching frame is available. Publish valid rendition to advance that view;
 the store's latest text remains readable independently. Clear `alive` or
 `manages-viewport` when returning to ordinary text. Surface-only updates wake
 the head to retry deferred adoption without forcing a full-screen repaint.
-`(head:buffer-rendition buffer)` returns its opaque prepared frame;
-`(head:read-rendition buffer ranges)` reads explicit `[from,to)` ranges
+`(seat:buffer-rendition buffer)` returns its opaque prepared frame;
+`(seat:read-rendition buffer ranges)` reads explicit `[from,to)` ranges
 given as `(from . to)` pairs without filling that cache. Both enforce current
 visibility and return `#f` when unavailable. `render:header` and `render:row`
 return owned header and `(cell-strings styles cell-link-ranges)` data from a

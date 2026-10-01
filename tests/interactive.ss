@@ -139,16 +139,16 @@
               (lambda (budget)
                 (evaluate
                   `(begin
-                     (paint:input-delay ,budget)
+                     (tui:input-delay ,budget)
                      (window:delete-others!)
-                     (let ([b (head:new-local-buffer! "scroll-burst")])
-                       (head:buffer-lines-set! b
+                     (let ([b (seat:new-local-buffer! "scroll-burst")])
+                       (seat:buffer-lines-set! b
                          (list->vector (map (lambda (i) (format "~a ~a" i (make-string 90 #\x))) (iota 100))))
-                       (head:show-buffer-mirror! b))
+                       (seat:show-buffer-mirror! b))
                      (window:set-wrap! #t)
                      (window:split-right!)
                      (window:set-wrap! #t)
-                     (head:double-click? 0 0 0)
+                     (seat:double-click? 0 0 0)
                      (keymap:bind! "F11" paint:place-cursor!)
                      (keymap:bind! "F12"
                        (lambda ()
@@ -162,18 +162,18 @@
                 (wait-for! 'burst-reaches-its-modal-answer
                   (lambda () (find-cell (format "Burst complete ~a ~s" budget "x"))) 5000)
                 (evaluate
-                  '(list (head:window-xoff (head:current-window))
+                  '(list (seat:window-xoff (seat:current-window))
                          (map (lambda (w)
-                                (list (head:window-prow w) (head:window-pcol w)
-                                      (head:window-top w) (head:window-topseg w)))
-                              (map car (head:layout))))))
+                                (list (seat:window-prow w) (seat:window-pcol w)
+                                      (seat:window-top w) (seat:window-topseg w)))
+                              (map car (seat:layout))))))
               '(0 8))])
        (check 'coalescing-preserves-wrapped-motion-paging-mouse-and-modal-input
          (equal? (car results) (cadr results))))
      (evaluate '(begin
-                  (keymap:unbind! "F11") (keymap:unbind! "F12") (paint:input-delay 8)
+                  (keymap:unbind! "F11") (keymap:unbind! "F12") (tui:input-delay 8)
                   (window:delete-others!)
-                  (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
+                  (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
 
      ;; A divider owns its drag across widget contents, on either axis.
      ;; Release inside the widget must also retire the host's gesture.
@@ -190,7 +190,7 @@
              (send! "\x1b;[24~")
              (wait-for! 'divider-frame-published
                (lambda () (find-cell (format "Divider ~a step ~a" split step))) 3000)
-             (let* ([before (evaluate '(let ([d (car (head:dividers))]) (list (car d) (caddr d) (cadddr d))))]
+             (let* ([before (evaluate '(let ([d (car (seat:dividers))]) (list (car d) (caddr d) (cadddr d))))]
                     [horizontal? (eq? (car before) 'right)]
                     [x (if horizontal? (+ 1 (cadr before)) 2)]
                     [y (if horizontal? 3 (+ 1 (caddr before)))]
@@ -200,13 +200,13 @@
                (wait-for! 'divider-gesture-applied
                  (lambda () (find-cell (format "Divider ~a step ~a" split (+ step 1)))) 3000)
                (check (list 'divider-crosses-widgets-and-releases split delta)
-                 (equal? (evaluate '(let ([d (car (head:dividers))]) (list (caddr d) (cadddr d) (and (head:drag) #t))))
+                 (equal? (evaluate '(let ([d (car (seat:dividers))]) (list (caddr d) (cadddr d) (and (seat:drag) #t))))
                    (list (+ (cadr before) (if horizontal? delta 0)) (+ (caddr before) (if horizontal? 0 delta)) #f)))))
            '(-2 3) '(1 3)))
        '(window:split-below! window:split-right!))
      (evaluate '(begin
                   (keymap:unbind! 'buffet "F12") (window:delete-others!)
-                  (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
+                  (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
 
      ;; -- a nested terminal: default partial capture lets whole editor
      ;; commands through while other keys reach the child; full capture
@@ -281,7 +281,7 @@
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; An argument whose type is documented completes to its values: the
      ;; buffers, spelled as the expressions that denote them.
-     (send! "\x1b;xhead:show-buffer! \t\t")
+     (send! "\x1b;xseat:show-buffer! \t\t")
      (wait-for! 'a-typed-argument-lists-its-values
                 (lambda () (and (find-cell "matches of buffer")
                                 (find-cell "*scratch*") (find-cell "*terminal*")
@@ -304,11 +304,11 @@
                 (lambda () (not (find-cell "λ ("))) 5000)
      ;; A needle argument searches as it is typed: the note counts the
      ;; matches in a separate editor; Tab navigates without moving the source.
-     (evaluate '(let ([b (head:new-buffer! "needles")])
-                  (head:show-buffer-mirror! b)
+     (evaluate '(let ([b (seat:new-buffer! "needles")])
+                  (seat:show-buffer-mirror! b)
                   (edit:insert-text! "alpha beta alpha\ngamma alpha")
-                  (head:goto! '(0 . 0))
-                  (head:buffer-name b)))
+                  (seat:goto! '(0 . 0))
+                  (seat:buffer-name b)))
      (send! "\x1b;xsearch:replace! \"alp")
      (wait-for! 'a-needle-argument-counts-its-matches
                 (lambda () (and (find-cell "λ (search:replace! \"alp") (find-cell "[1 of 3]"))) 5000)
@@ -316,44 +316,44 @@
      (wait-for! 'tab-visits-the-next-match
                 (lambda () (find-cell "[2 of 3]")) 5000)
      (check 'needle-preview-leaves-original-caret-alone
-       (equal? (evaluate '(head:point)) '(0 . 0)))
+       (equal? (evaluate '(seat:point)) '(0 . 0)))
      (send! "\x1b;[Z")
      (wait-for! 'shift-tab-visits-the-previous-match
        (lambda () (find-cell "[1 of 3]")) 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-search-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
-     (check 'cancelling-the-search-restores-point (equal? (evaluate '(head:point)) '(0 . 0)))
+     (check 'cancelling-the-search-restores-point (equal? (evaluate '(seat:point)) '(0 . 0)))
      (send! "\x13;alpha")
      (wait-for! 'incremental-search-entry-on-main-pump
-       (lambda () (and (find-cell "I-search:") (equal? (evaluate '(head:point)) '(0 . 5)))) 5000)
+       (lambda () (and (find-cell "I-search:") (equal? (evaluate '(seat:point)) '(0 . 5)))) 5000)
      (send! "\x13;")
      (wait-for! 'incremental-search-repeat
-       (lambda () (equal? (evaluate '(head:point)) '(0 . 16))) 5000)
+       (lambda () (equal? (evaluate '(seat:point)) '(0 . 16))) 5000)
      (check 'incremental-search-preserves-document
-       (equal? (evaluate '(head:buffer-lines (head:current-buffer-mirror))) '#("alpha beta alpha" "gamma alpha")))
+       (equal? (evaluate '(seat:buffer-lines (seat:current-buffer-mirror))) '#("alpha beta alpha" "gamma alpha")))
      (send! "\x7;")
      (wait-for! 'incremental-search-cancel
-       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(0 . 0)))) 5000)
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(seat:point)) '(0 . 0)))) 5000)
      (send! "\x13;\x13;")
      (wait-for! 'incremental-search-remembers-needle
-       (lambda () (equal? (evaluate '(head:point)) '(0 . 5))) 5000)
+       (lambda () (equal? (evaluate '(seat:point)) '(0 . 5))) 5000)
      (send! "\x1b;[C")
      (wait-for! 'arrow-finishes-search-and-moves-editor
-       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(0 . 6)))) 5000)
-     (evaluate '(begin (head:goto! '(0 . 0)) #t))
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(seat:point)) '(0 . 6)))) 5000)
+     (evaluate '(begin (seat:goto! '(0 . 0)) #t))
      (send! "\x13;gamma\r")
      (wait-for! 'return-settles-the-last-needle-before-closing
-       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(1 . 5)))) 5000)
-     (evaluate '(begin (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
+       (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(seat:point)) '(1 . 5)))) 5000)
+     (evaluate '(begin (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
      ;; A revision candidate highlights a separate read-only editor; the
      ;; source editor's caret and style stay unchanged throughout.
-     (evaluate '(let ([b (head:new-buffer! "previews")])
-                  (head:show-buffer-mirror! b)
-                  (head:goto! '(0 . 0))
+     (evaluate '(let ([b (seat:new-buffer! "previews")])
+                  (seat:show-buffer-mirror! b)
+                  (seat:goto! '(0 . 0))
                   (edit:insert-text! "alpha ")
                   (edit:insert-text! "beta")
-                  (head:goto! '(0 . 0))
-                  (head:buffer-name b)))
+                  (seat:goto! '(0 . 0))
+                  (seat:buffer-name b)))
      (send! "\x1b;xdelta-log:show! 2")
      (wait-for! 'the-previewed-entry-is-highlighted
        (lambda ()
@@ -366,15 +366,15 @@
                 (lambda () (find-cell "λ (delta-log:show! 2)")) 5000)
      (check 'revision-preview-does-not-move-or-restyle-original
        (let ([cell (find-cell "alpha beta")])
-         (and (equal? (evaluate '(head:point)) '(0 . 0)) cell
+         (and (equal? (evaluate '(seat:point)) '(0 . 0)) cell
            (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain))))
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-preview-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-preview-restores-point-and-the-style
-       (equal? (list (evaluate '(head:point))
+       (equal? (list (evaluate '(seat:point))
                      (let ([cell (find-cell "alpha beta")]) (and cell (style-at (cons (car cell) (+ (cdr cell) 6))))))
                (list '(0 . 0) 'plain)))
-     (evaluate '(begin (head:show-buffer-mirror! (head:buffer-named "*scratch*")) #t))
+     (evaluate '(begin (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
      ;; A closed string is final: Tab settles the forms around it, the file
      ;; literal closing at its one argument and the command at its one,
      ;; whether or not the path exists.
@@ -407,7 +407,7 @@
      (wait-for! 'describe-key-uses-the-normal-pump (lambda () (find-cell "Describe key:")) 5000)
      (send! "\x18;2")
      (wait-for! 'describe-key-publishes-a-contextual-listing (lambda () (find-cell "Key: C-x 2")) 5000)
-     (check 'describing-split-does-not-split (= (evaluate '(length (head:windows))) 2))
+     (check 'describing-split-does-not-split (= (evaluate '(length (seat:windows))) 2))
      (evaluate '(begin (bindings:hide!) #t))
      ;; Subword prefixes may reorder. Complete a nested operator from inside
      ;; its token, retaining arguments; Enter runs the completed expression.
@@ -425,15 +425,15 @@
      ;; scroll the header away: inspect the prepared host projection itself.
      (check 'describe-source-is-shared-and-private-to-the-requester
        (evaluate
-         '(let* ([source (find (lambda (b) (and (head:buffer-store-id b)
-                                             (eq? (head:buffer-fact b 'reference-query #f) 'markdown:view!))) (head:buffers))]
-                 [id (head:buffer-store-id source)] [view (head:find-tool-buffer (format "*describe:~a*" id))])
+         '(let* ([source (find (lambda (b) (and (seat:buffer-store-id b)
+                                             (eq? (seat:buffer-fact b 'reference-query #f) 'markdown:view!))) (seat:buffers))]
+                 [id (seat:buffer-store-id source)] [view (seat:find-tool-buffer (format "*describe:~a*" id))])
             (and (store:exists? id) (equal? (store:property id 'audience) (list head:ui-actor))
               (store:visible? head:ui-actor id) (not (store:visible? '(head "interactive-other") id))
-              (head:buffer-read-only source) (not (head:buffer-store-id view))
-              (widget:descendant (head:buffer-fact view 'widget-id #f) 'app 'body 'text)
+              (seat:buffer-read-only source) (not (seat:buffer-store-id view))
+              (widget:descendant (seat:buffer-fact view 'widget-id #f) 'app 'body 'text)
               (exists (lambda (line) (string:prefix? "procedure: (markdown:view!" line))
-                (vector->list (head:buffer-lines view)))))))
+                (vector->list (seat:buffer-lines view)))))))
      ;; A definition documented in its own body reaches the page through the
      ;; head's contribution to the query, with no registry batch involved. Read
      ;; the screen: an evaluation right after a full-page repaint would wait on

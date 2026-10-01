@@ -18,10 +18,15 @@
              (prefix (state catalogue) catalogue:)
              (prefix (state view) view:)
              (prefix (core publication) publication:)
+             (prefix (core operation) operation:)
              (prefix (core property) property:)
              (prefix (core port) port:)
              (prefix (service file) file:)
+             (prefix (service composition) composition:)
+             (prefix (service policy) policy:)
+             (prefix (state actor) actor:)
              (prefix (service prompt-request) prompt-request:)
+             (prefix (service root-binding) root-binding:)
              (prefix (foundation edoc) edoc:)
              (prefix (foundation text) text:)
              (prefix (core kernel) kernel:)
@@ -39,6 +44,7 @@
      ;; Canonical model state shares this base API fixture and process.
      (file:absolute "/tmp") ; initialize the concrete filename type
      (include "tests/model.sps")
+     (include "tests/composition.sps")
      (include "tests/connection.sps")
      (include "tests/collection.sps")
      (include "tests/catalogue.sps")

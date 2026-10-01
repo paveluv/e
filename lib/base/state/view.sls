@@ -3,7 +3,7 @@
 (elibrary (state view)
   (export arrange! (rename (descriptor:basis basis))
     (rename (descriptor:children children)) claim! create!
-    (rename (descriptor:focus focus)) fork!
+    disposal exchange! (rename (descriptor:focus focus)) fork!
     (rename (descriptor:generation generation))
     (rename (descriptor:kind kind))
     (rename (descriptor:options options))
@@ -14,14 +14,14 @@
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
     (rename (descriptor:state state)) tree upgrade)
-  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
-          (prefix (state connection) connection:) (prefix (state model) model:))
+  (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core handle) handle:) (prefix (core identity) identity:) (prefix (core kernel) kernel:)
+          (prefix (state connection) connection:) (prefix (state model) model:) (prefix (state store) store:))
   (define registration
     (kernel:call-with-runtime-registrations
-      (lambda () (model:register-kind! 'widget-view 2 descriptor:valid?))))
+      (lambda () (model:register-kind! 'widget-view 3 descriptor:valid?))))
   (define (field r k) (cdr (assq k r)))
   (define (value r) (field r 'value))
-  (define (supported? r) (and r (eq? (field r 'kind) 'widget-view) (= (field r 'schema) 2)
+  (define (supported? r) (and r (eq? (field r 'kind) 'widget-view) (= (field r 'schema) 3)
                               (descriptor:valid? (value r))))
   (define (entry id) (let ([r (model:snapshot id)]) (and (supported? r) r)))
   (define (change r d) (list (field r 'id) (field r 'revision) (descriptor:references d) d))
@@ -29,13 +29,35 @@
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
   (define resource-kinds (kernel:make-registry car))
 
-  (edoc "Register a base lifecycle for explicitly owned per-view resources. Prepare receives actor and resource envelope, returning three values: a pure mapping-to-allocation-spec builder, extra old-to-new reference pairs and a rollback thunk. It may prepare owned output before the guarded allocation; rollback releases it if the fork fails. Release receives actor and resource ID. Borrowed models never use this protocol."
+  (edoc "Register copying and ownership for a per-view resource. Prepare receives actor and resource envelope, returning a pure allocation builder, reference mappings and rollback. Ownership is a pure envelope-to-reference-list projection used by individual and graph disposal; never include borrowed sources. Native workers must observe model retirement."
         (kind symbol "model kind") (schema integer "model schema") (prepare procedure "prepare a copy")
-        (release procedure "retire resource and its owned output"))
-  (define (register-resource-kind! kind schema prepare release)
-    (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0) (procedure? prepare) (procedure? release))
+        (ownership procedure "pure owned-reference projection"))
+  (define (register-resource-kind! kind schema prepare ownership)
+    (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0)
+                 (procedure? prepare) (procedure? ownership))
       (error 'register-resource-kind! "invalid resource lifecycle"))
-    (kernel:registry-add! resource-kinds (list (list kind schema) prepare release)))
+    (kernel:registry-add! resource-kinds (list (list kind schema) prepare ownership)))
+  (define (owned-references r)
+    (let* ([kind (kernel:registry-find resource-kinds
+                   (lambda (p) (equal? (car p) (list (field r 'kind) (field r 'schema)))))]
+           [refs (if kind ((caddr kind) r) '())])
+      (unless (and (list? refs) (for-all (lambda (ref) (or (handle:model? ref) (handle:buffer? ref))) refs))
+        (error 'view "invalid owned resource references" refs)) refs))
+  (define (release-resource! actor id)
+    (if (handle:buffer? id) (store:delete! actor id)
+      (let retry ()
+        (let ([r (model:snapshot id)])
+          (when r
+            (if (supported? r)
+              (let-values ([(status current) (retire! actor id (field r 'revision))])
+                (case status [(stale) (retry)] [(applied) (void)]
+                  [else (error 'view "owned view cannot be retired" id)]))
+              (let ([refs (owned-references r)])
+                (let-values ([(status current) (model:retire! actor id (field r 'revision))])
+                  (case status [(stale) (retry)]
+                    [(applied) (for-each (lambda (ref) (release-resource! actor ref)) refs)
+                     (retire-scope! actor id)]
+                    [else (error 'view "owned resource cannot be retired" id)])))))))))
   (define (resource-kind r)
     (or (kernel:registry-find resource-kinds (lambda (p) (equal? (car p) (list (field r 'kind) (field r 'schema)))))
         (error 'view "resource lifecycle is unavailable" (field r 'kind))))
@@ -48,6 +70,9 @@
         (descriptor:owned (value r)))))
   ;; Every supported record read becomes a witness, even when unchanged.
   (define (transaction! actor plan retry? . retired)
+    (let-values ([(status records) (transact! actor plan retry? '() retired)])
+      (values status (map row (filter supported? records)))))
+  (define (transact! actor plan retry? extra retired)
     (let loop ()
       (let ([reply
              (call/cc
@@ -61,15 +86,19 @@
                    (define (put id d) (need id) (hashtable-set! next id d))
                    (plan get need put read (lambda (status) (abort (list status '()))))
                    (let* ([records (filter supported? (vector->list (hashtable-values read)))]
-                          [changes (map (lambda (r) (change r (or (hashtable-ref next (field r 'id) #f) (value r)))) records)])
+                          [batch (and (procedure? retired) (retired read))]
+                          [removed (if batch (map car batch) retired)]
+                          [changes (append extra (map (lambda (r) (change r (or (hashtable-ref next (field r 'id) #f) (value r)))) records))]
+                          [kept (filter (lambda (c) (not (member (car c) removed))) changes)])
                      (let-values ([(status current)
-                                   (if (null? retired) (model:commit! actor changes)
-                                     (let* ([id (car retired)] [r (hashtable-ref read id #f)])
-                                       (let-values ([(status current)
-                                                     (model:retire! actor id (field r 'revision)
-                                                       (filter (lambda (c) (not (equal? (car c) id))) changes))])
-                                         (values status (if current (list current) '())))))])
-                       (list (if (eq? status 'stale) 'retry status) (map row (filter supported? current))))))))])
+                                   (cond [batch (model:retire-many! actor batch kept)]
+                                     [(null? retired) (model:commit! actor changes)]
+                                     [else
+                                      (let* ([id (car retired)] [r (hashtable-ref read id #f)])
+                                        (let-values ([(status current)
+                                                      (model:retire! actor id (field r 'revision) kept)])
+                                          (values status (if current (list current) '()))))])])
+                       (list (if (eq? status 'stale) 'retry status) current))))))])
         (if (and retry? (eq? (car reply) 'retry)) (loop)
             (values (if (eq? (car reply) 'retry) 'stale (car reply)) (cadr reply))))))
   (define (walk get root fail)
@@ -92,6 +121,104 @@
   (define (ownership d who)
     (descriptor:with d (list (cons 'owner who) (cons 'generation (+ 1 (descriptor:generation d))) (cons 'sequence 0))))
 
+  (edoc "Prepare disposal of a root's presentations, scoped models and explicitly owned resources. Return (model-envelopes output-buffer-references), never borrowed sources. Model revisions and scope closure are rechecked at exchange; preparation performs no deletion."
+        (root model "root to retire") (returns list))
+  (define (disposal root)
+    (let* ([packet (model:snapshots (model:ids))]
+           [all (filter values (map caddr (cadr packet)))]
+           [records (make-hashtable equal-hash equal?)] [scoped (make-hashtable equal-hash equal?)]
+           [seen (make-hashtable equal-hash equal?)] [out '()] [buffers '()])
+      (define (visit id required?)
+        (unless (hashtable-contains? seen id)
+          (hashtable-set! seen id #t)
+          (let ([r (hashtable-ref records id #f)])
+            (when (and required? (not r)) (error 'disposal "owned resource is unavailable" id))
+            (when r
+              (set! out (cons r out))
+              (if (eq? (field r 'kind) 'widget-view)
+                (begin
+                  (unless (supported? r) (error 'disposal "unsupported view schema" id))
+                  (for-each (lambda (c) (visit (cadr c) #t)) (descriptor:children (value r)))
+                  (for-each (lambda (ref)
+                              (let ([owned (hashtable-ref records ref #f)])
+                                (when owned
+                                  (unless (equal? (field owned 'scope) id)
+                                    (error 'disposal "owned resource belongs to another view" ref))
+                                  (resource-kind owned))
+                                (visit ref #f))) (descriptor:owned (value r))))
+                (for-each (lambda (ref)
+                            (if (model:reference? ref) (visit ref #f)
+                              (unless (member ref buffers) (set! buffers (cons ref buffers))))) (owned-references r))))
+            (for-each (lambda (ref) (visit ref #t)) (hashtable-ref scoped id '())))))
+      (for-each (lambda (r)
+                  (hashtable-set! records (field r 'id) r)
+                  (let ([scope (field r 'scope)])
+                    (when (model:reference? scope)
+                      (hashtable-set! scoped scope (cons (field r 'id) (hashtable-ref scoped scope '())))))) all)
+      (visit root #t)
+      (list out buffers)))
+
+  (edoc "Exchange disjoint root leases and guarded owner-model changes in one transaction. A candidate basis is the exact prepared descriptor tree, or false when acquiring saved state. Renew fences a previous attachment even when restoring the same root. Return status and coherent model envelopes, including the owner witnesses; no second claim is needed."
+        (actor actor "head") (old (or model #f) "previous root") (candidate (or model #f) "next root")
+        (basis (or list #f) "prepared candidate descriptors") (renew? boolean "renew the saved root lease")
+        (changes list "additional guarded model changes") (disposal (or list #f) "prepared retirement plan, or false to retain"))
+  (define (exchange! actor old candidate basis renew? changes disposal)
+    (unless (and (descriptor:head? actor) (or (not old) (model:reference? old))
+                 (or (not candidate) (model:reference? candidate)) (or (not basis) (list? basis)))
+      (error 'exchange! "expected roots and an optional descriptor basis"))
+    (let ([retired (if disposal (map (lambda (r) (field r 'id)) (car disposal)) '())])
+      (transact! actor
+        (lambda (get need put read fail)
+          (define (subtree root)
+            (if (not root) '()
+              (begin
+                (when (descriptor:parent (need root)) (fail 'parented))
+                ;; Admission refuses missing/unsupported descriptor schemas;
+                ;; an unknown widget kind still has a valid descriptor.
+                (walk need root fail))))
+          (let* ([previous (subtree old)] [next (subtree candidate)]
+                 [owner (and old (descriptor:owner (need old)))])
+            (for-each (lambda (id)
+                        (unless (eq? (field (hashtable-ref read id #f) 'persistence) 'persistent)
+                          (fail 'transient))) next)
+            (when (and owner (not (equal? owner actor))) (fail 'owned))
+            (when disposal
+              (when (exists (lambda (c) (member (car c) retired)) changes) (fail 'invalid))
+              (unless (and old (member old retired) (not (equal? old candidate))
+                        (for-all (lambda (id) (member id retired)) previous)) (fail 'invalid))
+              (when (exists (lambda (id) (or (member id retired)
+                                           (exists (lambda (ref) (member ref (append retired (cadr disposal))))
+                                             (descriptor:references (need id))))) next) (fail 'invalid))
+              (for-each
+                (lambda (r)
+                  (when (supported? r)
+                    (let* ([id (field r 'id)] [d (need id)] [parent (descriptor:parent d)])
+                      (unless (equal? (field r 'revision) (field (hashtable-ref read id #f) 'revision)) (fail 'stale))
+                      (when (and (descriptor:owner d) (not (equal? actor (descriptor:owner d)))) (fail 'owned))
+                      (when (and parent (not (member parent retired)))
+                        (let* ([p (need parent)] [root (root-of need parent fail)] [root-d (need root)])
+                          (when (member (descriptor:focus root-d) retired)
+                            (put root (descriptor:with root-d '((focus . #f)))))
+                          (put parent (descriptor:with (need parent)
+                                        (list (cons 'children (filter (lambda (c) (not (member (cadr c) retired))) (descriptor:children p)))))))))))
+                (car disposal)))
+            (for-each (lambda (id) (unless (equal? owner (descriptor:owner (need id))) (fail 'invalid))) previous)
+            (when basis
+              (unless (= (length basis) (length next)) (fail 'stale))
+              (let ([prepared (make-hashtable equal-hash equal?)])
+                (for-each (lambda (row)
+                            (unless (and (pair? row) (model:reference? (car row))
+                                      (not (hashtable-contains? prepared (car row)))) (fail 'invalid))
+                            (hashtable-set! prepared (car row) (cdr row))) basis)
+                (for-each (lambda (id) (unless (equal? (hashtable-ref prepared id #f) (need id)) (fail 'stale))) next)))
+            (unless (equal? old candidate)
+              (when (exists (lambda (id) (member id previous)) next) (fail 'invalid))
+              (for-each (lambda (id) (when (descriptor:owner (need id)) (fail 'owned))) next)
+              (for-each (lambda (id) (put id (ownership (need id) #f))) previous))
+            (when (or renew? (not (equal? old candidate)) (not owner))
+              (for-each (lambda (id) (put id (ownership (need id) actor))) next))))
+        #f changes (if disposal (lambda (read) (map (lambda (r) (list (field r 'id) (field r 'revision))) (car disposal))) '()))))
+
   (edoc "Create an unparented view; source is a model/buffer reference or false for a container. An optional owning model gives the view its scope and persistence; otherwise it is session-persistent. Allocation witnesses the owner's lifetime."
         (actor actor "creator") (source datum "source reference") (kind symbol "widget contract")
         (schema integer "contract version") (options list "logical options") (state datum "interaction")
@@ -102,7 +229,7 @@
       (when (and (pair? scope) (not owner)) (error 'create! "resource owner is unavailable" (car scope)))
       (let ([ids (model:allocate! actor 1
                    (lambda (ids)
-                     (list (list 'widget-view 2 (if owner (field owner 'id) 'session)
+                     (list (list 'widget-view 3 (if owner (field owner 'id) 'session)
                              (if owner (field owner 'persistence) 'persistent) (descriptor:references d) d)))
                    (lambda (ids) (if owner (list (list (field owner 'id) (field owner 'revision) (field owner 'references) (value owner))) '())))])
         (unless ids (error 'create! "resource owner changed; retry")) (car ids))))
@@ -113,7 +240,7 @@
     (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'retire! "expected a revision"))
     (let* ([before (entry id)]
            [owned (if (and before (= revision (field before 'revision)))
-                    (map (lambda (r) (cons (field r 'id) (caddr (resource-kind r)))) (resources before)) '())])
+                    (map (lambda (r) (resource-kind r) (field r 'id)) (resources before)) '())])
       (let-values ([(status rows)
                     (transaction! actor
                       (lambda (get need put read fail)
@@ -138,7 +265,7 @@
                                       (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
                                   (walk get root fail)))) (descriptor:children d)))) #f id)])
         (when (eq? status 'applied)
-          (for-each (lambda (p) ((cdr p) actor (car p))) owned)
+          (for-each (lambda (id) (release-resource! actor id)) owned)
           (retire-scope! actor id))
         (values status (model:snapshot id)))))
 
@@ -355,7 +482,7 @@
                                                    [(commands) (cons 'commands (map (lambda (c) (list (car c) (mapped (cadr c)) (caddr c) (cadddr c))) (cdr p)))]
                                                    [(owned) (cons 'owned (map mapped (cdr p)))] [else p])) (descriptor:options old)))
                                         '(generation . 0) '(sequence . 0)))])
-                            (list 'widget-view 2 (mapped (field original 'scope)) (field original 'persistence) (descriptor:references d) d))) rows originals)
+                            (list 'widget-view 3 (mapped (field original 'scope)) (field original 'persistence) (descriptor:references d) d))) rows originals)
                       (map (lambda (p) ((car p) mapped)) prepared)))) owners aliases)))))))
 
   (edoc "Release this disconnected head's descriptors, including detached or malformed trees."
@@ -374,12 +501,19 @@
                                                           (when (and d (descriptor:owner d))
                                                             (put id (descriptor:with d '((owner . #f))))))) (model:ids 'widget-view))) #t))
 
-  (edoc "Upgrade known saved leaf envelopes before model import; unknown schemas are unchanged."
+  (edoc "Upgrade saved views before model import. Schema 3 makes catalogue membership explicit: former named root entries keep it, while named children stay private. Unknown schemas and current explicit choices are unchanged."
         (r list "model envelope") (returns list))
   (define (upgrade r)
-    (if (and (eq? (field r 'kind) 'widget-view) (= (field r 'schema) 1))
-        (let ([old (value r)])
-          (unless (and (list? old) (= (length old) 8)) (error 'upgrade "invalid saved leaf view"))
-          (let ([d (descriptor:with (descriptor:make (car old) (cadr old) (caddr old) '() (list-ref old 7))
-                     (map cons '(generation owner sequence basis) (list-head (list-tail old 3) 4)))])
-            (map (lambda (p) (case (car p) [(schema) '(schema . 2)] [(value) (cons 'value d)] [else p])) r))) r)))
+    (if (not (and (eq? (field r 'kind) 'widget-view) (memv (field r 'schema) '(1 2)))) r
+      (let* ([old (value r)]
+             [d (if (= (field r 'schema) 2) old
+                  (begin
+                    (unless (and (list? old) (= (length old) 8)) (error 'upgrade "invalid saved leaf view"))
+                    (descriptor:with (descriptor:make (car old) (cadr old) (caddr old) '() (list-ref old 7))
+                      (map cons '(generation owner sequence basis) (list-head (list-tail old 3) 4)))))]
+             [options (descriptor:options d)] [name (assq 'name options)] [audience (assq 'audience options)]
+             [listed? (and (not (descriptor:parent d)) name (string? (cdr name))
+                        (or (not audience) (identity:audience? (cdr audience))))]
+             [next (if (and listed? (not (assq 'catalogue options)))
+                     (descriptor:with d (list (cons 'options (cons '(catalogue . #t) options)))) d)])
+        (map (lambda (p) (case (car p) [(schema) '(schema . 3)] [(value) (cons 'value next)] [else p])) r)))))

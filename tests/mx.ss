@@ -10,10 +10,11 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
-     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
+     (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
              (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
              (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
              (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
@@ -41,28 +42,28 @@
          (check (list 'settle (car case)) (settled (car case)) (cons (cadr case) (string-length (cadr case)))))
        '(;; a nullary operator closes its form; one taking arguments steps to the first
          ("(window:split-right!" "(window:split-right!)")
-         ("(head:window-index" "(head:window-index ")
+         ("(seat:window-index" "(seat:window-index ")
          ;; the last argument closes the form, an earlier one steps on
-         ("(head:window-index (head:current-window" "(head:window-index (head:current-window))")
+         ("(seat:window-index (seat:current-window" "(seat:window-index (seat:current-window))")
          ("(text:make-span 1 2" "(text:make-span 1 2 ")
          ;; closing a form settles it as an argument of its parent, recursively
-         ("(head:window-numbered (head:window-index (head:current-window" "(head:window-numbered (head:window-index (head:current-window)))")
+         ("(seat:window-numbered (seat:window-index (seat:current-window" "(seat:window-numbered (seat:window-index (seat:current-window)))")
          ;; brackets close with their own kind; a closed form settles as an
          ;; argument of its parent, or stops at an operator without an arity
-         ("(vector-ref {head:current-window" "(vector-ref {head:current-window} ")
-         ("(let ([x (head:current-window" "(let ([x (head:current-window)")
+         ("(vector-ref {seat:current-window" "(vector-ref {seat:current-window} ")
+         ("(let ([x (seat:current-window" "(let ([x (seat:current-window)")
          ;; rest and optional parameters, syntax, and unbound names are unknown arities
          ("(list foo" "(list foo")
          ("(define foo" "(define foo")
          ("(no-such-procedure-here" "(no-such-procedure-here")
          ;; a quoted or quasiquoted form is data
          ("'(window:split-right!" "'(window:split-right!")
-         ("`(head:current-window" "`(head:current-window")
-         ("(list '(head:current-window" "(list '(head:current-window")
+         ("`(seat:current-window" "`(seat:current-window")
+         ("(list '(seat:current-window" "(list '(seat:current-window")
          ;; too many arguments already: nothing to close
-         ("(head:current-window x" "(head:current-window x")
+         ("(seat:current-window x" "(seat:current-window x")
          ;; a bare symbol has no form
-         ("head:current-window" "head:current-window")))
+         ("seat:current-window" "seat:current-window")))
 
      ;; Inside a string the settle step judges the typed session: a value
      ;; that still completes on, a directory with entries, stays open and
@@ -75,12 +76,12 @@
          ("(visit-file! \"manual/EVAL.md" "(visit-file! \"manual/EVAL.md\"")
          ("(display \"manual/EVAL.md" "(display \"manual/EVAL.md")))
      ;; an input that does not read is never settled
-     (check 'an-unreadable-input-is-left-alone (settled "(head:current-window]") '("(head:current-window]" . 21))
+     (check 'an-unreadable-input-is-left-alone (settled "(seat:current-window]") '("(seat:current-window]" . 21))
 
      ;; The input reads as data once its open string and forms are closed,
      ;; or the ghost says why not
      (check 'inputs-that-close-have-no-complaint
-       (map eval:input-diagnostic '("(head:current-window" "(visit-file! \"manual/" "(let ([x 1" "" "(" "'(a b" "(f #\\( " "(f \"a)\" ; c"))
+       (map eval:input-diagnostic '("(seat:current-window" "(visit-file! \"manual/" "(let ([x 1" "" "(" "'(a b" "(f #\\( " "(f \"a)\" ; c"))
        '(#f #f #f #f #f #f #f #f))
      (check 'inputs-that-cannot-close-say-why
        (map eval:input-diagnostic '("(f x))" "(f x]" "(f #\\foo)" "(f . )"))
@@ -92,9 +93,9 @@
 
      ;; Text after the cursor is left alone; blank text after it is kept.
      (check 'text-after-the-symbol-stops-the-settling
-       (eval:settle-completion "(head:current-window 1)" 20) '("(head:current-window 1)" . 20))
+       (eval:settle-completion "(seat:current-window 1)" 20) '("(seat:current-window 1)" . 20))
      (check 'blank-tail-is-kept
-       (eval:settle-completion "(head:current-window  " 20) '("(head:current-window)  " . 21))
+       (eval:settle-completion "(seat:current-window  " 20) '("(seat:current-window)  " . 21))
 
      ;; At an argument position the type documented for it decides what Tab
      ;; offers: the type's values as expressions, the procedures producing
@@ -148,11 +149,11 @@
      (eval '(define myb (store:find-named "*scratch*")) (interaction-environment))
      (define scratch-text (format "'~s" myb))
      (check 'buffer-completion-separates-labels-from-portable-values
-       (let ([offered (labels "(head:show-buffer! ")])
-         (list (has? "*scratch*" offered) (has? "(head:current-buffer)" offered)
+       (let ([offered (labels "(seat:show-buffer! ")])
+         (list (has? "*scratch*" offered) (has? "(seat:current-buffer)" offered)
            (has? "(new-buffer! name)" offered) (has? "myb" offered)
-           (has? "(head:new-buffer! name)" offered) (has? "(head:current-buffer-mirror)" offered)
-           (has? "*scratch*" (labels "(head:show-buffer! scr")) (labels "(head:show-buffer! my")))
+           (has? "(seat:new-buffer! name)" offered) (has? "(seat:current-buffer-mirror)" offered)
+           (has? "*scratch*" (labels "(seat:show-buffer! scr")) (labels "(seat:show-buffer! my")))
        '(#t #t #t #t #f #f #t ("myb")))
      ;; The operator position of a nested form takes the enclosing argument's
      ;; type: (bu offers what bu offers less the bare variables, and Tab
@@ -162,7 +163,7 @@
      (check 'named-reference-normalization-preserves-the-match-set
        (let* ([a (store:create! head:ui-actor "(completion-label-a)" '(""))]
               [b (store:create! head:ui-actor "(completion-label-b)" '(""))]
-              [prefix "(head:show-buffer! "] [input (string-append prefix "completionlabel")]
+              [prefix "(seat:show-buffer! "] [input (string-append prefix "completionlabel")]
               [before (list-sort string<? (labels input))]
               [same? (and (= (length before) 2)
                        (for-all (lambda (text)
@@ -196,13 +197,13 @@
            (completion:candidate-context (list-ref (completion-state:snapshot s) 7)))
          '(#t "cba" #f ((type . choice) (value . "cba")))))
      (check 'buffer-completion-retains-free-expressions-and-canonical-data
-       (list (has? scratch-text (labels "(head:show-buffer! '(buffer"))
-         (extensions "(head:show-buffer! *scratch*")
-         (extensions "(head:show-buffer! my")
-         (extensions "(head:show-buffer! (curr")
+       (list (has? scratch-text (labels "(seat:show-buffer! '(buffer"))
+         (extensions "(seat:show-buffer! *scratch*")
+         (extensions "(seat:show-buffer! my")
+         (extensions "(seat:show-buffer! (curr")
          (labels "(list (bu")
          (edoc:type-spelling 'buffer myb) (edoc:type-spelling 'list myb))
-       (list #t (list scratch-text) '("myb") '("(head:current-buffer)") #f scratch-text scratch-text))
+       (list #t (list scratch-text) '("myb") '("(seat:current-buffer)") #f scratch-text scratch-text))
      ;; The file completion parameter: prefix offers the directory's entries
      ;; extending the component, fuzzy all of them for the matcher's
      ;; segments, deep the entries below it too
@@ -247,24 +248,24 @@
        (list (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" \"man"))
              (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"man"))
              (has-prefix? "manual/" (labels "(extension:load! \"x\" \"y\" '(\"lib\" \"man"))
-             (has? scratch-text (labels "(head:show-buffer! '(bu")))
+             (has? scratch-text (labels "(seat:show-buffer! '(bu")))
        '(#t #t #t #t))
      (check 'literals-and-strings-complete-in-place
-       (list (has? "'clean" (labels "(head:buffer-wrap-set! b ")) (has? "#f" (labels "(head:buffer-wrap-set! b "))
+       (list (has? "'clean" (labels "(seat:buffer-wrap-set! b ")) (has? "#f" (labels "(seat:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
-             (length (labels "(head:buffer-wrap-set! b ")) (labels "(window:set-wrap! ")
+             (length (labels "(seat:buffer-wrap-set! b ")) (labels "(window:set-wrap! ")
              (has-prefix? "manual/" (labels "(visit-file! \"man"))
-             (has? "*scratch*" (labels "(head:show-buffer! *scr"))
+             (has? "*scratch*" (labels "(seat:show-buffer! *scr"))
              ;; an undocumented operator falls back to symbols
              (labels "(car "))
        '(#t #t 4 ("#t" "#f" "'default") #t #t #f))
      ;; a scope form's argument completes by type, syntax or not
      (check 'a-scope-form-completes-its-argument-by-type
-       (list (has? scratch-text (labels "(head:with-buffer '(bu")) (has? "(head:current-buffer)" (labels "(head:with-buffer (curr"))
-             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(head:with-window (wi")))
+       (list (has? scratch-text (labels "(seat:with-buffer '(bu")) (has? "(seat:current-buffer)" (labels "(seat:with-buffer (curr"))
+             (has? "(current-region)" (labels "(with-region (re")) (has-prefix? "(window " (labels "(seat:with-window (wi")))
        '(#t #t #t #t))
      (check 'a-completed-value-settles-its-form
-       (let* ([s (string-append "(head:show-buffer! " scratch-text)] [out (string-append s ")")])
+       (let* ([s (string-append "(seat:show-buffer! " scratch-text)] [out (string-append s ")")])
          (equal? (settled s) (cons out (string-length out)))) #t)
 
 
@@ -275,7 +276,7 @@
        (list (extensions "(mode:choose! \"sch") (span "(mode:choose! \"sch") (extensions "(mode:choose! sch") (span "(mode:choose! sch")
              (settled "(mode:choose! \"scheme")
              ;; a bare token the values alone match opens their literal
-             (has? "*scratch*" (labels "(head:show-buffer! *")))
+             (has? "*scratch*" (labels "(seat:show-buffer! *")))
        '(("scheme") (15 . 18) ("\"scheme\"") (14 . 17)
          ("(mode:choose! \"scheme\"" . 22) #t))
      ;; Tab at a final datum, a closed string or form, settles: each enclosing
@@ -284,12 +285,12 @@
      ;; closed string is never completed further, existing or not
      (check 'a-final-datum-settles-the-forms-around-it
        (list (settled "(save-file! \"~/ddd\"") (settled "(save-file! \"~/ddd")
-             (settled "(head:show-buffer! '(buffer 1)") (settled "(window:split-right! ")
-             (settled "(head:set-window-buffer! (window 1)") (settled "(head:set-window-buffer! (window 1) ")
+             (settled "(seat:show-buffer! '(buffer 1)") (settled "(window:split-right! ")
+             (settled "(seat:set-window-buffer! (window 1)") (settled "(seat:set-window-buffer! (window 1) ")
              (labels "(extension:load! \"x\" \"y\"") (labels "(visit-file! \"manual/\""))
        '(("(save-file! \"~/ddd\")" . 20) ("(save-file! \"~/ddd\")" . 20)
-         ("(head:show-buffer! '(buffer 1))" . 31) ("(window:split-right!)" . 21)
-         ("(head:set-window-buffer! (window 1) " . 36) ("(head:set-window-buffer! (window 1) " . 36) #f #f))
+         ("(seat:show-buffer! '(buffer 1))" . 31) ("(window:split-right!)" . 21)
+         ("(seat:set-window-buffer! (window 1) " . 36) ("(seat:set-window-buffer! (window 1) " . 36) #f #f))
 
      ;; ~ and / lead the home and the root directory, though the matcher has
      ;; no segment for them: at a file or directory argument they open the
@@ -389,10 +390,10 @@
      ;; Keys bind structure, not spelled names: a call with its producers and
      ;; a pre-filled M-x describe themselves by their procedures' names.
      (check 'structured-key-actions-describe-themselves
-       (list (keymap:action-text (keymap:call kill-buffer! head:current-buffer-mirror))
+       (list (keymap:action-text (keymap:call kill-buffer! seat:current-buffer-mirror))
              (keymap:action-text (keymap:prefill answer!))
              (keymap:prefill-text (keymap:prefill search:replace! "old")))
-       '("(kill-buffer! (head:current-buffer-mirror))" "λ (answer! " "(search:replace! \"old\" "))
+       '("(kill-buffer! (seat:current-buffer-mirror))" "λ (answer! " "(search:replace! \"old\" "))
 
      ;; a procedure without an edoc shows its described parameters, the
      ;; corpus's or a module's, in its completion hint, before its arity

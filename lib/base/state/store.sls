@@ -550,14 +550,14 @@
       (unless trashed? (evict-trashed-holder! actor name id))
       (string-copy name)))
 
-  (edoc "Delete a buffer."
+  (edoc "Delete a buffer if it still exists. Repeating disposal is harmless."
         (actor actor "the actor identity")
         (id buffer "the buffer id"))
   (define (delete! actor id)
     (transact! actor
       (lambda (actor)
-        (buffer-of 'delete! id)
-        (delete-buffer! actor id)))
+        (when (hashtable-contains? (store-buffers (current-store)) (index id))
+          (delete-buffer! actor id))))
     (void))
 
   (define (delete-buffer! actor id)

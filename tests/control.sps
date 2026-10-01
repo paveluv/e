@@ -108,7 +108,7 @@
   (check 'control-disable-and-reenable-do-not-resurrect-a-held-press (line) "original")
   (let-values ([(text rev) (store:snapshot source)])
     (store:edit! '(agent "control") source rev (text:make-span 0 1 0 3) '("X"))
-    (head:sync-foreign-edits! source))
+    (seat:sync-foreign-edits! source))
   (let ([before (line)])
     (check 'control-stale-overlap-refuses-without-losing-text
       (list (refused? (lambda () (control:activate! button))) (line)) (list #t before)))
@@ -148,7 +148,7 @@
     (let-values ([(status reason) (store:edit! actor source revision (text:make-span 0 0 0 3) '("expanded")
                                     (list #f "Completion" (cons 'revision revision)))])
       (check 'entry-proposal-refuses-changed-endpoint (list status reason) '(stale revision-changed)))
-    (head:sync-foreign-edits! source)
+    (seat:sync-foreign-edits! source)
     (check 'entry-api-refuses-old-completion-revision
       (refused? (lambda () (entry:set-text! id "expanded" revision))) #t))
   (entry:set-text! id "new") (entry:undo! id)
@@ -176,7 +176,7 @@
           (dynamic-wind void
             (lambda ()
               (entry:insert! id "X")
-              (list fired? (store:line source 0) (not (head:buffer-of-store-id source))
+              (list fired? (store:line source 0) (not (seat:buffer-of-store-id source))
                 (eq? mirror (text-source:lookup source))
                 (if remount? (view:state (interaction:snapshot id))
                   (refused? (lambda () (entry:insert! id "lost"))))))

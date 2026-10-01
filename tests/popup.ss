@@ -8,13 +8,14 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
              (head literal)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head keymap) keymap:)
              (prefix (head paint) paint:)
              (prefix (head window) window:))
@@ -22,55 +23,55 @@
      (define check test:check)
      (define path (format "/tmp/e-popup-~a.txt" (get-process-id)))
      (call-with-output-file path (lambda (p) (display "hello\n" p)))
-     (define popup (head:popup))
+     (define popup (seat:popup))
      (window:init!)
      (check 'c-x-esc-and-c-x-c-g-empty-the-pop-up
        (list (eq? (keymap:binding "C-x ESC") window:clear-pop-up!) (eq? (keymap:binding "C-x C-g") window:clear-pop-up!)) '(#t #t))
-     (define (popup-name) (head:buffer-name (head:window-buffer popup)))
+     (define (popup-name) (seat:buffer-name (seat:window-buffer popup)))
      (define (popup-entry) (find (lambda (e) (eq? (car e) popup)) (paint:window-layout)))
      (head:before-frame!)
-     (check 'the-pop-up-starts-hidden-with-its-placeholder (list (head:popup-rows) (popup-name)) '(0 "<pop-up>"))
+     (check 'the-pop-up-starts-hidden-with-its-placeholder (list (seat:popup-rows) (popup-name)) '(0 "<pop-up>"))
 
      (window:link-target! popup)
-     (head:with-window popup (visit-file! path))
+     (seat:with-window popup (visit-file! path))
      (head:before-frame!)
      (define entry (popup-entry))
      (check 'a-buffer-sent-to-the-pop-up-shows-it
-       (list (> (head:popup-rows) 0) (> (caddr entry) 0) (popup-name) (equal? (window:linked 'target) (list popup)))
+       (list (> (seat:popup-rows) 0) (> (caddr entry) 0) (popup-name) (equal? (window:linked 'target) (list popup)))
        (list #t #t (let ([s path]) (substring s (+ 1 (let loop ([i (- (string-length s) 1)]) (if (char=? (string-ref s i) #\/) i (loop (- i 1))))) (string-length s))) #t))
      (define status-row (+ (cadr entry) (caddr entry)))
-     (define left (head:window-xoff popup))
-     (define right (+ left (head:window-width popup)))
+     (define left (seat:window-xoff popup))
+     (define right (+ left (seat:window-width popup)))
      (check 'the-pop-ups-bar-has-one-clear-button-where-the-close-button-would-be
-       (list (head:window-button-at (- right 2) status-row) (head:window-button-at (- right 1) status-row)
-             (head:window-button-at (- right 4) status-row) (head:window-button-at left status-row))
+       (list (seat:window-button-at (- right 2) status-row) (seat:window-button-at (- right 1) status-row)
+             (seat:window-button-at (- right 4) status-row) (seat:window-button-at left status-row))
        (list (cons 'clear popup) #f #f #f))
-     (define b (head:window-buffer popup))
+     (define b (seat:window-buffer popup))
      ;; a checkpoint keeps no place of the pop-up's, and resumes while the
      ;; buffer shows there
      (check 'a-checkpoint-keeps-no-place-in-the-pop-up
        (list (exists (lambda (entry) (let ([place (car entry)]) (or (eq? place popup) (and (pair? place) (eq? (cdr place) popup)))))
-                     (head:buffer-placements b))
-             (begin (head:checkpoint!) (head:resume!)))
+                     (seat:buffer-placements b))
+             (begin (seat:checkpoint!) (seat:resume!)))
        '(#f #t))
      ;; a resize by hand sets the size, which sticks as the most the pane takes
-     (define rows (head:popup-rows))
-     (head:resize-popup! -1)
+     (define rows (seat:popup-rows))
+     (seat:resize-popup! -1)
      (check 'a-resize-by-hand-sets-the-size-and-its-limit
-       (list (head:popup-rows) (head:popup-limit) (begin (head:show-popup! 100) (head:popup-rows)) (begin (head:show-popup! 1) (head:popup-rows)))
+       (list (seat:popup-rows) (seat:popup-limit) (begin (seat:show-popup! 100) (seat:popup-rows)) (begin (seat:show-popup! 1) (seat:popup-rows)))
        (list (- rows 1) (- rows 1) (- rows 1) 1))
      (head:before-frame!)
      (paint:window-layout) ; the dividers come with a tiling
      (check 'the-boundary-above-the-shown-pop-up-is-a-divider
-       (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (head:root)))) (head:dividers)) #t) #t)
+       (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (seat:root)))) (seat:dividers)) #t) #t)
      (window:delete-others!)
-     (check 'keeping-one-window-hides-the-pop-up-too (head:popup-rows) 0)
-     (head:with-window popup (visit-file! path))
+     (check 'keeping-one-window-hides-the-pop-up-too (seat:popup-rows) 0)
+     (seat:with-window popup (visit-file! path))
      (window:clear-pop-up!)
      (head:before-frame!)
      (check 'clearing-restores-the-placeholder-and-hides-the-pane
        ;; hidden, the pane has no layout entry to paint or hit
-       (list (head:popup-rows) (popup-name) (if (popup-entry) (caddr (popup-entry)) 'hidden) (and (memq b (head:buffers)) #t))
+       (list (seat:popup-rows) (popup-name) (if (popup-entry) (caddr (popup-entry)) 'hidden) (and (memq b (seat:buffers)) #t))
        '(0 "<pop-up>" hidden #t))
      (delete-file path)
      (test:finish! 'popup)))

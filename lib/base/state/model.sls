@@ -3,9 +3,9 @@
 ;; a batch installs only against the records and definitions it inspected.
 (import (only (foundation edoc) elibrary))
 (elibrary (state model)
-  (export allocate! available? commit! create! demanded? export ids import! metadata observe-demand! reference? register-kind! retire! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
+  (export allocate! available? commit! create! demanded? export ids import! metadata observe-demand! reference? register-kind! retire! retire-many! revision snapshot snapshots subscribe! unsubscribe! valid-import?)
   (import (rnrs)
-          (only (chezscheme) unbox make-mutex with-mutex void gensym format)
+          (only (chezscheme) unbox make-mutex with-mutex void gensym format hashtable-values)
           (prefix (core handle) handle:)
           (prefix (core identity) identity:)
           (prefix (core kernel) kernel:)
@@ -220,6 +220,10 @@
                                 (not (for-all eq? before (map record-of (map car changes))))
                                 (not (for-all (lambda (d r) (eq? d (definition-of r))) old-definitions before))) 'stale]
                            [(not (= start (state-next-id data))) 'retry]
+                           [(exists (lambda (e)
+                                      (let ([scope (field e 'scope)])
+                                        (and (reference? scope) (not (member scope ids)) (not (record-of scope))))) entries)
+                            (error 'allocate! "resource owner has retired")]
                            [else
                             (unless (for-all (lambda (d e) (eq? d (definition-of e))) definitions entries)
                               (error 'allocate! "kind changed during validation"))
@@ -296,19 +300,22 @@
         (actor actor "the author")
         (changes list "(model-id expected-revision references value) entries"))
   (define (commit! actor changes)
-    (transact! actor changes #f))
+    (transact! actor changes '() #f))
 
   ;; Retirement can update structural neighbors in the same writer. The
   ;; deletion marker is internal; ordinary commits still require real values.
-  (define (transact! actor changes retired)
+  (define (transact! actor changes retired closed?)
     (mutate!
       (lambda ()
         (let* ([actor (own-actor actor)] [changes (own-changes changes)]
-               [ids (map car changes)] [before (read-records ids)])
+               [ids (map car changes)] [before (read-records ids)]
+               [removed (and (pair? retired) (make-eqv-hashtable))])
+          (define (removed? id) (and removed (reference? id) (hashtable-contains? removed (cadr id))))
+          (when removed (for-each (lambda (id) (hashtable-set! removed (cadr id) #t)) retired))
           (if (not (matches? before changes)) (values 'stale (datum:copy before))
               (let* ([definitions (map definition-of before)]
                      [after (map (lambda (entry change)
-                                   (and (not (equal? (car change) retired))
+                                   (and (not (removed? (car change)))
                                      (replace-state entry actor (caddr change) (cadddr change)))) before changes)]
                      [available (for-all accepts? definitions before)])
                 (when available
@@ -318,6 +325,11 @@
                   (let ([current (map record-of ids)])
                     (cond
                       [(not (for-all eq? before current)) (values 'stale (datum:copy current))]
+                      [(and closed?
+                            (exists (lambda (r) (and (removed? (field r 'scope))
+                                                  (not (removed? (field r 'id)))))
+                              (vector->list (hashtable-values (state-records data)))))
+                       (values 'stale (datum:copy current))]
                       [(or (not available) (not (for-all (lambda (definition entry) (eq? definition (definition-of entry))) definitions before)))
                        (values 'unavailable (datum:copy current))]
                       [else
@@ -333,8 +345,16 @@
         (changes (list-of list) "optional batch of ordinary guarded changes, excluding the retired target"))
   (define (retire! actor id revision . changes)
     (unless (<= (length changes) 1) (error 'retire! "expected one neighbor change batch"))
-    (let-values ([(status rows) (transact! actor (cons (list id revision '() #f) (if (pair? changes) (car changes) '())) id)])
+    (let-values ([(status rows) (transact! actor (cons (list id revision '() #f) (if (pair? changes) (car changes) '())) (list id) #f)])
       (values status (car rows))))
+
+  (edoc "Retire a complete owned model graph and update guarded neighbors in one transaction. Targets are (id revision) pairs. A concurrently added scoped resource makes the whole batch stale; new allocation cannot extend a retired scope. References alone never imply deletion. Return status and envelopes in target-then-change order, with false for deleted records."
+        (actor actor "author") (targets list "distinct (id revision) targets")
+        (changes list "guarded neighbor changes"))
+  (define (retire-many! actor targets changes)
+    (unless (and (list? targets) (for-all (lambda (p) (and (list? p) (= (length p) 2))) targets))
+      (error 'retire-many! "expected (id revision) targets"))
+    (transact! actor (append (map (lambda (p) (append p (list '() #f))) targets) changes) (map car targets) #t))
 
   (edoc "The persistent model representation as (values next-id envelopes), including opaque unknown schemas."
         (returns any))

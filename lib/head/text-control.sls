@@ -2,11 +2,17 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head text-control)
   (export advance! basis-text call-with-intent! context current? history! lines mirror pending? register-policy! revision submit! undo-scope)
-  (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core property) property:)
+  (import (chezscheme)
+          (prefix (core kernel) kernel:)
+          (prefix (core property) property:)
           (prefix (foundation text) text:)
-          (prefix (head head) head:) (prefix (head interaction) interaction:)
-          (prefix (head text-source) text-source:) (prefix (head widget) widget:)
+          (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
+          (prefix (head seat) seat:)
+          (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:)
           (prefix (state view) view:))
+
   (define (refuse message)
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
 
@@ -131,7 +137,7 @@
                                 (let-values ([(lines rev changes points committed)
                                               (text-source:edit! head:ui-actor (list old (text-source:id m) basis) span replacement context positions)])
                                   (text-source:adopt! m basis lines rev changes)
-                                  (head:note-ui-edit! (text-source:id m) committed)
+                                  (seat:note-ui-edit! (text-source:id m) committed)
                                   (settle! id source d m rev points state)))))) )
 
   (edoc "Apply source undo/redo and rebase a still-current view's logical positions through the same journal."

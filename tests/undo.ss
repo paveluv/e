@@ -7,12 +7,13 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
@@ -25,12 +26,12 @@
      (store:log-retention 256)   ; the bound these checks exercise
      (define bot '(agent undo-test))
      (define (fresh name shared?)
-       (let ([b ((if shared? head:new-buffer! head:new-local-buffer!) name)])
-         (head:buffer-lines-set! b '#("base" "other"))
-         (head:show-buffer-mirror! b)
-         (head:goto! '(0 . 0))
+       (let ([b ((if shared? seat:new-buffer! seat:new-local-buffer!) name)])
+         (seat:buffer-lines-set! b '#("base" "other"))
+         (seat:show-buffer-mirror! b)
+         (seat:goto! '(0 . 0))
          b))
-     (define (text-of b) (vector->list (head:buffer-lines b)))
+     (define (text-of b) (vector->list (seat:buffer-lines b)))
      (define (blocked? report) (and (string:search report "blocked" 0 (string-length report)) #t))
      (define (nothing? report) (and (string:search report "No further" 0 (string-length report)) #t))
 
@@ -38,11 +39,11 @@
      ;; must not erase the foreign provenance.  Both own edits can be
      ;; undone because their inverses are disjoint from the agent's edit.
      (define b (fresh "undo-foreign" #t))
-     (define id (head:buffer-store-id b))
+     (define id (seat:buffer-store-id b))
      (insert-text! "A")
      (store:edit! bot id (store:revision id) (text:make-span 1 0 1 0) '("G"))
      (head:before-frame!)
-     (head:goto! '(0 . 5))
+     (seat:goto! '(0 . 5))
      (insert-text! "B")
      (undo!)
      (check 'first-undo-preserves-foreign-text (text-of b) '("Abase" "Gother"))
@@ -61,7 +62,7 @@
      ;; Ordinary undo/redo can traverse several entries without clearing
      ;; the store's delta history.  Unchanged content keeps others' marks.
      (define plain (fresh "undo-plain" #t))
-     (define plain-id (head:buffer-store-id plain))
+     (define plain-id (seat:buffer-store-id plain))
      (store:set-mark! bot plain-id 'anchor '(1 . 2))
      (insert-text! "A")
      (insert-text! "B")
@@ -75,7 +76,7 @@
 
      ;; A reset or truncation cannot authorize restoring a head snapshot.
      (define reset-buffer (fresh "undo-reset" #t))
-     (define reset-id (head:buffer-store-id reset-buffer))
+     (define reset-id (seat:buffer-store-id reset-buffer))
      (insert-text! "A")
      (store:reset! bot reset-id '("foreign reset"))
      (head:before-frame!)
@@ -83,7 +84,7 @@
      (check 'reset-gap-keeps-text (text-of reset-buffer) '("foreign reset"))
 
      (define truncated (fresh "undo-truncated" #t))
-     (define truncated-id (head:buffer-store-id truncated))
+     (define truncated-id (seat:buffer-store-id truncated))
      (insert-text! "A")
      (store:edit! bot truncated-id (store:revision truncated-id)
                   (text:make-span 1 0 1 0) '("G"))
@@ -98,7 +99,7 @@
      ;; A foreign edit made by a subscriber after undo commits still
      ;; reaches the cache.  Redo rebases its inverse, preserving that edit.
      (define raced (fresh "undo-callback" #t))
-     (define raced-id (head:buffer-store-id raced))
+     (define raced-id (seat:buffer-store-id raced))
      (insert-text! "A")
      (define token
        (store:subscribe! raced-id
@@ -115,7 +116,7 @@
 
      ;; A live overlap refuses, with no history movement or side effects.
      (define overlap (fresh "undo-overlap" #t))
-     (define overlap-id (head:buffer-store-id overlap))
+     (define overlap-id (seat:buffer-store-id overlap))
      (insert-text! "A")
      (store:edit! bot overlap-id (store:revision overlap-id) (text:make-span 0 0 0 5) '("BOT"))
      (head:before-frame!)
@@ -134,7 +135,7 @@
      (check 'invalid-scope-refuses (guard (ex [else #t]) (undo-scope 'everyone) #f) #t)
      (check 'invalid-scope-keeps-default (undo-scope) 'mine)
      (define scoped (fresh "undo-scoped" #t))
-     (define scoped-id (head:buffer-store-id scoped))
+     (define scoped-id (seat:buffer-store-id scoped))
      (insert-text! "A")
      (store:edit! bot scoped-id (store:revision scoped-id) (text:make-span 1 0 1 0) '("G"))
      (head:before-frame!)
@@ -171,24 +172,24 @@
      ;; command's final-newline choice when that command is undone.
      (define formatted (fresh "undo-formatted" #t))
      (mode:register! "undo-format" '() '() (lambda (line) #f))
-     (head:with-buffer-mirror formatted (mode:choose! "undo-format"))
-     (head:buffer-trailing-set! formatted #f)
+     (seat:with-buffer-mirror formatted (mode:choose! "undo-format"))
+     (seat:buffer-trailing-set! formatted #f)
      (mode:register-formatter! "undo-format" (lambda (b from to) '("BASE" "OTHER")))
      (format-buffer!)
      (check 'format-applies (text-of formatted) '("BASE" "OTHER"))
      (undo!)
      (check 'format-undo (text-of formatted) '("base" "other"))
-     (check 'format-undo-restores-final-newline (head:buffer-trailing formatted) #f)
+     (check 'format-undo-restores-final-newline (seat:buffer-trailing formatted) #f)
      (redo!)
      (check 'format-redo (text-of formatted) '("BASE" "OTHER"))
-     (check 'format-redo-restores-final-newline (head:buffer-trailing formatted) #t)
-     (head:buffer-trailing-set! formatted #f)
+     (check 'format-redo-restores-final-newline (seat:buffer-trailing formatted) #t)
+     (seat:buffer-trailing-set! formatted #f)
      (format-buffer!)
-     (check 'format-can-change-only-final-newline (head:buffer-trailing formatted) #t)
+     (check 'format-can-change-only-final-newline (seat:buffer-trailing formatted) #t)
      (undo!)
-     (check 'metadata-only-format-undo (buffer-text (head:buffer-store-id formatted)) "BASE\nOTHER")
+     (check 'metadata-only-format-undo (buffer-text (seat:buffer-store-id formatted)) "BASE\nOTHER")
      (redo!)
-     (check 'metadata-only-format-redo (buffer-text (head:buffer-store-id formatted)) "BASE\nOTHER\n")
+     (check 'metadata-only-format-redo (buffer-text (seat:buffer-store-id formatted)) "BASE\nOTHER\n")
      (mode:register-indenter! "undo-format" (lambda (b from to) '(2 4)))
      (indent-buffer!)
      (check 'indent-applies (text-of formatted) '("  BASE" "    OTHER"))
@@ -199,20 +200,20 @@
      ;; final-newline flag.  Formatting does own that flag, and refuses
      ;; its entire inverse when another actor has subsequently changed it.
      (define foreign-fact (fresh "undo-foreign-fact" #t))
-     (define foreign-fact-id (head:buffer-store-id foreign-fact))
+     (define foreign-fact-id (seat:buffer-store-id foreign-fact))
      (insert-text! "A")
      (store:set-property! bot foreign-fact-id 'trailing #f)
      (undo!)
-     (check 'ordinary-undo-preserves-foreign-final-newline (buffer-text (head:buffer-store-id foreign-fact)) "base\nother")
-     (head:with-buffer-mirror foreign-fact (mode:choose! "undo-format"))
+     (check 'ordinary-undo-preserves-foreign-final-newline (buffer-text (seat:buffer-store-id foreign-fact)) "base\nother")
+     (seat:with-buffer-mirror foreign-fact (mode:choose! "undo-format"))
      (format-buffer!)
      (store:set-property! bot foreign-fact-id 'trailing #f)
      (check 'format-undo-refuses-foreign-fact-change (blocked? (undo!)) #t)
-     (check 'fact-conflict-keeps-entire-formatted-result (buffer-text (head:buffer-store-id foreign-fact)) "BASE\nOTHER")
+     (check 'fact-conflict-keeps-entire-formatted-result (buffer-text (seat:buffer-store-id foreign-fact)) "BASE\nOTHER")
 
      ;; The same editing guard protects history actions and fresh edits.
-     (head:show-buffer-mirror! plain)
-     (head:buffer-read-only-set! plain #t)
+     (seat:show-buffer-mirror! plain)
+     (seat:buffer-read-only-set! plain #t)
      (define protected-text (text-of plain))
      (check 'read-only-history-commands-refuse
        (map (lambda (command)
@@ -223,13 +224,13 @@
      ;; after the command preflight, or a caller enters the head seam directly.
      (check 'read-only-shared-entrypoints-refuse
        (cons (guard (ex [(kernel:refusal? ex) (condition-message ex)] [else (raise ex)])
-               (head:store-edit! plain (text:make-span 0 0 0 0) '("bad")) #f)
+               (seat:store-edit! plain (text:make-span 0 0 0 0) '("bad")) #f)
              (map (lambda (direction)
-                    (call-with-values (lambda () (head:store-history! plain direction 'mine)) list))
+                    (call-with-values (lambda () (seat:store-history! plain direction 'mine)) list))
                   '(undo redo)))
        '("Edit not applied: the buffer is read-only" (refused read-only) (refused read-only)))
      (check 'read-only-keeps-text (text-of plain) protected-text)
-     (head:buffer-read-only-set! plain #f)
+     (seat:buffer-read-only-set! plain #f)
 
      ;; a local buffer, a view or a tool of the head's, is not edited and has no history
      (define local (fresh "undo-local" #f))

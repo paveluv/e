@@ -4,11 +4,12 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
      (import (prefix (apps terminal) terminal:) (prefix (service vt) vt:) (prefix (test) test:)
-             (prefix (head head) head:) (prefix (head paint) paint:))
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head paint) paint:) (prefix (head tui) tui:))
 
      (define check test:check)
 
@@ -1182,7 +1183,7 @@
      ;; no generated face registration or head callback is needed to read it.
      (let ([emulator (vt:make-emulator 1 5)] [calls (test:recorder)])
        (dynamic-wind
-         (lambda () (head:set-repaint-hook! (lambda () (calls 'repaint))))
+         (lambda () (seat:set-repaint-hook! (lambda () (calls 'repaint))))
          (lambda ()
            (vt:emulator-feed! emulator
              "\x1b;[31m\x1b;]8;id=wide;https://frame.example\x1b;\\界\x1b;]8;;\x1b;\\q\x301;Z\x1b;[6 q")
@@ -1208,7 +1209,7 @@
                '("界q\x301;Z " "0;31" ("https://frame.example" "wide") (0 4 #t))))
            (head:run-deferred!)
            (check 'frame-feed-and-read-do-not-call-the-head (calls) '()))
-         (lambda () (head:set-repaint-hook! paint:invalidate-screen-cache!)))
+         (lambda () (seat:set-repaint-hook! tui:invalidate-screen-cache!)))
        (let* ([links (vt:emulator-hyperlinks emulator)]
               [uri (car (vector-ref (vector-ref links 0) 0))])
          (string-set! uri 0 #\X)

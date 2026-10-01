@@ -20,7 +20,7 @@
 ;; exports are the editor's public command API.
 ;;
 ;; The generic helpers act on the selected region, else on the whole
-;; current buffer -- current-region; with-region and head:with-buffer-mirror
+;; current buffer -- current-region; with-region and seat:with-buffer-mirror
 ;; retarget them for the extent of a body.  A region is a slice of one
 ;; buffer between two (row . col) points: '(region (buffer 7) (0 . 0) (12 . 5)).
 
@@ -47,14 +47,11 @@
   (import (chezscheme)
           (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
-          (prefix (core property) property:)
           (prefix (core region) region:)
           (prefix (foundation datum) datum:)
-          (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
           (prefix (head catalogue-host) catalogue-host:)
-          (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head editor) editor:)
           (prefix (head expression) expression:)
@@ -63,18 +60,18 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head render) render:)
+          (prefix (head seat) seat:)
           (prefix (head style) style:)
-          (prefix (head table) table:)
           (prefix (head text-control) text-control:)
           (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:)
+          (prefix (head tui) tui:)
           (prefix (head window) window:)
           (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
           (prefix (state store) store:)
-          (prefix (sys glyph) glyph:)
           (prefix (sys sys) sys:)
           (prefix (sys tty) tty:))
 
@@ -85,8 +82,8 @@
   ;; the seat's lists and selection through the identifier-syntax
   ;; facades below (a facade sweep is on the tech-debt ledger).
   (define-syntax buffers
-    (identifier-syntax [id (head:buffers)]
-      [(set! id v) (head:set-buffers! v)]))
+    (identifier-syntax [id (seat:buffers)]
+      [(set! id v) (seat:set-buffers! v)]))
 
   ;; Buffer facts and the store client -- the bridge between this
   ;; seat's records and the (store) -- live in (head) now; the
@@ -94,14 +91,14 @@
 
 
   (define-syntax windows
-    (identifier-syntax [id (head:windows)]
-      [(set! id v) (head:set-windows! v)]))
+    (identifier-syntax [id (seat:windows)]
+      [(set! id v) (seat:set-windows! v)]))
   (define-syntax layout-root
-    (identifier-syntax [id (head:root)]
-      [(set! id v) (head:set-root! v)]))
+    (identifier-syntax [id (seat:root)]
+      [(set! id v) (seat:set-root! v)]))
   (define-syntax current-window
-    (identifier-syntax [id (head:current-window)]
-      [(set! id v) (head:set-current! v)]))
+    (identifier-syntax [id (seat:current-window)]
+      [(set! id v) (seat:set-current! v)]))
   ;; The (store) is the master copy of every buffer's text; this
   ;; seat is one of its clients.  A buffer record's lines field is a
   ;; cache of the store's immutable text vector, adopted after every
@@ -119,18 +116,18 @@
            [id (get place)]
            [(set! id v) (put place v)]))]))
 
-  (define-state file-name (head:window-buffer current-window)
-    head:buffer-file head:buffer-file-set!)
-  (define-state mark-row (head:window-buffer current-window)
-    head:buffer-mark-row head:buffer-mark-row-set!)
-  (define-state mark-col (head:window-buffer current-window)
-    head:buffer-mark-col head:buffer-mark-col-set!)
-  (define-state mark-active? (head:window-buffer current-window)
-    head:buffer-marked head:buffer-marked-set!)
-  (define-state point-row current-window head:window-prow head:window-prow-set!)
-  (define-state point-col current-window head:window-pcol head:window-pcol-set!)
-  (define-state top-row current-window head:window-top head:window-top-set!)
-  (define-state left-col current-window head:window-left head:window-left-set!)
+  (define-state file-name (seat:window-buffer current-window)
+    seat:buffer-file seat:buffer-file-set!)
+  (define-state mark-row (seat:window-buffer current-window)
+    seat:buffer-mark-row seat:buffer-mark-row-set!)
+  (define-state mark-col (seat:window-buffer current-window)
+    seat:buffer-mark-col seat:buffer-mark-col-set!)
+  (define-state mark-active? (seat:window-buffer current-window)
+    seat:buffer-marked seat:buffer-marked-set!)
+  (define-state point-row current-window seat:window-prow seat:window-prow-set!)
+  (define-state point-col current-window seat:window-pcol seat:window-pcol-set!)
+  (define-state top-row current-window seat:window-top seat:window-top-set!)
+  (define-state left-col current-window seat:window-left seat:window-left-set!)
 
   ;;; Editor state ------------------------------------------------------------
 
@@ -138,11 +135,11 @@
   ;; message and echo-pending are identifier-syntax facades for the
   ;; sites here that still write them.
   (define-syntax rows
-    (identifier-syntax [id (paint:screen-rows)]
-      [(set! id v) (paint:set-screen-rows! v)]))
+    (identifier-syntax [id (tui:screen-rows)]
+      [(set! id v) (tui:set-screen-rows! v)]))
   (define-syntax cols
-    (identifier-syntax [id (paint:screen-cols)]
-      [(set! id v) (paint:set-screen-cols! v)]))
+    (identifier-syntax [id (tui:screen-cols)]
+      [(set! id v) (tui:set-screen-cols! v)]))
   (define-syntax message
     (identifier-syntax [id (echo:text)] [(set! id v) (echo:set-text! v)]))
   (define-syntax echo-pending
@@ -151,7 +148,7 @@
   (edoc "Borrow immutable text with its document identity and revision for a later bulk rewrite."
         (id model "explicit editor view; omission uses the legacy current buffer") (returns list "(lines document-id revision)"))
   (define basis
-    (case-lambda [() (head:edit-basis (head:current-buffer-mirror))] [(id) (editor:basis id)]))
+    (case-lambda [() (seat:edit-basis (seat:current-buffer-mirror))] [(id) (editor:basis id)]))
 
   ;;; Small utilities -------------------------------------------------------
 
@@ -161,22 +158,21 @@
 
   ;;; Buffer access and undo ------------------------------------------------
 
-  (define (vlen) (head:buffer-line-count (head:current-buffer-mirror)))
-  (define (line-at n) (head:buffer-line (head:current-buffer-mirror) n))
+  (define (vlen) (seat:buffer-line-count (seat:current-buffer-mirror)))
+  (define (line-at n) (seat:buffer-line (seat:current-buffer-mirror) n))
   ;; Navigation addresses the window presentation; editing addresses source.
-  (define (current-display-line) (render:line-ref (head:window-text current-window) point-row))
-
+  (define (current-display-line) (render:line-ref (seat:window-text current-window) point-row))
 
   (define (check-editable!)
     ;; The same guard protects fresh edits and undo: #t forbids all edits,
     ;; and a procedure decides per edit. A local buffer, a view or a tool
     ;; of this head's, is never edited: every text edited is the base's.
-    (let* ([b (head:window-buffer current-window)] [guard (head:buffer-read-only b)])
+    (let* ([b (seat:window-buffer current-window)] [guard (seat:buffer-read-only b)])
       ;; the pop-up shows; what it shows is edited in a window of its own
-      (when (head:popup? current-window)
+      (when (seat:popup? current-window)
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "the pop-up is read-only"))))
-      (unless (head:buffer-store-id b)
+      (unless (seat:buffer-store-id b)
         (raise (condition (kernel:make-read-only-error)
                           (make-message-condition "local buffers are read-only"))))
       (when (if (procedure? guard) (not (guard)) guard)
@@ -252,8 +248,8 @@
       [()
        (let ([id (current-editor)])
          (if id (forward-expression! id)
-           (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if end (head:goto! end) (set-message! "No expression after point")))))]
+           (let-values ([(start end) (expression:forward (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if end (seat:goto! end) (set-message! "No expression after point")))))]
       [(id) (editor:expression! id 'forward)]))
 
   (edoc "Move point backward over one expression: the atom around point, else the last expression ending by it inside the enclosing one; the C-M-b of Emacs."
@@ -263,8 +259,8 @@
       [()
        (let ([id (current-editor)])
          (if id (backward-expression! id)
-           (let-values ([(start end) (expression:backward (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if start (head:goto! start) (set-message! "No expression before point")))))]
+           (let-values ([(start end) (expression:backward (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if start (seat:goto! start) (set-message! "No expression before point")))))]
       [(id) (editor:expression! id 'backward)]))
 
   (define (position-before? a b)
@@ -298,11 +294,11 @@
       [()
        (let ([id (current-editor)])
          (if id (mark-expression! id)
-           (let* ([point (head:point)] [mark (cons mark-row mark-col)]
+           (let* ([point (seat:point)] [mark (cons mark-row mark-col)]
                   [from (if (and mark-active? (position-before? point mark)) mark point)])
-             (let-values ([(start end) (expression:forward (head:buffer-lines (head:current-buffer-mirror)) from)])
+             (let-values ([(start end) (expression:forward (seat:buffer-lines (seat:current-buffer-mirror)) from)])
                (cond [(not end) (set-message! "No expression after point")]
-                 [(head:buffer-selectable? (head:current-buffer-mirror))
+                 [(seat:buffer-selectable? (seat:current-buffer-mirror))
                   (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
                   (set! message "Mark set")])))))]
       [(id) (editor:expression! id 'mark)]))
@@ -314,10 +310,10 @@
       [()
        (let ([id (current-editor)])
          (if id (mark-form! id)
-           (let-values ([(start end) (expression:top-level (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
+           (let-values ([(start end) (expression:top-level (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
              (cond [(not start) (set-message! "No top-level form in the buffer")]
-               [(head:buffer-selectable? (head:current-buffer-mirror))
-                (head:goto! start)
+               [(seat:buffer-selectable? (seat:current-buffer-mirror))
+                (seat:goto! start)
                 (set! mark-row (car end)) (set! mark-col (cdr end)) (set! mark-active? #t)
                 (set! message "Mark set")]))))]
       [(id) (editor:expression! id 'form)]))
@@ -329,8 +325,8 @@
       [()
        (let ([id (current-editor)])
          (if id (up-expression! id)
-           (let-values ([(start end) (expression:container (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if start (head:goto! start) (set-message! "Not inside an expression")))))]
+           (let-values ([(start end) (expression:container (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if start (seat:goto! start) (set-message! "Not inside an expression")))))]
       [(id) (editor:expression! id 'up)]))
 
   (edoc "Move point down into the next list or vector, just past its opening delimiter; the C-M-d of Emacs."
@@ -340,8 +336,8 @@
       [()
        (let ([id (current-editor)])
          (if id (down-expression! id)
-           (let ([inside (expression:down (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if inside (head:goto! inside) (set-message! "No list after point")))))]
+           (let ([inside (expression:down (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if inside (seat:goto! inside) (set-message! "No list after point")))))]
       [(id) (editor:expression! id 'down)]))
 
   (edoc "Move point over the next list or vector, skipping atoms; the C-M-n of Emacs."
@@ -351,8 +347,8 @@
       [()
        (let ([id (current-editor)])
          (if id (next-list! id)
-           (let-values ([(start end) (expression:next-list (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if end (head:goto! end) (set-message! "No list after point")))))]
+           (let-values ([(start end) (expression:next-list (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if end (seat:goto! end) (set-message! "No list after point")))))]
       [(id) (editor:expression! id 'next)]))
 
   (edoc "Move point back over the previous list or vector, skipping atoms; the C-M-p of Emacs."
@@ -362,8 +358,8 @@
       [()
        (let ([id (current-editor)])
          (if id (previous-list! id)
-           (let-values ([(start end) (expression:previous-list (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if start (head:goto! start) (set-message! "No list before point")))))]
+           (let-values ([(start end) (expression:previous-list (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if start (seat:goto! start) (set-message! "No list before point")))))]
       [(id) (editor:expression! id 'previous)]))
 
   (edoc "Move point to the start of the last top-level form beginning before point, the enclosing one included; the C-M-a of Emacs."
@@ -373,8 +369,8 @@
       [()
        (let ([id (current-editor)])
          (if id (beginning-of-form! id)
-           (let ([start (expression:form-start (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if start (head:goto! start) (set-message! "No top-level form before point")))))]
+           (let ([start (expression:form-start (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if start (seat:goto! start) (set-message! "No top-level form before point")))))]
       [(id) (editor:expression! id 'start)]))
 
   (edoc "Move point to the end of the first top-level form ending after point, the enclosing one included; the C-M-e of Emacs."
@@ -384,8 +380,8 @@
       [()
        (let ([id (current-editor)])
          (if id (end-of-form! id)
-           (let ([end (expression:form-end (head:buffer-lines (head:current-buffer-mirror)) (head:point))])
-             (if end (head:goto! end) (set-message! "No top-level form after point")))))]
+           (let ([end (expression:form-end (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+             (if end (seat:goto! end) (set-message! "No top-level form after point")))))]
       [(id) (editor:expression! id 'end)]))
 
   (edoc "Swap the expression before point with the one after it, point ending after both; the C-M-t of Emacs."
@@ -409,7 +405,7 @@
     (or (current-editor) (refuse! "The current window has no mounted editor")))
 
   (define (current-editor)
-    (and (head:window-widget current-window) (head:window-editor current-window)))
+    (and (seat:window-widget current-window) (seat:window-editor current-window)))
 
   (edoc "Move point one character left, crossing to the end of the previous line.")
   (define (move-left!)
@@ -448,16 +444,16 @@
 
   (define (goal-position wrapped?)
     ;; Equal row/column numbers alone do not identify a navigation context.
-    (let ([b (head:current-buffer-mirror)])
-      (list current-window b (head:buffer-revision b)
-            (head:window-text current-window)
+    (let ([b (seat:current-buffer-mirror)])
+      (list current-window b (seat:buffer-revision b)
+            (seat:window-text current-window)
             (and wrapped? (paint:wrap-width current-window))
-            (render:header (head:window-rendition current-window)) point-row point-col)))
+            (render:header (seat:window-rendition current-window)) point-row point-col)))
 
   (define (visual-column w row col)
-    (let* ([frame (head:window-rendition w)]
+    (let* ([frame (seat:window-rendition w)]
            [breaks (and (paint:window-wrapped? w)
-                        (paint:line-breaks w (render:line-ref (head:window-text w) row)))])
+                        (paint:line-breaks w (render:line-ref (seat:window-text w) row)))])
       (- (render:column frame row col)
          (if breaks
              (render:column frame row (vector-ref breaks (text-layout:segment breaks col))) 0))))
@@ -468,13 +464,13 @@
     (unless (and (integer? delta) (exact? delta)) (error 'move-vertical! "expected an exact integer" delta))
     (let ([id (current-editor)])
       (if id (do ([i (abs delta) (- i 1)]) ((zero? i)) (editor:move! id (if (< delta 0) 'up 'down)))
-        (let* ([w current-window] [wrapped? (paint:window-wrapped? w)] [goal (head:window-goal w)]
+        (let* ([w current-window] [wrapped? (paint:window-wrapped? w)] [goal (seat:window-goal w)]
                [goal-col (if (and goal (equal? (cdr goal) (goal-position wrapped?))) (car goal)
                              (visual-column w point-row point-col))]
-               [point (text-layout:move (head:window-text w) (head:window-rendition w)
+               [point (text-layout:move (seat:window-text w) (seat:window-rendition w)
                         (and wrapped? (paint:wrap-width w)) (cons point-row point-col) delta goal-col)])
           (set! point-row (car point)) (set! point-col (cdr point))
-          (head:window-goal-set! w (cons goal-col (goal-position wrapped?)))))))
+          (seat:window-goal-set! w (cons goal-col (goal-position wrapped?)))))))
 
   (edoc "Insert text at point as one undo entry; its newlines become line breaks."
         (s string "the text to insert")
@@ -544,9 +540,9 @@
     ;; OSC 52 lets the host terminal own the clipboard, which also works when
     ;; e is several SSH or multiplexer layers away from the desktop. The
     ;; payload is base64, so buffer contents cannot terminate the sequence.
-    (when (and (forward-copy-buffer-to-system-clipboard) (paint:screen-live?))
-      (with-mutex paint:redraw-lock
-        (paint:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
+    (when (and (forward-copy-buffer-to-system-clipboard) (tui:screen-live?))
+      (with-mutex tui:redraw-lock
+        (tui:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
   ;; Whatever changes *copy* -- a hand edit there, undo, the prompt's C-k --
@@ -557,13 +553,13 @@
   (define published-copy (cons #f #f)) ; (buffer . the revision published)
 
   (define (copy-revision b)
-    (let-values ([(lines revision facts) (head:buffer-state b)]) revision))
+    (let-values ([(lines revision facts) (seat:buffer-state b)]) revision))
 
   (define (note-copy-published! b)
     (set! published-copy (cons b (copy-revision b))))
 
   (define (publish-copy-changes!)
-    (let ([b (head:copy-buffer #f)])
+    (let ([b (seat:copy-buffer #f)])
       (when b
         (let ([revision (copy-revision b)])
           (cond [(not (eq? b (car published-copy))) (set! published-copy (cons b revision))]
@@ -571,17 +567,17 @@
                 [else
                  (set! published-copy (cons b revision))
                  (when (forward-copy-buffer-to-system-clipboard)
-                   (publish-system-clipboard! (head:copy-text)))])))))
+                   (publish-system-clipboard! (seat:copy-text)))])))))
 
   (define (replace-copy-text! text label)
-    (let* ([b (head:copy-buffer)] [basis (head:edit-basis b)]
+    (let* ([b (seat:copy-buffer)] [basis (seat:edit-basis b)]
            [key (list head:ui-actor (gensym->unique-string (gensym "copy")))])
       (let-values ([(lines trailing?) (text:from-string text)])
         (let-values ([(span replacement) (text:difference (car basis) lines)])
-          (head:store-edit! b span replacement
+          (seat:store-edit! b span replacement
             (list key (format "~a ~s" label (string:elide text 40))
               (list 'undo (cons 'trailing trailing?)) (list 'labels (cons 'batch key)))
-            (map (lambda (w) (cons w 'end)) (filter (lambda (w) (eq? (head:window-buffer w) b)) (head:windows))) basis)))
+            (map (lambda (w) (cons w 'end)) (filter (lambda (w) (eq? (seat:window-buffer w) b)) (seat:windows))) basis)))
       (note-copy-published! b) (publish-system-clipboard! text)))
 
   (define (killing?)
@@ -613,7 +609,7 @@
   (edoc "The copy buffer's text."
         (returns string))
   (define (copy-text)
-    (head:copy-text))
+    (seat:copy-text))
 
   (edoc "Insert the copy buffer's text at point."
         (id model "editor view; omission addresses the current window")
@@ -700,7 +696,7 @@
     (case-lambda
       [(path)
        (visit-file! path (lambda (kind value)
-                           (case kind [(directory) (head:open-directory! value)] [(buffer) (head:show-buffer-mirror! value)])))]
+                           (case kind [(directory) (seat:open-directory! value)] [(buffer) (seat:show-buffer-mirror! value)])))]
       [(path destination) (visit-file! path destination #f)]
       [(path destination proposal)
        (unless (procedure? destination) (error 'visit-file! "expected a destination procedure" destination))
@@ -709,9 +705,9 @@
            (case (car result)
              [(directory) (destination 'directory (cadr result))]
              [(buffer)
-              (let ([b (or (head:adopt-store-buffer! (cadr result))
+              (let ([b (or (seat:adopt-store-buffer! (cadr result))
                          (error 'visit-file! "acquired buffer is no longer visible"))])
-                (head:sync-foreign-edits! (cadr result))
+                (seat:sync-foreign-edits! (cadr result))
                 (destination 'buffer b)
                 (log:add! 'edit:visit-file! (cons (if (caddr result) "Loaded" "Visited") (list-ref result 3)) (caddr result))
                 (when (list-ref result 4) (log:add! 'edit:visit-file! (list-ref result 4))))]) #t))]))
@@ -723,22 +719,22 @@
   (edoc "Save the current shared document through the base's document service. External changes merge undoably before saving; conflicts refuse, and an unavailable merge rereads undoably instead. Overwritten bytes become a shared backup. App presentations cannot be saved as files. Pre/post hooks run in this head, with mode, file and name adopted atomically."
         (target file "destination to write and visit") (returns boolean "whether saving completed"))
   (define (save-file! target)
-    (let* ([path (file:visit-path target)] [b (head:window-buffer current-window)]
-           [id (head:buffer-store-id b)])
+    (let* ([path (file:visit-path target)] [b (seat:window-buffer current-window)]
+           [id (seat:buffer-store-id b)])
       (define (check-source!)
-        (when (head:app-buffer? b)
-          (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (head:buffer-name b))))
+        (when (seat:app-buffer? b)
+          (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (seat:buffer-name b))))
         (unless id (refuse-file! "Only shared documents can be saved; copy the text into a document first")))
       (check-source!)
-      (when (head:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
+      (when (seat:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
       (file:run-pre-save-hooks! path)
       (check-source!)
-      (let-values ([(text revision facts) (head:buffer-state b)])
+      (let-values ([(text revision facts) (seat:buffer-state b)])
         (let* ([detected (mode:detect path (vector-ref text 0))]
                [adoption (list (vector-ref text 0) (and detected (mode:name detected)))]
                [result (document:save! head:ui-actor id path adoption)])
           ;; Merge/reread can change shared text even when saving refuses.
-          (head:sync-foreign-edits! id) (head:flush-ui-audit! id)
+          (seat:sync-foreign-edits! id) (seat:flush-ui-audit! id)
           (case (car result)
             [(refused) (refuse-file! (cadr result))]
             [(unchanged) (set! message (cadr result)) #f]
@@ -760,17 +756,17 @@
       [else (format "not merged (~a)" detail)]))
 
   (define (reload-document! replace?)
-    (let* ([b (head:current-buffer-mirror)] [id (head:buffer-store-id b)])
+    (let* ([b (seat:current-buffer-mirror)] [id (seat:buffer-store-id b)])
       (unless id (refuse-file! "This buffer is not a shared document"))
       (let-values ([(status detail)
                     (guard (ex [(kernel:refusal? ex) (raise ex)]
                                [else (refuse-file! (kernel:condition-text ex))])
                       ((if replace? document:reread! document:reload!) head:ui-actor id))])
         ;; An adoption failure after commit is not a refused document action.
-        (head:sync-foreign-edits! id)
-        (head:flush-ui-audit! id)
+        (seat:sync-foreign-edits! id)
+        (seat:flush-ui-audit! id)
         (unless (eq? status 'applied)
-          (refuse-file! (format "~a could not be ~a: ~a" (head:buffer-name b)
+          (refuse-file! (format "~a could not be ~a: ~a" (seat:buffer-name b)
                           (if replace? "reread" "reloaded") (merge-failure detail)))))))
 
   (edoc "Reread the current document's file in the base as one undoable replacement, settling pending conflicts. Concurrent edits or retargeting during the read refuse; earlier undo history remains."
@@ -812,10 +808,10 @@
   (edoc "The selected region while the mark is active, else the whole current text buffer, as portable data. A local app without a document refuses."
         (returns region))
   (define (current-region)
-    (let ([m (head:mark)] [b (head:current-buffer-mirror)])
-      (unless (head:buffer-store-id b) (refuse! "The current app has no text document"))
+    (let ([m (seat:mark)] [b (seat:current-buffer-mirror)])
+      (unless (seat:buffer-store-id b) (refuse! "The current app has no text document"))
       (if m
-          (region:make (head:buffer-store-id b) m (head:point))
+          (region:make (seat:buffer-store-id b) m (seat:point))
           (whole-buffer b))))
 
   (define (call-with-region r thunk)
@@ -823,16 +819,16 @@
     ;; its end; the previous selection and point return on exit and on
     ;; escape. The body of with-region, the one form M-x offers.
     (let* ([r (datum:copy r)] [id (region:buffer r)] [start (region:start r)] [end (region:end r)]
-           [b (head:adopt-store-buffer! id)])
+           [b (seat:adopt-store-buffer! id)])
       (unless b (refuse! "The region's document is unavailable"))
       (for-each
         (lambda (p)
-          (unless (and (< (car p) (head:buffer-line-count b))
-                    (<= (cdr p) (string-length (head:buffer-line b (car p)))))
+          (unless (and (< (car p) (seat:buffer-line-count b))
+                    (<= (cdr p) (string-length (seat:buffer-line b (car p)))))
             (error 'edit:with-region "position is outside the document" p)))
         (list start end))
-      (head:with-buffer-mirror b
-        (let ([saved-point (head:point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
+      (seat:with-buffer-mirror b
+        (let ([saved-point (seat:point)] [saved-mark (cons mark-row mark-col)] [saved-active mark-active?])
           (define (select! start end active?)
             (set! mark-row (car start)) (set! mark-col (cdr start)) (set! mark-active? active?)
             (set! point-row (car end)) (set! point-col (cdr end)))
@@ -900,9 +896,9 @@
         (name string "the buffer's name")
         (returns buffer) (public))
   (define (new-buffer! name)
-    (let ([b (head:new-buffer! name)])
-      (head:show-buffer-mirror! b)
-      (datum:copy (head:buffer-store-id b))))
+    (let ([b (seat:new-buffer! name)])
+      (seat:show-buffer-mirror! b)
+      (datum:copy (seat:buffer-store-id b))))
 
   (define (age-text seconds)
     ;; how long ago, in the coarsest unit that is not zero
@@ -938,10 +934,10 @@
     (unless (<= (length buffer*) 1) (error 'kill-buffer! "expected at most one buffer"))
     (when (and (pair? buffer*) (not (handle:buffer? (car buffer*))))
       (error 'kill-buffer! "expected a buffer reference" (car buffer*)))
-    (let* ([id (if (null? buffer*) (head:current-buffer) (car buffer*))]
-           [b (if (null? buffer*) (head:current-buffer-mirror) (head:buffer-of-store-id id))]
+    (let* ([id (if (null? buffer*) (seat:current-buffer) (car buffer*))]
+           [b (if (null? buffer*) (seat:current-buffer-mirror) (seat:buffer-of-store-id id))]
            [m (and id (cadar (cadr (store:metadata (list id)))))]
-           [name (if id (and m (cdr (assq 'name m))) (head:buffer-name b))])
+           [name (if id (and m (cdr (assq 'name m))) (seat:buffer-name b))])
       (when (and id (not (store:visible? head:ui-actor id))) (error 'kill-buffer! "buffer is not visible" id))
       (let* (
              [unsaved? (and m (cdr (assq 'modified m)))]
@@ -950,7 +946,7 @@
           (unless m (error 'kill-buffer! "the buffer no longer exists" name))
           (let-values ([(status current) (store:archive! head:ui-actor id (cdr (assq 'version m)) 'trash)])
             (unless (eq? status 'applied) (error 'kill-buffer! "the buffer changed; choose it again" name))))
-        (when b (head:forget-buffer! b))
+        (when b (seat:forget-buffer! b))
         (log:add! 'edit:kill-buffer!
           (cond [(or (not id) disposable?) (format "Killed ~a" name)]
                 [unsaved? (format "Killed ~a; its unsaved work is in the trash" name)]
@@ -991,10 +987,10 @@
       (unless entry (error 'restore! "no such buffer in the trash" name))
       (let ([id (car entry)])
         (archive-entry! entry 'restore)
-        (let ([b (head:adopt-store-buffer! id)])
+        (let ([b (seat:adopt-store-buffer! id)])
           (unless b (error 'restore! "the buffer did not come back" name))
-          (head:show-buffer-mirror! b)
-          (log:add! 'edit:restore! (format "Restored ~a" (head:buffer-name b)))
+          (seat:show-buffer-mirror! b)
+          (log:add! 'edit:restore! (format "Restored ~a" (seat:buffer-name b)))
           id))))
 
   (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
@@ -1063,8 +1059,6 @@
       [() (indent-buffer! (require-editor))]
       [(id) (editor:format! id 'indent-buffer)]))
 
-
-
   (edoc "Rewrite the lines between mark and point with the mode's formatter."
         (edits)
         (id model "editor view; omission addresses the current window"))
@@ -1096,14 +1090,14 @@
       [(direction fraction)
        (let ([id (current-editor)])
          (if id (page! id direction fraction)
-           (let* ([w current-window] [v (head:window-text w)]
-                  [sticky (min (head:buffer-sticky-lines (head:current-buffer-mirror)) (- (render:line-count v) 1))])
+           (let* ([w current-window] [v (seat:window-text w)]
+                  [sticky (min (seat:buffer-sticky-lines (seat:current-buffer-mirror)) (- (render:line-count v) 1))])
              (let-values ([(top point)
-                           (text-layout:page v (head:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
-                             sticky (paint:page-size) (cons (head:window-top w) (head:window-topseg w))
+                           (text-layout:page v (seat:window-rendition w) (and (paint:window-wrapped? w) (paint:wrap-width w))
+                             sticky (paint:page-size) (cons (seat:window-top w) (seat:window-topseg w))
                              (visual-column w point-row point-col) direction fraction)])
-               (head:goto! point)
-               (head:window-top-set! w (car top)) (head:window-topseg-set! w (cdr top))))))]
+               (seat:goto! point)
+               (seat:window-top-set! w (car top)) (seat:window-topseg-set! w (cdr top))))))]
       [(id direction fraction) (editor:page! id direction fraction)]))
 
   ;; The head's side of the interaction protocol: another actor's
@@ -1140,18 +1134,18 @@
         (refuse-file! "This buffer has no file: (edit:save-file! path) saves it under one")))
 
   (define (view-quit-buffers!)
-    (let ([b (head:find-tool-buffer "*buffet*")])
+    (let ([b (seat:find-tool-buffer "*buffet*")])
       (if b
           (let ([w (window:display! (catalogue-host:reference b))])
             (when w
               (window:focus! w)
-              (head:dispatch-app-event! "FOCUS")
+              (seat:dispatch-app-event! "FOCUS")
               (set! message "")))
           (set-message! "The <buffet> app is not available"))))
 
   (edoc "Quit this head at once: shared text stays in the base, the screen is checkpointed for the next attach, and the exit notice names every buffer with unsaved work.")
   (define (quit!)
-    (head:depart!))
+    (seat:depart!))
 
   ;;; Pasting and typed runs --------------------------------------------------
 
@@ -1179,7 +1173,7 @@
 
   (edoc "Set the mark at point and activate it.")
   (define (set-mark-command!)
-    (when (head:buffer-selectable? (head:current-buffer-mirror))
+    (when (seat:buffer-selectable? (seat:current-buffer-mirror))
       (set! mark-row point-row) (set! mark-col point-col)
       (set! mark-active? #t))
     (set! message (if mark-active? "Mark set" "")))
@@ -1203,7 +1197,7 @@
   (edoc "Erase and repaint the screen, asking the terminal for its color scheme again.")
   (define (redraw-command!)
     (tty:query-color-scheme!)
-    (paint:mark-size-dirty!) (paint:erase-screen!) (set! message "Screen redrawn"))
+    (tui:mark-size-dirty!) (tui:erase-screen!) (set! message "Screen redrawn"))
 
   (edoc "Insert a line break after point, leaving point where it is."
         (edits))
@@ -1243,9 +1237,9 @@
   ;;; Regions and the generic helpers ------------------------------------------
 
   (define (whole-buffer b)
-    (let ([last (- (head:buffer-line-count b) 1)])
-      (region:make (head:buffer-store-id b) '(0 . 0)
-                   (cons last (string-length (head:buffer-line b last))))))
+    (let ([last (- (seat:buffer-line-count b) 1)])
+      (region:make (seat:buffer-store-id b) '(0 . 0)
+                   (cons last (string-length (seat:buffer-line b last))))))
 
   (edoc "Read a region from one document snapshot, rows joined with newlines; unavailable documents or coordinates outside the text refuse. No displayed buffer is required."
         (r region "the region to read")
@@ -1293,10 +1287,10 @@
       (log:register-formatter! 'edit:visit-file! fmt)
       (log:register-formatter! 'edit:save-file! fmt))
     (style:set-changed-hook!
-      (lambda () (paint:invalidate-screen-cache!)))
+      (lambda () (tui:invalidate-screen-cache!)))
     (style:color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! style:color-scheme!)
-    (head:add-shutdown-hook! (lambda () (head:flush-ui-audit! 'all)))
+    (head:add-shutdown-hook! (lambda () (seat:flush-ui-audit! 'all)))
     ;; The layer's default bindings are data, like every module's.
     (begin
       (for-each
@@ -1334,9 +1328,9 @@
     ;; argument, how to quit (the modified-buffers check), and what runs
     ;; after every key
     (begin
-      (head:set-file-opener! visit-file!)
-      (head:set-quit-command! quit!)
-      (head:set-review-viewer! view-quit-buffers!)
+      (seat:set-file-opener! visit-file!)
+      (seat:set-quit-command! quit!)
+      (seat:set-review-viewer! view-quit-buffers!)
       (head:add-pre-redraw-hook! publish-copy-changes!)
       (head:set-after-key! clamp-point!))
 

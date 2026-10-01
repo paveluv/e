@@ -300,7 +300,7 @@
         (thunk thunk "the head")
         (returns integer "the exit status"))
   (define (call-with-runtime thunk)
-    (let ([modules '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "file" "filesystem" "git" "https" "identity" "interaction" "journal" "log" "model" "path" "port" "row"
+    (let ([modules '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "endpoint" "file" "filesystem" "git" "https" "identity" "interaction" "journal" "log" "model" "operation" "path" "port" "row"
                      "property" "range" "reference" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "widget" "wire")])
       (kernel:pin-modules! (cons* "client" "cache" modules))
       (guard (ex [(stale-base? ex) (report-stale! (stale-status ex)) 1]
@@ -322,6 +322,9 @@
             (claim! (list 'head (or (startup:name) (startup:default-name))) (daemon:socket))
             (let ([failures (kernel:load-modules! modules)])
               (unless (null? failures) (raise (cdar failures))))
+            ;; Text, surface, presence and log events belong to the head's
+            ;; endpoint even when its composition has no window or document.
+            (request 'watch-head)
             (thunk)
             (farewell (or departure (leave! #f)))
             0)

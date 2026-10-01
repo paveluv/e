@@ -64,7 +64,7 @@
      ;; known schemas without rewriting extension payloads or revision numbers.
      (let* ([directory (format "/tmp/e-journal-~a" (get-process-id))]
             [path (string-append directory "/session")]
-            [view (descriptor:make '(buffer 1) 'editor 1 '((annotations 1 5 ())) '((0 . 0) (0 . 0) (0 . 0) #f))]
+            [view (descriptor:make '(buffer 1) 'editor 1 '((name . "saved editor") (annotations 1 5 ())) '((0 . 0) (0 . 0) (0 . 0) #f))]
             [extension-view (descriptor:make #f 'extension-widget 1 '((annotations . "opaque")) '())]
             [newer-view (descriptor:make #f 'editor 2 '((annotations . "opaque")) '())]
             [checkpoint '(screen 6 1 (window 1 0 0 0 #t #f ((1 model 2))) (((shared 1 5) #f ())))])
@@ -95,7 +95,7 @@
                  (cdr (assq 'options (payload 2))) (payload 3) (payload 4) (payload 5) (payload 6)
                  (actor:checkpoint '(head "desk")))
                (list '((buffer 1)) '((document buffer 1) (disabled))
-                 '((annotations (buffer 1) 5 ())) unknown unknown extension-view newer-view
+                 '((catalogue . #t) (name . "saved editor") (annotations (buffer 1) 5 ())) unknown unknown extension-view newer-view
                  '(screen 6 1 (window 1 0 0 0 #t #f (((buffer 1) model 2))) (((shared (buffer 1) 5) #f ())))))))
          (lambda () (delete-file path) (delete-directory directory))))
 

@@ -1,16 +1,15 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions arrange! cancel! capture! caret command-bindings commands context descendant event-frame focus! focus-next! focused
+  (export act! actions adopt! arrange! cancel! capture! caret command-bindings commands context descendant detach! discard! event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles generation
-          host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown status target unmount!)
+          host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown stage! status target unmount!)
   (import (except (chezscheme) inspect)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
           (prefix (foundation datum) datum:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
-          (prefix (head echo) echo:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -28,7 +27,7 @@
   (define (generation) definition-generation)
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
-  (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable bundle)))
+  (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable bundle) (mutable staged?)))
 
   (edoc "The opaque host slot supplied when this tree was mounted."
         (id model "mounted view or descendant") (returns any) (effects internal))
@@ -57,10 +56,12 @@
   (define notification-lock (make-mutex))
   (define pump-thread (get-thread-id))
   (define (release-service! id)
+    (hashtable-delete! pending-scroll id) (hashtable-delete! pending-reveal id) (hashtable-delete! scroll-positions id)
     (let ([n (hashtable-ref nodes id #f)]) (when n (node-activity-set! n #f)))
     (let ([entry (hashtable-ref services id #f)])
-      (when entry ((field entry 'release (lambda (id) (void))) id) (hashtable-delete! services id)))
-    (hashtable-delete! pending-scroll id) (hashtable-delete! pending-reveal id) (hashtable-delete! scroll-positions id))
+      (when entry
+        (hashtable-delete! services id)
+        ((field entry 'release (lambda (id) (void))) id))))
 
   (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
   (define (pump!)
@@ -70,12 +71,8 @@
           (hashtable-clear! notifications) ready)))
     (vector-for-each
       (lambda (id)
-        (let* ([n (hashtable-ref nodes id #f)] [d (and n (read-view id))] [entry (definition d)]
-               [old (hashtable-ref services id #f)])
-          (unless (eq? old entry)
-            (release-service! id)
-            (when entry (hashtable-set! services id entry)))
-          (when entry ((field entry 'service (lambda (id frame) (void))) id (allocation id)))))
+        (let ([n (hashtable-ref nodes id #f)])
+          (when (and n (not (mount-staged? (node-root n)))) (service-node! id))))
       (hashtable-keys nodes))
     (vector-for-each
       (lambda (child)
@@ -88,6 +85,12 @@
                 (interaction:set-state! head:ui-actor parent #f anchor))))))
       (hashtable-keys pending-scroll))
     (vector-for-each (lambda (id) (reveal! id (hashtable-ref pending-reveal id #f))) (hashtable-keys pending-reveal)))
+  (define (service-node! id)
+    (let* ([d (read-view id)] [entry (definition d)] [old (hashtable-ref services id #f)])
+      (unless (eq? old entry)
+        (release-service! id)
+        (when entry (hashtable-set! services id entry)))
+      (when entry ((field entry 'service (lambda (id frame) (void))) id (allocation id)))))
   (define presentations '())
   (define inactive (make-hashtable equal-hash equal?))
 
@@ -511,13 +514,72 @@
            (lambda ()
              (let-values ([(status d) (interaction:claim! head:ui-actor id)])
                (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
-               (let* ([m (make-mount (datum:copy id) slot #f '() #f)] [tree (rows id)])
+               (let* ([m (make-mount (datum:copy id) slot #f '() #f #f)] [tree (rows id)])
                  (guard (ex [else
                              (when (mount-subscription m) (unsubscribe! (mount-subscription m)))
                              (when d (interaction:release! head:ui-actor id (view:generation d)))
                              (raise ex)])
                    (mount-subscription-set! m (subscribe! m tree))
                    (reconcile! m tree) (hashtable-set! roots id m) (pump!) m)))))])))
+
+  (define staging? (make-parameter #f))
+
+  (edoc "Acquire and prepare a candidate tree without claiming a live mount or publishing input geometry. Refuse overlapping local mounts. The caller retains the canonical rows as its admission basis; failure releases only local candidate demand."
+        (tree list "coherent canonical descriptor rows, root first") (slot any "head host identity")
+        (width integer "backend width") (height integer "backend height") (returns any "staged mount"))
+  (define (stage! tree slot width height)
+    (unless (and (pair? tree) (for-all (lambda (row) (and (cdr row) (not (hashtable-contains? nodes (car row))))) tree))
+      (error 'stage! "candidate overlaps a mounted tree or is unavailable"))
+    (kernel:call-with-runtime-registrations
+      (lambda ()
+        (let ([m (make-mount (datum:copy (caar tree)) slot #f '() #f #t)])
+          (guard (ex [else (discard! m) (raise ex)])
+            (interaction:call-with-preview tree
+              (lambda ()
+                (mount-subscription-set! m (subscribe! m tree))
+                (reconcile! m tree)
+                (for-each service-node! (mount-ids m))
+                (parameterize ([staging? #t]) (prepare! (mount-id m) width height))))
+            m)))))
+
+  (edoc "Adopt a prepared mount after canonical ownership admission, without another claim or resource acquisition. The caller has already adopted the coherent interaction rows."
+        (candidate any "staged mount"))
+  (define (adopt! candidate)
+    (unless (and (mount? candidate) (mount-staged? candidate)
+              (not (hashtable-contains? roots (mount-id candidate))))
+      (error 'adopt! "expected a fresh staged mount"))
+    (let ([d (read-view (mount-id candidate))])
+      (unless (and d (equal? (view:owner d) head:ui-actor)) (error 'adopt! "candidate has not been admitted")))
+    (mount-staged?-set! candidate #f)
+    (hashtable-delete! preparations (mount-id candidate))
+    (hashtable-set! roots (mount-id candidate) candidate))
+
+  (edoc "Release an unadmitted candidate's local subscriptions and caches. Canonical resources and leases are untouched."
+        (candidate any "staged mount"))
+  (define (discard! candidate)
+    (unless (and (mount? candidate) (mount-staged? candidate)) (error 'discard! "expected a staged mount"))
+    (mount-staged?-set! candidate #f)
+    (dispose-mount! candidate))
+
+  (define (dispose-mount! m)
+    (let ([id (mount-id m)])
+      (hashtable-delete! roots id)
+      (hashtable-delete! preparations id)
+      (hashtable-delete! last-focus id)
+      (hashtable-delete! inactive id)
+      (set! presentations (filter (lambda (p) (not (equal? id (frame-id (car p))))) presentations))
+      (for-each
+        (lambda (id)
+          (guard (ex [else (head:report! (kernel:condition-text ex))]) (release-service! id))
+          (hashtable-delete! nodes id) (hashtable-delete! failures id)) (mount-ids m))
+      (when (mount-subscription m)
+        (unsubscribe! (mount-subscription m)) (mount-subscription-set! m #f))))
+
+  (edoc "Release local resources after an atomic composition exchange has already released or retired the canonical lease. Perform no second ownership transaction."
+        (id model "previously mounted root"))
+  (define (detach! id)
+    (let ([m (hashtable-ref roots id #f)])
+      (when m (cancel! id 'unmount) (dispose-mount! m))))
 
   (edoc "Release a root and its recursive resources after publication; canonical views and sources survive."
         (id model "root id"))
@@ -527,13 +589,7 @@
         (cancel! id 'unmount)
         (let ([d (read-view id)])
           (when d (interaction:release! head:ui-actor id (view:generation d))))
-        (hashtable-delete! roots id)
-        (hashtable-delete! preparations id)
-        (hashtable-delete! last-focus id)
-        (hashtable-delete! inactive id)
-        (set! presentations (filter (lambda (p) (not (equal? id (frame-id (car p))))) presentations))
-        (for-each (lambda (id) (release-service! id) (hashtable-delete! nodes id) (hashtable-delete! failures id)) (mount-ids m))
-        (unsubscribe! (mount-subscription m)))))
+        (dispose-mount! m))))
 
   (edoc "Arrange owned trees, staging source demand before the guarded structural commit."
         (changes list "(parent revision children options) entries"))
@@ -739,9 +795,10 @@
             (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip))))
             (style-cells clip rect (list (list (list 0 0 (caddr rect) (cadddr rect)) 'ghost))) #f))
         (guard (ex [else
+                    (when (staging?) (raise ex))
                     (let ([basis (list entry source)])
                       (unless (equal? basis (hashtable-ref failures id #f))
-                        (hashtable-set! failures id basis) (echo:set-text! (kernel:condition-text ex))))
+                        (hashtable-set! failures id basis) (head:report! (kernel:condition-text ex))))
                     (placeholder (format "[Widget failed ~s]" id))])
           (cond
             [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) #f rect clip '() '() (make-vector 0) #f)]
@@ -793,7 +850,7 @@
       (unless (rectangle? rect) (error 'prepare! "invalid allocation" rect))
       (let* ([old (prepared id)] [frame (build)] [d (read-view id)] [before (and d (view:focus d))])
         (hashtable-set! preparations id frame)
-        (ensure-focus! id)
+        (unless (staging?) (ensure-focus! id))
         (let ([d (read-view id)])
           (unless (equal? before (and d (view:focus d)))
             (set! frame (build)) (hashtable-set! preparations id frame)))
@@ -846,7 +903,7 @@
       (for-each (lambda (p)
                   (let* ([f (car p)] [entry (frame-definition f)] [handler (field entry 'event #f)])
                     (when (and handler (eq? entry (definition (frame-descriptor f))))
-                      (guard (ex [else (echo:set-text! (kernel:condition-text ex))])
+                      (guard (ex [else (head:report! (kernel:condition-text ex))])
                         (parameterize ([target (frame-id f)] [event-frame f])
                           (handler (frame-id f) (frame-source f) (frame-descriptor f) (cdr p))))))) pending)))
   (define last-focus (make-hashtable equal-hash equal?))
@@ -1160,7 +1217,7 @@
       (let* ([data (text-source! id source d)]
              [row (text-state (view:state d) (vector-length data))]
              [text (vector-ref data row)])
-        (echo:set-text! text)
+        (head:report! text)
         (list
           (view:source d)
           (cdr (assq 'revision source))

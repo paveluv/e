@@ -69,7 +69,8 @@
       (values (lambda (mapped) (specification (mapped (get v 'draft)) document (mapped (get r 'scope))))
         (list (cons (get v 'document) document))
         (lambda () (when (store:exists? document) (store:delete! producer document))))))
-  (define lifecycle (view:register-resource-kind! 'review-preview 1 copy-resource! close!))
+  (define lifecycle (view:register-resource-kind! 'review-preview 1 copy-resource!
+                      (lambda (r) (list (get (get r 'value) 'document)))))
 
   (define (target r selection)
     (let* ([v (get r 'value)] [rewrite? (eq? (get r 'kind) 'rewrite-draft)])

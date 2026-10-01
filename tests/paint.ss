@@ -9,11 +9,50 @@
 (include "tests/roots.ss")
 (test-roots! 'base)
 
+;; Import and exercise the engine before loading any default window policy.
+;; The same backend used below by paint also presents a windowless widget.
+(eval
+  '(begin
+     (import (prefix (head head) head:) (prefix (head tui) tui:)
+             (prefix (head widget) widget:) (prefix (head root) root:) (prefix (state model) model:)
+             (prefix (state store) store:) (prefix (state view) view:)
+             (prefix (core kernel) kernel:)
+             (prefix (test) test:) (prefix (sys sys) sys:))
+     (parameterize ([kernel:registering-module 'bare-engine]) (widget:init!))
+     (head:before-frame!)
+     (test:check 'engine-definitions-create-no-editor-resources
+       (list (store:buffer-list) (model:ids)) '(() ()))
+     (model:register-kind! 'bare-frame 1 string?)
+     (let* ([source (model:create! head:ui-actor 'bare-frame 1 'session 'transient '() "Hello")]
+            [root (view:create! head:ui-actor source 'text 2 '() 0)]
+            [output (open-output-string)] [drawn 0])
+       (widget:mount! root 'bare-screen)
+       (parameterize ([sys:terminal-output-port output])
+         (do ([n 0 (+ n 1)]) ((= n 2))
+           (tui:render! head:before-frame!
+             (lambda ()
+               (let* ([frame (widget:prepare! root 12 1)] [row (car (widget:frame-lines frame))])
+                 (tui:begin-frame! '(bare-screen 12 1) 1)
+                 (tui:set-placements! (list (list frame 0 0)))
+                 (tui:paint! 0 0 row (lambda () (set! drawn (+ drawn 1)) (tui:ansi! row))))) #f)))
+       (test:check 'windowless-frame-shares-diff-and-published-geometry
+         (list drawn (equal? (caar (widget:shown)) (widget:prepared root)) (store:buffer-list)) '(1 #t ()))
+       (widget:unmount! root)
+       (view:retire! head:ui-actor root (model:revision root))
+       (model:retire! head:ui-actor source (model:revision source))
+       (let ([errors (open-output-string)])
+         (parameterize ([current-error-port errors]) (head:report! "No composition"))
+         (test:check 'head-diagnostic-without-an-echo-area (get-output-string errors) "No composition\n")))
+     (include "tests/root-install.sps")
+     (kernel:retract-module! 'bare-engine)))
+
+(test-host!)
+
 (define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
 
 (evaluate!
   '(begin
-     (import (prefix (head paint) paint:) (prefix (head widget) widget:)
+     (import (prefix (head paint) paint:) (prefix (head tui) tui:) (prefix (head widget) widget:)
              (prefix (head edit) edit:) (prefix (head dispatch) dispatch:)
              (prefix (head entry) entry:) (prefix (state store) store:)
              (prefix (head interaction) interaction:) (prefix (head window) window:)
@@ -21,7 +60,7 @@
              (prefix (head pacing) pacing:)
              (prefix (head spinner) spinner:)
              (prefix (head style) style:)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head echo) echo:)
              (prefix (core kernel) kernel:)
              (prefix (sys glyph) glyph:)
@@ -87,7 +126,7 @@
          (1007 (5)) (108 (5 3 1))))
      (check 'input-delay-stays-bounded
        (map (lambda (value)
-              (test:raises? (lambda () (paint:input-delay value))))
+              (test:raises? (lambda () (tui:input-delay value))))
          '(-1 51 1.5 8.0 #f))
        '(#t #t #t #t #t))
 
@@ -148,16 +187,16 @@
 
      ;; -- fit ------------------------------------------------------------------
 
-     (check 'fit-pads (paint:fit "ab" 4) "ab  ")
-     (check 'fit-truncates (paint:fit "abcdef" 4) "abcd")
+     (check 'fit-pads (tui:fit "ab" 4) "ab  ")
+     (check 'fit-truncates (tui:fit "abcdef" 4) "abcd")
 
      ;; -- goto -----------------------------------------------------------------
 
-     (check 'goto (painted (lambda () (paint:goto! 3 7))) "\x1b;[3;7H")
+     (check 'goto (painted (lambda () (tui:goto! 3 7))) "\x1b;[3;7H")
 
      ;; -- the row painter ---------------------------------------------------------
 
-     (define (paint-line . args) (painted (lambda () (apply paint:display-editor-line! args))))
+     (define (paint-line . args) (painted (lambda () (apply tui:display-editor-line! args))))
 
      ;; plain text pads to the width
      (check 'plain-row
@@ -237,10 +276,10 @@
 
      (let ([out (painted
                   (lambda ()
-                    (paint:emit-runs! "abcd"
-                                      (vector 'keyword 'keyword 'plain
-                                              'plain)
-                                      0 4)))])
+                    (tui:emit-runs! "abcd"
+                                    (vector 'keyword 'keyword 'plain
+                                            'plain)
+                                    0 4)))])
        (check 'runs-coalesce (stripped out) "abcd")
        (check 'runs-styled (contains? out (style:code 'keyword))
               #t))
@@ -258,24 +297,24 @@
      ;; Viewport walks share line breaks, but never retain another window's
      ;; width or a previous wrap setting. Check partial top segments and the
      ;; exact overflow boundary while geometry changes on the same text.
-     (let* ([b (head:new-local-buffer! "viewport geometry")]
-            [w (head:make-window b 0 0 0 1 9 10 0 5 #t)]
-            [other (head:make-window b 0 0 0 1 9 10 0 11 #t)])
-       (head:buffer-lines-set! b '#("abcdefghij" "klmnopqrst" "uvwx"))
-       (head:window-line-numbers-set! other #f)
-       (parameterize ([head:scrollbar #f])
+     (let* ([b (seat:new-local-buffer! "viewport geometry")]
+            [w (seat:make-window b 0 0 0 1 9 10 0 5 #t)]
+            [other (seat:make-window b 0 0 0 1 9 10 0 11 #t)])
+       (seat:buffer-lines-set! b '#("abcdefghij" "klmnopqrst" "uvwx"))
+       (seat:window-line-numbers-set! other #f)
+       (parameterize ([seat:scrollbar #f])
          (check 'viewport-walks-follow-current-window-geometry
            (map (lambda (case)
                   (let ([width (car case)] [wrap (cadr case)] [numbers (caddr case)]
                         [fact (list-ref case 3)] [topseg (list-ref case 4)] [height (list-ref case 5)])
-                    (head:window-width-set! w width)
-                    (head:window-wrap-set! w wrap)
-                    (head:window-line-numbers-set! w numbers)
-                    (head:buffer-fact-set! b 'wrap fact)
-                    (head:window-topseg-set! w topseg)
+                    (seat:window-width-set! w width)
+                    (seat:window-wrap-set! w wrap)
+                    (seat:window-line-numbers-set! w numbers)
+                    (seat:buffer-fact-set! b 'wrap fact)
+                    (seat:window-topseg-set! w topseg)
                     (list (paint:rows-before w 1 9) (paint:rows-before other 1 9)
-                          (paint:view-overflows? w (head:window-text w) (- height 1))
-                          (paint:view-overflows? w (head:window-text w) height))))
+                          (paint:view-overflows? w (seat:window-text w) (- height 1))
+                          (paint:view-overflows? w (seat:window-text w) height))))
              '((5 #t #f default 1 6) (7 #t #f default 1 4)
                (7 #t #t default 1 6) (7 #f #f default 0 3)
                (7 #t #f clean 1 4) (7 #t #f (clean . 3) 1 9)
@@ -314,26 +353,26 @@
                   (scan (+ at 8) (cons 'end events))]
                  [else (scan (+ at 1) events)]))))
 
-     (define document (head:new-local-buffer! "paint frames"))
-     (head:buffer-lines-set! document
+     (define document (seat:new-local-buffer! "paint frames"))
+     (seat:buffer-lines-set! document
        (list->vector
          (map (lambda (row) (format "paint row ~a" row)) (iota 200))))
-     (head:add-buffer! document)
-     (head:set-window-buffer! (head:current-window) document)
+     (seat:add-buffer! document)
+     (seat:set-window-buffer! (seat:current-window) document)
      ;; Let initial size detection settle, then use a fixed test grid.
      (painted paint:redraw!)
-     (paint:set-screen-rows! 24)
-     (paint:set-screen-cols! 80)
+     (tui:set-screen-rows! 24)
+     (tui:set-screen-cols! 80)
      ;; Apps may project source coordinates or replace generated details
      ;; with operation text. A stale fact must not leave a partial marker
      ;; or invalid substring bounds when that standard header is replaced.
-     (let ([view (head:register-widget-host! (head:new-local-buffer! "status projection") void void)])
-       (head:buffer-lines-set! view '("generated"))
-       (head:buffer-fact-set! view 'conflicts 1)
-       (head:set-window-buffer! (head:current-window) view)
+     (let ([view (seat:register-widget-host! (seat:new-local-buffer! "status projection") void void)])
+       (seat:buffer-lines-set! view '("generated"))
+       (seat:buffer-fact-set! view 'conflicts 1)
+       (seat:set-window-buffer! (seat:current-window) view)
        (check 'app-status-projection-keeps-default-coordinates-and-operation-text-coherent
          (map (lambda (value)
-                (head:set-app-status-position! view (and value (lambda (b) value)))
+                (seat:set-app-status-position! view (and value (lambda (b) value)))
                 (let ([frame (stripped (painted paint:redraw!))])
                   (list (contains? frame "!!") (contains? frame "L8 C3") (contains? frame "Pick a file"))))
               '(#f (7 . 2) "Pick a file"))
@@ -342,46 +381,46 @@
        ;; line shows; the empty text leaves the name alone
        (check 'status-text-follows-the-buffer-name
          (map (lambda (value)
-                (head:set-app-status-position! view (lambda (b) value))
+                (seat:set-app-status-position! view (lambda (b) value))
                 (let ([frame (stripped (painted paint:redraw!))])
-                  (list (contains? frame (format "▏~a  3 of 5" (head:buffer-name view)))
-                        (contains? frame (format "▏~a" (head:buffer-name view))))))
+                  (list (contains? frame (format "▏~a  3 of 5" (seat:buffer-name view)))
+                        (contains? frame (format "▏~a" (seat:buffer-name view))))))
               '("3 of 5" ""))
          '((#t #t) (#f #t)))
-       (head:set-app-status-position! view #f)
-       (head:buffer-lines-set! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
+       (seat:set-app-status-position! view #f)
+       (seat:buffer-lines-set! view (map (lambda (i) (format "choice ~a" i)) (iota 50)))
        (check 'hidden-cursor-still-follows-keyboard-selection
          (map (lambda (visible?)
-                (head:set-app-cursor-visible! view visible?)
-                (head:window-prow-set! (head:current-window) 49)
-                (head:window-top-set! (head:current-window) 0)
+                (seat:set-app-cursor-visible! view visible?)
+                (seat:window-prow-set! (seat:current-window) 49)
+                (seat:window-top-set! (seat:current-window) 0)
                 (let ([frame (painted paint:redraw!)])
-                  (list (> (head:window-top (head:current-window)) 0)
+                  (list (> (seat:window-top (seat:current-window)) 0)
                         (contains? frame "\x1b;[?25h")))) '(#t #f))
          '((#t #t) (#t #f)))
        ;; Clickable status spans use cell geometry, including wide/combining
        ;; labels. Ellipsizing a control makes the entire control inert.
        (let* ([prefix "界e\x301; 🔒"] [toggle void]
-              [start (+ (glyph:cells (format "~a▏~a  ~a" (head:window-index (head:current-window)) (head:buffer-name view) prefix)) 1)]
-              [edge (+ start 2 head:window-buttons-width 1)])
+              [start (+ (glyph:cells (format "~a▏~a  ~a" (seat:window-index (seat:current-window)) (seat:buffer-name view) prefix)) 1)]
+              [edge (+ start 2 seat:window-buttons-width 1)])
          (define (hits)
-           (let* ([entry (car (head:layout))] [row (+ (cadr entry) (caddr entry))])
+           (let* ([entry (car (seat:layout))] [row (+ (cadr entry) (caddr entry))])
              (map (lambda (column)
-                    (let ([hit (head:window-button-at column row)]) (and hit (eq? (car hit) toggle))))
+                    (let ([hit (seat:window-button-at column row)]) (and hit (eq? (car hit) toggle))))
                (list (- start 2) start (+ start 1) (+ start 2)))))
-         (head:set-app-status-position! view (lambda (b) prefix))
+         (seat:set-app-status-position! view (lambda (b) prefix))
          (parameterize ([kernel:registering-module 'paint-control-test])
            (paint:add-buffer-status-hint!
              (lambda (b active?) (and (eq? b view) (list '(" " . #f) (cons "🔓" toggle) '(" tail" . #f))))))
          (check 'status-controls-hit-only-complete-visible-labels
-           (map (lambda (width) (paint:set-screen-cols! width) (painted paint:redraw!) (hits))
+           (map (lambda (width) (tui:set-screen-cols! width) (painted paint:redraw!) (hits))
              (list 80 edge (+ edge 1)))
            '((#f #t #t #f) (#f #f #f #f) (#f #t #t #f)))
-         (head:set-window-buffer! (head:current-window) document)
+         (seat:set-window-buffer! (seat:current-window) document)
          (check 'replacing-buffer-clears-painted-controls (hits) '(#f #f #f #f))
          (kernel:retract-module! 'paint-control-test)
-         (paint:set-screen-cols! 80))
-       (head:forget-buffer! view))
+         (tui:set-screen-cols! 80))
+       (seat:forget-buffer! view))
      ;; A preparation hook may present a notice, causing a direct redraw.
      ;; Both frames prepare at the current width; their synchronized updates
      ;; must not nest, since the inner end would release the outer update.
@@ -389,12 +428,12 @@
        (parameterize ([kernel:registering-module 'paint-prepare-test])
          (head:add-pre-redraw-hook!
            (lambda ()
-             (set! prepared (cons (list (paint:screen-cols) (head:window-width (head:current-window))) prepared))
+             (set! prepared (cons (list (tui:screen-cols) (seat:window-width (seat:current-window))) prepared))
              (when (null? (cdr prepared))
                (paint:echo-queue! 'eval "42" #f #f " [copied]")
                (paint:show-message! "Prepared\nmessage" #f)))))
        (dynamic-wind
-         (lambda () (paint:set-screen-live! #t))
+         (lambda () (tui:set-screen-live! #t))
          (lambda ()
            (let ([frame (painted paint:redraw!)])
              (check 'frame-prepares-before-synchronized-paint
@@ -402,21 +441,21 @@
                      (contains? frame (string-append (style:code 'ghost) " [copied]")))
                '(((80 80) (80 80)) (begin end begin end) #t #t #t))))
          (lambda ()
-           (paint:set-screen-live! #f)
+           (tui:set-screen-live! #f)
            (kernel:retract-module! 'paint-prepare-test)
            (echo:settle!))))
      ;; The echo area is a bordered box of at most 100 columns, centered: a
      ;; narrower screen is the whole box. Rows wrap inside the borders with
      ;; their text at the left one, and cursor geometry counts inner columns.
      (define (echo-box-frame width text)
-       (paint:set-screen-cols! width)
-       (paint:invalidate-screen-cache!)
+       (tui:set-screen-cols! width)
+       (tui:invalidate-screen-cache!)
        (echo:set-text! text)
        (paint:update-echo-geometry!)
        (dynamic-wind
-         (lambda () (paint:set-screen-live! #t))
+         (lambda () (tui:set-screen-live! #t))
          (lambda () (stripped (painted paint:present-echo!)))
-         (lambda () (paint:set-screen-live! #f))))
+         (lambda () (tui:set-screen-live! #f))))
      (check 'echo-rows-are-a-centered-bordered-box
        (list
          (let ([frame (echo-box-frame 80 "Boxed")])
@@ -440,12 +479,12 @@
        '((78 (0 . 5) 5 #t) (98 #t) (58 2 (1 . 0) #t)))
      (check 'echo-border-follows-its-setting
        (begin
-         (paint:set-screen-cols! 80)
-         (paint:invalidate-screen-cache!)
+         (tui:set-screen-cols! 80)
+         (tui:invalidate-screen-cache!)
          (echo:set-text! "Framed")
          (paint:update-echo-geometry!)
          (dynamic-wind
-           (lambda () (paint:set-screen-live! #t))
+           (lambda () (tui:set-screen-live! #t))
            (lambda ()
              ;; no cache reset between the two frames: the key carries the glyph
              (list (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┊")
@@ -453,36 +492,36 @@
                      (contains? (painted paint:present-echo!) "\x1b;[38;5;245m║"))
                    (test:raises? (lambda () (paint:echo-box-border "ab")))
                    (parameterize ([paint:echo-box-border #\|]) (paint:echo-box-border))))
-           (lambda () (paint:set-screen-live! #f))))
+           (lambda () (tui:set-screen-live! #f))))
        '(#t #t #t "|"))
      (check 'echo-border-wears-the-inactive-bar-shade
        (begin
-         (paint:set-screen-cols! 80)
-         (paint:invalidate-screen-cache!)
+         (tui:set-screen-cols! 80)
+         (tui:invalidate-screen-cache!)
          (echo:set-text! "Shaded")
          (paint:update-echo-geometry!)
          (dynamic-wind
-           (lambda () (paint:set-screen-live! #t))
+           (lambda () (tui:set-screen-live! #t))
            (lambda () (contains? (painted paint:present-echo!) "\x1b;[38;5;245m┊"))
-           (lambda () (paint:set-screen-live! #f))))
+           (lambda () (tui:set-screen-live! #f))))
        #t)
-     (paint:set-screen-cols! 80)
+     (tui:set-screen-cols! 80)
      (echo:settle!)
-     (define top-before (head:window-top (head:current-window)))
+     (define top-before (seat:window-top (seat:current-window)))
      (define scrolling
        (let loop ([row 0] [frames '()])
          (if (= row 40)
            (reverse frames)
            (begin
-             (head:window-prow-set! (head:current-window) row)
+             (seat:window-prow-set! (seat:current-window) row)
              (let ([frame (painted paint:redraw!)])
                (loop (+ row 1) (cons frame frames)))))))
      (check 'scrolling-frames-are-synchronized
             (map sync-events scrolling) (make-list 40 '(begin end)))
      (check 'scrolling-moves-the-viewport
-            (> (head:window-top (head:current-window)) top-before) #t)
+            (> (seat:window-top (seat:current-window)) top-before) #t)
      (define (current-top-line)
-       (vector-ref (head:buffer-lines document) (head:window-top (head:current-window))))
+       (vector-ref (seat:buffer-lines document) (seat:window-top (seat:current-window))))
      (check 'scrolling-paints-visible-text
             (contains? (car (reverse scrolling)) (current-top-line)) #t)
 
@@ -496,27 +535,27 @@
            (lambda ()
              (unless before
                (set! before (get-output-string sink))
-               (head:window-prow-set! (head:current-window) 95)
-               (paint:set-screen-cols! 60)
+               (seat:window-prow-set! (seat:current-window) 95)
+               (tui:set-screen-cols! 60)
                (paint:redraw!)
                (set! nested (get-output-string sink)))
              ;; Asking for a fresh next frame is not a nested publication
              ;; and must not cause this callback to be retried indefinitely.
-             (paint:invalidate-screen-cache!)
+             (tui:invalidate-screen-cache!)
              #f)))
        (parameterize ([sys:terminal-output-port sink]) (paint:redraw!))
        (let ([frame (string-append nested (get-output-string sink))])
          (check 'nested-paint-publishes-before-return-and-discards-obsolete-output
            (list before (sync-events nested) (sync-events frame)
                  (contains? frame old-top) (contains? frame (current-top-line))
-                 (head:window-width (head:current-window)))
+                 (seat:window-width (seat:current-window)))
            '("" (begin end) (begin end begin end) #f #t 60)))
        (kernel:retract-module! 'paint-nested-test)
-       (paint:set-screen-cols! 80))
+       (tui:set-screen-cols! 80))
 
      ;; A malformed highlighter or an escape after row preparation leaves
      ;; the terminal untouched. Neither failed diff may become the baseline.
-     (head:window-prow-set! (head:current-window) 120)
+     (seat:window-prow-set! (seat:current-window) 120)
      (parameterize ([kernel:registering-module 'paint-failure-test])
        (paint:add-highlighter! (lambda () #f)))
      (define failed-output (open-output-string))
@@ -529,7 +568,7 @@
             (contains? (painted paint:redraw!) (current-top-line)) #t)
 
      ;; Escape late, after this new viewport has updated the private shadow.
-     (head:window-prow-set! (head:current-window) 150)
+     (seat:window-prow-set! (seat:current-window) 150)
      (define escaped-output (open-output-string))
      (check 'frame-can-unwind
             (call/cc
@@ -588,25 +627,25 @@
            (lambda ()
              (set! prepared (+ prepared 1))
              (when (= prepared 2)
-               (do ([i 0 (+ i 1)]) ((= i 100)) (paint:visual-bell!))))))
+               (do ([i 0 (+ i 1)]) ((= i 100)) (tui:visual-bell!))))))
        (let ([stop (test:worker
                      (lambda ()
                        (sleep (make-time 'time-duration 400000000 0))
                        (timed-out? #t)
                        (head:wake-main!)))])
          (dynamic-wind
-           (lambda () (paint:set-screen-live! #t))
+           (lambda () (tui:set-screen-live! #t))
            (lambda ()
              (let ([result
                     (call/cc
                       (lambda (done)
                         (head:set-frame-hook!
-                          (lambda ()
+                          (lambda (coalesce?)
                             (when (timed-out?) (done 'timed-out))
                             (let ([frame (painted paint:redraw!)])
                               (set! frames (cons frame frames))
                               (unless (flashing? frame) (done 'expired)))))
-                        (paint:visual-bell!)
+                        (tui:visual-bell!)
                         (head:read-key-event #f)))])
                (check 'bell-retrigger-and-expiry-share-the-owning-pump
                  (list result (map flashing? (reverse frames)) prepared (painters))
@@ -616,7 +655,7 @@
                    (contains? (car frames) "Question survives the bell"))
                  (list (make-list 4 '(begin end)) "Question survives the bell" #t))))
            (lambda ()
-             (paint:set-screen-live! #f)
+             (tui:set-screen-live! #f)
              (head:set-frame-hook! void)
              (kernel:retract-module! 'paint-bell-test)
              (stop)))))
@@ -626,16 +665,16 @@
      (check 'bell-lifetime-without-an-input-pump
        (map
          (lambda (state)
-           (paint:set-screen-live! (not (eq? state 'inactive)))
+           (tui:set-screen-live! (not (eq? state 'inactive)))
            (let ([old-display (open-output-string)])
-             (parameterize ([sys:terminal-output-port old-display]) (paint:visual-bell!))
+             (parameterize ([sys:terminal-output-port old-display]) (tui:visual-bell!))
              (when (eq? state 'retired)
-               (paint:set-screen-live! #f)
-               (paint:set-screen-live! #t))
+               (tui:set-screen-live! #f)
+               (tui:set-screen-live! #t))
              (let ([frame (and (not (eq? state 'expired)) (painted paint:redraw!))])
                (sleep (make-time 'time-duration 75000000 0))
                (let ([frame (or frame (painted paint:redraw!))])
-                 (paint:set-screen-live! #f)
+                 (tui:set-screen-live! #f)
                  (list (get-output-string old-display) (flashing? frame)
                    (sync-events frame) (contains? frame "Question survives the bell"))))))
          '(inactive retired expired))
@@ -666,7 +705,7 @@
            '((header bold bold header header) (header header header header header))))
        (widget:unmount! root))
      (model:register-kind! 'frame-test 1 string?)
-     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
+     (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [source (model:create! head:ui-actor 'frame-test 1 'session 'persistent '() "a\nb\nc\nd\ne")]
             [text (view:create! head:ui-actor source 'text 2 '() 0)]
             [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f)])
@@ -680,18 +719,18 @@
            '((0 2) 0 ("  c   " "  d   ")))
          (check 'zero-allocation-produces-no-output (widget:frame-lines (widget:prepare! scroll 0 0)) '())
          (painted paint:redraw!)
-         (let* ([layout (head:root)] [other (head:make-window was 0 0 0 0 0 4 40 10 'default)])
+         (let* ([layout (seat:root)] [other (seat:make-window was 0 0 0 0 0 4 40 10 'default)])
            (check 'painted-widget-pointer-uses-the-same-origin-as-window-text
              (map (lambda (layout)
-                    (head:set-layout-root! layout)
+                    (seat:set-layout-root! layout)
                     (widget:act! scroll 'scroll -100)
                     (painted paint:redraw!)
                     (let ([p (paint:window-screen-position w 1 0)])
                       (widget:pointer! '(pointer press primary ()) (- (cdr p) 1) (- (car p) 1))
                       (view:state (interaction:snapshot text))))
-               (list w (head:make-layout-split 'right other w 1 1) (head:make-layout-split 'below other w 1 1)))
+               (list w (seat:make-layout-split 'right other w 1 1) (seat:make-layout-split 'below other w 1 1)))
              '(1 1 1))
-           (head:set-layout-root! layout) (painted paint:redraw!))
+           (seat:set-layout-root! layout) (painted paint:redraw!))
          (let ([shown (widget:shown)])
            (widget:prepare! scroll 1 1) (painted paint:present-echo!)
            (check 'partial-output-retains-exact-shown-widget-frame (eq? shown (widget:shown)) #t))
@@ -704,9 +743,9 @@
            (check 'partial-output-cannot-reenable-uncertain-hits (widget:shown) '())
            (painted paint:redraw!)
            (check 'full-output-reenables-widget-frame (widget:frame-id (caar (widget:shown))) scroll))
-         (head:show-buffer-mirror! was) (head:forget-buffer! b)))
+         (seat:show-buffer-mirror! was) (seat:forget-buffer! b)))
      (entry:init!)
-     (let* ([w (head:current-window)] [was (head:current-buffer-mirror)]
+     (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [source (store:create! head:ui-actor "entry paint" '("abcdef"))]
             [id (view:create! head:ui-actor source 'entry 1 '() '((0 . 2) (0 . 0)))]
             [b (window:show-widget! w id)])
@@ -719,22 +758,22 @@
        (let ([output (painted paint:redraw!)])
          (check 'unchanged-entry-text-still-updates-selection-and-caret
            (list (contains? output "abcdef") (widget:caret (caar (widget:shown)))) '(#t (4 . 0))))
-       (head:show-buffer-mirror! was) (head:forget-buffer! b))
+       (seat:show-buffer-mirror! was) (seat:forget-buffer! b))
      ;; Ordinary documents use the same editor projection as embedded ones;
      ;; source identity, wrapped input, outer chrome and resume agree.
      (edit:init!)
-     (let* ([w (head:current-window)] [b (head:new-buffer! "hosted editor")])
-       (head:buffer-lines-set! b (list->vector (cons (make-string 180 #\a) (make-list 30 "界éz"))))
-       (head:show-buffer-mirror! b) (head:window-line-numbers-set! w #t)
-       (paint:set-screen-cols! 100) (paint:set-screen-rows! 24)
-       (let* ([other (window:split-right!)] [a (head:window-editor w)] [c (head:window-editor other)])
+     (let* ([w (seat:current-window)] [b (seat:new-buffer! "hosted editor")])
+       (seat:buffer-lines-set! b (list->vector (cons (make-string 180 #\a) (make-list 30 "界éz"))))
+       (seat:show-buffer-mirror! b) (seat:window-line-numbers-set! w #t)
+       (tui:set-screen-cols! 100) (tui:set-screen-rows! 24)
+       (let* ([other (window:split-right!)] [a (seat:window-editor w)] [c (seat:window-editor other)])
          (window:focus! w)
          (let ([running (painted (lambda () (parameterize ([paint:cursor-in-echo #t]) (paint:place-cursor!))))])
            (check 'ordinary-editing-restores-blinking-block-after-evaluation
              (list (contains? running "\x1b;[3 q") (contains? (painted paint:redraw!) "\x1b;[1 q")) '(#t #t)))
          (dispatch:key! "DOWN") (painted paint:redraw!)
          (check 'ordinary-split-uses-independent-editor-roots-and-wrapped-input
-           (list (eq? b (head:window-buffer w)) (eq? b (head:window-buffer other))
+           (list (eq? b (seat:window-buffer w)) (eq? b (seat:window-buffer other))
              (not (equal? a c)) (car (view:state (interaction:snapshot a)))
              (car (view:state (interaction:snapshot c))))
            (list #t #t #t (cons 0 (paint:wrap-width w)) '(0 . 0)))
@@ -751,26 +790,26 @@
          (let ([at (paint:window-screen-position w 1 1)])
            (widget:pointer! '(pointer press primary () 2) (- (cdr at) 1) (- (car at) 1))
            (widget:pointer! '(pointer release primary ()) (- (cdr at) 1) (- (car at) 1)))
-         (head:set-window-buffer! (head:popup) b)
+         (seat:set-window-buffer! (seat:popup) b)
          (check 'ordinary-word-selection-and-read-only-popup-survive-hosting
            (list (list-head (view:state (interaction:snapshot a)) 2)
-             (test:raises? (lambda () (edit:insert! (head:window-editor (head:popup)) "denied"))))
+             (test:raises? (lambda () (edit:insert! (seat:window-editor (seat:popup)) "denied"))))
            '(((1 . 4) (1 . 0)) #t))
          (window:clear-pop-up!)
          (edit:end-of-buffer!) (painted paint:redraw!)
          (let ([bottom (car (view:state (interaction:snapshot a)))]
-               [top (head:window-top w)])
-           (head:goto! '(2 . 4)) (edit:beginning-of-line!) (painted paint:redraw!)
+               [top (seat:window-top w)])
+           (seat:goto! '(2 . 4)) (edit:beginning-of-line!) (painted paint:redraw!)
            (check 'current-window-api-and-search-jumps-use-editor-reveal
              (list bottom (> top 0) (car (view:state (interaction:snapshot a)))
-               (let ([p (paint:window-screen-position w 2 0)]) (<= 1 (car p) (head:window-size w))))
+               (let ([p (paint:window-screen-position w 2 0)]) (<= 1 (car p) (seat:window-size w))))
              '((30 . 4) #t (2 . 0) #t)))
-         (head:checkpoint!)
+         (seat:checkpoint!)
          (check 'ordinary-resume-rehosts-retained-editor-roots
-           (and (head:resume!)
+           (and (seat:resume!)
              (begin (painted paint:redraw!)
                (for-all (lambda (id)
-                          (and (find (lambda (w) (equal? id (head:window-widget w))) (head:windows))
+                          (and (find (lambda (w) (equal? id (seat:window-widget w))) (seat:windows))
                             (find (lambda (p) (equal? id (widget:frame-id (car p)))) (widget:shown)))) (list a c))) #t)
            #t)))
      (test:finish! 'paint))

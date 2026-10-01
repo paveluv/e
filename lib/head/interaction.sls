@@ -2,7 +2,7 @@
 ;; acknowledged replies never overwrite a newer provisional selection.
 (import (only (foundation edoc) elibrary))
 (elibrary (head interaction)
-  (export arrange! bind! claim! flush! focus! publish! reconcile! release! set-state! snapshot start!)
+  (export adopt! arrange! bind! call-with-preview claim! flush! focus! publish! reconcile! release! set-state! snapshot start!)
   (import (chezscheme)
           (prefix (core descriptor) descriptor:)
           (prefix (core identity) identity:)
@@ -21,6 +21,16 @@
   (define owner #f)
   (define wake! void)
   (define writer #f)
+  (define preview (make-parameter #f))
+
+  (edoc "Prepare against private descriptor copies without claiming or publishing interaction. Local normalization is discarded; canonical rows remain the admission basis."
+        (rows list "candidate descriptor rows") (thunk thunk "local preparation") (returns any))
+  (define (call-with-preview rows thunk)
+    (let ([table (make-hashtable equal-hash equal?)])
+      (for-each (lambda (row) (hashtable-set! table (car row) (datum:copy (cdr row)))) rows)
+      (parameterize ([preview table]) (thunk))))
+  (define (state-table id)
+    (if (and (preview) (hashtable-contains? (preview) id)) (preview) owned))
 
   (edoc "Start this head's interaction publisher with an explicit actor and failure wakeup. Repeated startup for the same actor is harmless; a different actor requires another head runtime."
         (actor actor "head identity") (notify! thunk "wake the owner on publication failure"))
@@ -51,10 +61,12 @@
           (when (eq? (car reply) 'applied) (adopt! (cadr reply)))
           (values (car reply) (snapshot id))))))
 
+  (edoc "Adopt coherent admitted ownership rows without claiming again. False descriptors forget retired views; surviving rows follow their canonical owner. Call after fencing prior publication."
+        (rows list "(id . descriptor-or-false) entries"))
   (define (adopt! rows)
     (with-mutex owned-lock
       (for-each (lambda (row)
-                  (if (equal? owner (view:owner (cdr row)))
+                  (if (and (cdr row) (equal? owner (view:owner (cdr row))))
                     (hashtable-set! owned (datum:copy (car row)) (datum:copy (cdr row)))
                     (hashtable-delete! owned (car row)))) rows)
       (set! dirty? #t)))
@@ -110,16 +122,16 @@
         (id model "root") (target any "descendant or #f"))
   (define (focus! id target)
     (with-mutex owned-lock
-      (let ([d (hashtable-ref owned id #f)])
+      (let* ([table (state-table id)] [d (hashtable-ref table id #f)])
         (unless d (error 'focus! "root is not owned" id))
         (unless (equal? target (view:focus d))
-          (hashtable-set! owned id (descriptor:with d (list (cons 'focus target) (cons 'sequence (+ 1 (view:sequence d))))))
-          (set! dirty? #t)))))
+          (hashtable-set! table id (descriptor:with d (list (cons 'focus target) (cons 'sequence (+ 1 (view:sequence d))))))
+          (when (eq? table owned) (set! dirty? #t))))))
 
   (edoc "Read the owned view's latest provisional descriptor locally. An unclaimed view returns #f."
         (id model "view model id") (returns (or list #f)))
   (define (snapshot id)
-    (with-mutex owned-lock (datum:copy (hashtable-ref owned id #f))))
+    (with-mutex owned-lock (datum:copy (hashtable-ref (state-table id) id #f))))
 
   (edoc "Change interaction immediately for an owned view, without waiting for publication. Otherwise update saved unmounted state at the base. Activation must carry this actual state and model basis, not reread saved selection."
         (actor actor "attribution is supplied by the connection") (id model "view model id")
@@ -128,12 +140,13 @@
     (unless (or (not basis) (and (integer? basis) (exact? basis) (>= basis 0))) (error 'set-state! "invalid basis" basis))
     (let ([result
            (with-mutex owned-lock
-             (let ([old (hashtable-ref owned id #f)])
+             (let* ([table (state-table id)] [old (hashtable-ref table id #f)])
                (and old
                  (let ([next (if (equal? (list basis state) (list (view:basis old) (view:state old))) old
                                (descriptor:with old (list (cons 'sequence (+ 1 (view:sequence old)))
                                                       (cons 'basis basis) (cons 'state state))))])
-                   (unless (eq? old next) (hashtable-set! owned id next) (set! dirty? #t))
+                   (unless (eq? old next)
+                     (hashtable-set! table id next) (when (eq? table owned) (set! dirty? #t)))
                    (list 'applied (datum:copy next))))))])
       (if result (apply values result) (view:set-state! actor id basis state))))
 

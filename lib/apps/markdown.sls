@@ -6,14 +6,26 @@
                                                            (control:source! edit!) (control:follow! follow!)) init! (rename (control:locate! locate!) (control:move! move!))
           open-link! open-source! render (rename (control:scroll! scroll!) (control:select! select!) (control:set-mark! set-mark!))
           view! (rename (control:width-limit view-max-width)))
-  (import (chezscheme) (prefix (foundation markup) markup:) (prefix (foundation string) string:)
-          (prefix (head catalogue-host) catalogue-host:) (prefix (head edit) edit:)
-          (prefix (head head) head:) (prefix (head keymap) keymap:) (prefix (head layout) layout:)
-          (prefix (head markdown-control) control:) (prefix (head markdown-layout) markdown-layout:)
-          (prefix (head style) style:) (prefix (head text-source) text-source:)
-          (prefix (head widget) widget:) (prefix (head window) window:)
-          (prefix (service file) file:) (prefix (service log) log:) (prefix (state store) store:)
+  (import (chezscheme)
+          (prefix (foundation markup) markup:)
+          (prefix (foundation string) string:)
+          (prefix (head catalogue-host) catalogue-host:)
+          (prefix (head edit) edit:)
+          (prefix (head head) head:)
+          (prefix (head keymap) keymap:)
+          (prefix (head layout) layout:)
+          (prefix (head markdown-control) control:)
+          (prefix (head markdown-layout) markdown-layout:)
+          (prefix (head seat) seat:)
+          (prefix (head style) style:)
+          (prefix (head text-source) text-source:)
+          (prefix (head widget) widget:)
+          (prefix (head window) window:)
+          (prefix (service file) file:)
+          (prefix (service log) log:)
+          (prefix (state store) store:)
           (prefix (state view) view:))
+
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
 
   (edoc "The command handed a quoted web URL when a Markdown link is followed." (value string))
@@ -76,13 +88,13 @@
         (source (list-of buffer) "optional source reference, default current") (returns model))
   (define (view! . source)
     (unless (<= (length source) 1) (error 'view! "expected at most one source"))
-    (let* ([document (or (if (pair? source) (car source) (head:current-buffer))
+    (let* ([document (or (if (pair? source) (car source) (seat:current-buffer))
                        (error 'view! "Markdown needs a base document"))]
-           [row (if (equal? document (head:current-buffer)) (car (head:point)) 0)]
+           [row (if (equal? document (seat:current-buffer)) (car (seat:point)) 0)]
            [root (window:tool! (string-append "markdown " (store:buffer-name document))
                    (lambda (commands) (create! head:ui-actor document commands row)) (format "markdown:~s" document))])
-      (let* ([host (window:show-widget! (head:current-window) root)]
-             [actual (head:buffer-fact host 'widget-id #f)])
+      (let* ([host (window:show-widget! (seat:current-window) root)]
+             [actual (seat:buffer-fact host 'widget-id #f)])
         (control:locate! (widget:descendant actual 'app 'text) row) actual)))
 
   (edoc "Register Markdown composition, presentation, faces and source/view commands." (public))

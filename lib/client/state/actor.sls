@@ -14,6 +14,24 @@
   (define identity? identity:valid?)
   (define audience? identity:audience?)
   (define in-audience? identity:in-audience?)
+
+  (define (directory-entries kind)
+    (fold-right
+      (lambda (entry out)
+        (if (or (not kind) (eq? (cadr entry) kind))
+            (cons (list (car entry) #f (let ([c (list-ref entry 4)]) (and (string? c) c))) out)
+            out))
+      '() (attached)))
+
+  (edoc-type actor "an actor identity datum: (kind name more ...)"
+    (predicate identity:valid?) (portable #t) (within list)
+    (complete (lambda (partial) (directory-entries #f))))
+
+  (edoc-type head "a head identity datum: (head name more ...)"
+    (predicate (lambda (v) (and (identity:valid? v) (eq? (car v) 'head))))
+    (complete (lambda (partial) (directory-entries 'head)))
+    (portable #t) (within actor))
+
   (define bound? #f)
   ;; The head's open questions, read once per change: every delivered event
   ;; (a question, a pending notice, an answer) may have changed them.

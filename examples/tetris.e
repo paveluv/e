@@ -2,7 +2,7 @@
 ;; p pauses, r restarts. (tetris:create!) returns a widget for any host.
 ;; Each view keeps its own game in the ordinary saved interaction state.
 (import (prefix (only (foundation edoc) expression) edoc:)
-        (prefix (head head) head:) (prefix (head interaction) interaction:)
+        (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head interaction) interaction:)
         (prefix (head keymap) keymap:) (prefix (head style) style:)
         (prefix (head widget) widget:) (prefix (head window) window:)
         (prefix (state view) view:) (prefix (sys glyph) glyph:)
@@ -140,4 +140,4 @@
 (define (tetris:create!)
   (view:create! head:ui-actor #f 'tetris 1 '((name . "<tetris>")) (tetris:new-game)))
 (define (tetris:open!)
-  (let ([id (tetris:create!)]) (window:show-widget! (head:current-window) id) id))
+  (let ([id (tetris:create!)]) (window:show-widget! (seat:current-window) id) id))

@@ -165,7 +165,7 @@
      ;; a sigil-led query extends across the sigil: the walk's pruning check
      ;; over joined parts must not refuse the lone (
      (check 'fuzzy-expand-across-a-sigil
-       (fuzzy:expansions "(bu" '("(buffer \"a\")" "(head:new-buffer! name)" "(head:current-buffer-mirror)"))
+       (fuzzy:expansions "(bu" '("(buffer \"a\")" "(seat:new-buffer! name)" "(seat:current-buffer-mirror)"))
        '("(buffer"))
      (check 'fuzzy-expand-within-limits
        (list (fuzzy:expansions "ab" '("ab-x" "ab-y"))

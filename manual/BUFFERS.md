@@ -59,7 +59,7 @@ hints, `C-x TAB` listing the keys instead, and neither does any echo
 message. Every buffer's name shows, an app's too. Temporary interactions
 such as find-file use the space after it for match counts and pages instead
 of generated-buffer coordinates, and a buffer may replace those details
-with text of its own after its name through `head:set-buffer-status!`, as
+with text of its own after its name through `seat:set-buffer-status!`, as
 `<bindings>` does with its page.
 
 Window 0 is the pop-up window. It has no rows and no status line until a
@@ -354,7 +354,7 @@ one entry of its delta log, and `C-_` brings the previous one back, as far as
 the log's retention reaches. It is disposable: killing it asks nothing, it
 does not outlive the base, and the next copy recreates it. A second head on
 the same base gets its own, shown as `[copy]` there as well.
-`edit:copy-text` returns its text, `head:copy-buffer` the buffer.
+`edit:copy-text` returns its text, `seat:copy-buffer` the buffer.
 
 Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
 `M-w`, `C-w`, repeated `C-k`, Scheme calls to `edit:copy-text!`, and any other
@@ -431,7 +431,7 @@ edit buffer; an app's buffer shows itself as the app decides. Untoggled
 windows follow the configurable default:
 
 ```scheme
-(head:line-numbers #t) ; default is #f
+(seat:line-numbers #t) ; default is #f
 ```
 
 The gutter is left of the text (and right of a left-side scrollbar). It expands
@@ -576,7 +576,7 @@ expression in the keyboard section and its target API in **Widget commands**.
 The table adopts the hovered or selected row; the app validates the result
 basis and passes the document's metadata version to the archive operation.
 Pending and stale targets refuse. Flags use
-the same `buffer-flag` enumeration as `head:buffer-flags`: `conflicted` and
+the same `buffer-flag` enumeration as `seat:buffer-flags`: `conflicted` and
 `read-only`. `(edit:delete-trashed! name)` is the direct archive command;
 `(edit:kill-buffer! buffer)` kills a buffer directly.
 
@@ -613,7 +613,7 @@ The public app API is documented in [App buffers](APPS.md).
 
 ## Scrollbars
 
-Ordinary buffers show no head:scrollbar by default; `(head:scrollbar #t)` in config.e
+Ordinary buffers show no seat:scrollbar by default; `(seat:scrollbar #t)` in config.e
 enables a one-column vertical bar for them, and `<buffet>` shows one while
 its rows overflow the window. The thin `│` is the track and the centered heavy
 `┃` is the visible extent. Thumb size reflects the proportion of the buffer
@@ -629,13 +629,13 @@ Mouse clicks and wheel events also settle the echo area.
 Configure scrollbars in `config.e`:
 
 ```scheme
-(head:scrollbar #f)                 ; default; #t shows ordinary-buffer scrollbars
-(head:scrollbar-position 'right)    ; default; the alternative is 'left
+(seat:scrollbar #f)                 ; default; #t shows ordinary-buffer scrollbars
+(seat:scrollbar-position 'right)    ; default; the alternative is 'left
 ```
 
 An app may force a scrollbar, a side, or an automatic bar through
-`head:set-app-presentation!`. `<buffet>` uses the automatic bar: it appears
-on the `head:scrollbar-position` side only when the list is taller than the
+`seat:set-app-presentation!`. `<buffet>` uses the automatic bar: it appears
+on the `seat:scrollbar-position` side only when the list is taller than the
 window.
 
 Every frame is a cached repaint -- rows are painted only when their content
@@ -664,7 +664,7 @@ point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`window:toggle-wrap
 toggles wrapping for one window, and `(window:set-wrap! setting)` sets it to
 `#t`, `#f` or `default`. Like line numbers, the window's setting applies
 while it shows an edit buffer; a buffer's own wrap fact, set with
-`head:buffer-wrap-set!`, is what an app's buffer follows and what an edit
+`seat:buffer-wrap-set!`, is what an app's buffer follows and what an edit
 buffer follows while its window's setting is `default`. The fact is saved with
 the session, so a base restart keeps it: a terminal's transcript, whose rows
 are as wide as the terminal was, stays unwrapped.
@@ -746,7 +746,7 @@ M-x, so a tag is an ordinary symbol there, `'target`.
 ## Buffer API
 
 Buffers are stable data references, such as `'(buffer 17)`. Use
-`(head:current-buffer)` for the current shared document (or `#f` in a local
+`(seat:current-buffer)` for the current shared document (or `#f` in a local
 widget host), and `(store:find-named "notes.txt")` to resolve a name once.
 Renaming a document does not change its reference. A deleted reference never
 names a later buffer with the same name. The `buffer` type checks only shape;
@@ -766,13 +766,13 @@ indicates unsaved changes. Both facts are maintained by the text owner.
 
 `(edit:new-buffer! name)` creates an empty shared document, shows it, and returns
 its reference. `store:create!` creates content without placing it. Use
-`head:show-buffer!` to select a document, or `window:display!` and
+`seat:show-buffer!` to select a document, or `window:display!` and
 `window:pop-up-or-reuse!` to place a shared document or mounted widget reference
-without leaving the current window. `head:with-buffer` temporarily selects a
+without leaving the current window. `seat:with-buffer` temporarily selects a
 shared document for current-context editing and search. For example:
 
 ```scheme
-(head:with-buffer (store:find-named "notes.txt")
+(seat:with-buffer (store:find-named "notes.txt")
   (search:replace! "old" "new"))
 ```
 
@@ -783,9 +783,9 @@ returns its original reference. `edit:call-as-one-edit!` groups edits into
 coherent undo entries.
 
 The default window host still uses opaque head records internally. Its
-`head:current-buffer-mirror`, `head:show-buffer-mirror!`,
-`head:with-buffer-mirror`, `head:new-buffer!`, `head:new-local-buffer!` and
-`head:buffer-*` accessors are temporary presentation adapters, documented as
+`seat:current-buffer-mirror`, `seat:show-buffer-mirror!`,
+`seat:with-buffer-mirror`, `seat:new-buffer!`, `seat:new-local-buffer!` and
+`seat:buffer-*` accessors are temporary presentation adapters, documented as
 `(record buffer)`. They are neither portable buffer values nor application
 models. Extensions should use base resources and explicit widget views.
 Window records and `(window n)` selectors remain temporary host adapters too.
@@ -868,7 +868,7 @@ deletion releases it. `store:buffer-name` returns the current name and
 `store:find-named` returns its id or `#f`. Returned strings are copies.
 `rename!` returns the name accepted at that commit; a subscriber can rename
 or delete the buffer before the call returns. For a head record, use
-`(head:buffer-name-set! b name)` to commit and
+`(seat:buffer-name-set! b name)` to commit and
 adopt its current name. A failed rename preserves the cached label and
 reports the error.
 
@@ -878,25 +878,25 @@ closes dependent local views, and withdraws its managed marks; shared text,
 history, and other actors' marks survive. Dropping `audience` restores the
 default. `(store:visible? actor id)` tests existence and audience; raw store
 reads remain available under their own policy. Audience is routing, not an
-access-control boundary. `(head:adopt-store-buffer! id)` returns the current
+access-control boundary. `(seat:adopt-store-buffer! id)` returns the current
 head record, or `#f` when invisible. After readmission use that record;
 retained hidden or superseded records cannot be added or displayed again.
 
-`(head:buffer-point b)` reads point in the selected window when it shows
+`(seat:buffer-point b)` reads point in the selected window when it shows
 `b`, otherwise in another window showing it, otherwise from its saved
 position. It does not switch windows or run repaint callbacks.
-`head:show-buffer!` on the already displayed buffer preserves the live cursor
+`seat:show-buffer!` on the already displayed buffer preserves the live cursor
 and viewport. To compose window changes and cursor placement before repaint
-callbacks run, use `(head:call-with-display-update thunk)`; nested calls
+callbacks run, use `(seat:call-with-display-update thunk)`; nested calls
 produce one notification after all changes. The thunk's return values are
 preserved. Exceptions and escapes still notify completed changes; this scope
 does not roll them back.
 
-`head:buffer-lines-set!` and `head:store-reset!` accept a line list or vector.
+`seat:buffer-lines-set!` and `seat:store-reset!` accept a line list or vector.
 An empty input becomes one empty line. They validate the complete input and
 own a new vector; callers must treat the shared line strings as immutable.
 Reset is for an explicit baseline or generated view, and clears shared undo.
-Ordinary edits use `head:store-edit!`.
+Ordinary edits use `seat:store-edit!`.
 
 Shared head and policy edits, undo and redo check `read-only` inside the store
 transaction as well as at the command prompt. Trusted producers can still
@@ -908,17 +908,17 @@ producer path; it is not exposed through session or wire requests.
 
 Local labels share the head's buffer namespace.  A collision receives
 `<name 2>`, `<name 3>`, and so on; when a visible shared buffer arrives or is renamed,
-the local buffer yields the conflicting label.  `head:add-buffer!`
+the local buffer yields the conflicting label.  `seat:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
 `window:tool!` retains a named widget composition in the default head host.
 Its stable tool key is separate from its displayed label, so renaming or a
-label collision does not replace its identity. `head:find-tool-buffer` is the
+label collision does not replace its identity. `seat:find-tool-buffer` is the
 outer host's lookup; extensions should use widget sources and views rather
 than local snapshot buffers. See [Apps](APPS.md) and [Widgets](WIDGETS.md).
 
-`head:buffer-fact` uses its fallback only for an absent fact; an explicit
-`#f` remains `#f`, and store failures propagate. `head:buffer-facts-set!`
+`seat:buffer-fact` uses its fallback only for an absent fact; an explicit
+`#f` remains `#f`, and store failures propagate. `seat:buffer-facts-set!`
 accepts an alist and validates the whole batch before either owner changes
 any fact. The corresponding store call is `(store:set-properties! actor id
 facts [expected [name]])`; the head call takes the same optional arguments
@@ -951,9 +951,9 @@ facts can hold runtime objects, including a dynamic `read-only` guard;
 that procedure returns true to allow an edit. Use ordinary data flags for
 shared read-only state.
 
-`(head:buffer-state b)` and `(store:snapshot-state id)` return
+`(seat:buffer-state b)` and `(store:snapshot-state id)` return
 `(values text revision facts)` from one current read. The shared form can be
-newer than the window's cached text. `(head:store-reset! b lines facts)` and
+newer than the window's cached text. `(seat:store-reset! b lines facts)` and
 `(store:reset! actor id lines facts)` install a baseline and related facts
 together; facts are optional. An invalid input changes neither text nor facts.
 An optional final `(revision fact ...)`, built with `(cons revision facts)`
@@ -1016,26 +1016,26 @@ or a revision to include it. Names and facts are owned copies; text remains
 an immutable snapshot. This supplies the daemon's existing `state` request,
 so concurrent rename/deletion cannot split the name from the snapshot.
 
-For derived views, `(head:snapshot-since b basis)` returns the same three
+For derived views, `(seat:snapshot-since b basis)` returns the same three
 values from this head's adopted text, for either a local or shared buffer.
 It does not pull a newer store snapshot. Pass the previous content revision,
 or `#f` when there is no previous basis. The head retains up to 256 adopted
 revision links. A link may contain several deltas or jump revisions after a
 reload; an unavailable basis returns `#f` for the chain. Local content
-revisions in this API, `head:edit-basis`, and `head:buffer-state` are distinct
-from `head:buffer-revision`, which counts repaint changes. Run head reads and
+revisions in this API, `seat:edit-basis`, and `seat:buffer-state` are distinct
+from `seat:buffer-revision`, which counts repaint changes. Run head reads and
 mutations on the main pump; workers schedule work with `head:run-on-main!`.
 
 Local views over shared sources can participate in named-screen restoration.
 Set their local `resume-kind` fact to a symbol and register
-`(head:register-resume! kind capture restore)` in the owning module's `init!`.
+`(seat:register-resume! kind capture restore)` in the owning module's `init!`.
 `capture` receives the buffer and an alist of placements, returning two values:
 a plain descriptor list (or `#f` when unavailable) and projected placements.
 `restore` receives that descriptor and the saved placements, returning the
 rebuilt buffer (or `#f`) and its current placements. Placement keys are `spot`,
 `spot-top`, `mark`, a window number, or `(top . window-number)`; coordinates are
 `(row . column)`. Keep keys unchanged and serialize source/query intent only.
-`(head:resume-source! id revision placements)` returns the current shared buffer
+`(seat:resume-source! id revision placements)` returns the current shared buffer
 and rebased/clamped source placements. Markdown uses this path for its source
 rows while retaining rendered columns separately. The head restores the layout
 and applies placements; providers do not select windows or publish shared text.
@@ -1100,9 +1100,9 @@ chain starts after the supplied basis and includes this edit; a commit that
 trims the oldest retained log entry still returns that entry in its
 acknowledgement. Refusals are the same as for `store:edit!`.
 
-Head extensions can capture `(head:edit-basis b)` before computing a
+Head extensions can capture `(seat:edit-basis b)` before computing a
 proposal. It contains the immutable source lines, store id (or `#f`), and
-revision. Pass it to `(head:store-edit! b span replacement context placements
+revision. Pass it to `(seat:store-edit! b span replacement context placements
 source)` so a callback advancing the head cannot change the proposal's
 basis. The context is the store edit context above. Placements are an alist
 whose keys are windows, `mark`, `spot`, `(top . window)`, or `spot-top`, and

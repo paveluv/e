@@ -1,5 +1,6 @@
 ;; Included by store.ss: model contracts need no additional test process.
 (let ()
+  (import (prefix (core descriptor) descriptor:))
   (define author '(head "models"))
   (define validator-owner (string-copy "model-validator-fixture"))
   (define (get entry key) (cdr (assq key entry)))
@@ -39,7 +40,7 @@
         '(#t #t (unavailable contract))))
     (test:check 'entry-port-uses-text-source-and-refuses-multiline
       (map (lambda (lines)
-             (port:project '((kind . widget-view) (schema . 2) (value (kind . entry) (schema . 1)))
+             (port:project '((kind . widget-view) (schema . 3) (value (kind . entry) (schema . 1)))
                'text (list (cons 'revision 3) (cons 'value lines))))
         '(#("hello") #("a" "b")))
       '((ready "hello") (unavailable missing-value))))
@@ -272,7 +273,7 @@
         (view:set-state! author root #f 'moved)
         (values (lambda (mapped) (list 'sample 1 (mapped root) 'persistent '() '("copy"))) '()
           (lambda () (set! rolled-back? #t))))
-      (lambda (actor id) (model:retire! actor id (get (model:snapshot id) 'revision))))
+      (lambda (r) '()))
     (view:arrange! author (list (list root 0 '() (list (list 'owned resource)))) '())
     (let ([before (model:ids)])
       (test:check 'view-fork-rolls-back-prepared-resources-on-witness-race
@@ -288,7 +289,26 @@
             (test:raises? (lambda () (model:allocate! author 2
                                        (lambda (ids) (list (list 'sample 1 'session 'persistent '() '("valid"))
                                                        (list 'sample 1 'session 'persistent '() 42))))))
-            (= before (car (exported)))) '(2 (model 3) #f () 7 (4 2) #t #t #t)))
+            (= before (car (exported)))) '(3 (model 3) #f () 7 (4 2) #t #t #t)))
+  (let* ([root (descriptor:make #f 'extension 7 '((name . "app") (audience (head "models"))) '())]
+         [nested (descriptor:with root '((parent model 8)))]
+         [private (descriptor:with root '((options (name . "private") (catalogue . #f))))]
+         [invalid (descriptor:with root '((options (name . "private") (audience . invalid))))])
+    (test:check 'catalogue-migration-preserves-only-former-entries-and-is-idempotent
+      (map (lambda (d schema)
+             (let* ([upgraded (view:upgrade (saved 7 'widget-view schema d))]
+                    [next (get upgraded 'value)])
+               (list (get upgraded 'schema) (assq 'catalogue (view:options next))
+                 (view:parent next) (equal? upgraded (view:upgrade upgraded)))))
+        (list root nested private invalid root root) '(2 2 2 2 3 4))
+      '((3 (catalogue . #t) #f #t) (3 #f (model 8) #t) (3 (catalogue . #f) #f #t)
+        (3 #f #f #t) (3 #f #f #t) (4 #f #f #t)))
+    (test:check 'catalogue-options-require-a-boolean-label-and-valid-audience
+      (map (lambda (options) (descriptor:valid? (descriptor:with root (list (cons 'options options)))))
+        '(((catalogue . maybe) (name . "bad")) ((catalogue . #t))
+          ((catalogue . #t) (name . 7)) ((catalogue . #t) (name . "bad") (audience . invalid))
+          ((catalogue . #f)) ((catalogue . #t) (name . "good"))))
+      '(#f #f #f #f #t #t)))
   (model:register-kind! 'unknown 1 (lambda (value) #f))
   (test:check 'model-unavailable-data-still-exports-intact
     (list (model:available? '(model 3)) (model:snapshot '(model 3))

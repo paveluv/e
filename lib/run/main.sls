@@ -24,12 +24,13 @@
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head seat) seat:)
           (prefix (head suspension) suspension:)
+          (prefix (head tui) tui:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
-          (prefix (sys sys) sys:)
-          (prefix (sys tty) tty:))
+          (prefix (sys sys) sys:))
 
   (edoc "Whether the base stops when the last head leaves."
         (value boolean))
@@ -50,7 +51,7 @@
       (guard (ex [else (finish!) (raise ex)])
         (let review ([remote (client:request 'prepare-close)] [changed? #f])
           (set! token (cadr remote))
-          (let-values ([(local valid?) (head:prepare-quit)])
+          (let-values ([(local valid?) (seat:prepare-quit)])
             (let* ([status (cadddr remote)]
                    [count (lambda (key) (cdr (assq key status)))]
                    [risks
@@ -69,7 +70,7 @@
                  (if (not (head:call-uninterrupted valid?))
                      (review (client:request 'prepare-close) #t)
                      (begin
-                       (head:checkpoint!)
+                       (seat:checkpoint!)
                        ;; The base rechecks transient work, then uses the
                        ;; same save/stop path as a system stop or restart.
                        (let ([next (client:request 'shutdown token)])
@@ -77,20 +78,20 @@
                 [(#\v)
                  (client:request 'cancel-review token)
                  (set! token #f)
-                 (head:view-review!)]
+                 (seat:view-review!)]
                 [else (void)]))))
         (finish!))))
 
   (define departure-hooked
-    (head:set-departure!
+    (seat:set-departure!
       (lambda ()
         (if (not (shutdown-on-exit))
             ;; Ordinary detach commits after shutdown hooks and the final
             ;; checkpoint, once main has restored the terminal.
             (head:quit!)
             (begin
-              (head:flush-ui-audit! 'all)
-              (head:checkpoint!)
+              (seat:flush-ui-audit! 'all)
+              (seat:checkpoint!)
               (let ([result (client:leave! #t)])
                 (if (and (pair? result) (eq? (car result) 'last))
                     (shutdown!)
@@ -114,9 +115,8 @@
                               (if (> (length asks) 1)
                                 (format " (~a waiting)" (length asks))
                                 ""))
-                (paint:screen-cols))
+                (tui:screen-cols))
               'ask))))))
-
 
   ;;; Configuration and reloads -----------------------------------------------------
 
@@ -127,11 +127,11 @@
     ;; around it -- a recolor must repaint rows cached under the old
     ;; codes -- re-resolves buffer modes, and reports an error.  ->
     ;; whether it loaded cleanly.
-    (paint:invalidate-screen-cache!)
+    (tui:invalidate-screen-cache!)
     (let ([result (kernel:load-config!)])
       (cond [(eq? result #t)
              (mode:refresh!)
-             (paint:invalidate-screen-cache!)
+             (tui:invalidate-screen-cache!)
              #t]
             [(eq? result 'absent) #f]
             [else
@@ -144,7 +144,7 @@
       (lambda (name)
         (load-config!)              ; the settings reapply on top
         (mode:refresh!)
-        (paint:invalidate-screen-cache!)
+        (tui:invalidate-screen-cache!)
         (echo:set-text! (format "Reloaded ~a" name)))))
 
   ;; Saving a module's source reloads it on the spot (a fresh .sls file
@@ -203,7 +203,9 @@
   ;;; Startup, the loop, shutdown --------------------------------------------------------
 
   ;; a frame is the painter's: the pump asks for one through this hook
-  (define frame-hooked (head:set-frame-hook! (lambda () (paint:redraw!))))
+  (define frame-hooked
+    (begin (head:set-key-handler! dispatch:key!)
+      (head:set-frame-hook! (lambda (coalesce?) (paint:redraw! coalesce?)))))
 
   (define ask-presented (head:add-pre-redraw-hook! present-pending-ask!))
 
@@ -257,6 +259,8 @@
       (actor:call-as head:ui-actor run-head)))
 
   (define (run-head)
+    (seat:initialize!)
+    (head:set-report-handler! echo:set-text!)
     ;; The loader script is pure bootstrap; the extension modules are
     ;; loaded here, before the file argument needs their modes.
     (let ([file (startup:file)])
@@ -269,8 +273,8 @@
         (reverse
           (kernel:load-modules!
             '("bindings" "blame" "buffet" "c-mode" "completion" "control" "delta-log" "describe" "dispatch" "echo" "edit" "entry" "environment" "eval" "extension" "finder" "git-view"
-              "glyph" "head" "history" "history-view" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
-              "namespace" "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "region" "render" "scheme-format"
+              "glyph" "head" "seat" "tui" "history" "history-view" "keymap" "layout" "literal" "log-view" "markdown" "md-mode" "mode" "mouse"
+              "namespace" "paint" "paren" "pretty-scheme" "prompt" "prompt-host" "range" "region" "render" "routing" "scheme-format"
               "conflict-review" "conflict-source" "review-preview" "rewrite" "rewrite-source" "scheme-mode" "search" "style" "table" "terminal" "text-source" "tty" "widget" "window"))))
       (load-config!)
       ;; Config loads the local view providers before resolving their plain
@@ -278,7 +282,7 @@
       ;; but only once the terminal is live and keys arrive, below: visiting
       ;; may ask about a file changed on disk, and a question asked before
       ;; the input reader runs waits forever.
-      (let ([resumed? (head:resume!)])
+      (let ([resumed? (seat:resume!)])
         (when (and (not file) (not resumed?) startup-page)
           (guard (ex [else (void)]) (startup-page))
           ;; the greeting outlives the page's own load chatter
@@ -290,36 +294,25 @@
     ;; the process past the modified-buffers check: they run the
     ;; editor's quit and unwind the evaluation instead.
     (let ([safe-quit (lambda args
-                       (head:quit-command!)
+                       (seat:quit-command!)
                        (raise (head:make-interrupted)))])
       (exit-handler safe-quit)
       (abort-handler safe-quit)
       (reset-handler safe-quit))
     (dynamic-wind
-      ;; The alternate screen, plus bracketed paste: terminals that
-      ;; support it (virtually all) wrap pastes in ESC[200~ / ESC[201~,
-      ;; making a paste one identifiable edit; others ignore the mode.
-      ;; Mouse tracking likewise (see mouse:track!).
-      ;; Mode 2031 subscribes to theme changes. Query both the scheme and
-      ;; the background color so older hosts can supply a fallback.
-      (lambda () (sys:terminal-raw!)
-        (paint:ansi! "\x1b;[?1049h\x1b;[2J\x1b;[?2004h\x1b;[?2031h")
-        (tty:query-color-scheme!)
-        (tty:mouse-reporting! #t)
-        (paint:set-screen-live! #t)
-        (head:start-input-reader!))
+      (lambda () (tui:enter!) (head:start-input-reader!))
       (lambda ()
         (let ([file (startup:file)])
-          (when file (run-command! (lambda () (head:open-file! file)))))
+          (when file (run-command! (lambda () (seat:open-file! file)))))
         (let loop ()
           (unless (head:quitting?)
             (resume-commands!)
             (head:run-deferred!)
-            (paint:redraw! #t)
+            (head:redraw! #t)
             ;; Queue the prepared state without waiting for the base. The
             ;; writer coalesces pending snapshots; lifecycle checkpoints
             ;; still wait. Wake frames queue at most once a second.
-            (head:checkpoint! 'async)
+            (seat:checkpoint! 'async)
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
@@ -330,7 +323,7 @@
                         (echo:set-text! (condition-message ex))]
                        [else (log:add! 'main:run-head (kernel:condition-text ex))])
               (let ([event (parameterize ([head:in-main-pump #t]) (head:read-key-event))])
-                (run-command! (lambda () (dispatch:key! event)))))
+                (run-command! (lambda () (head:key! event)))))
             (head:after-key!)
             (loop))))
       (lambda ()
@@ -340,13 +333,8 @@
         (dynamic-wind void
           head:run-shutdown-hooks!
           (lambda ()
-            (guard (ex [else (void)]) (head:checkpoint!))
-            (paint:set-screen-live! #f)
-            (paint:reset-cursor-style!)
-            (tty:mouse-reporting! #f)
-            (paint:ansi! "\x1b;[?2031l\x1b;[?2004l\x1b;[?25h\x1b;[?1049l\x1b;[0m")
-            (flush-output-port (sys:terminal-output-port))
-            (sys:terminal-restore!)
+            (guard (ex [else (void)]) (seat:checkpoint!))
+            (tui:leave!)
             (report-unsaved-work!))))))
 
   (define (report-unsaved-work!)
@@ -354,15 +342,15 @@
     ;; buffers whose work is unsaved, the shared ones kept in the base and
     ;; the local ones that went with this head. Quitting asks nothing.
     (let ([unsaved (filter (lambda (b)
-                             (and (head:buffer-modified b) (not (head:buffer-fact b 'disposable #f))))
-                           (head:buffers))])
+                             (and (seat:buffer-modified b) (not (seat:buffer-fact b 'disposable #f))))
+                           (seat:buffers))])
       (unless (null? unsaved)
         (let* ([port (current-error-port)]
                [term (getenv "TERM")]
                [color? (and term (not (string=? term "dumb")))]
-               [names (lambda (bs) (string:join (map head:buffer-name bs) ", "))]
-               [shared (filter head:buffer-store-id unsaved)]
-               [local (filter (lambda (b) (not (head:buffer-store-id b))) unsaved)])
+               [names (lambda (bs) (string:join (map seat:buffer-name bs) ", "))]
+               [shared (filter seat:buffer-store-id unsaved)]
+               [local (filter (lambda (b) (not (seat:buffer-store-id b))) unsaved)])
           (define (say text)
             (display (if color? (string-append "\x1b;[1;31m" text "\x1b;[0m\n") (string-append text "\n")) port))
           (unless (null? shared)

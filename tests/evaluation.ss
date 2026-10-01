@@ -3,10 +3,11 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 (eval
   '(begin
      (import (prefix (apps eval) eval:) (prefix (head edit) edit:)
-             (prefix (head head) head:) (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head echo) echo:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head echo) echo:)
              (prefix (service log) log:) (prefix (test) test:)
              (prefix (head suspension) suspension:) (prefix (head text-source) text-source:)
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
@@ -30,8 +31,8 @@
                (eval:status stopped) (head:interrupted? (eval:condition stopped))))
        '(error #t interrupted #t))
 
-     (define b (head:new-buffer! "evaluation"))
-     (head:show-buffer-mirror! b)
+     (define b (seat:new-buffer! "evaluation"))
+     (seat:show-buffer-mirror! b)
      (define nested
        (run (lambda ()
               (edit:insert-text! "outer")
@@ -44,10 +45,10 @@
                 (car (eval:values inner))))))
      (test:check 'nested-evaluation-streams-each-line-once
        (list (eval:values nested) (output 'stdout)
-             (output 'stderr) (edit:buffer-text (head:buffer-store-id b)))
+             (output 'stderr) (edit:buffer-text (seat:buffer-store-id b)))
        '((42) ("inner" "outer") ("warning") "outerinner\n"))
      (edit:undo!)
-     (test:check 'nested-edits-share-one-undo (edit:buffer-text (head:buffer-store-id b)) "\n")
+     (test:check 'nested-edits-share-one-undo (edit:buffer-text (seat:buffer-store-id b)) "\n")
 
      (define handler (keyboard-interrupt-handler))
      (define descriptors (test:fd-count))
@@ -81,12 +82,12 @@
        (list (eval:status result) (eval:values result) (car (output 'stdout)) (car (output 'stderr))
          (= descriptors (test:fd-count))) '(ok (#t) "before pause" "after pause" #t))
      (edit:undo!)
-     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text (head:buffer-store-id b)) "beforeother\n")
+     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text (seat:buffer-store-id b)) "beforeother\n")
      (edit:undo!) (edit:undo!)
 
      (eval:report! nested 'probe)
      (test:check 'extension-label-is-data-without-mx-history
-       (list (log:history 'eval:report! car) (head:copy-text) (map log:datum (log:entries 'eval:report!)))
+       (list (log:history 'eval:report! car) (seat:copy-text) (map log:datum (log:entries 'eval:report!)))
        '(() "42" ((probe . "42"))))
      (test:check 'a-report-needs-a-destination (test:raises? (lambda () (eval:report! nested))) #t)
      (eval:report! (run (lambda () #f)) "#f")
@@ -100,10 +101,10 @@
      (let ([values-to-copy '((app describe) ((model 17) (model 18)) #((agent helper) "a\"b"))])
        (eval:report! (run (lambda () (apply values values-to-copy))) 'probe)
        (test:check 'copied-multiple-values-are-an-executable-expression
-         (call-with-values (lambda () (eval (read (open-input-string (head:copy-text))))) list) values-to-copy)
-       (let ([copied (head:copy-text)])
+         (call-with-values (lambda () (eval (read (open-input-string (seat:copy-text))))) list) values-to-copy)
+       (let ([copied (seat:copy-text)])
          (eval:report! (run (lambda () (list (current-output-port)))) 'probe)
-         (test:check 'opaque-result-does-not-overwrite-a-usable-copy (head:copy-text) copied)))
+         (test:check 'opaque-result-does-not-overwrite-a-usable-copy (seat:copy-text) copied)))
      ;; A library compiled on import announces itself as a compile record for
      ;; the log alone; a broken one fails the evaluation, which the echo shows.
      (define root (format "/tmp/e-eval-compile-~a-~a" (get-process-id) (random 1000000)))

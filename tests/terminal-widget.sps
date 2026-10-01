@@ -15,7 +15,7 @@
   (define (child id) (widget:descendant id 'text))
   (define (state id) (view:state (interaction:snapshot id)))
   (define (take) (let ([out (reverse messages)]) (set! messages '()) out))
-  (define (key value) (dispatch:input! root (list 'key value #f) 'terminal-host-fixture))
+  (define (key value) (routing:input! root (list 'key value #f) 'terminal-host-fixture))
   (terminal:init!)
   (actor:register! owner (lambda (message) (set! messages (cons message messages))))
   (publish '(3 2 #f))
@@ -25,7 +25,7 @@
     (widget:pump!) (take)
     (check 'terminal-nests-with-readonly-editor-children-and-a-hidden-process-cursor
       (list (widget:caret frame) (car (widget:frame-lines (widget:prepared (child a))))
-        (state a) (state b) (not (head:buffer-of-store-id source)))
+        (state a) (state b) (not (seat:buffer-of-store-id source)))
       '(#f "two     " (partial #t) (partial #t) #t))
     (publish '(2 1 #t)) (widget:pump!)
     (check 'process-cursor-following-is-derived-without-view-publications

@@ -3,9 +3,10 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 (eval
   '(begin
-     (import (prefix (apps buffet) buffet:) (prefix (head head) head:)
+     (import (prefix (apps buffet) buffet:) (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (apps bindings) bindings:) (prefix (head binding-list) listing:)
              (prefix (head widget) widget:) (prefix (head window) window:)
              (prefix (head table) table:) (prefix (head entry) entry:)
@@ -23,7 +24,7 @@
      (define (get xs key) (cdr (assq key xs)))
      (define (help-record)
        (widget:pump!)
-       (model:snapshot (view:source (interaction:snapshot (widget:descendant (head:window-widget (head:popup)) 'app)))))
+       (model:snapshot (view:source (interaction:snapshot (widget:descendant (seat:window-widget (seat:popup)) 'app)))))
      (define (help-rows) (apply append (map (lambda (p) (get (model:snapshot (cdr p)) 'value)) (get (get (help-record) 'value) 'parts))))
      (define (help-text)
        (string:join (map (lambda (r) (string-append (or (cadr r) "") " " (string:join (caddr r) " ") " " (cadddr r) " " (list-ref r 4))) (help-rows)) "\n"))
@@ -31,7 +32,7 @@
        (test:await name (lambda () (head:before-frame!) (predicate (help-text)))))
      (define (contains? text needle) (and (string:search text needle 0 (string-length text)) #t))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
-     (define (root) (head:buffer-fact (head:current-buffer-mirror) 'widget-id #f))
+     (define (root) (seat:buffer-fact (seat:current-buffer-mirror) 'widget-id #f))
      (define (app) (child (root) 'app))
      (define (table) (child (app) 'table))
      (define (entry) (child (child (table) 'filter) 'entry))
@@ -60,13 +61,13 @@
              (settle!)
              (let* ([s (selection)] [r (collection:lookup (query) (cadr s) ref '(name))])
                (and (equal? (caddr s) ref) (eq? (car r) 'ready) (pair? (list-ref r 4))
-                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (head:buffer-name b)))))))))
+                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (seat:buffer-name b)))))))))
      (define (press! . keys) (for-each dispatch:key! keys))
-     (define a (head:new-buffer! "buffet-a"))
-     (define b (head:new-buffer! "buffet-b"))
+     (define a (seat:new-buffer! "buffet-a"))
+     (define b (seat:new-buffer! "buffet-b"))
      (define path "/tmp/buffet-path/with-many-components/file.scm")
-     (head:buffer-file-set! a path)
-     (head:show-buffer-mirror! a) (head:show-buffer-mirror! b)
+     (seat:buffer-file-set! a path)
+     (seat:show-buffer-mirror! a) (seat:show-buffer-mirror! b)
      (buffet:open!) (settle!)
      (let* ([lines (widget:frame-lines (draw! (root) 120 15))] [heading (cadr lines)]
             [name (string:search heading "Buffer" 0 120)] [next (string:search heading "Lines" 0 120)])
@@ -74,17 +75,17 @@
          (list (<= (- next name 2) 12)
            (and (exists (lambda (line) (string:search line path 0 (string-length line))) (cddr lines)) #t)) '(#t #t)))
      (test:check 'default-previous-and-self-name
-       (list (caddr (selection)) (head:buffer-name (head:current-buffer-mirror)))
+       (list (caddr (selection)) (seat:buffer-name (seat:current-buffer-mirror)))
        (list (catalogue-host:reference a) "<buffet>"))
      (press! "RET")
-     (test:check 'enter-opens-the-previous-document (eq? (head:current-buffer-mirror) a) #t)
+     (test:check 'enter-opens-the-previous-document (eq? (seat:current-buffer-mirror) a) #t)
      (buffet:open!) (settle!) (press! "ESC")
-     (test:check 'escape-restores-origin (eq? (head:current-buffer-mirror) a) #t)
+     (test:check 'escape-restores-origin (eq? (seat:current-buffer-mirror) a) #t)
      (buffet:open!) (settle!)
      (define host (root)) (define original-app (app)) (define original-table (table)) (define original-query (query))
      (define filter-id (view:source (interaction:snapshot (entry))))
      (test:check 'internal-filter-is-not-a-switchable-document
-       (exists (lambda (b) (equal? filter-id (head:buffer-store-id b))) (head:buffers)) #f)
+       (exists (lambda (b) (equal? filter-id (seat:buffer-store-id b))) (seat:buffers)) #f)
      (let ([focus (widget:focused (root))])
        (press! "C-x" "TAB")
        (await-help! 'initial-binding-list (lambda (text) (contains? text "Composition")))
@@ -203,48 +204,51 @@
      (press! "UP") (settle!)
      (test:check 'arrows-from-filter-reach-table (not (equal? before (selection))) #t)
      (table:sort-by! (table) '((name descending))) (settle!)
-     (head:show-buffer-mirror! a)
+     (seat:show-buffer-mirror! a)
      (buffet:previous!)
-     (test:check 'global-cycle-uses-compound-order (eq? (head:current-buffer-mirror) b) #t)
+     (test:check 'global-cycle-uses-compound-order (eq? (seat:current-buffer-mirror) b) #t)
      (buffet:open!) (settle!)
      (select! b)
      (define stale (selection)) (define stale-basis (get (state) 'basis))
-     (head:buffer-name-set! b "buffet-b-renamed")
+     (seat:buffer-name-set! b "buffet-b-renamed")
      (test:check 'stale-destructive-action-refuses
        (test:raises? (lambda () (buffet:kill! (app) stale stale-basis))) #t)
      (settle!) (select! b) (press! "C-k") (settle!)
      (test:check 'trash-retires-the-head-buffer
-       (list (and (store:property (head:buffer-store-id b) 'trashed #f) #t) (memq b (head:buffers))) '(#t #f))
+       (list (and (store:property (seat:buffer-store-id b) 'trashed #f) #t) (memq b (seat:buffers))) '(#t #f))
      (let ([text (string:join (widget:frame-lines (draw! (root) 120 15)) "\n")])
        (test:check 'archive-age-and-retention-are-presented
          (and (string:search text " ago" 0 (string-length text)) (string:search text " left" 0 (string-length text)) #t) #t))
-     (table:select! (table) (head:buffer-store-id b)) (settle!)
+     (table:select! (table) (seat:buffer-store-id b)) (settle!)
      (press! "RET")
      (test:check 'archive-restore-preserves-identity
-       (list (head:buffer-store-id (head:current-buffer-mirror)) (store:property (head:buffer-store-id b) 'trashed #f))
-       (list (head:buffer-store-id b) #f))
+       (list (seat:buffer-store-id (seat:current-buffer-mirror)) (store:property (seat:buffer-store-id b) 'trashed #f))
+       (list (seat:buffer-store-id b) #f))
      (buffet:open!) (settle!)
-     (select! (head:buffer-of-store-id (head:buffer-store-id b))) (press! "C-k") (settle!)
-     (table:select! (table) (head:buffer-store-id b)) (settle!)
+     (select! (seat:buffer-of-store-id (seat:buffer-store-id b))) (press! "C-k") (settle!)
+     (table:select! (table) (seat:buffer-store-id b)) (settle!)
      (press! "C-x" "D")
-     (test:check 'permanent-archive-delete (store:exists? (head:buffer-store-id b)) #f)
+     (test:check 'permanent-archive-delete (store:exists? (seat:buffer-store-id b)) #f)
      (settle!)
-     (let* ([picker (head:current-buffer-mirror)]
+     (let* ([picker (seat:current-buffer-mirror)]
             [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>")) '())]
-            [local (window:show-widget! (head:current-window) id)])
-       (head:show-buffer-mirror! picker) (head:before-frame!)
+            [local (window:show-widget! (seat:current-window) id)])
+       (seat:show-buffer-mirror! picker) (head:before-frame!)
        (select! local)
        (let ([old (selection)] [basis (get (state) 'basis)])
-         (view:arrange! head:ui-actor (list (list id (model:revision id) '() '((name . "<buffet-local-renamed>")))) '())
-         (head:buffer-name-set! local "<buffet-local-renamed>")
+         (view:arrange! head:ui-actor
+           (list (list id (model:revision id) '()
+                   (map (lambda (p) (if (eq? (car p) 'name) '(name . "<buffet-local-renamed>") p))
+                     (view:options (view:snapshot id))))) '())
+         (seat:buffer-name-set! local "<buffet-local-renamed>")
          (test:check 'view-generation-fences-retirement
            (test:raises? (lambda () (buffet:kill! (app) old basis))) #t))
        (select! local) (press! "C-k")
        (test:check 'table-activation-retires-view-and-placement
-         (list (model:snapshot id) (memq local (head:buffers))) '(#f #f))
+         (list (model:snapshot id) (memq local (seat:buffers))) '(#f #f))
        (settle!))
-     (let* ([w (head:current-window)] [picker (head:current-buffer-mirror)]
-            [other (window:split-right!)] [fork (head:buffer-fact (head:window-buffer other) 'widget-id #f)]
+     (let* ([w (seat:current-window)] [picker (seat:current-buffer-mirror)]
+            [other (window:split-right!)] [fork (seat:buffer-fact (seat:window-buffer other) 'widget-id #f)]
             [fork-table (child (child fork 'app) 'table)])
        (test:check 'split-forks-view-state-and-shares-query
          (list (equal? host fork) (equal? original-table fork-table)
@@ -255,7 +259,7 @@
            (and (string:search (cadr wide) "Modified" 0 300)
              (string:search (cadr wide) "Lines" 0 300)
              (string:search (cadr wide) "File" 0 300) (= (string-length (cadr wide)) 300)) #t))
-       (window:focus! other) (head:show-buffer-mirror! a)
+       (window:focus! other) (seat:show-buffer-mirror! a)
        (widget:set-active! host #f)
        (test:await 'inactive-table-ready
          (lambda ()
@@ -275,9 +279,9 @@
          (widget:pointer! '(scroll 0 3 cells) 3 row)
          (test:check 'wheel-never-changes-selection
            (get (view:state (interaction:snapshot original-table)) 'selection) s)
-         (let ([result (parameterize ([head:app-event-focus other]) (widget:pointer! '(pointer press primary ()) 3 row))])
+         (let ([result (parameterize ([seat:app-event-focus other]) (widget:pointer! '(pointer press primary ()) 3 row))])
            (test:check 'inactive-click-opens-in-focused-window-and-keeps-focus
-             (list (cadr result) (eq? other (head:current-window)) (eq? picker (head:window-buffer w)) (eq? a (head:window-buffer other))) '(#f #t #t #t))))
+             (list (cadr result) (eq? other (seat:current-window)) (eq? picker (seat:window-buffer w)) (eq? a (seat:window-buffer other))) '(#f #t #t #t))))
        (window:focus! w) (window:delete-others!) (widget:set-active! host #t) (settle!))
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.

@@ -57,7 +57,7 @@
         (let-values ([(token take) (store:watch! wake!)]) (set! take-events take))
         (set! running? #t) (fork-thread work!))))
 
-  (edoc "Create a buffer catalogue source for a head, with explicit home spelling for filtering. Shared document and named root-view inventories are rebuilt from base state; only this small recipe persists."
+  (edoc "Create a buffer catalogue source for a head, with explicit home spelling for filtering. Shared documents and explicitly listed views come from base state independently of containment; only this small recipe persists."
         (actor actor "owner/head") (home string "absolute home directory")
         (persistence (one-of transient persistent) "restart policy") (returns row-source))
   (define (create-source! actor home persistence)
@@ -128,10 +128,9 @@
         (cond [trashed '((roles ghost))] [(get m 'modified #f) '((roles italic))] [else '()]))))
   (define (view-row id)
     (let* ([r (model:snapshot id)] [d (and r (get r 'value #f))])
-      (and r (eq? (get r 'kind #f) 'widget-view) (descriptor:valid? d)
-        (not (descriptor:parent d))
+      (and r (eq? (get r 'kind #f) 'widget-view) (model:available? id) (descriptor:valid? d)
         (let* ([options (descriptor:options d)] [name (get options 'name #f)])
-          (and (string? name) (actor:audience? (get options 'audience 'all))
+          (and (get options 'catalogue #f)
             (list (list id (list (cons 'name name) (cons 'version (descriptor:generation d))
                              '(flags) '(mode . "widget") '(archive . live)) '())
               (get options 'audience 'all)))))))

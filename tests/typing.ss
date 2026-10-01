@@ -9,6 +9,7 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 
 (eval
   '(begin
@@ -17,7 +18,7 @@
              (head literal)
              (prefix (apps delta-log) delta-log:)
              (prefix (head dispatch) dispatch:)
-             (prefix (head head) head:)
+             (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head window) window:)
              (prefix (head keymap) keymap:)
              (prefix (state store) store:))
@@ -26,15 +27,15 @@
      (edit-init!)
      (window:init!)
      (delta-log:init!)
-     (define b (head:new-buffer! "typing"))
-     (head:show-buffer-mirror! b)
-     (head:goto! '(0 . 0))
-     (define (text) (vector->list (head:buffer-lines b)))
+     (define b (seat:new-buffer! "typing"))
+     (seat:show-buffer-mirror! b)
+     (seat:goto! '(0 . 0))
+     (define (text) (vector->list (seat:buffer-lines b)))
      (define (type! s) (for-each dispatch:key! (string->list s)))
      (define (press! key . times) (do ([n (if (pair? times) (car times) 1) (- n 1)]) ((= n 0)) (dispatch:key! key)))
      (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (delta-log:log) i)))))
      (define (same-batch? . is) (for-all (lambda (i) (equal? (batch-at i) (batch-at (car is)))) (cdr is)))
-     (define (label) (cadr (car (store:undo-labels (head:buffer-store-id b)))))
+     (define (label) (cadr (car (store:undo-labels (seat:buffer-store-id b)))))
 
      ;; typed characters are entries of one batch under one label; moving
      ;; point starts a new run

@@ -101,7 +101,7 @@
                       (set! nested #t)
                       (set! nested (cadr (document:acquire! actor (path "nested-acquire")))))))])
     (ready alias)
-    (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination (head:buffer-store-id value))))
+    (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination (seat:buffer-store-id value))))
     (model:unsubscribe! token)
     (test:check 'ordinary-visit-invalidates-proposals-and-logs-creation-in-order
       (list (file-exists? target) (equal? nested (store:find-file (path "nested-acquire"))) (store:property destination 'base)

@@ -3,13 +3,14 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
+(test-host!)
 (eval
   '(begin
      (import (prefix (test) test:) (prefix (apps bindings) bindings:)
              (prefix (head binding-list) listing:)
-             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head keymap) keymap:)
+             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head keymap) keymap:)
              (prefix (head widget) widget:) (prefix (head window) window:) (prefix (head interaction) interaction:)
-             (prefix (head mouse) mouse:) (prefix (head paint) paint:) (prefix (head dispatch) dispatch:)
+             (prefix (head mouse) mouse:) (prefix (head paint) paint:) (prefix (head dispatch) dispatch:) (prefix (head routing) routing:)
              (prefix (foundation string) string:) (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state actor) actor:))
      (define check test:check)
@@ -45,7 +46,7 @@
          (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP")
          (keymap:sequence-text (keymap:spec "DELETE")) (keymap:sequence-text (keymap:spec "C-M-SPC")))
        '("M-BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC"))
-     (define source (head:window-widget (head:current-window)))
+     (define source (seat:window-widget (seat:current-window)))
      (define a (bindings:create! '() source))
      (define query (view:source (view:snapshot a)))
      (define root (view:create! head:ui-actor #f 'row 1 '() '()))
@@ -98,10 +99,10 @@
      (define executed 0)
      (keymap:bind-default! 'global "C-c F11" (lambda () (set! executed (+ executed 1))))
      (pump!) (bindings:capture-key! a) (pump!)
-     (dispatch:input! root '(key "C-c" #f)) (pump!)
+     (routing:input! root '(key "C-c" #f)) (pump!)
      (check 'key-inspector-keeps-a-prefix-in-ordinary-view-state
        (view:state (interaction:snapshot (widget:descendant a 'reader))) '("C-c"))
-     (dispatch:input! root '(key "F11" #f)) (pump!)
+     (routing:input! root '(key "F11" #f)) (pump!)
      (test:await 'captured-key-published
        (lambda () (pump!)
          (contains? (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)) "C-c F11")))
@@ -109,7 +110,7 @@
        (check 'key-inspector-reports-resolution-without-executing-it
          (list executed (not (assq 'reader (view:children (interaction:snapshot a))))
            (contains? (text rows) "C-c F11") (contains? (text rows) "Resolved in global")) '(0 #t #t #t)))
-     (bindings:capture-key! a) (pump!) (dispatch:input! root '(key "C-g" #f)) (pump!)
+     (bindings:capture-key! a) (pump!) (routing:input! root '(key "C-g" #f)) (pump!)
      (check 'key-capture-cancel-removes-only-the-reader
        (list executed (not (assq 'reader (view:children (interaction:snapshot a))))) '(0 #t))
      (widget:unmount! root)
@@ -122,11 +123,11 @@
      (define shown (bindings:show!))
      (paint:window-layout) (head:before-frame!)
      (check 'default-placement-shows-a-widget-without-a-local-listing-copy
-       (list (equal? shown (head:window-widget (head:popup)))
-         (head:buffer-name (head:window-buffer (head:popup)))
-         (vector-length (head:buffer-lines (head:window-buffer (head:popup))))) '(#t "<bindings>" 1))
+       (list (equal? shown (seat:window-widget (seat:popup)))
+         (seat:buffer-name (seat:window-buffer (seat:popup)))
+         (vector-length (seat:buffer-lines (seat:window-buffer (seat:popup))))) '(#t "<bindings>" 1))
      (keymap:run! (keymap:call widget:invoke! (widget:descendant shown 'app) 'return)) (head:before-frame!)
-     (check 'default-return-restores-an-empty-popup (head:popup-rows) 0)
+     (check 'default-return-restores-an-empty-popup (seat:popup-rows) 0)
      ;; A named host outlives its attachment's transient inspection. Exercise
      ;; both departure (an unavailable snapshot) and recovery (no subtree).
      (for-each
@@ -151,7 +152,7 @@
                (lambda () (head:before-frame!) (eq? 'ready (get (get (model:snapshot source) 'value) 'status))))
              (check (list 'default-inspection-is-rebuilt reason)
                (list (not (equal? shown fresh)) (model:snapshot shown)
-                 (equal? fresh (head:window-widget (head:popup)))
+                 (equal? fresh (seat:window-widget (seat:popup)))
                  (and (model:snapshot query) #t))
                (list #t #f #t (eq? reason 'departed))))))
        '(restored departed))

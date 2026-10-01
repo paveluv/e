@@ -26,13 +26,13 @@
 ;; (main:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (paint:scroll-margin 8)              ; rows kept between the cursor and the edges
-;; (paint:input-delay 8)              ; presentation budget in ms; 0 disables pacing
-;; (head:scrollbar #f)                 ; #t: show position bars in ordinary buffers
-;; (head:scrollbar-position 'right)    ; position bars on the left or right edge
+;; (tui:input-delay 8)              ; presentation budget in ms; 0 disables pacing
+;; (seat:scrollbar #f)                 ; #t: show position bars in ordinary buffers
+;; (seat:scrollbar-position 'right)    ; position bars on the left or right edge
 ;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this
 ;;                                ; wide, centered; a narrower screen is the box
 ;; (paint:echo-box-border "┊")    ; the one-cell glyph on both sides of that box
-;; (head:line-numbers #f)              ; #t: show line numbers in every untoggled window
+;; (seat:line-numbers #f)              ; #t: show line numbers in every untoggled window
 ;; (paint:wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
 ;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your
@@ -67,7 +67,7 @@
 ;; (terminal:forward-clipboard-to-copy-buffer #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's copy buffer
-;; (head:min-window-lines 3)      ; minimum text height allowed by a split
+;; (seat:min-window-lines 3)      ; minimum text height allowed by a split
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground

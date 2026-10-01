@@ -69,7 +69,7 @@ binding then reads as the call it makes in the bindings listing and under `C-h k
 a lambda works too, but shows as an anonymous command:
 
 ```scheme
-(keymap:bind! "M-g" (keymap:call head:goto! '(0 . 0)))
+(keymap:bind! "M-g" (keymap:call seat:goto! '(0 . 0)))
 (keymap:bind! "C-c n" (keymap:call edit:move-vertical! 10))
 ```
 
@@ -81,14 +81,14 @@ any other argument as given. `keymap:run!` executes that same structured call;
 argument, so completion asks for it:
 
 ```scheme
-(keymap:bind! "C-x k" (keymap:call edit:kill-buffer! head:current-buffer))
+(keymap:bind! "C-x k" (keymap:call edit:kill-buffer! seat:current-buffer))
 (keymap:bind! 'finder "F2"
   (keymap:call table:toggle-sort!
     (keymap:call widget:descendant widget:target 'table) 'size))
 (keymap:bind! "C-c a" (keymap:prefill edit:answer!))
 ```
 
-`C-h k` shows the first as `(edit:kill-buffer! (head:current-buffer))` and
+`C-h k` shows the first as `(edit:kill-buffer! (seat:current-buffer))` and
 the third as `λ (edit:answer! `, by the names the top level gives the
 procedures, so a rename follows.
 

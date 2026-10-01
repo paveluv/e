@@ -26,14 +26,9 @@
   (define (create! actor document owner)
     (unless (and (store:visible? actor document) (view:snapshot owner)) (error 'create! "document or owner is unavailable"))
     (apply model:create! actor (spec document owner)))
-  (define (close! actor id)
-    (let retry ()
-      (let ([r (record id)])
-        (when r (let-values ([(status ignored) (model:retire! actor id (get r 'revision))])
-                  (when (eq? status 'stale) (retry)))))))
   (define (copy! actor r)
     (values (lambda (mapped) (spec (get (get r 'value) 'document) (mapped (get r 'scope)))) '() void))
-  (define lifecycle (view:register-resource-kind! 'change-preview 1 copy! close!))
+  (define lifecycle (view:register-resource-kind! 'change-preview 1 copy! (lambda (r) '())))
   (define (stamp r)
     (let* ([document (get (get r 'value) 'document)]
            [metadata (cadar (cadr (store:metadata (list document))))]
