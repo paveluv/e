@@ -140,7 +140,8 @@
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
     (case operation
       [(environment-create) (control!) (arity 2) (apply environment:create! actor args)]
-      [(environment-evaluate) (control!) (arity 3) (apply environment:evaluate! actor args)]
+      [(environment-evaluate) (control!) (arity 4) (apply environment:evaluate! actor args)]
+      [(environment-for-document) (control!) (arity 2) (apply environment:for-document! actor args)]
       [(environment-cancel) (control!) (arity 1) (environment:cancel! actor (car args))]
       [(environment-reset) (control!) (arity 2) (apply environment:reset! actor args) #t]
       [(environment-release) (control!) (arity 1) (environment:release! actor (car args))]

@@ -1161,6 +1161,18 @@ immediately. Jobs in one environment execute in submission order; different
 environments execute independently. Explicitly sharing the environment ID
 shares definitions and ordering. Opening or splitting a view starts no worker.
 
+`environment:for-document! actor document-id recipe` obtains one persistent
+environment associated with a document, shared across heads. A changed recipe
+resets its generation and native bindings while retaining completed jobs.
+Other documents have independent environments.
+
+An optional fifth argument to `environment:evaluate!` is a Scheme expression
+evaluating to a procedure that receives the final values list inside the worker.
+Its returned values become the job result. For example, a worksheet can pass
+`'render-result-comment` to its imported formatter. The source runs once, at
+top level; formatting happens afterward, so even native objects can be reduced
+to portable comment text. False preserves the ordinary result.
+
 The job contains its source, generation, status, structured diagnostic and
 result. `output` references ordinary read-only base text. `channels` records
 reverse-chronological `(channel row character)` run starts; channels are
@@ -1218,7 +1230,7 @@ No arbitrary model traversal or implicit current-model alias is involved.
 Environment controls and result controls use this same receiver mechanism.
 
 Asynchronous completion sources may supply a local `basis` procedure and an
-idempotent `release` procedure as the fifth/sixth arguments to
+idempotent `release` procedure as the fourth/fifth arguments to
 `completion:make-source`. A changed basis refreshes visible choices and fences
 old selections even when the draft has not changed. Cleanup releases shared
 catalogue demand; painting reads only prepared completion data.

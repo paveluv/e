@@ -105,7 +105,10 @@
                                 (unless namespace (error 'evaluate "worker is not initialized"))
                                 (let ([p (open-input-string (cadr command))])
                                   (let loop ([form (read p)] [last '()])
-                                    (if (eof-object? form) (apply values last)
+                                    (if (eof-object? form)
+                                      (if (and (pair? (cddr command)) (caddr command))
+                                        ((eval (caddr command) namespace) last)
+                                        (apply values last))
                                       (call-with-values (lambda () (eval form namespace))
                                         (lambda result (loop (read p) result)))))))))]
             [(release)

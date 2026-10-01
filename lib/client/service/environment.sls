@@ -1,6 +1,6 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (service environment)
-  (export cancel! close! completion create! evaluate! release! reset!)
+  (export cancel! close! completion create! evaluate! for-document! release! reset!)
   (import (chezscheme) (prefix (core client) client:))
   (define (request actor operation . args)
     (unless (equal? actor (client:identity)) (error 'environment "actor differs from connection identity"))
@@ -13,8 +13,16 @@
 
   (edoc "Queue Scheme source at an explicit namespace generation and return its job model immediately. Accepted jobs survive head detach; inspect model:snapshots for state and output references."
     (actor actor "connection attribution") (id model "environment") (generation integer "expected generation")
-    (source string "Scheme forms") (returns model) (receiver id (model environment)) (public))
-  (define (evaluate! actor id generation source) (request actor 'environment-evaluate id generation source))
+    (source string "Scheme forms") (projection datum "optional procedure expression receiving the final values list inside the worker; false preserves values")
+    (returns model) (receiver id (model environment)) (public))
+  (define evaluate!
+    (case-lambda
+      [(actor id generation source) (evaluate! actor id generation source #f)]
+      [(actor id generation source projection) (request actor 'environment-evaluate id generation source projection)]))
+
+  (edoc "Get the persistent isolated environment for an explicit document. Changed recipes reset its generation and live bindings, preserving completed jobs. Concurrent heads share the same document environment."
+    (actor actor "caller") (document integer "owning document ID") (input list "environment recipe") (returns model) (public))
+  (define (for-document! actor document input) (request actor 'environment-for-document document input))
 
   (edoc "Cancel a queued job without resetting definitions. Running cancellation resets the namespace and reaps its worker; committed effects remain. Return queued, reset or finished."
     (actor actor "connection attribution") (id model "job") (returns symbol) (receiver id (model evaluation-job)) (public))
