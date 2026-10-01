@@ -1,7 +1,7 @@
 ;; Document filesystem operations belong to the base, independently of views.
 (import (only (foundation edoc) elibrary))
 (elibrary (service document)
-  (export acquire! check! reload! reread! save! save-output!)
+  (export acquire! check! reload! reread! save!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (core property) property:)
           (prefix (foundation string) string:) (prefix (service file) file:)
@@ -118,9 +118,7 @@
                   (list 'trashed (time-second (current-time 'time-utc)) actor)
                   (list 'backup path (cdr disk) sum)))))))
 
-  (define (save-document! actor id path adoption output)
-    ;; One filesystem engine. The explicit output adapter is only for legacy
-    ;; detached head-local text; it receives a receipt, never a hidden document.
+  (define (save-document! actor id path adoption)
     (let ([written? #f])
       (call/cc
         (lambda (return)
@@ -131,7 +129,7 @@
                                        (format "Save failed: ~a" (kernel:condition-text ex)))])
                         (log:add! 'document:save-document! message)
                         (list 'failed message))])
-            (let-values ([(text revision facts) (if id (store:snapshot-state id) (apply values output))])
+            (let-values ([(text revision facts) (store:snapshot-state id)])
               (define (check-source! facts)
                 (when (and (fact facts 'app) (fact facts 'alive))
                   (refuse "Cannot save a buffer that belongs to a live app"))
@@ -148,7 +146,6 @@
                              (equal? (car disk) (fact facts 'base)))
                     (return '(unchanged "No changes to save")))
                   (when (and disk (not adopted?) (not (equal? (car disk) (fact facts 'base))))
-                    (unless id (refuse "The file changed on disk; visit it as a shared document before merging local output"))
                     (let-values ([(status detail)
                                   (apply-disk! actor id path (cons revision facts) disk identity #f)])
                       (cond
@@ -188,27 +185,20 @@
                     ;; Text may advance during I/O; its modified flag remains
                     ;; derived against these exact written bytes. Metadata may
                     ;; not be retargeted or readopted underneath this receipt.
-                    (when (and id (not (store:set-properties! actor id updates review (file:base-name path))))
+                    (unless (store:set-properties! actor id updates review (file:base-name path))
                       (error 'save-document! "Buffer's file state changed; saved baseline was not updated."))
                     (let ([message (if (and adopted? kept)
                                      (format "Wrote ~a; what it held is kept as ~a" path kept)
                                      (format "Wrote ~a" path))])
                       (log:add! 'document:save-document! message)
-                      (if id (list 'saved message) (list 'saved message updates))))))))))))
+                      (list 'saved message)))))))))))
 
   (edoc "Save a shared document in the base, merging external edits undoably and backing up overwritten bytes. File facts, name and an adopted mode commit together; newer text remains dirty. Returns (saved message), (unchanged message), (refused message) or (failed message); a failed save can already have written bytes. Hooks belong to the caller."
         (actor actor "requesting actor") (id integer "document identity")
         (path string "canonical target") (adoption list "(reviewed-first-line detected-mode-name-or-false), used for Save As")
         (returns list))
   (define (save! actor id path adoption)
-    (activity:call-with (lambda () (save-document! actor id path adoption #f))))
-
-  (edoc "Save detached legacy head-local output using the same base filesystem and backup engine. Returns save! statuses, with facts appended to a saved receipt for guarded local adoption. External changes to an already visited file refuse; merging requires a shared document. This adapter ends with local output migration."
-        (actor actor "requesting actor") (path string "canonical target")
-        (text vector "local lines") (facts list "coherent local facts")
-        (adoption list "(reviewed-first-line detected-mode-name-or-false)") (returns list))
-  (define (save-output! actor path text facts adoption)
-    (activity:call-with (lambda () (save-document! actor #f path adoption (list text #f facts)))))
+    (activity:call-with (lambda () (save-document! actor id path adoption))))
 
   (edoc "Acquire a file or directory in the base without placing it in a window. Missing files and parents are created exclusively; existing shared work is reused and disk changes merge undoably. Returns (directory path) or (buffer id admitted? path diagnostic). Filesystem failures raise."
         (actor actor "requesting head") (path string "absolute path, trailing slash requests a directory")

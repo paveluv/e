@@ -369,13 +369,13 @@
        (make-list 8 '(#t #t #t #t #t #t)))
 
      ;; Saving observes live app ownership, including registration by a
-     ;; pre-save hook. Detached views and exited shared apps can be saved.
-     (check 'save-refuses-live-apps-and-allows-their-stopped-output
+     ;; pre-save hook. Only exited shared apps have savable output.
+     (check 'save-refuses-presentations-and-allows-stopped-shared-output
        (map
          (lambda (kind)
-           (let ([b (fresh "app-output" (eq? kind 'shared))] [before #f])
+           (let ([b (fresh "app-output" (not (eq? kind 'local)))] [before #f])
              (define (own!)
-               (if (eq? kind 'shared)
+               (if (not (eq? kind 'local))
                    (head:buffer-facts-set! b '((app . (app save-test)) (alive . #t) (read-only . #t)))
                    (head:register-view! b void))
                (set! before (state b)))
@@ -390,16 +390,16 @@
                  (let* ([result (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))]
                         [unchanged? (and (equal? before (state b)) (not (file-exists? path)))])
                    (kernel:retract-module! 'state-app-save-hook)
-                   (if (eq? kind 'shared) (head:buffer-fact-set! b 'alive #f) (head:detach-app! b))
-                   (let ([saved? (save-file! path)])
-                     (list result unchanged? saved? (file:read path)))))
+                   (if (eq? kind 'local) (head:detach-app! b) (head:buffer-fact-set! b 'alive #f))
+                   (let ([saved? (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))])
+                     (list result unchanged? saved? (and (file-exists? path) (file:read path))))))
                (lambda ()
                  (kernel:retract-module! 'state-app-save-hook)
                  (when (head:buffer-store-id b) (store:delete! head:ui-actor (head:buffer-store-id b)))
                  (head:forget-buffer! b)
                  (when (file-exists? path) (delete-file path))))))
          '(local shared hook))
-       (make-list 3 '(refused #t #t "output\n")))
+       '((refused #t refused #f) (refused #t #t "output\n") (refused #t #t "output\n")))
 
      ;; Saving publishes the file, label and detected mode before callbacks.
      ;; A subscriber can then edit or choose newer metadata, and pump a frame;
@@ -478,51 +478,47 @@
 
      ;; Interrupt a real save after its review but before fact publication.
      ;; The written bytes survive refusal; newer text alone still permits save.
-     (for-each
-       (lambda (shared?)
-         (check (list 'in-flight-save shared?)
-           (map
-             (lambda (change)
-               (let* ([b (fresh "save in flight" shared?)] [before #f] [post-saves 0]
-                      [lines (make-vector 100000 "ordinary line")]
-                      [written (file:text lines #t)] [name (head:buffer-name b)])
-                 (head:store-reset! b lines (if shared? '() '((modified . #t))))
-                 (dynamic-wind
-                   (lambda ()
-                     (parameterize ([kernel:registering-module 'in-flight-save])
-                       (file:add-pre-save-hook! (lambda (target) (set-timer 10000)))
-                       (file:add-post-save-hook! (lambda (target) (set! post-saves (+ post-saves 1))))))
-                   (lambda ()
-                     (let ([result
-                            (interrupt-during!
-                              (lambda ()
-                                (case change
-                                  [(file) (head:buffer-facts-set! b
-                                            '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
-                                  [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
-                                  [(mode) (head:with-buffer b (mode:choose! "invalid-line-output"))]
-                                  [(trailing) (head:buffer-trailing-set! b #f)]
-                                  [(text) (if shared? (insert! (head:buffer-store-id b) 0 "later ")
-                                              (head:store-edit! b (text:make-span 0 0 0 0) '("later ")))])
-                                (set! before (state b)))
-                              (lambda () (save-file! path)))])
-                       (list result (string=? (file:read path) written) post-saves
-                             (if (memq change '(text trailing))
-                                 (and (equal? (head:buffer-base b) written) (head:buffer-modified b)
-                                      (if (eq? change 'text)
-                                          (equal? (vector-ref (car (state b)) 0) "later ordinary line")
-                                          (not (head:buffer-trailing b))))
-                                 (and (equal? before (state b)) (equal? name (head:buffer-name b))
-                                      (let ([message (log:datum (car (log:entries (if shared? 'document:save-document! 'edit:save-file!) 1)))])
-                                        (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
-                                             (string:suffix? "saved baseline was not updated." message))))))))
-                   (lambda ()
-                     (kernel:retract-module! 'in-flight-save)
-                     (when (file-exists? path) (delete-file path))))))
-             '(file protection mode text trailing))
-           '(((#t #f) #t 0 #t) ((#t #f) #t 0 #t) ((#t #f) #t 0 #t)
-             ((#t #t) #t 1 #t) ((#t #t) #t 1 #t))))
-       '(#t #f))
+     (check 'in-flight-save
+            (map
+              (lambda (change)
+                (let* ([b (fresh "save in flight" #t)] [before #f] [post-saves 0]
+                       [lines (make-vector 100000 "ordinary line")]
+                       [written (file:text lines #t)] [name (head:buffer-name b)])
+                  (head:store-reset! b lines '())
+                  (dynamic-wind
+                    (lambda ()
+                      (parameterize ([kernel:registering-module 'in-flight-save])
+                        (file:add-pre-save-hook! (lambda (target) (set-timer 10000)))
+                        (file:add-post-save-hook! (lambda (target) (set! post-saves (+ post-saves 1))))))
+                    (lambda ()
+                      (let ([result
+                             (interrupt-during!
+                               (lambda ()
+                                 (case change
+                                   [(file) (head:buffer-facts-set! b
+                                             '((file . "/tmp/retargeted.txt") (base . "new baseline\n")))]
+                                   [(protection) (head:buffer-facts-set! b '((read-only . #t) (disposable . #t)))]
+                                   [(mode) (head:with-buffer b (mode:choose! "invalid-line-output"))]
+                                   [(trailing) (head:buffer-trailing-set! b #f)]
+                                   [(text) (insert! (head:buffer-store-id b) 0 "later ")])
+                                 (set! before (state b)))
+                               (lambda () (save-file! path)))])
+                        (list result (string=? (file:read path) written) post-saves
+                              (if (memq change '(text trailing))
+                                (and (equal? (head:buffer-base b) written) (head:buffer-modified b)
+                                     (if (eq? change 'text)
+                                         (equal? (vector-ref (car (state b)) 0) "later ordinary line")
+                                         (not (head:buffer-trailing b))))
+                                (and (equal? before (state b)) (equal? name (head:buffer-name b))
+                                     (let ([message (log:datum (car (log:entries 'document:save-document! 1)))])
+                                       (and (string:prefix? (format "Wrote ~a, but could not finish saving:" path) message)
+                                            (string:suffix? "saved baseline was not updated." message))))))))
+                    (lambda ()
+                      (kernel:retract-module! 'in-flight-save)
+                      (when (file-exists? path) (delete-file path))))))
+              '(file protection mode text trailing))
+            '(((#t #f) #t 0 #t) ((#t #f) #t 0 #t) ((#t #f) #t 0 #t)
+              ((#t #t) #t 1 #t) ((#t #t) #t 1 #t)))
 
      ;; Old disk readers cannot attach their stamp/status to newer file facts
      ;; or replace a newer reader's observation of the same baseline.

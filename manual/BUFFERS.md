@@ -833,10 +833,10 @@ or `(failed message)`. A failure after writing says so explicitly.
 
 `edit:save-file!` supplies this mode choice and runs this head's pre-save
 hooks before the request and post-save hooks after successful adoption.
-Detached legacy local output uses `document:save-output!` with its text and
-facts, then adopts the returned facts against its local review. It creates
-no shared shadow buffer. If its previously saved file changed externally,
-visit that file as a shared document to merge it; local output cannot merge.
+Saving requires a shared document. App presentations and legacy local text
+cannot acquire file identity through Save As; copy wanted text into a shared
+document first. Read-only output stored in a shared document can be saved
+after its producing app has stopped.
 Restored backups detect their mode from their original path and first line.
 
 `(store:find-file canonical-path)` looks up the shared

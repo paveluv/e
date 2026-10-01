@@ -719,14 +719,15 @@
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (refuse-file! message) (refuse! message))
 
-  (edoc "Save the current buffer through the base's document service. External changes merge undoably before saving; conflicts refuse, and an unavailable merge rereads undoably instead. Overwritten bytes become a shared backup. Active apps refuse; detached local output uses an explicit export adapter. Pre/post hooks run in this head, with mode, file and name adopted atomically."
+  (edoc "Save the current shared document through the base's document service. External changes merge undoably before saving; conflicts refuse, and an unavailable merge rereads undoably instead. Overwritten bytes become a shared backup. App presentations cannot be saved as files. Pre/post hooks run in this head, with mode, file and name adopted atomically."
         (target file "destination to write and visit") (returns boolean "whether saving completed"))
   (define (save-file! target)
     (let* ([path (file:visit-path target)] [b (head:window-buffer current-window)]
            [id (head:buffer-store-id b)])
       (define (check-source!)
         (when (head:app-buffer? b)
-          (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (head:buffer-name b)))))
+          (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (head:buffer-name b))))
+        (unless id (refuse-file! "Only shared documents can be saved; copy the text into a document first")))
       (check-source!)
       (when (head:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
       (file:run-pre-save-hooks! path)
@@ -734,13 +735,9 @@
       (let-values ([(text revision facts) (head:buffer-state b)])
         (let* ([detected (mode:detect path (vector-ref text 0))]
                [adoption (list (vector-ref text 0) (and detected (mode:name detected)))]
-               [adopted? (not (equal? path (cond [(assq 'file facts) => cdr] [else #f])))]
-               [review (property:select facts (append '(file base app alive)
-                                                (if adopted? '(read-only disposable mode mode-auto) '())))]
-               [result (if id (document:save! head:ui-actor id path adoption)
-                         (document:save-output! head:ui-actor path text facts adoption))])
+               [result (document:save! head:ui-actor id path adoption)])
           ;; Merge/reread can change shared text even when saving refuses.
-          (when id (head:sync-foreign-edits! id) (head:flush-ui-audit! id))
+          (head:sync-foreign-edits! id) (head:flush-ui-audit! id)
           (case (car result)
             [(refused) (refuse-file! (cadr result))]
             [(unchanged) (set! message (cadr result)) #f]
@@ -750,13 +747,6 @@
                          (log:add! 'edit:save-file!
                            (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex)))
                          #f])
-               (unless id
-                 (let* ([updates (caddr result)] [written (cdr (assq 'base updates))])
-                   (unless (and (not (head:app-buffer? b))
-                                (head:buffer-facts-set! b
-                                  (cons (cons 'modified (not (string=? (buffer-text b) written))) updates)
-                                  review (file:base-name path)))
-                     (refuse-file! "Buffer's file state changed; saved baseline was not updated."))))
                (file:run-post-save-hooks! path)
                #t)])))))
 
