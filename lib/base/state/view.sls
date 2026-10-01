@@ -107,7 +107,7 @@
                    (lambda (ids) (if owner (list (list (field owner 'id) (field owner 'revision) (field owner 'references) (value owner))) '())))])
         (unless ids (error 'create! "resource owner changed; retry")) (car ids))))
 
-  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing its child subtrees as unowned roots, then releasing its explicitly owned resources. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke their scoped views on departure. Return status and current target envelope."
+  (edoc "Retire a view against its revision, atomically unlinking its parent and releasing borrowed child subtrees as unowned roots, then releasing its explicitly owned resources and views scoped to its lifetime. Borrowed sources and command targets survive. Head callers unmount first; base resource owners may revoke scoped views on departure. Return status and current target envelope."
         (actor actor "resource owner") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision)
     (unless (and (integer? revision) (exact? revision) (>= revision 0)) (error 'retire! "expected a revision"))
@@ -135,7 +135,9 @@
                                     (let* ([d (need id)] [d (if (descriptor:owner d) (ownership d #f) d)])
                                       (put id (if (equal? id root) (descriptor:with d '((parent . #f) (focus . #f))) d))))
                                   (walk get root fail)))) (descriptor:children d)))) #f id)])
-        (when (eq? status 'applied) (for-each (lambda (p) ((cdr p) actor (car p))) owned))
+        (when (eq? status 'applied)
+          (for-each (lambda (p) ((cdr p) actor (car p))) owned)
+          (retire-scope! actor id))
         (values status (model:snapshot id)))))
 
   (edoc "Retire views scoped to an already-retired resource and their scoped descendants. Guarded allocation cannot extend this closed lifetime; borrowed sources survive."
@@ -148,7 +150,7 @@
           (let ([r (model:snapshot id)])
             (when (and r (equal? (field r 'scope) owner))
               (let-values ([(status current) (retire! actor id (field r 'revision))])
-                (case status [(stale) (retry)] [(applied) (retire-scope! actor id)]))))))
+                (when (eq? status 'stale) (retry)))))))
       (model:ids 'widget-view)))
 
   (edoc "Read a canonical descriptor, or #f if unavailable." (id model "view id") (returns any))

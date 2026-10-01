@@ -565,7 +565,7 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (completion:make-candidate (option-insert option) text styles (candidate-preview type option window))))
+      (completion:make-candidate (option-insert option) text styles (candidate-preview type option window) (vector label hint))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")
@@ -756,7 +756,15 @@
                                     (and make window
                                       (cons (or (hashtable-ref makers make #f)
                                               (let ([scoped (lambda () (head:with-window window (make)))])
-                                                (hashtable-set! makers make scoped) scoped)) (cadddr context)))))))) window))
+                                                (hashtable-set! makers make scoped) scoped)) (cadddr context)))))))
+                            (lambda () #f) (lambda () (values))
+                            (lambda (s pos)
+                              (let ([context (and typed? (argument-context s pos))])
+                                (if (not context) '()
+                                  (list (cons 'type (car context)) (cons 'token (cadddr context))
+                                    (cons 'literal? (car (cddddr context)))
+                                    (cons 'editor (and window (head:window-editor window)))
+                                    (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))))))) window))
 
   (define (completion-at-window source window)
     (if (not window) source
@@ -769,7 +777,8 @@
               (head:with-window window (apply proc arguments)))))
         (completion:make-source (scope (completion:source-lookup source))
           (scope (completion:source-settle source)) (scope (completion:source-kind source))
-          (scope (completion:source-track source))))))
+          (scope (completion:source-track source)) (completion:source-basis source) (completion:source-release source)
+          (scope (completion:source-context source))))))
 
   (define (type-text type)
     ;; a type as the status line names it: a name as itself, a record type

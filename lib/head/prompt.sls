@@ -1,7 +1,7 @@
 ;; Prompt controls own no keyboard reader or window. The host places the tree.
 (import (only (foundation edoc) elibrary))
 (elibrary (head prompt)
-  (export accept! active? cancel! choose! complete! create! drain! edge! history! init! inspect! key! newline! read! register-host! register-profile!)
+  (export accept! active? cancel! choose! complete! completion-context create! create-choices! drain! edge! history! init! inspect! key! newline! read! register-host! register-presentation! register-profile!)
   (import (chezscheme) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:)
           (prefix (head completion) completion:) (prefix (head completion-layout) completion-layout:)
@@ -9,7 +9,7 @@
           (prefix (head editor) editor:)
           (prefix (head entry) entry:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head layout) layout:)
-          (prefix (head suspension) suspension:) (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
+          (prefix (head suspension) suspension:) (prefix (head table) table:) (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
           (prefix (head widget) widget:) (prefix (service log) log:)
           (prefix (service prompt-request) prompt-request:) (prefix (state model) model:)
           (prefix (state view) view:) (prefix (sys glyph) glyph:))
@@ -28,6 +28,8 @@
   (define hovered (make-hashtable equal-hash equal?))
   (define hosts (kernel:make-registry))
   (define profiles (kernel:make-registry car))
+  (define presentations (kernel:make-registry car))
+  (define presentation-factories (make-hashtable equal-hash equal?))
   (define tickets (make-hashtable equal-hash equal?))
   (define host-changes
     (kernel:registry-observe! hosts
@@ -38,8 +40,53 @@
   (define pending '())
   (define-record-type runtime (fields request (mutable generation) factory source completion profile-factory profile
                                 (mutable signature) (mutable delivered?) (mutable closed?)
-                                (mutable message) (mutable history-index) (mutable stash) (mutable edge) (mutable kind)))
+                                (mutable message) (mutable history-index) (mutable stash) (mutable edge) (mutable kind) (mutable context)))
   (define (option options key fallback) (cond [(assq key options) => cdr] [else fallback]))
+
+  (edoc "Register an exact edoc argument type's completion presentation. The module-owned factory receives (request context commands) and returns an unmounted composition. Select passes generation and insertion text; cancel cancels the prompt. Different owners cannot claim the same type; missing types use the generic presentation."
+        (type datum "exact resolved type, including compound type data")
+        (factory procedure "request, explicit context and named select/cancel targets -> view") (public))
+  (define (register-presentation! type factory)
+    (unless (and type (procedure? factory)) (error 'register-presentation! "expected a type and factory"))
+    (kernel:registry-add! presentations (cons type factory)))
+
+  (edoc "Read a prompt's prepared completion snapshot and explicit argument context without querying the provider. Candidates and source handles are head data; draft, origin and request identity belong to the base."
+        (request model "acquired prompt request") (returns list) (effects internal) (public))
+  (define (completion-context request)
+    (let* ([source (model:snapshot request)] [value (and source (get source 'value))]
+           [r (and value (hashtable-ref live (get value 'controller) #f))])
+      (list (cons 'request request) (cons 'origin (if value (get value 'origin) #f))
+        (cons 'argument (if r (runtime-context r) '()))
+        (cons 'snapshot (and r (runtime-completion r) (completion-state:snapshot (runtime-completion r)))))))
+
+  (edoc "Create a completion choice control over the prompt's existing candidate set. Table and columns are head layouts; choosing only proposes literal insertion through the supplied select target."
+        (request model "prompt request") (commands list "explicit select/cancel targets")
+        (layout (one-of columns table) "candidate layout") (owner model "lifetime owner, usually request or containing view") (returns model) (public))
+  (define (create-choices! request commands layout owner)
+    (unless (memq layout '(columns table)) (error 'create-choices! "expected columns or table"))
+    (view:create! head:ui-actor request 'prompt-choices 1 (list (cons 'commands commands) (cons 'layout layout)) '() owner))
+  (define (default-presentation request context commands) (create-choices! request commands 'columns request))
+  (define (table-presentation request context commands) (create-choices! request commands 'table request))
+
+  (define (presentation-service! id frame)
+    (let-values ([(source d inputs) (widget:context id)])
+      (let* ([context (completion-context (view:source d))] [argument (get context 'argument)]
+             [type (option argument 'type #f)] [registration (kernel:registry-find presentations (lambda (r) (equal? (car r) type)))]
+             [factory (if registration (cdr registration) default-presentation)] [key (list (and registration type) factory)]
+             [old (hashtable-ref presentation-factories id #f)])
+        ;; Once accepted, a queued outcome owns the controller's lease.
+        ;; Replacing a child now would renew it and strand that outcome.
+        (unless (or (not (eq? (get (get source 'value) 'status) 'editing)) (equal? key old))
+          (let ([next (factory (view:source d) context (get (view:options d) 'commands))]
+                [prior (and (pair? (view:children d)) (cadar (view:children d)))])
+            (let-values ([(status ignored) (widget:arrange! (list (list id (get (model:snapshot id) 'revision)
+                                                                    (list (list 'presentation next 'fit)) (view:options d))))])
+              (if (eq? status 'applied)
+                (begin (hashtable-set! presentation-factories id key)
+                  (when prior (let ([r (caddar (cadr (model:snapshots (list prior))))])
+                                (when r (view:retire! head:ui-actor prior (get r 'revision))))))
+                (let ([r (caddar (cadr (model:snapshots (list next))))])
+                  (when r (view:retire! head:ui-actor next (get r 'revision)))))))))))
   (define (profile-factory d)
     (let ([recipe (option (view:options d) 'profile #f)])
       (and recipe (kernel:registry-find profiles (lambda (p) (equal? (car p) (list-head recipe 2)))))))
@@ -116,7 +163,7 @@
                                     [(source) (and factory (factory (caddr recipe) (get value 'origin)))]
                                     [(r) (make-runtime request generation factory source
                                            (and source (completion-state:create source (option profile 'transform #f)))
-                                           profile-factory profile #f (not (eq? status 'editing)) #f '(ghost . "") -1 "" #f "symbol")])
+                                           profile-factory profile #f (not (eq? status 'editing)) #f '(ghost . "") -1 "" #f "symbol" '())])
                         (when (and recipe (not factory)) (error 'prompt "completion provider is unavailable" recipe))
                         (hashtable-set! live id r) r)))])
           (when r
@@ -190,7 +237,8 @@
                           (filter values (list (assq 'mode options)
                                            (let ([p (assq 'editing-policy options)]) (and p (cons 'policy (cdr p))))))
                           (if multiline? '((0 . 0) (0 . 0) (0 . 0) #f) '((0 . 0) (0 . 0))) request)]
-                 [choices (create-view! who request 'prompt-choices 1 '() '() request)]
+                 [choices (create-view! who request 'prompt-completion 1
+                            (list (cons 'commands (list (list 'select root 'choose '()) (list 'cancel root 'cancel '())))) '() request)]
                  [help (create-view! who request 'prompt-help 1
                          (list (cons 'text (cond [(assq 'help options) => cdr] [else ""]))) '() request)])
             (let-values ([(status rows)
@@ -227,11 +275,16 @@
           (runtime-signature-set! r signature)
           (repaint-completion! id)))))
   (define (repaint-completion! id)
-    (for-each (lambda (name) (widget:repaint! (widget:descendant id name) #t)) '(choices help)))
+    (define (repaint-tree! child)
+      (widget:repaint! child #t)
+      (let ([d (interaction:snapshot child)]) (when d (for-each (lambda (c) (repaint-tree! (cadr c))) (view:children d)))))
+    (for-each (lambda (name) (repaint-tree! (widget:descendant id name))) '(choices help)))
   (define (refresh-kind! r)
     (let* ([snapshot (completion-state:snapshot (runtime-completion r))]
-           [source (list-ref snapshot 6)] [kind (and (completion:source? source) (completion:source-kind source))])
-      (runtime-kind-set! r (or (if (procedure? kind) (kind (cadr snapshot) (caddr snapshot)) kind) "symbol"))))
+           [source (or (list-ref snapshot 6) (runtime-source r))] [kind (and (completion:source? source) (completion:source-kind source))]
+           [context (and (completion:source? source) (completion:source-context source))])
+      (runtime-kind-set! r (or (if (procedure? kind) (kind (cadr snapshot) (caddr snapshot)) kind) "symbol"))
+      (runtime-context-set! r (if context (context (cadr snapshot) (caddr snapshot)) '()))))
   (define (input-position text offset)
     (let loop ([at 0] [row 0] [column 0])
       (if (= at offset) (cons row column)
@@ -337,17 +390,46 @@
 
   ;; The head owns its API corpus and prepared labels. Only authored input and
   ;; the portable provider recipe belong in the base; painting never ships rows.
-  (define-record-type projection (fields id controller snapshot message kind (mutable width) (mutable rows)))
+  (define-record-type projection (fields id controller snapshot message kind layout (mutable width) (mutable rows)))
   (define (completion-data id source inputs)
     (let* ([controller (get (get source 'value) 'controller)] [r (hashtable-ref live controller #f)])
       (make-projection id controller (and r (runtime-completion r) (completion-state:snapshot (runtime-completion r)))
-        (if r (runtime-message r) '(ghost . "")) (if r (runtime-kind r) "symbol") #f '#())))
+        (if r (runtime-message r) '(ghost . "")) (if r (runtime-kind r) "symbol")
+        (option (view:options (interaction:snapshot id)) 'layout 'columns) #f '#())))
+  (define completion-table (table:make '#("Completion" "Details") '#(10 7) 0 '(1) '#(text text)))
+  (define completion-column (table:make '#("Completion") '#(10) 0 '() '#(text)))
+  (define (table-rows candidates width)
+    (define (cells candidate)
+      (if (completion:candidate? candidate)
+        (or (completion:candidate-cells candidate) (vector (completion:candidate-label candidate) "")) (vector candidate "")))
+    (define (cell candidate column) (vector-ref (cells candidate) column))
+    (if (null? candidates) '#()
+      (let-values ([(format-row columns) (table:layout
+                                           (if (for-all (lambda (c) (string=? (cell c 1) "")) candidates) completion-column completion-table)
+                                           '() candidates cell width)])
+        (list->vector
+          (cons (let ([text (format-row #f)]) (completion-layout:make-row text (make-vector (string-length text) 'header) #f '()))
+            (map (lambda (candidate)
+                   (let* ([text (format-row candidate)] [faces (make-vector (string-length text) 'plain)]
+                          [styles (and (completion:candidate? candidate) (completion:candidate-styles candidate))]
+                          [start (if (completion:candidate? candidate) (completion:candidate-value candidate) candidate)])
+                     (let columns-loop ([columns columns] [offset 0])
+                       (when (pair? columns)
+                         (let* ([column (caar columns)] [source (cell candidate column)] [size (- (caddar columns) (cadar columns))]
+                                [fitted (glyph:fit source size)] [source-offset (if (zero? column) 0 (+ 2 (string-length (cell candidate 0))))])
+                           (do ([i 0 (+ i 1)]) ((= i (string-length fitted)))
+                             (when (< (+ offset i) (vector-length faces))
+                               (vector-set! faces (+ offset i)
+                                 (if (and styles (< i (string-length source)) (< (+ source-offset i) (vector-length styles)))
+                                   (vector-ref styles (+ source-offset i)) (if (zero? column) 'plain 'chrome)))))
+                           (columns-loop (cdr columns) (+ offset (string-length fitted) 2)))))
+                     (completion-layout:make-row text faces #f (list (list 0 (string-length text) start))))) candidates))))))
   (define (rows! data width)
     (unless (equal? width (projection-width data))
       (projection-width-set! data width)
-      (projection-rows-set! data (completion-layout:format-columns
-                                   (or (and (projection-snapshot data) (list-ref (projection-snapshot data) 3)) '())
-                                   (max 1 width) values (lambda (s) #f))))
+      (let ([candidates (or (and (projection-snapshot data) (list-ref (projection-snapshot data) 3)) '())])
+        (projection-rows-set! data (if (eq? (projection-layout data) 'table) (table-rows candidates (max 1 width))
+                                     (completion-layout:format-columns candidates (max 1 width) values (lambda (s) #f))))))
     (projection-rows data))
   (define (choice-page data d width height range)
     (let* ([rows (rows! data width)] [count (vector-length rows)]
@@ -379,7 +461,7 @@
           (and choice (list choice text))))))
   (define (choice-bindings frame x y)
     (let ([hit (choice-at frame x y)] [data (widget:frame-data frame)])
-      (if hit (list (list '(click primary ()) (keymap:call choose! (car data) (cadr data) (caddr (car hit))))) '())))
+      (if hit (list (list '(click primary ()) (keymap:call widget:invoke! (cadddr data) 'select (cadr data) (caddr (car hit))))) '())))
   (define (choice-event! id source d event)
     (and (eq? (car event) 'pointer)
       (let* ([frame (widget:event-frame)] [x (list-ref event 4)] [y (list-ref event 5)]
@@ -512,6 +594,11 @@
 
   (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings." (public))
   (define (init!)
+    (for-each (lambda (type) (register-presentation! type table-presentation)) '(file buffer buffer-name (one-of partial full)))
+    (widget:register! 'prompt-completion 1
+      (append (layout:container 'y)
+        (list (cons 'service presentation-service!)
+          (cons 'release (lambda (id) (hashtable-delete! presentation-factories id))))))
     (widget:register! 'prompt-continuation 1
       (append (layout:container 'y)
         (list (cons 'contexts (lambda (id d) (option (view:options d) 'contexts '())))
@@ -531,7 +618,7 @@
     (widget:register! 'prompt 1
       (append (layout:container 'y)
         (list (cons 'capture-contexts '(widget-prompt)) (cons 'capture-event capture-event!) (cons 'service service!) (cons 'release release!)
-          (cons 'actions (list (cons 'accept accept!) (cons 'cancel cancel!))))))
+          (cons 'actions (list (cons 'accept accept!) (cons 'cancel cancel!) (cons 'choose choose!))))))
     (keymap:bind-default! 'widget-prompt "RET" (keymap:call accept! widget:target))
     (keymap:bind-default! 'widget-prompt "TAB" (keymap:call complete! widget:target #f))
     (keymap:bind-default! 'widget-prompt "S-TAB" (keymap:call complete! widget:target #t))

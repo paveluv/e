@@ -1,9 +1,9 @@
 ;; Completion contracts are independent of prompt placement and input dispatch.
 (import (only (foundation edoc) elibrary))
 (elibrary (head completion)
-  (export candidate-label candidate-preview candidate-styles candidate-value candidate?
+  (export candidate-cells candidate-label candidate-preview candidate-styles candidate-value candidate?
           make-candidate make-searcher make-source provider register! searcher-done searcher-find searcher-next searcher-previous searcher?
-          source-basis source-kind source-lookup source-release source-settle source-track source?)
+          source-basis source-context source-kind source-lookup source-release source-settle source-track source?)
   (import (rnrs) (only (chezscheme) list-head) (prefix (core kernel) kernel:))
 
   (define providers (kernel:make-registry car))
@@ -43,8 +43,9 @@
         (settle (or procedure #f) "advance after a sole completion")
         (kind (or procedure string #f) "completion label")
         (track (or procedure #f) "optional live search provider")
-        (basis procedure "local revision stamp") (release procedure "idempotent lifetime cleanup"))
-  (define-record-type (source %make-source source?) (fields lookup settle kind track basis release))
+        (basis procedure "local revision stamp") (release procedure "idempotent lifetime cleanup")
+        (context (or procedure #f) "text and caret -> explicit argument context"))
+  (define-record-type (source %make-source source?) (fields lookup settle kind track basis release context))
 
   (edoc "A cursor-aware source: (lookup text position) gives (values start end expansions candidates), start #f meaning no completable token; an optional settle step, (settle text position), gives the (text . position) to continue with after a sole match is inserted; an optional kind, (kind text position) or a string, names what the completions are for the list's status line; an optional track, (track text position), gives (maker . needle) where a live search stands in for the list."
         (lookup procedure "the completion source")
@@ -52,7 +53,8 @@
         (kind (or procedure string #f) "what the completions are")
         (track (or procedure #f) "where a live search stands in")
         (basis procedure "local revision stamp, optional with release")
-        (release procedure "idempotent source cleanup, optional with basis"))
+        (release procedure "idempotent source cleanup, optional with basis")
+        (context (or procedure #f) "optional argument context containing an exact type"))
   (define make-source
     (case-lambda
       [(lookup)
@@ -62,9 +64,11 @@
       [(lookup settle kind)
        (make-source lookup settle kind #f)]
       [(lookup settle kind track)
-       (%make-source lookup settle kind track (lambda () #f) (lambda () (values)))]
+       (%make-source lookup settle kind track (lambda () #f) (lambda () (values)) #f)]
       [(lookup settle kind track basis release)
-       (%make-source lookup settle kind track basis release)]))
+       (%make-source lookup settle kind track basis release #f)]
+      [(lookup settle kind track basis release context)
+       (%make-source lookup settle kind track basis release context)]))
 
   ;; A searcher stands in for the list at a typed argument: it finds the
   ;; needle's matches in the current buffer and highlights them as a search
@@ -80,17 +84,22 @@
   ;; inserted on selection. The lookup result owns both, including during cycling.
   (edoc "A candidate's insertion text, styled label and optional reversible preview."
         (value string "inserted text") (label string "display label")
-        (styles (or vector #f) "label character styles") (preview (or procedure #f) "show candidate and return cleanup"))
+        (styles (or vector #f) "label character styles") (preview (or procedure #f) "show candidate and return cleanup")
+        (cells (or vector #f) "optional semantic label and hint cells"))
   (define-record-type (candidate %make-candidate candidate?)
-    (fields value label styles preview))
+    (fields value label styles preview cells))
 
   (edoc "A completion candidate: the text inserted on selection, the label the list shows with its styles, and an optional preview, a thunk that shows the candidate's value in the editor while it is the inserted one and gives the thunk undoing the showing."
         (value string "the text inserted on selection")
         (label string "the text shown in the list")
         (styles (or vector #f) "the label's styles")
-        (preview (list-of procedure) "the preview thunk, at most one")
+        (preview (or procedure #f) "optional preview thunk")
+        (cells (or vector #f) "optional semantic label and hint cells")
         (returns (record candidate)))
-  (define (make-candidate value label styles . preview)
-    (%make-candidate value label styles (and (pair? preview) (car preview))))
+  (define make-candidate
+    (case-lambda
+      [(value label styles) (%make-candidate value label styles #f #f)]
+      [(value label styles preview) (%make-candidate value label styles preview #f)]
+      [(value label styles preview cells) (%make-candidate value label styles preview cells)]))
 
 )

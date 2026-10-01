@@ -576,7 +576,8 @@ copied tree. An allocation or fork refuses if its resource owner disappears.
 
 After unmounting, `view:retire!` takes actor, view and expected model revision.
 It atomically removes the view from its parent, clears affected host focus and
-releases its child subtrees as unowned roots. Sources and command targets are
+releases borrowed child subtrees as unowned roots. Views scoped to the retired
+view's lifetime are retired too, including their scoped descendants. Sources and command targets are
 borrowed and survive. Use this operation for views; `model:retire!` handles
 ordinary model state. A resource-owning service may retire its scoped views
 when its request or session ends.
@@ -1221,3 +1222,36 @@ idempotent `release` procedure as the fifth/sixth arguments to
 `completion:make-source`. A changed basis refreshes visible choices and fences
 old selections even when the draft has not changed. Cleanup releases shared
 catalogue demand; painting reads only prepared completion data.
+
+## Prompt completion presentations
+
+`prompt:register-presentation! type factory` maps an exact edoc argument type
+to a module-owned head factory. Compound type data is matched exactly too;
+there is no inheritance or ranking between factories. Conflicting owners
+refuse registration. Unregistered types use the generic presentation, and
+reload/removal replaces the affected child through the normal widget lifetime.
+
+The factory receives `(request context commands)` and returns an unmounted
+view or composition. `context` contains the captured origin, prepared argument
+context and completion snapshot. The `select` target accepts the displayed
+generation and insertion text; `cancel` cancels the prompt. For example:
+
+```scheme
+(prompt:register-presentation! '(one-of red green blue)
+  (lambda (request context commands)
+    (prompt:create-choices! request commands 'table request)))
+```
+
+`prompt:create-choices!` supports `columns` and `table` using the same provider
+candidates. Its final argument is its lifetime owner: use the request for a
+standalone choice view or a containing view for a composed child. File,
+buffer and terminal-capture arguments have table presentations. Empty hint
+columns are omitted. Selecting a file inserts its literal; it does not open it.
+
+`prompt:completion-context request` reads prepared head data without querying
+the provider. A completion source may provide a seventh `context` callback to
+`completion:make-source`; it receives text and caret and returns an alist with
+an exact `type` and any explicit argument context its presentation needs.
+Factories do not perform matching. Normalization, generation fencing and
+literal insertion remain with the existing completion session. Typing within
+one type reuses its composition; painting makes no completion requests.

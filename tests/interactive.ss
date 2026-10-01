@@ -285,7 +285,8 @@
      (wait-for! 'a-typed-argument-lists-its-values
                 (lambda () (and (find-cell "matches of buffer")
                                 (find-cell "(buffer \"*scratch*\")")
-                                (find-cell "(buffer \"*terminal*\")  terminal")))
+                                (find-cell "(buffer \"*terminal*\")")
+                                (find-cell "Completion") (find-cell "Details") (find-cell "terminal  modified")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'typed-completions-give-the-window-back
@@ -297,7 +298,7 @@
      (wait-for! 'a-directory-completion-stays-open-and-lists-its-entries
                 (lambda () (and (find-cell "λ (edit:visit-file! (file \"manual/")
                                 (find-cell "matches of file")
-                                (find-cell "manual/EVAL.md")))
+                                (find-cell "manual/APPS.md")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-session-gives-the-window-back
