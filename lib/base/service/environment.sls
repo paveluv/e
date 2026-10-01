@@ -142,7 +142,7 @@
                  [(read) (unless (null? args) (error 'resource "invalid read")) (list (get r 'revision) (get r 'value))]
                  [(commit)
                   (unless (= (length args) 2) (error 'resource "invalid commit"))
-                  (when (memq (get r 'kind) '(environment evaluation-job widget-view collection buffer-catalogue
+                  (when (memq (get r 'kind) '(history history-item environment evaluation-job widget-view collection buffer-catalogue
                                                connection-topology connection-bindings prompt-request))
                     (error 'resource "use the model's owning service"))
                   (call-with-values (lambda () (model:commit! actor

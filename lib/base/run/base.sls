@@ -22,6 +22,7 @@
           ;; Keep them in the resident import graph even before their first call.
           (prefix (service git) git:)
           (prefix (service git-source) git-source:)
+          (prefix (service history) history:)
           (prefix (service inspection) inspection:)
           (prefix (service journal-source) journal-source:)
           (prefix (service log) log:)
@@ -51,7 +52,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "history" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -134,7 +135,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(change-preview widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+      (when (memq kind '(history history-item change-preview widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -142,6 +143,8 @@
       [(environment-create) (control!) (arity 2) (apply environment:create! actor args)]
       [(environment-evaluate) (control!) (arity 4) (apply environment:evaluate! actor args)]
       [(environment-for-document) (control!) (arity 2) (apply environment:for-document! actor args)]
+      [(history-create) (control!) (arity 1) (apply history:create! actor args)]
+      [(history-append) (control!) (arity 5) (apply history:append! actor args)]
       [(environment-cancel) (control!) (arity 1) (environment:cancel! actor (car args))]
       [(environment-reset) (control!) (arity 2) (apply environment:reset! actor args) #t]
       [(environment-release) (control!) (arity 1) (environment:release! actor (car args))]
@@ -202,7 +205,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(change-preview connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+             [(history history-item change-preview connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)

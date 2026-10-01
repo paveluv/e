@@ -16,7 +16,8 @@
            [result (eval:create-result-view! head:ui-actor job)]
            [prompt (eval:create-model-prompt! env generation draft (list (list 'accepted id 'accepted '())))])
       (widget:arrange!
-        (list (list id (model:revision id) (list (car (view:children d)) (list 'result result '(grow 1)) (list 'prompt prompt 'fit))
+        (list (list id (environment-example:get (caddar (cadr (model:snapshots (list id)))) 'revision)
+                (list (car (view:children d)) (list 'result result '(grow 1)) (list 'prompt prompt 'fit))
                 (view:options d))))
       (widget:focus! id (widget:descendant prompt 'input 'entry)))))
 (widget:register! 'environment-example 1

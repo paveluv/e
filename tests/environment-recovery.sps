@@ -4,7 +4,7 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (service environment) environment:) (prefix (state model) model:)
+     (import (prefix (service environment) environment:) (prefix (service history) history:) (prefix (state model) model:)
        (prefix (state store) store:) (prefix (test) test:))
      (define saved (read))
      (define env (caddr saved))
@@ -21,7 +21,9 @@
            (test:await 'restored-worker (lambda () (eq? (get (value fresh) 'status) 'error)))
            (test:check 'portable-history-and-output-survive-with-fresh-native-bindings
              (list (get (value job) 'result) (get (value job) 'channels)
-               (store:line output 0) (store:property output 'internal) (store:exists? (list-ref saved 4)))
-             '((value ((portable)) "((portable))") ((stdout 0 0)) "retained" #t #t))))
+               (store:line output 0) (store:property output 'internal) (store:exists? (list-ref saved 4))
+               (map (lambda (id) (get (value id) 'count)) (model:ids 'history))
+               (map (lambda (id) (car (get (value id) 'recipe))) (model:ids 'history-item)))
+             '((value ((portable)) "((portable))") ((stdout 0 0)) "retained" #t #t (2) (result unregistered-example)))))
        environment:stop!)
      (test:finish! 'environment-recovery)))

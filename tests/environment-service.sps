@@ -76,6 +76,9 @@
       (environment:close! bob b (generation b))
       (let ([saved (run alice a "(define transient-binding 9) (display \"retained\") '(portable)")])
         (done saved)
+        (let ([history (history:create! alice 'persistent)])
+          (history:append! alice history 0 (list 'result 1 saved) #f (list saved a))
+          (history:append! alice history 1 '(unregistered-example 1 (inert data)) #f '()))
         (environment:stop!)
         (let ([process (sys:open-process '("scheme" "--script" "tests/environment-recovery.sps"))])
           (dynamic-wind void

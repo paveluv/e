@@ -5,7 +5,7 @@
 (test-roots! 'base)
 (eval
   '(begin
-     (import (prefix (core worker) worker:) (prefix (service environment) environment:)
+     (import (prefix (core worker) worker:) (prefix (service environment) environment:) (prefix (service history) history:)
        (prefix (state model) model:) (prefix (state store) store:) (prefix (foundation text) text:)
        (prefix (sys sys) sys:) (prefix (test) test:))
      (define recipe
