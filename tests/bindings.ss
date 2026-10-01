@@ -127,5 +127,33 @@
          (vector-length (head:buffer-lines (head:window-buffer (head:popup))))) '(#t "<bindings>" 1))
      (keymap:run! (keymap:call widget:invoke! (widget:descendant shown 'app) 'return)) (head:before-frame!)
      (check 'default-return-restores-an-empty-popup (head:popup-rows) 0)
+     ;; A named host outlives its attachment's transient inspection. Exercise
+     ;; both departure (an unavailable snapshot) and recovery (no subtree).
+     (for-each
+       (lambda (reason)
+         (set! shown (bindings:show!))
+         (let* ([app (widget:descendant shown 'app)] [query (view:source (interaction:snapshot app))])
+           (test:await 'default-inspection-ready
+             (lambda () (head:before-frame!) (eq? 'ready (get (get (model:snapshot query) 'value) 'status))))
+           (case reason
+             [(departed)
+              (let ([r (model:snapshot query)])
+                (model:commit! head:ui-actor
+                  (list (list query (get r 'revision) (get r 'references)
+                          (map (lambda (p) (if (eq? (car p) 'status) '(status . unavailable) p)) (get r 'value))))))]
+             [(restored)
+              (for-each (lambda (id) (model:retire! head:ui-actor id (model:revision id)))
+                (cons query (map car (view:tree app))))])
+           (head:before-frame!)
+           (let* ([fresh (bindings:show!)] [app (widget:descendant fresh 'app)]
+                  [source (view:source (interaction:snapshot app))])
+             (test:await 'reopened-inspection-ready
+               (lambda () (head:before-frame!) (eq? 'ready (get (get (model:snapshot source) 'value) 'status))))
+             (check (list 'default-inspection-is-rebuilt reason)
+               (list (not (equal? shown fresh)) (model:snapshot shown)
+                 (equal? fresh (head:window-widget (head:popup)))
+                 (and (model:snapshot query) #t))
+               (list #t #f #t (eq? reason 'departed))))))
+       '(restored departed))
      (include "tests/inspection.sps")
      (test:finish! 'bindings)))

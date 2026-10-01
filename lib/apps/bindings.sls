@@ -4,6 +4,7 @@
   (export capture-key! copy! create! hide! init! inspect! key! open! page! page-up! press! select! show!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core work-queue) work-queue:)
           (prefix (foundation text) text:) (prefix (head binding-list) listing:)
+          (prefix (head catalogue-host) catalogue-host:)
           (prefix (head dispatch) dispatch:) (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head mode) mode:)
           (prefix (head mouse) mouse:) (prefix (head widget) widget:) (prefix (head window) window:)
@@ -231,10 +232,17 @@
 
   ;; The default placement is the only part that knows about windows.
   (define default-root #f)
+  (define (live-app root)
+    (let* ([d (interaction:snapshot root)] [child (and d (assq 'app (view:children d)))]
+           [app (and child (interaction:snapshot (cadr child)))]
+           [r (and app (view:source app) (model:snapshot (view:source app)))]
+           [v (and r (get r 'value '()))])
+      (and v (equal? (get v 'owner #f) head:ui-actor)
+        (not (eq? (get v 'status #f) 'unavailable)) (cadr child))))
   (define (active-app)
     (and default-root
       (exists (lambda (w) (and (equal? (head:window-widget w) default-root) (or (not (head:popup? w)) (> (head:popup-rows) 0)))) (head:windows))
-      (interaction:snapshot default-root) (widget:descendant default-root 'app)))
+      (live-app default-root)))
   (define (default-subject)
     (let* ([w (head:current-window)] [root (dispatch:input-root)] [b (head:window-buffer w)])
       (and (not (and default-root (equal? (head:window-widget w) default-root)))
@@ -244,7 +252,16 @@
     (let ([app (active-app)])
       (when app (let ([target (default-subject)]) (when target (request! app target))))))
   (define (ensure! target)
-    (set! default-root (window:tool! "bindings" (lambda (commands) (create! commands (and target (car target))))))
+    (define (tool!) (window:tool! "bindings" (lambda (commands) (create! commands (and target (car target))))))
+    (let ([root (tool!)])
+      ;; The window host survives recovery; its attachment's inspection does
+      ;; not. Retire only this placement, preserving borrowed snapshots that
+      ;; another inspector may still display as unavailable.
+      (unless (live-app root)
+        (unless (catalogue-host:retire! root (view:generation (interaction:snapshot root)))
+          (refuse "Inspection changed while reopening; try again"))
+        (set! root (tool!)))
+      (set! default-root root))
     (when target (request! (widget:descendant default-root 'app) target)) default-root)
 
   (edoc "Show mouse, keyboard, command and composition bindings in the default pop-up. An already visible inspector pages down."

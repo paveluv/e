@@ -1,0 +1,63 @@
+;; Exercise the example inside the existing widget process, without sleeps.
+(load "examples/tetris.e")
+(let ()
+  (define (occupied game) (length (filter positive? (bytevector->u8-list (vector-ref game 0)))))
+  (define (state id) (view:state (interaction:snapshot id)))
+  (check 'tetris-seven-pieces-rotate-without-drift
+    (for-all (lambda (kind)
+               (let ([p (tetris:piece kind)])
+                 (and (tetris:fits? (make-bytevector 200 0) p)
+                   (equal? p (fold-left (lambda (p ignored) (tetris:rotate p)) p (iota 4)))))) '(1 2 3 4 5 6 7)) #t)
+  (let* ([g (tetris:new-game)] [wall (fold-left (lambda (g ignored) (tetris:step g 'left)) g (iota 12))]
+         [paused (tetris:step wall 'pause)] [dropped (tetris:step wall 'drop)])
+    (check 'tetris-collisions-pause-and-lock-preserve-prior-state
+      (list (equal? wall (tetris:step wall 'left)) (equal? paused (tetris:step paused 'tick))
+        (occupied g) (occupied dropped)) '(#t #t 0 4)))
+  (check 'tetris-clears-one-through-four-lines-and-shifts-survivors
+    (map (lambda (n)
+           (let ([g (tetris:new-game)])
+             (vector-set! g 1 (tetris:rotate (tetris:piece 1)))
+             (bytevector-u8-set! (vector-ref g 0) 0 7)
+             (for-each (lambda (y) (for-each (lambda (x) (unless (= x 5)
+                                                           (bytevector-u8-set! (vector-ref g 0) (+ x (* 10 y)) 2))) (iota 10)))
+               (map (lambda (y) (+ y (- 20 n))) (iota n)))
+             (let ([next (tetris:step g 'drop)])
+               (list (vector-ref next 4) (vector-ref next 3) (occupied next)
+                 (bytevector-u8-ref (vector-ref next 0) (* 10 n)))))) '(1 2 3 4))
+    '((1 100 4 7) (2 300 3 7) (3 500 2 7) (4 800 1 7)))
+  (let ([g (tetris:new-game)])
+    (vector-set! g 1 (tetris:move (tetris:piece 2) 0 18))
+    (vector-set! g 2 2)
+    (bytevector-u8-set! (vector-ref g 0) 3 7)
+    (let* ([over (tetris:step g 'tick)] [fresh (tetris:step over 'restart)])
+      (check 'tetris-blocked-spawn-stops-until-restart
+        (list (vector-ref over 5) (equal? over (tetris:step over 'drop))
+          (vector-ref fresh 5) (occupied fresh)) '(over #t playing 0))))
+  (let* ([a (tetris:create!)] [b (tetris:create!)]
+         [root (view:create! head:ui-actor #f 'row 1 '() '())])
+    (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+    (widget:mount! root 'tetris-example)
+    (let ([before (state b)] [f (widget:prepare! root 86 20)])
+      (widget:present! (list (list f 0 0)))
+      (widget:focus! root a)
+      (let ([piece (vector-ref (state a) 1)])
+        (dispatch:input! root '(key "LEFT"))
+        (check 'tetris-keymap-invokes-the-public-action
+          (vector-ref (state a) 1) (tetris:move piece -1 0)))
+      (let ([piece (vector-ref (state a) 1)])
+        (hashtable-set! tetris:deadlines a (make-time 'time-monotonic 0 0))
+        (widget:pump!)
+        (check 'tetris-composes-with-independent-games-and-scheduled-gravity
+          (list (length (widget:frame-lines f)) (map (lambda (f) (caddr (widget:frame-rect f))) (widget:frame-children f))
+            (equal? before (state b)) (equal? (vector-ref (state a) 1) (tetris:move piece 0 1))) '(20 (43 43) #t #t)))
+      (tetris:play! a 'pause)
+      (widget:pump!)
+      (check 'tetris-pause-and-small-geometry-release-animation
+        (list (hashtable-contains? tetris:deadlines a)
+          (car (widget:frame-lines (widget:prepare! a 21 5)))) (list #f (glyph:fit "Tetris needs 22×20" 21))))
+    (let ([saved (state a)])
+      (widget:unmount! root)
+      (check 'tetris-unmount-keeps-saved-game-and-releases-deadlines
+        (list (equal? saved (view:state (view:snapshot a))) (hashtable-size tetris:deadlines)) '(#t 0)))
+    (view:retire! head:ui-actor root (model:revision root))
+    (for-each (lambda (id) (view:retire! head:ui-actor id (model:revision id))) (list a b))))

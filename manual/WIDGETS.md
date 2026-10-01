@@ -532,6 +532,22 @@ validates the selected query basis
 before editing. Its data and views survive detach; load its action definition
 again in head configuration when using it across head restarts.
 
+The [Tetris example](../examples/tetris.e) is a single self-contained widget:
+
+```scheme
+(load (string-append (kernel:installation-directory) "/examples/tetris.e"))
+(tetris:open!)
+```
+
+Left/Right move, Up rotates, Down lowers a piece, Space drops it, `p` pauses
+and `r` restarts. It needs at least 22 columns and 20 rows; a wider host shows
+the score, next piece and controls. `(tetris:create!)` returns an unmounted
+view that fits into any composition, just like a table or editor. Each view
+has an independent game in its saved interaction state. Gravity uses the
+head's frame deadlines and stops when paused or unmounted. There are no game
+threads, custom wire operations or base configuration. Load the example again
+to present a saved game in a new head.
+
 Base and head port declarations must agree. A differing or absent declaration
 makes its endpoint unavailable; restoring the matching declaration reacquires
 its dependencies. Change the contract schema when changing a nominal type's

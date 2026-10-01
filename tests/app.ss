@@ -415,5 +415,6 @@
      (include "tests/git-widget.sps")
      (include "tests/range.sps")
      (include "tests/document.sps")
+     (include "tests/tetris.sps")
      (test:finish! 'app))
   (interaction-environment))
