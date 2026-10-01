@@ -104,9 +104,10 @@ Extensions may be deferred until Tab requests normalization; every extension
 must preserve the candidate set. Return false as the start when no token can
 complete. Optional settle, kind and argument-context callbacks preserve typed
 completion behavior. Rich candidates use `completion:make-candidate` with an
-insertion string, display label, character styles and optional reversible
-preview. The provider owns matching; the prompt owns input, selection and
-lifetime.
+insertion string, display label, character styles, optional semantic cells
+and optional typed value context. This context selects a scoped presentation;
+it contains no executable preview callback. The provider owns matching; the
+prompt owns input, selection and lifetime.
 
 `prompt:register-host!` supplies placement for linear callers. Its preparation
 procedure returns parent request, portable captured origin, and an attachment

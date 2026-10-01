@@ -138,7 +138,7 @@
     (let ([r (hashtable-ref live id #f)])
       (when r
         (runtime-closed?-set! r #t)
-        (when (runtime-completion r) (completion-state:finish! (runtime-completion r) #f))
+        (when (runtime-completion r) (completion-state:finish! (runtime-completion r)))
         (hashtable-delete! live id)
         ;; A host may be walking the very descriptors it is releasing.
         ;; Teardown runs after unmount/reconciliation has finished.
@@ -181,7 +181,7 @@
           (unless (or (not r) (runtime-delivered? r) (runtime-closed? r) (eq? status 'editing))
             (runtime-generation-set! r generation)
             (runtime-delivered?-set! r #t)
-            (when (runtime-completion r) (completion-state:finish! (runtime-completion r) (eq? status 'accepted)))
+            (when (runtime-completion r) (completion-state:finish! (runtime-completion r)))
             (let ([outcome (if (eq? status 'accepted) (get value 'outcome) (get value 'origin))])
               (queue!
                 (lambda ()
@@ -282,9 +282,13 @@
   (define (refresh-kind! r)
     (let* ([snapshot (completion-state:snapshot (runtime-completion r))]
            [source (or (list-ref snapshot 6) (runtime-source r))] [kind (and (completion:source? source) (completion:source-kind source))]
-           [context (and (completion:source? source) (completion:source-context source))])
+           [context (and (completion:source? source) (completion:source-context source))]
+           [selected (list-ref snapshot 7)]
+           [current (if context (context (cadr snapshot) (caddr snapshot)) '())]
+           [chosen (and selected (completion:candidate-context selected))])
       (runtime-kind-set! r (or (if (procedure? kind) (kind (cadr snapshot) (caddr snapshot)) kind) "symbol"))
-      (runtime-context-set! r (if context (context (cadr snapshot) (caddr snapshot)) '()))))
+      (runtime-context-set! r (if (and chosen
+                                    (or (not (assq 'type current)) (equal? (assq 'type current) (assq 'type chosen)))) chosen current))))
   (define (input-position text offset)
     (let loop ([at 0] [row 0] [column 0])
       (if (= at offset) (cons row column)
@@ -328,7 +332,7 @@
             (unless (and (memq 'complete (widget:actions presentation)) (widget:act! presentation 'complete backwards?))
               (let-values ([(entry source d text position) (draft-context id)])
                 (completion-state:normalize! (runtime-completion r)
-                  (if backwards? (option (runtime-profile r) 'alternate (runtime-source r)) (runtime-source r)) backwards?)
+                  (if backwards? (option (runtime-profile r) 'alternate (runtime-source r)) (runtime-source r)))
                 (refresh-kind! r)
                 (apply-completion! id r entry source d))))))))
 

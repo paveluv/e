@@ -346,8 +346,8 @@
      (wait-for! 'return-settles-the-last-needle-before-closing
        (lambda () (and (not (find-cell "I-search:")) (equal? (evaluate '(head:point)) '(1 . 5)))) 5000)
      (evaluate '(begin (head:show-buffer! (head:buffer-named "*scratch*")) #t))
-     ;; A revision candidate previews its entry: a sole completion highlights
-     ;; the text the entry wrote and brings point there; C-g undoes both.
+     ;; A revision candidate highlights a separate read-only editor; the
+     ;; source editor's caret and style stay unchanged throughout.
      (evaluate '(let ([b (head:new-buffer! "previews")])
                   (head:show-buffer! b)
                   (head:goto! '(0 . 0))
@@ -358,9 +358,16 @@
      (send! "\x1b;xdelta-log:show! (revision 2\t")
      (wait-for! 'a-sole-revision-settles-and-previews
                 (lambda () (find-cell "λ (delta-log:show! (revision 2))")) 5000)
-     (check 'the-previewed-entry-is-highlighted
+     (wait-for! 'the-previewed-entry-is-highlighted
+       (lambda ()
+         (exists (lambda (row)
+                   (let* ([line (list-ref (screen-lines) row)] [at (string:search line "alpha beta" 0 (string-length line))])
+                     (and at (not (eq? (style-at (cons row (+ at 6))) 'plain)))))
+           (iota (length (screen-lines))))) 5000)
+     (check 'revision-preview-does-not-move-or-restyle-original
        (let ([cell (find-cell "alpha beta")])
-         (and cell (not (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain)))))
+         (and (equal? (evaluate '(head:point)) '(0 . 0)) cell
+           (eq? (style-at (cons (car cell) (+ (cdr cell) 6))) 'plain))))
      (send! "\x7;")                     ; C-g
      (wait-for! 'the-preview-quits-with-the-prompt (lambda () (find-cell "Quit")) 5000)
      (check 'cancelling-the-preview-restores-point-and-the-style

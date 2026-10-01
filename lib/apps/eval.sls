@@ -543,15 +543,6 @@
       (let ([inserts (bare-inserts)])
         (if (eq? in-string? #t) (map string-escaped inserts) inserts))))
 
-  (define (candidate-preview type option window)
-    ;; the thunk showing a value candidate in the editor while it is the
-    ;; inserted one, from its type's preview clause; #f for the rest
-    (let ([p (and (option-value option) (edoc:type-preview type))])
-      (and p window
-        (lambda ()
-          (let ([undo (head:with-window window (p (option-value option)))])
-            (and undo (lambda () (when (memq window (head:windows)) (head:with-window window (undo))))))))))
-
   (define (typed-candidate type entry window)
     ;; a prompt candidate from (option . fragments): the label with its
     ;; matched characters underlined, the hint in grey, the insertion apart
@@ -565,7 +556,11 @@
         (lambda (fragment)
           (style:fill-range! styles (cadr fragment) (+ (cadr fragment) (caddr fragment)) (list face 'mark)))
         fragments)
-      (completion:make-candidate (option-insert option) text styles (candidate-preview type option window) (vector label hint))))
+      (completion:make-candidate (option-insert option) text styles (vector label hint)
+        (and (option-value option)
+          (list (cons 'type type) (cons 'value (option-value option)) '(literal? . #t)
+            (cons 'document (and window (head:buffer-store-id (head:window-buffer window))))
+            (cons 'editor (and window (head:window-editor window))))))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
         (text string "the prompt input")

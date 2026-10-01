@@ -36,6 +36,7 @@
      (define bot '(agent delta-test))
      (include "tests/rewrite-draft.sps")
      (include "tests/conflict-review.sps")
+     (include "tests/change-preview.sps")
      (define b (head:new-buffer! "log-me"))
      (head:show-buffer! b)
      (head:goto! '(0 . 0))

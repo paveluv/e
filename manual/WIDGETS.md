@@ -1263,3 +1263,19 @@ Its query has no redundant input draft; the typed needle input carries text.
 First-hit annotations arrive before the optional cancellable count. Closing
 the prompt releases its views and search demand without restoring or modifying
 the original editor.
+
+Revision and conflict arguments use the same choice control beside a read-only
+editor. `change-preview:create!` creates a base query owned by the containing
+view; that view declares it in `owned`. Its `selection` input is false,
+`(revision number)` or `(conflict number)`, and its `annotations` output is a
+revision-bound batch containing at most one span. It borrows the document
+instead of copying text or creating a review draft. Selection and document
+version fence worker publication, including settlement that changes conflict
+state without changing text. Retiring the owner removes its query and views.
+
+Completion candidates may carry typed value context as their fifth argument.
+The session retains a selected literal after automatic closing parentheses,
+until input, caret or provider basis changes. A different current argument
+type takes precedence. This is data for presentation; it never evaluates a
+variable, nested call or candidate callback. Legacy edoc `search`/`preview`
+clauses and completion preview thunks are removed.

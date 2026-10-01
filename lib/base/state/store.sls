@@ -20,7 +20,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state store)
-  (export archive! backups-kept blame buffer-list buffer-name close! conflict-state conflicts create! delete! discard! drop-mark! drop-property!
+  (export archive! backups-kept blame buffer-list buffer-name close! (rename (conflict-region conflict-span)) conflict-state conflicts create! delete! discard! drop-mark! drop-property!
           edit! edit-with-snapshot! exists? expire-trash! export extract find-file find-named
           history history-step! import! line line-count (rename (log-entries log)) log-retention
           mark marks metadata properties property publication publish! redo! reload! rename! reread! reset! resolve! resolve-picks! revision revision-span
@@ -2192,6 +2192,16 @@
         (let* ([b (buffer-of 'revision-span id)]
                [e (find (lambda (e) (= revision (entry-revision e))) (buffer-deltas b))])
           (list (buffer-revision b) (and e (text:span->datum (current-span-of b e))))))))
+
+  (edoc "Locate one pending conflict without copying its alternatives or document text. Return (source-revision span-datum); a missing or settled conflict has a false span."
+        (id integer "document") (revision integer "conflict identity") (returns list))
+  (define (conflict-region id revision)
+    (unless (integer-at-least? revision 1) (error 'conflict-span "expected a conflict identity" revision))
+    (locked
+      (lambda ()
+        (let* ([b (buffer-of 'conflict-region id)]
+               [c (find (lambda (c) (= revision (conflict-revision c))) (unsettled-conflicts b))])
+          (list (buffer-revision b) (and c (text:span->datum (conflict-span c))))))))
 
   (define (span-union spans)
     (let loop ([spans (cdr spans)] [start (text:span-start (car spans))] [end (text:span-end (car spans))])

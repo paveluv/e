@@ -1,7 +1,7 @@
 ;; Completion contracts are independent of prompt placement and input dispatch.
 (import (only (foundation edoc) elibrary))
 (elibrary (head completion)
-  (export candidate-cells candidate-label candidate-preview candidate-styles candidate-value candidate?
+  (export candidate-cells candidate-context candidate-label candidate-styles candidate-value candidate?
           make-candidate make-source provider register!
           source-basis source-context source-kind source-lookup source-release source-settle source?)
   (import (rnrs) (only (chezscheme) list-head) (prefix (core kernel) kernel:))
@@ -57,24 +57,18 @@
 
   ;; A display label and its character styles are independent of the string
   ;; inserted on selection. The lookup result owns both, including during cycling.
-  (edoc "A candidate's insertion text, styled label and optional reversible preview."
-        (value string "inserted text") (label string "display label")
-        (styles (or vector #f) "label character styles") (preview (or procedure #f) "show candidate and return cleanup")
-        (cells (or vector #f) "optional semantic label and hint cells"))
-  (define-record-type (candidate %make-candidate candidate?)
-    (fields value label styles preview cells))
+  (edoc "A candidate's literal insertion, styled label, optional semantic cells and argument context. Context is data, never a preview callback."
+    (value string "inserted text") (label string "display label") (styles (or vector #f) "label styles")
+    (cells (or vector #f) "semantic label and hint") (context (or list #f) "type and explicit value/receiver context"))
+  (define-record-type (candidate %make-candidate candidate?) (fields value label styles cells context))
 
-  (edoc "A completion candidate: the text inserted on selection, the label the list shows with its styles, and an optional preview, a thunk that shows the candidate's value in the editor while it is the inserted one and gives the thunk undoing the showing."
-        (value string "the text inserted on selection")
-        (label string "the text shown in the list")
-        (styles (or vector #f) "the label's styles")
-        (preview (or procedure #f) "optional preview thunk")
-        (cells (or vector #f) "optional semantic label and hint cells")
-        (returns (record candidate)))
+  (edoc "Construct a literal insertion candidate, optionally with semantic label/hint cells and context for a scoped presentation. Selecting it never executes a callback."
+    (value string "insertion") (label string "label") (styles (or vector #f) "label styles")
+    (cells (or vector #f) "optional semantic cells") (context (or list #f) "optional typed value context") (returns (record candidate)))
   (define make-candidate
     (case-lambda
       [(value label styles) (%make-candidate value label styles #f #f)]
-      [(value label styles preview) (%make-candidate value label styles preview #f)]
-      [(value label styles preview cells) (%make-candidate value label styles preview cells)]))
+      [(value label styles cells) (%make-candidate value label styles cells #f)]
+      [(value label styles cells context) (%make-candidate value label styles cells context)]))
 
 )

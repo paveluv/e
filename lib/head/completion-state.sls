@@ -9,31 +9,27 @@
     (fields primary transform (mutable text) (mutable position) (mutable generation)
       (mutable source) (mutable range) (mutable prepared) (mutable options)
       (mutable matches) (mutable index) (mutable candidates) (mutable page)
-      (mutable note) (mutable preview) (mutable undo) (mutable preview-text)
+      (mutable note) (mutable selected)
       (mutable basis)))
 
   (edoc "Create a head-local completion session. The optional text transformer applies only to completion edits; text ownership and submission remain with the host."
         (primary any "primary source")
         (transform (or procedure #f) "text and character caret -> (text . caret)"))
   (define (create primary transform)
-    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f #f #f))
+    (make-state primary transform "" 0 0 #f #f #f '() '() 0 #f 0 "" #f #f))
   (define (basis source) (and (completion:source? source) ((completion:source-basis source))))
 
-  (edoc "Read a prepared session as (generation text caret candidates note page-sequence source preview). False candidates means the list is hidden. This never invokes a provider."
+  (edoc "Read a prepared session as (generation text caret candidates note page-sequence source selected-candidate). False candidates means the list is hidden. This never invokes a provider."
         (s any "completion session") (returns list))
   (define (snapshot s)
     (list (state-generation s) (state-text s) (state-position s) (state-candidates s)
       (state-note s)
-      (state-page s) (state-source s) (state-preview s)))
+      (state-page s) (state-source s) (state-selected s)))
 
-  (define (end-preview! s)
-    (when (state-undo s) (guard (ex [else (void)]) ((state-undo s))))
-    (state-preview-set! s #f) (state-undo-set! s #f) (state-preview-text-set! s #f))
-
-  (edoc "Close reversible candidate previews and release the source."
-        (s any "completion session") (accepted? boolean "whether input was accepted"))
-  (define (finish! s accepted?)
-    (end-preview! s)
+  (edoc "Release the completion source. Scoped presentations own their own view lifetimes."
+        (s any "completion session"))
+  (define (finish! s)
+    (state-selected-set! s #f)
     (when (completion:source? (state-primary s)) ((completion:source-release (state-primary s)))))
 
   (define (value candidate)
@@ -60,9 +56,9 @@
   (define (refresh! s text position)
     (unless (and (<= 0 position (string-length text)) (exact? position) (integer? position))
       (error 'refresh! "invalid completion caret" position))
-    (when (and (state-preview s) (not (equal? text (state-preview-text s)))) (end-preview! s))
     (unless (and (string=? text (state-text s)) (= position (state-position s))
               (equal? (state-basis s) (basis (state-primary s))))
+      (state-selected-set! s #f)
       (unless (equal? (state-basis s) (basis (state-primary s))) (state-prepared-set! s #f))
       (state-basis-set! s (basis (state-primary s)))
       (unless (prepared? s (state-source s) text position) (state-prepared-set! s #f))
@@ -92,19 +88,15 @@
             (not (and (null? (cdr candidates)) (string=? (value (car candidates)) (substring (car next) start end)))))
         (begin (state-range-set! s (cons start end)) (state-matches-set! s candidates) (candidates! s candidates))
         (dismiss! s))))
-  (define (preview! s candidate)
-    (unless (eq? candidate (state-preview s))
-      (end-preview! s)
-      (when (and (completion:candidate? candidate) (completion:candidate-preview candidate))
-        (state-preview-set! s candidate) (state-preview-text-set! s (state-text s))
-        (state-undo-set! s (guard (ex [else #f]) ((completion:candidate-preview candidate)))))))
-  (define (preview-value! s text)
-    (preview! s (find (lambda (candidate) (string=? (value candidate) text)) (state-matches s))))
+  (define (remember! s candidate)
+    (state-selected-set! s (and (completion:candidate? candidate) (completion:candidate-context candidate) candidate)))
+  (define (remember-value! s text)
+    (remember! s (find (lambda (candidate) (string=? (value candidate) text)) (state-matches s))))
 
   (edoc "Normalize once, then cycle equivalent spellings or request another page. The source owns matching and set-preserving extensions; deferred extensions are evaluated only for new normalization."
         (s any "completion session") (source any "cursor-aware source, legacy prefix procedure or false")
-        (backwards? boolean "visit the previous live-search match"))
-  (define (normalize! s source backwards?)
+  )
+  (define (normalize! s source)
     (refresh! s (state-text s) (state-position s))
     (state-note-set! s "")
     (state-generation-set! s (+ 1 (state-generation s)))
@@ -130,14 +122,14 @@
                         [next (replace-range s (if (pair? options) (car options) (value candidate)))]
                         [next ((completion:source-settle source) (car next) (cdr next))])
                    (if (equal? next (cons text position)) (dismiss! s)
-                     (begin (continue! s source next) (edit! s next #f) (preview! s candidate))))]
+                     (begin (continue! s source next) (edit! s next #f) (remember! s candidate))))]
                 [(prepared? s source text position)
                  (if (<= (length (state-options s)) 1) (show! s (state-matches s))
                    (begin
                      (state-index-set! s (mod (+ 1 (state-index s)) (length (state-options s))))
                      (candidates! s (state-matches s))
                      (let ([text (list-ref (state-options s) (state-index s))])
-                       (edit! s (replace-range s text) source) (preview-value! s text))))]
+                       (edit! s (replace-range s text) source) (remember-value! s text))))]
                 [else
                  (state-options-set! s (if (procedure? options) (options) options)) (state-index-set! s 0)
                  (state-matches-set! s candidates)
@@ -145,7 +137,7 @@
                  (unless (pair? (state-options s)) (error 'normalize! "source returned matches without extensions"))
                  (let* ([option (car (state-options s))] [next (replace-range s option)]
                         [unchanged? (string=? text (car next))])
-                   (edit! s next source) (preview-value! s option)
+                   (edit! s next source) (remember-value! s option)
                    (when (and unchanged? (not (state-candidates s)))
                      (state-note-set! s (format " [~a matches; Tab to list]" (length candidates)))))])]))]
         [else
@@ -170,5 +162,6 @@
     (and (= generation (state-generation s))
       (equal? (state-basis s) (basis (state-primary s)))
       (state-candidates s) (exists (lambda (candidate) (string=? text (value candidate))) (state-candidates s))
-      (let ([next (if (state-source s) (replace-range s text) (cons text (string-length text)))])
-        (dismiss! s) (edit! s next #f) #t))))
+      (let ([candidate (find (lambda (c) (string=? text (value c))) (state-candidates s))]
+            [next (if (state-source s) (replace-range s text) (cons text (string-length text)))])
+        (dismiss! s) (edit! s next #f) (remember! s candidate) #t))))

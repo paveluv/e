@@ -45,15 +45,15 @@
         (let* ([s (completion-state:create a #f)] [text "(privat"]
                [old ((completion:source-basis a))])
           (completion-state:refresh! s text (string-length text))
-          (completion-state:normalize! s a #f)
-          (completion-state:normalize! s a #f)
+          (completion-state:normalize! s a)
+          (completion-state:normalize! s a)
           (let ([shown (completion-state:snapshot s)]
                 [next (environment:evaluate! who env 1 "(define private-next 43)")])
             (test:await 'new-catalogue
               (lambda () (pump!) (and (finished? next) (not (equal? old ((completion:source-basis a)))))))
             (check 'changed-catalogue-refuses-stale-completion-choice
               (completion-state:choose! s (car shown) "private-name") #f))
-          (completion-state:finish! s #f))
+          (completion-state:finish! s))
         ((completion:source-release b)))
       (let* ([view (eval:create-result-view! who job)] [fork (view:fork! who view)]
              [children (test:child-pids)]

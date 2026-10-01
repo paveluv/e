@@ -10,6 +10,7 @@
           (prefix (foundation datum) datum:)
           (prefix (foundation text) text:)
           (prefix (foundation wire) wire:)
+          (prefix (service change-preview) change-preview:)
           (prefix (service conflict-review) conflict-review:)
           (prefix (service conflict-source) conflict-source:)
           (prefix (service doc) doc:)
@@ -50,7 +51,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "connection" "daemon" "datum" "diff" "doc" "document" "environment" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "path" "policy" "port" "row"
-      "conflict-review" "conflict-source" "git" "git-source" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -133,7 +134,7 @@
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
     (define (generic-kind! kind)
-      (when (memq kind '(widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+      (when (memq kind '(change-preview widget-view collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
       (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
@@ -200,7 +201,7 @@
        (let ([r (model:snapshot (car args))])
          (when r
            (case (cdr (assq 'kind r))
-             [(connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+             [(change-preview connection-topology connection-bindings prompt-request search-request widget-view environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)
@@ -283,6 +284,8 @@
        (arity 2)
        (call-with-values (lambda () (store:rewrite-preview (car args) (cadr args))) list)]
       [(revision-span) (arity 2) (apply store:revision-span args)]
+      [(conflict-span) (arity 2) (apply store:conflict-span args)]
+      [(change-preview-create) (control!) (head!) (arity 2) (apply change-preview:create! actor args)]
       [(conflict-review-create) (control!) (arity 1) (apply conflict-review:create! actor args)]
       [(conflict-review-refresh) (control!) (arity 3) (apply conflict-review:refresh! actor args)]
       [(conflict-review-choose) (control!) (arity 4) (apply conflict-review:choose! actor args)]

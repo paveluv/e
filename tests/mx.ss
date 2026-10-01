@@ -168,23 +168,27 @@
                       (lambda (text caret)
                         (values 0 (string-length text)
                           (lambda () (set! expansions (+ expansions 1)) '("abc" "bca" "cba"))
-                          (if (string=? text "z") '() '("abc" "bca" "cba")))))]
+                          (if (string=? text "z") '()
+                            (map (lambda (name) (completion:make-candidate name name #f #f
+                                                  (list '(type . choice) (cons 'value name)))) '("abc" "bca" "cba"))))))]
             [s (completion-state:create source #f)])
        (completion-state:refresh! s "a" 1)
-       (completion-state:normalize! s source #f)
-       (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source)
+       (completion-state:normalize! s source)
        (let ([page (completion-state:snapshot s)])
          (check 'completion-normalizes-and-cycles-without-recomputing-extensions
-           (list (cadr page) (list-ref page 3) expansions) '("bca" ("abc" "bca" "cba") 1))
+           (list (cadr page) (map completion:candidate-value (list-ref page 3)) expansions) '("bca" ("abc" "bca" "cba") 1))
          (completion-state:refresh! s "z" 1)
          (check 'completion-refuses-stale-page-without-expansion-or-text-change
            (list (completion-state:choose! s (car page) "abc")
-             (cadr (completion-state:snapshot s)) expansions) '(#f "z" 1)))
+             (cadr (completion-state:snapshot s)) expansions (list-ref (completion-state:snapshot s) 7)) '(#f "z" 1 #f)))
        (completion-state:refresh! s "a" 1)
-       (completion-state:normalize! s source #f) (completion-state:normalize! s source #f)
+       (completion-state:normalize! s source) (completion-state:normalize! s source)
        (check 'completion-selects-current-value-and-hides-its-page
          (list (completion-state:choose! s (car (completion-state:snapshot s)) "cba")
-           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)) '(#t "cba" #f)))
+           (cadr (completion-state:snapshot s)) (list-ref (completion-state:snapshot s) 3)
+           (completion:candidate-context (list-ref (completion-state:snapshot s) 7)))
+         '(#t "cba" #f ((type . choice) (value . "cba")))))
      (check 'a-nested-operator-completes-to-the-enclosing-arguments-type
        (let ([nested (labels "(head:show-buffer! (bu")])
          (list (has? "(buffer \"*scratch*\")" nested) (has? "(head:fresh-buffer! name)" nested) (has? "myb" nested)
