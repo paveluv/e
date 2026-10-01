@@ -64,6 +64,21 @@
          (list (equal? query (view:source (interaction:snapshot b)))
            (< (caddr (widget:frame-rect ra)) (caddr (widget:frame-rect rb)))
            (contains? (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)) "Composition"))) '(#t #t #t))
+     ;; Hold a base publication: preparing another frame must still return,
+     ;; and a newer subject must supersede the queued intermediate capture.
+     (let* ([captured (test:gate)] [release (test:gate)]
+            [watch (model:subscribe! (list query)
+                     (lambda (notice) (unless (captured) (captured #t) (test:await 'release-inspection release))))])
+       (dynamic-wind void
+         (lambda ()
+           (bindings:inspect! a root) (pump!)
+           (test:await 'inspection-publication-held captured)
+           (bindings:inspect! a source) (pump!)
+           (check 'inspection-publication-never-blocks-preparing-a-newer-subject
+             (and (widget:prepared root) #t) #t))
+         (lambda () (release #t) (model:unsubscribe! watch)))
+       (test:await 'inspection-latest-subject
+         (lambda () (pump!) (equal? source (car (get (get (model:snapshot query) 'value) 'subject))))))
      (let* ([leaf (widget:descendant a 'viewport 'content 'listing)] [d (interaction:snapshot leaf)]
             [r (model:snapshot (view:source d))] [heading (car (get r 'value))] [label (cadr heading)]
             [start (list (car heading) 0 0)] [end (list (car heading) 0 (string-length label))])
@@ -87,6 +102,9 @@
      (check 'key-inspector-keeps-a-prefix-in-ordinary-view-state
        (view:state (interaction:snapshot (widget:descendant a 'reader))) '("C-c"))
      (dispatch:input! root '(key "F11" #f)) (pump!)
+     (test:await 'captured-key-published
+       (lambda () (pump!)
+         (contains? (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)) "C-c F11")))
      (let ([rows (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)])
        (check 'key-inspector-reports-resolution-without-executing-it
          (list executed (not (assq 'reader (view:children (interaction:snapshot a))))
