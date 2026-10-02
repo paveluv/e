@@ -1,7 +1,7 @@
 ;; Widget key routing and chords, independent of the default window host.
 (import (only (foundation edoc) elibrary))
 (elibrary (head routing)
-  (export cancel! feedback global-key! input! pending? resolve! (rename (run-key-action! run!)) set-prompt-opener!)
+  (export cancel! feedback input! pending? resolve! (rename (run-key-action! run!)) set-prompt-opener!)
   (import (chezscheme) (prefix (head head) head:) (prefix (head keymap) keymap:)
     (prefix (head widget) widget:))
 
@@ -46,18 +46,6 @@
           [else
            (head:set-last-command! #f)
            (error 'run! "context action used globally" action)]))
-
-  (edoc "Run the global map's command for one key as a command, the app handler bypassed: for a control standing in for a key, a wheel over an unfocused pane say. Whether the key was bound."
-        (key string "the key event")
-        (returns boolean))
-  (define (global-key! key)
-    (keymap:call-with-command! (lambda ()
-                                 (let ([hit (keymap:resolved-binding 'global (list key))])
-                                   (and hit
-                                     (begin
-                                       (head:set-current-keys! (list key))
-                                       (run-key-action! (keymap:binding-action (cdr hit)))
-                                       #t))))))
 
   ;; One chord for this pump, shared by ordinary dispatch and prompt readers.
   ;; Its receiver owns every suffix; stale/invalid suffixes are never replayed.

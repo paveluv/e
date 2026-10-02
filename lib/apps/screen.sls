@@ -5,7 +5,7 @@
   (import (chezscheme) (prefix (apps buffet) buffet:) (prefix (apps finder) finder:)
           (prefix (head edit) edit:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
-          (prefix (head layout) layout:) (prefix (head lifecycle) lifecycle:) (prefix (head widget) widget:)
+          (prefix (head layout) layout:) (prefix (head lifecycle) lifecycle:) (prefix (head tui) tui:) (prefix (head widget) widget:)
           (prefix (head window-control) window-control:) (prefix (service window) window:)
           (prefix (state model) model:) (prefix (state view) view:))
 
@@ -56,7 +56,7 @@
       (edit:visit-file! path
         (lambda (kind value)
           (case kind
-            [(directory) (finder:open-directory! value window)]
+            [(directory) (finder:open! window value)]
             [(buffer) (window-control:open-document! window value)])))))
 
   (edoc "Open a canonical document through this screen's main manager, independently of an auxiliary pane's focus. Presentation preferences pass to the ordinary window opener."
@@ -84,5 +84,7 @@
       (append (layout:container 'y)
         (list '(contexts screen global) (cons 'actions (list (cons 'open-file open-file!) (cons 'open-document open-document!) (cons 'quit quit!) (cons 'review review!)
                                                          (cons 'auxiliary auxiliary!) (cons 'hide-auxiliary hide-auxiliary!))))))
-    (keymap:bind-default! 'screen "C-x C-c" (keymap:call quit! widget:target)))
+    (keymap:bind-default! 'screen "C-x C-c" (keymap:call quit! widget:target))
+    (keymap:bind-default! 'screen "C-l" tui:erase-screen!)
+    (keymap:bind-default! 'screen "C-c a" (keymap:prefill edit:answer!)))
 )

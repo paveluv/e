@@ -25,15 +25,12 @@
 ;; (configuration:reload-on-save #t)     ; saving config.e applies it on the spot
 ;; (lifecycle:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
-;; (paint:scroll-margin 8)              ; rows kept between the cursor and the edges
+;; (text-layout:scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (tui:input-delay 8)              ; presentation budget in ms; 0 disables pacing
-;; (seat:scrollbar #f)                 ; #t: show position bars in ordinary buffers
-;; (seat:scrollbar-position 'right)    ; position bars on the left or right edge
-;; (paint:echo-box-width 100)     ; the echo area's bordered box: at most this
-;;                                ; wide, centered; a narrower screen is the box
-;; (paint:echo-box-border "┊")    ; the one-cell glyph on both sides of that box
-;; (seat:line-numbers #f)              ; #t: show line numbers in every untoggled window
-;; (paint:wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
+;; (window-control:scrollbar #f)                 ; #t: show position bars in ordinary buffers
+;;                               ; or 'left, 'right or 'auto
+;; (window-control:line-numbers #f)              ; #t: show line numbers in every untoggled window
+;; (text-layout:wrap-lines #t)                ; #f: long lines truncate ($) instead of wrapping (\)
 ;; (paren:matching-style 'bold)   ; matched brackets: bold, underline,
 ;;                                ; box, or colored -- or design your
 ;;                                ; own marking with the style DSL:
@@ -67,7 +64,6 @@
 ;; (terminal:forward-clipboard-to-copy-buffer #t)
 ;;                              ; import OSC 52 clipboard writes from terminal
 ;;                              ; children into e's copy buffer
-;; (seat:min-window-lines 3)      ; minimum text height allowed by a split
 ;; (style:set! 'ghost '((foreground 244) italic))
 ;;                                ; style DSL: bold, dim, italic, underline,
 ;;                                ; blink, reverse, hidden, strike; foreground
@@ -77,8 +73,8 @@
 ;;                                ; Full reference: manual/STYLES.md
 ;;                                ; ghost styles suggestions and notices;
 ;;                                ; chrome styles prompt labels and log prefixes
-;; (keymap:bind! "M-l" log-view:show!)    ; pop the <log> view with one chord
-;; (keymap:bind! "C-c s" edit:save!)      ; arbitrary multi-key chords work
-;; (keymap:unbind! "C-v")            ; remove a global binding
-;; (keymap:bind! 'isearch "M-i" 'toggle-case) ; rebind a contextual action
-;; (keymap:unbind! 'isearch "M-c")
+;; (keymap:bind! 'composed-window "M-l" (keymap:call log-view:open! widget:target))
+;; (keymap:bind! 'widget-editor "C-c s" (keymap:call edit:save! widget:target))      ; arbitrary multi-key chords work
+;; (keymap:unbind! 'widget-editor "C-v") ; remove an editor binding
+;; (keymap:bind! 'widget-search "M-i" (keymap:call widget:act! widget:target 'toggle-case)) ; rebind a contextual action
+;; (keymap:unbind! 'widget-search "M-c")

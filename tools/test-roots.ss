@@ -2,12 +2,6 @@
 ;; root and select a runtime before importing its consumers.
 (import (chezscheme))
 
-(define (test-host!)
-  ;; Fixtures using the default editor explicitly request its window host.
-  ;; Engine/base tests never allocate it through this bootstrap.
-  (eval '(begin (import (prefix (head seat) seat:)) (seat:initialize!))
-    (interaction-environment)))
-
 (define (test-roots! runtime)
   (unless (memq runtime '(base client)) (error 'test-roots! "expected base or client" runtime))
   ;; The loader's rule: the runtime's implementation tree in front of lib,

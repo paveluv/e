@@ -1,17 +1,15 @@
 #!/usr/bin/env scheme-script
 
-;; Plain/surface projection, head adoption, and the real painter share fixtures.
+;; Plain and surface projection share glyph, coordinate and output fixtures.
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 (eval
   '(begin
      (import (prefix (head render) render:) (prefix (head text-layout) text-layout:)
              (prefix (head layout) layout:) (prefix (state surface) surface:)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (state store) store:) (prefix (foundation text) text:)
-             (prefix (head paint) paint:) (prefix (head tui) tui:) (prefix (service vt) vt:)
-             (prefix (head edit) edit:)
+             (prefix (state store) store:) (prefix (foundation text) text:)
+             (prefix (head tui) tui:) (prefix (service vt) vt:)
              (prefix (core kernel) kernel:) (prefix (foundation string) string:)
              (prefix (head style) style:) (prefix (sys glyph) glyph:)
              (prefix (sys sys) sys:) (prefix (test) test:))
@@ -125,8 +123,6 @@
      (define lines (make-vector 50 "abc"))
      (vector-set! lines 0 "界e\x301;Z")
      (define id (store:create! author "*surface-render*" lines '((read-only . #t) (wrap . #t))))
-     (define b (seat:adopt-store-buffer! id))
-     (define w (seat:current-window))
      (define (grid face attrs)
        (list 0 (vector face 'ignored 'bold 'plain)
              (vector (list uri "wide") (list "https://ignored.example" #f)
@@ -137,35 +133,27 @@
            (let ([old (surface:snapshot id)])
              (surface:publish! id (and old (car old)) (store:revision id)
                                changes '(0 2 #t) '(4 4)))) list))
-     (define (header) (render:header (seat:buffer-rendition b)))
-     (define (data row) (render:row (seat:buffer-rendition b) row))
+     (define frame #f)
+     (define (prepare ranges)
+       (let-values ([(text revision) (store:snapshot id)])
+         (render:prepare frame id text revision ranges)))
+     (define (header) (render:header frame))
+     (define (data row) (render:row frame row))
      (define expected
        (list '#("界" "" "e\x301;" "Z") '#(red red bold plain)
              (list (list 0 2 uri "wide") '(2 3 "https://accent.example" #f))))
      (publish (list (grid 'red clusters) '(49 #(blue blue blue) #(#f #f #f) ())))
-     (seat:window-size-set! w 4)
-     (seat:window-width-set! w 12)
-     (define observed (test:recorder))
-     (seat:set-repaint-hook!
-       (lambda () (observed (list (seat:buffer-store-rev b) (header) (data 0)))))
-     (seat:set-window-buffer! w b)
-     (test:check 'show-publishes-text-and-rendition-before-one-callback
-       (observed) (list (list 0 (surface:snapshot id) expected)))
+     (set! frame (prepare '((0 . 1))))
      (test:check 'surface-keeps-source-text-and-grid-layout
-       (list (vector-ref (seat:buffer-lines b) 0) (paint:window-wrapped? w)) '("界e\x301;Z" #f))
-     (define frame (seat:buffer-rendition b))
+       (list (vector-ref lines 0) (data 0)) (list "界e\x301;Z" expected))
      (test:check 'one-cluster-map-drives-both-coordinate-directions
        (list (map (lambda (i) (render:column frame 0 i)) '(0 1 2 3 4 5))
              (map (lambda (i) (render:character frame 0 i)) '(0 1 2 3 4 5))
              (render:column frame 0 2 #t) (render:width frame 0 99))
        '((0 2 2 3 4 5) (0 0 1 3 4 5) 3 4))
-     (test:check 'public-links-are-character-ranges
-       (paint:buffer-line-hyperlinks b 0)
-       (list (list 0 1 uri "wide") '(1 3 "https://accent.example" #f)))
-     (test:check 'demand-reads-do-not-fill-the-head-with-scrollback
-       (list (data 49) (render:row (seat:read-rendition b '((49 . 50))) 49)
-             (eq? frame (seat:buffer-rendition b)))
-       '(#f (#("a" "b" "c") #(blue blue blue) ()) #t))
+     (test:check 'demand-reads-do-not-retain-scrollback
+       (list (data 49) (render:row (prepare '((49 . 50))) 49))
+       '(#f (#("a" "b" "c") #(blue blue blue) ())))
      (let ([row (data 0)] [header (header)])
        (string-set! (vector-ref (car row) 0) 0 #\X)
        (vector-set! (cadr row) 0 'damaged)
@@ -173,51 +161,18 @@
        (set-car! (caddr header) 99))
      (test:check 'cached-readbacks-are-owned (list (data 0) (header))
        (list expected (surface:snapshot id)))
-     (seat:refresh-renditions!)
-     (test:check 'unchanged-ranges-reuse-frame-and-do-not-notify
-       (list (eq? frame (seat:buffer-rendition b)) (length (observed))) '(#t 1))
-     (seat:window-prow-set! w 49)
-     (seat:window-top-set! w 49)
-     (seat:refresh-renditions!)
-     (test:check 'viewport-refill-discards-old-rows-without-invalidating-paint
-       (list (data 0) (and (data 49) #t) (length (observed))) '(#f #t 1))
-     (seat:window-prow-set! w 0)
-     (seat:window-top-set! w 0)
-     (seat:refresh-renditions!)
-
-     ;; The producer's thread only wakes the head. A complete adoption can
-     ;; reenter, commit another text/frame, and leave the newer result intact.
-     (define before-worker (seat:buffer-rendition b))
+     (test:check 'unchanged-demand-reuses-frame
+       (eq? frame (prepare '((0 . 1)))) #t)
+     (let ([next (prepare '((49 . 50)))])
+       (test:check 'viewport-refill-discards-undemanded-rows
+         (list (render:row next 0) (and (render:row next 49) #t)) '(#f #t)))
+     ;; Producer updates never mutate a retained projection. A text revision
+     ;; ahead of its surface falls back rather than mixing publications.
      ((test:worker (lambda () (publish (list (grid 'green clusters))))))
-     (test:check 'worker-does-not-mutate-the-head
-       (eq? before-worker (seat:buffer-rendition b)) #t)
-     (define once #t)
-     (define callbacks (test:recorder))
-     (seat:set-repaint-hook! tui:invalidate-screen-cache!)
-     (parameterize ([kernel:registering-module 'render-observer])
-       (head:add-pre-redraw-hook!
-         (lambda ()
-           (callbacks (list (vector-ref (seat:buffer-lines b) 0)
-                            (seat:buffer-store-rev b) (cadr (header))
-                            (vector-ref (cadr (data 0)) 0)))
-           (when once
-             (set! once #f)
-             (store:edit! author id 0 (text:make-span 0 3 0 4) '("Q"))
-             (publish (list (grid 'blue clusters)))
-             (head:before-frame!)))))
-     (head:before-frame!)
-     (test:check 'reentrant-adoption-never-mixes-text-and-rendition
-       (list (callbacks) (vector-ref (seat:buffer-lines b) 0) (cadr (header)))
-       '((("界e\x301;Z" 0 0 green) ("界e\x301;Q" 1 1 blue)) "界e\x301;Q" 1))
-     (kernel:retract-module! 'render-observer)
-     (store:edit! author id 1 (text:make-span 0 3 0 4) '("R"))
-     (head:before-frame!)
-     (test:check 'text-ahead-of-surface-clears-rendition
-       (list (header) (data 0) (paint:window-wrapped? w)
-             (paint:buffer-line-hyperlinks b 0)) '(#f #f #t ()))
-     (publish (list (grid 'red clusters)))
-     (head:before-frame!)
-
+     (test:check 'producer-does-not-mutate-retained-frame (data 0) expected)
+     (store:edit! author id 0 (text:make-span 0 3 0 4) '("R"))
+     (test:check 'text-ahead-of-surface-falls-back
+       (render:header (prepare '((0 . 1)))) #f)
      ;; Multiple disjoint ranges must all come from one publication, even
      ;; while a producer changes both faster than the head can read them.
      (define (paired face)
@@ -228,16 +183,15 @@
                       (do ([i 0 (+ i 1)]) ((= i 40))
                         (publish (paired (number->string (+ 30 (mod i 8)))))))))
      (define (coherent-range-read?)
-       (let ([frame (seat:read-rendition b '((0 . 1) (49 . 50)))])
+       (let ([frame (prepare '((0 . 1) (49 . 50)))])
          (or (not (render:header frame))
              (equal? (vector-ref (cadr (render:row frame 0)) 0)
                      (vector-ref (cadr (render:row frame 49)) 0)))))
      (define coherent? (for-all (lambda (i) (coherent-range-read?)) (iota 40)))
      (writer)
      (test:check 'concurrent-demand-ranges-stay-coherent
-       (and coherent? (coherent-range-read?) (and (seat:read-rendition b '((0 . 1))) #t)) #t)
+       (and coherent? (coherent-range-read?)) #t)
      (publish (paired 'red))
-     (head:before-frame!)
      (let ([id (store:create! author "surface-controls" '("\x1b;X") '((audience . ())))])
        (surface:publish! id #f 0 '((0 #(red red) #(#f #f) ())) #f '(1 2))
        (let-values ([(text revision) (store:snapshot id)])
@@ -251,98 +205,29 @@
        (for-all
          (lambda (bad)
            (publish (list (grid 'red (list (cons 'clusters bad)))))
-           (head:before-frame!)
-           (not (header)))
+           (not (render:header (prepare '((0 . 1))))))
          '(((0 . 1) (4 . 3)) ((4 . 3)) ((4 . 4.0)) ((-1 . 2) (5 . 2))
            ((1 . 1) (2 . 2) (1 . 1)) malformed)) #t)
      (publish (list (grid 'red clusters)))
-     (head:before-frame!)
 
-     ;; Capture actual ANSI in a VT emulator, including cursor geometry and
-     ;; selection of only the combining character (the complete glyph paints).
-     (define (painted)
-       (let ([port (open-output-string)])
-         (parameterize ([sys:terminal-output-port port]) (paint:redraw!))
-         (get-output-string port)))
-     (painted)
-     (tui:set-screen-rows! 8)
-     (tui:set-screen-cols! 12)
-     (seat:window-pcol-set! w 3)
-     (seat:buffer-mark-row-set! b 0)
-     (seat:buffer-mark-col-set! b 2)
-     (seat:buffer-marked-set! b #t)
-     (define mirror (vt:make-emulator 8 12))
-     (vt:emulator-feed! mirror (painted))
-     (test:check 'painter-emits-real-glyphs-at-cell-coordinates
-       (let ([selection (style:code (vector-ref (vector-ref (vt:emulator-styles mirror) 0) 2))])
+     (set! frame (prepare '((0 . 1))))
+     (let* ([port (open-output-string)] [mirror (vt:make-emulator 2 12)]
+            [row (data 0)])
+       (parameterize ([sys:terminal-output-port port])
+         (tui:display-editor-line! (car row) (car row)
+           (cons (render:column frame 0 2) (render:column frame 0 3 #t))
+           '() (caddr row) 0 (cadr row) #f 12 4))
+       (vt:emulator-feed! mirror (get-output-string port))
+       (test:check 'surface-output-shares-glyph-selection-and-link-geometry
          (list (substring (vector-ref (vt:emulator-screen mirror) 0) 0 3)
-               (and (string:search selection "44" 0 (string-length selection)) #t)))
-       '("界éR" #t))
-     (test:check 'painter-emits-surface-hyperlinks
-       (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1) (list uri "wide"))
-     (test:check 'cursor-uses-the-same-cell-projection
-       (paint:window-screen-position w 0 1) '(1 . 3))
-     (seat:buffer-marked-set! b #f)
-     (painted)
-     (surface:publish! id (car (surface:snapshot id)) (store:revision id) '() '(0 1 #t) '(4 4))
-     (test:check 'cursor-only-publication-does-not-repaint-unchanged-rows
-       (let ([output (painted)])
-         (list (string:search output uri 0 (string-length output)) (caddr (header))))
-       '(#f (0 1 #t)))
-
-     (let ([other (seat:new-local-buffer! "projection-resize")])
-       (seat:set-layout-root!
-         (seat:make-layout-split 'below w
-           (seat:make-window other 0 0 0 0 2 12 80 80 'default) 1 1))
-       (tui:set-screen-rows! 5)
-       (tui:set-screen-cols! 80)
-       (publish '((2 #(blue blue blue) #(#f #f #f) ())))
-       (painted)
-       ;; one ordinary window remains beside the hidden pop-up
-       (test:check 'collapsed-layout-demands-its-final-visible-rows
-         (list (length (remq (seat:popup) (seat:windows))) (and (data 2) #t)) '(1 #t))
-       (seat:forget-buffer! other))
-
-     (test:check 'unavailable-store-denies-rendition-and-retries-next-frame
-       (let* ([cell (kernel:persistent-cell 'store (lambda () #f))]
-              [saved (unbox cell)]
-              [unavailable
-               (dynamic-wind
-                 (lambda () (set-box! cell #f))
-                 (lambda ()
-                   (list (seat:buffer-rendition b) (seat:read-rendition b '((0 . 1)))
-                         (begin (head:before-frame!) (seat:buffer-rendition b))))
-                 (lambda () (set-box! cell saved)))])
-         (head:before-frame!)
-         (list unavailable (equal? (header) (surface:snapshot id))))
-       '((#f #f #f) #t))
-
-     ;; Hiding/deletion denies new metadata reads before queued retirement.
-     (store:set-property! author id 'audience '())
-     (test:check 'hidden-buffer-denies-cached-and-demanded-rendition
-       (list (seat:buffer-rendition b) (seat:read-rendition b '((0 . 1)))
-             (paint:buffer-line-hyperlinks b 0)) '(#f #f ()))
-     (head:before-frame!)
-     (test:check 'retired-reference-does-not-revive-on-readmission
-       (begin (store:set-property! author id 'audience 'all)
-              (head:before-frame!)
-              (list (seat:buffer-rendition b) (seat:read-rendition b '((0 . 1))))) '(#f #f))
-     (define current (seat:buffer-of-store-id id))
-     (seat:set-window-buffer! w current)
-     (test:check 'readmitted-buffer-adopts-current-surface
-       (render:header (seat:buffer-rendition current)) (surface:snapshot id))
+           (and (string:search (style:code (vector-ref (vector-ref (vt:emulator-styles mirror) 0) 2)) "44" 0
+                  (string-length (style:code (vector-ref (vector-ref (vt:emulator-styles mirror) 0) 2)))) #t)
+           (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 1))
+         (list "界éR" #t (list uri "wide"))))
      (surface:withdraw! id (car (surface:snapshot id)))
-     (head:before-frame!)
-     (test:check 'withdrawal-restores-ordinary-text
-       (list (render:header (seat:buffer-rendition current)) (paint:window-wrapped? w)
-             (paint:buffer-line-hyperlinks current 0)
-             (paint:window-screen-position w 0 1)) '(#f #t () (1 . 3)))
-     (publish (list (grid 'green clusters)))
-     (head:before-frame!)
+     (test:check 'withdrawal-restores-plain-projection
+       (render:header (prepare '((0 . 1)))) #f)
      (store:delete! author id)
-     (test:check 'delete-denies-metadata-before-cleanup
-       (list (seat:buffer-rendition current) (seat:read-rendition current '((0 . 1)))) '(#f #f))
-     (head:before-frame!)
 
      ;; The emulator's publication data must drive the ordinary surface
      ;; renderer, including physical glyph widths, without a terminal mode.

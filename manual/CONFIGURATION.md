@@ -151,14 +151,13 @@ assignments and other Scheme effects that ran before the error remain applied.
 ## Common examples
 
 ```scheme
-(keymap:bind! "C-c s" edit:save!)
-(keymap:unbind! "C-v")
+(keymap:bind! 'widget-editor "C-c s" (keymap:call edit:save! widget:target))
+(keymap:unbind! 'widget-editor "C-v")
 (mode:add-extension! "scheme" ".foo")
 (mode:indent-on-tab! "scheme" #f)
-(paint:wrap-lines #f)
-(seat:scrollbar #t)
-(seat:scrollbar-position 'right)
-(seat:line-numbers #f)
+(text-layout:wrap-lines #f)
+(window-control:scrollbar 'right)
+(window-control:line-numbers #f)
 (edit:undo-scope 'all) ; include other actors' changes; default is 'mine
 (scheme-format:width 100)
 (style:set! 'editor '((foreground 135) bold))

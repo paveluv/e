@@ -6,14 +6,11 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
 (eval
   '(begin
-     (import (prefix (head head) head:) (prefix (head seat) seat:)
-             (prefix (state store) store:)
+     (import (prefix (state store) store:)
              (prefix (foundation text) text:)
-             (prefix (core kernel) kernel:)
              (prefix (test) test:))
 
      (define bot '(agent mark-test))
@@ -103,113 +100,5 @@
               (lambda () (store:set-marks! bot id old-revision '((point . (1 . 4))) '(extra))) list)
             (list 'stale (store:revision id)))
      (check 'stale-batch-does-not-drop-a-mark (store:mark bot id 'extra) '(0 . 1))
-
-     ;; Pause after head adoption and let a writer commit before publication.
-     ;; Reset's normal repaint hook provides the barrier without a test hook.
-     (define b (seat:window-buffer (seat:current-window)))
-     (define hid (seat:buffer-store-id b))
-     (define w (seat:current-window))
-     (seat:store-reset! b '("abcdef"))
-     (seat:window-pcol-set! w 4)
-     (seat:buffer-mark-col-set! b 1)
-     (seat:buffer-marked-set! b #t)
-     (define w2 (seat:make-window b 0 0 0 0 2 12 80 80 'default))
-     (seat:set-windows! (list w w2))
-     (head:before-frame!)
-     (store:reset! bot hid '("abcdef"))
-     (define reset-revision (store:revision hid))
-     (define adopted (test:gate))
-     (define written (test:gate))
-     (define armed? #t)
-     (define writer
-       (test:worker
-         (lambda ()
-           (test:await 'mark-adoption adopted)
-           (dynamic-wind
-             (lambda () (void))
-             (lambda () (store:edit! bot hid (store:revision hid) (text:make-span 0 0 0 0) '("Q")) 'done)
-             (lambda () (written #t))))))
-     (dynamic-wind
-       (lambda ()
-         (seat:set-repaint-hook!
-           (lambda ()
-             (when (and armed? (= (seat:buffer-store-rev b) reset-revision))
-               (set! armed? #f)
-               (adopted #t)
-               (test:await 'mark-write written)))))
-       (lambda () (head:before-frame!))
-       (lambda () (seat:set-repaint-hook! (lambda () (void)))))
-     (check 'writer-crossed-publication-barrier (writer) 'done)
-     (check 'stale-publication-keeps-rebased-point (store:mark head:ui-actor hid 'point) '(0 . 5))
-     (check 'stale-publication-keeps-rebased-region
-            (ends (store:mark head:ui-actor hid 'region)) '((0 . 2) (0 . 5)))
-     (check 'stale-publication-keeps-both-window-points
-            (list-sort (lambda (a b) (< (cdr a) (cdr b)))
-              (map cdr (filter (lambda (entry) (and (pair? (car entry)) (eq? (caar entry) 'point)))
-                               (store:marks head:ui-actor hid))))
-            '((0 . 3) (0 . 5)))
-     (head:before-frame!)
-     (check 'retry-follows-the-new-text-once (seat:buffer-lines b) '#("Qabcdef"))
-     (check 'retry-keeps-head-and-published-point-in-agreement
-            (list (seat:window-pcol w) (store:mark head:ui-actor hid 'point)) '(5 (0 . 5)))
-     (check 'retry-keeps-head-and-published-region-in-agreement
-            (list (seat:buffer-mark-col b) (ends (store:mark head:ui-actor hid 'region)))
-            '(2 ((0 . 2) (0 . 5))))
-
-     ;; Failed updates/removals remain pending even without new input or
-     ;; another text event.  A store outage must not advance the diff cache.
-     (seat:window-pcol-set! w 6)
-     (seat:window-pcol-set! w2 1)
-     (seat:buffer-marked-set! b #f)
-     (define store-cell (kernel:persistent-cell 'store (lambda () (error 'mark-test "missing store"))))
-     (define saved-store (unbox store-cell))
-     (dynamic-wind
-       (lambda () (set-box! store-cell #f))
-       (lambda () (head:before-frame!))
-       (lambda () (set-box! store-cell saved-store)))
-     (check 'failed-publication-keeps-old-point (store:mark head:ui-actor hid 'point) '(0 . 5))
-     (check 'failed-publication-keeps-old-region
-            (ends (store:mark head:ui-actor hid 'region)) '((0 . 2) (0 . 5)))
-     (head:before-frame!)
-     (check 'unchanged-desired-point-retries-after-failure (store:mark head:ui-actor hid 'point) '(0 . 6))
-     (check 'unchanged-desired-removal-retries-after-failure (store:mark head:ui-actor hid 'region) #f)
-     (check 'region-removal-includes-window-name
-            (exists (lambda (entry) (and (pair? (car entry)) (eq? (caar entry) 'region)))
-                    (store:marks head:ui-actor hid)) #f)
-
-     ;; Publication failure is isolated per buffer; other windows progress.
-     (define other-buffer (seat:new-buffer! "other-window-marks"))
-     (seat:add-buffer! other-buffer)
-     (seat:store-reset! other-buffer '("xyz"))
-     (define other-id (seat:buffer-store-id other-buffer))
-     (define w3 (seat:make-window other-buffer 0 0 0 0 2 12 80 80 'default))
-     (seat:set-windows! (list w w2 w3))
-     (seat:window-pcol-set! w 100)
-     (head:before-frame!)
-     (check 'invalid-head-position-does-not-replace-old-mark (store:mark head:ui-actor hid 'point) '(0 . 6))
-     (check 'other-buffer-publishes-despite-failure
-            (map cdr (store:marks head:ui-actor other-id)) '((0 . 2)))
-     (seat:window-pcol-set! w 1)
-     (head:before-frame!)
-     (check 'corrected-buffer-retries (store:mark head:ui-actor hid 'point) '(0 . 1))
-     (store:set-mark! head:ui-actor other-id 'custom '(0 . 1))
-     (seat:set-windows! (list w w2))
-     (head:before-frame!)
-     (check 'window-removal-keeps-unmanaged-actor-marks
-            (store:marks head:ui-actor other-id) '((custom . (0 . 1))))
-
-     ;; A new process has no publication diff, but the same named actor
-     ;; still owns its old window/selection marks in the daemon.
-     (store:set-mark! head:ui-actor hid '(point . 900) '(0 . 0))
-     (store:set-mark! head:ui-actor other-id '(point . 901) '(0 . 0))
-     (store:set-mark! head:ui-actor other-id 'region (text:make-span 0 0 0 1))
-     (store:set-mark! bot other-id 'point '(0 . 2))
-     (seat:resume!)
-     (head:before-frame!)
-     (check 'resume-reconciles-abandoned-window-and-region-names-across-buffers
-       (list (store:mark head:ui-actor hid '(point . 900))
-             (length (store:marks head:ui-actor hid))
-             (store:marks head:ui-actor other-id) (store:marks bot other-id))
-       '(#f 3 ((custom . (0 . 1))) ((point . (0 . 2)))))
 
      (test:finish! 'mark)))

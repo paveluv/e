@@ -8,7 +8,6 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
 (putenv "SHELL" "/bin/sh")
 

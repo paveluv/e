@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! register-effect! replace-region! rewrite-regions! scroll! select! set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! register-effect! replace-region! rewrite-regions! scroll! select! selection set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -347,8 +347,7 @@
     (interaction:set-state! head:ui-actor id (text-control:revision source) (next-state id source d ps marked? reveal?))
     (mount-group-set! (mounted id) #f))
 
-  (edoc "Set an editor view's logical caret and selection anchor, snapping to whole graphemes. An equal pair clears mark activity. This also establishes a fresh selection when retained history is unavailable."
-        (id model "mounted editor view") (caret position "active endpoint") (anchor position "fixed endpoint"))
+  (edoc "Set an editor view's logical caret and selection anchor, snapping to whole graphemes. An equal pair clears mark activity. This also establishes a fresh selection when retained history is unavailable." (id model "mounted editor view") (caret position "active endpoint") (anchor position "fixed endpoint") (receiver id (view editor)))
   (define (select! id caret anchor)
     (unless (and (position? caret) (position? anchor)) (error 'select! "expected logical text positions"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -356,9 +355,7 @@
         (publish! id source d (list caret anchor (if ps (caddr ps) caret)) (not (equal? caret anchor)) #t)
         (mount-goal-set! (mounted id) #f))))
 
-  (edoc "Move an explicit editor caret by grapheme, displayed row, endpoint or to a logical position. Up/down require an allocated view and retain a head-local display column. Extend preserves the selection anchor."
-        (id model "editor view") (direction (or position (one-of left right up down home end start finish)) "motion or absolute position")
-        (extend (list-of boolean) "optional selection extension"))
+  (edoc "Move an explicit editor caret by grapheme, displayed row, endpoint or to a logical position. Up/down require an allocated view and retain a head-local display column. Extend preserves the selection anchor." (id model "editor view") (direction (or position (one-of left right up down home end start finish)) "motion or absolute position") (extend (list-of boolean) "optional selection extension") (receiver id (view editor)))
   (define (move! id direction . extend)
     (unless (and (or (position? direction) (memq direction '(left right up down home end start finish))) (<= (length extend) 1) (for-all boolean? extend)) (error 'move! "invalid movement"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -396,15 +393,20 @@
     (let ([m (text-control:mirror source)])
       (list (cons 'id (text-source:id m)) (cons 'revision (text-source:revision m)) (cons 'value (text-source:lines m)))))
 
-  (edoc "Borrow an explicit editor's immutable text basis for a later bulk rewrite, without remote reads."
-        (id model "editor view") (returns list "(lines document-id revision)"))
+  (edoc "Borrow an explicit editor's immutable text basis for a later bulk rewrite, without remote reads." (id model "editor view") (returns list "(lines document-id revision)") (receiver id (view editor)))
   (define (basis id)
     (let-values ([(source d) (text-control:context id 'editor)])
       (list (text-control:lines source) (text-source:id (text-control:mirror source)) (text-control:revision source))))
 
-  (edoc "Rewrite ordered disjoint ranges computed against a captured basis, preserving selection and sharing one undo action. Concurrently changed ranges are skipped; missing history or a changed view owner refuses the remaining work."
-        (id model "editor view") (basis list "(immutable-lines document-id revision)")
-        (regions list "(start end replacement-string) entries in basis order") (returns integer "ranges changed"))
+  (edoc "Read an explicit editor's logical caret, anchor, top and mark activity at its acquired text basis, without geometry, remote reads or publication. Missing selection history refuses. Returned positions are owned copies; capture with basis before deferred work."
+        (id model "editor view") (returns list "(caret anchor top marked?)") (receiver id (view editor)))
+  (define (selection id)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let ([ps (points source d)])
+        (unless ps (refuse "Editor selection history is unavailable"))
+        (append (map (lambda (p) (cons (car p) (cdr p))) ps) (list (cadddr (editor-state:state d)))))))
+
+  (edoc "Rewrite ordered disjoint ranges computed against a captured basis, preserving selection and sharing one undo action. Concurrently changed ranges are skipped; missing history or a changed view owner refuses the remaining work." (id model "editor view") (basis list "(immutable-lines document-id revision)") (regions list "(start end replacement-string) entries in basis order") (returns integer "ranges changed") (receiver id (view editor)))
   (define (rewrite-regions! id basis regions)
     (let-values ([(initial original) (text-control:context id 'editor)])
       (let ([document (text-source:id (text-control:mirror initial))])
@@ -519,18 +521,15 @@
                                                (for-each (lambda (callback) (callback settled?)) accepted))
                                              (when reload? (document:reload! head:ui-actor document) (text-source:open! head:ui-actor document)))))) )
 
-  (edoc "Insert multiline text into an explicit editor, replacing its active selection. Consecutive insertions at the unchanged resulting caret share an undo group. Stale or read-only edits refuse through the shared journal."
-        (id model "editor view") (text string "inserted text"))
+  (edoc "Insert multiline text into an explicit editor, replacing its active selection. Consecutive insertions at the unchanged resulting caret share an undo group. Stale or read-only edits refuse through the shared journal." (id model "editor view") (text string "inserted text") (receiver id (view editor)))
   (define (insert! id text)
     (insert-text! id text #t))
 
-  (edoc "Paste text into an explicit editor as one undo action, separate from surrounding typing."
-        (id model "editor view") (text string "inserted text"))
+  (edoc "Paste text into an explicit editor as one undo action, separate from surrounding typing." (id model "editor view") (text string "inserted text") (receiver id (view editor)))
   (define (paste! id text)
     (insert-text! id text #f))
 
-  (edoc "Insert at the declared caret without replacing a selection. Keep the caret before the insertion when stay? is true; settlement never overwrites a newer interaction."
-        (id model "editor view") (text string "inserted text") (stay? boolean "keep point before the inserted text"))
+  (edoc "Insert at the declared caret without replacing a selection. Keep the caret before the insertion when stay? is true; settlement never overwrites a newer interaction." (id model "editor view") (text string "inserted text") (stay? boolean "keep point before the inserted text") (receiver id (view editor)))
   (define (insert-at! id text stay?)
     (unless (and (string? text) (boolean? stay?)) (error 'insert-at! "expected text and a boolean placement"))
     (let-values ([(source d) (text-control:context id 'editor)] [(lines trailing?) (text:from-string text)])
@@ -546,8 +545,7 @@
               [(char=? (string-ref text end) #\newline) (loop (+ end 1) (+ end 1) (cons (substring text start end) out))]
               [else (loop start (+ end 1) out)])) (and typing? 'insert) 'end))))
 
-  (edoc "Replace an explicit range of the editor's current mirrored text as one undo action, placing the caret after the replacement. Use basis and rewrite-regions! for ranges computed before other commands."
-        (id model "editor view") (start position "first endpoint") (end position "last endpoint") (text string "replacement"))
+  (edoc "Replace an explicit range of the editor's current mirrored text as one undo action, placing the caret after the replacement. Use basis and rewrite-regions! for ranges computed before other commands." (id model "editor view") (start position "first endpoint") (end position "last endpoint") (text string "replacement") (receiver id (view editor)))
   (define (replace-region! id start end text)
     (unless (and (position? start) (position? end) (string? text)) (error 'replace-region! "invalid replacement"))
     (let-values ([(source d) (text-control:context id 'editor)] [(lines trailing?) (text:from-string text)])
@@ -558,8 +556,7 @@
                                 (cons 'state (append ps (list (cadddr (editor-state:state d)))))))
           (list start end) (append (vector->list lines) (if trailing? '("") '())) #f 'end))))
 
-  (edoc "Compute indentation or formatting through the document's mode and admit it against the original source revision. Preserve logical selections through the accepted result; callbacks cannot retarget a newer view."
-        (id model "editor view") (operation (one-of indent-line indent-region indent-buffer indent-expression tab format-region format-buffer) "transformation"))
+  (edoc "Compute indentation or formatting through the document's mode and admit it against the original source revision. Preserve logical selections through the accepted result; callbacks cannot retarget a newer view." (id model "editor view") (operation (one-of indent-line indent-region indent-buffer indent-expression tab format-region format-buffer) "transformation") (receiver id (view editor)))
   (define (format! id operation)
     (text-control:call-with-intent! id (lambda ()
                                          (let-values ([(source d) (text-control:context id 'editor)])
@@ -589,8 +586,7 @@
                                                      (unless next (refuse "No indenter for this mode"))
                                                      (rewrite! id source d old next points '() "Indent text"))))))))) )
 
-  (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish."
-        (id model "editor view") (operation (one-of copy cut line forward backward) "transfer") (publish procedure "(text accumulate?)"))
+  (edoc "Transfer a selected region or the rest of a line through an explicit clipboard capability. The publisher receives text and whether a preceding kill in this view can accumulate; rejected cuts never publish." (id model "editor view") (operation (one-of copy cut line forward backward) "transfer") (publish procedure "(text accumulate?)") (receiver id (view editor)))
   (define (transfer! id operation publish)
     (unless (memq operation '(copy cut line forward backward)) (error 'transfer! "invalid transfer"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -622,8 +618,7 @@
                             (equal? after (typing-basis (interaction:snapshot id))))
                       (mount-group-set! m (list 'kill after #f))))))))))))
 
-  (edoc "Operate on Scheme expressions in an explicit editor, sharing immutable source analysis across views. Motions and marks use current mirrored text; transposition is admitted against its captured revision."
-        (id model "editor view") (operation (one-of forward backward up down next previous start end mark form transpose) "expression operation"))
+  (edoc "Operate on Scheme expressions in an explicit editor, sharing immutable source analysis across views. Motions and marks use current mirrored text; transposition is admitted against its captured revision." (id model "editor view") (operation (one-of forward backward up down next previous start end mark form transpose) "expression operation") (receiver id (view editor)))
   (define (expression! id operation)
     (let-values ([(source d) (text-control:context id 'editor)])
       (if (eq? operation 'transpose)
@@ -654,8 +649,7 @@
                   (or marked? (and (memq operation '(mark form)) #t)) #t)
                 (mount-goal-set! (mounted id) #f))))))))
 
-  (edoc "Page an allocated editor by a fraction of its height, retaining mark activity and the desired display column. At an already reached edge, move the caret to that edge."
-        (id model "editor view") (direction integer "negative up, positive down") (fraction integer "positive page divisor"))
+  (edoc "Page an allocated editor by a fraction of its height, retaining mark activity and the desired display column. At an already reached edge, move the caret to that edge." (id model "editor view") (direction integer "negative up, positive down") (fraction integer "positive page divisor") (receiver id (view editor)))
   (define (page! id direction fraction)
     (unless (and (integer? direction) (exact? direction) (not (zero? direction))
               (integer? fraction) (exact? fraction) (> fraction 0)) (error 'page! "invalid page direction or divisor"))
@@ -669,8 +663,7 @@
             (publish! id source d (list caret (if marked? (cadr ps) caret) (text-layout:anchor lines wrap top)) marked? #f)
             (mount-goal-set! m goal))))))
 
-  (edoc "Delete an editor's active selection, or an adjacent grapheme or newline."
-        (id model "editor view") (direction (one-of backward forward) "deletion direction"))
+  (edoc "Delete an editor's active selection, or an adjacent grapheme or newline." (id model "editor view") (direction (one-of backward forward) "deletion direction") (receiver id (view editor)))
   (define (delete! id direction)
     (unless (memq direction '(backward forward)) (error 'delete! "invalid deletion direction"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -678,16 +671,14 @@
         (replace! id source d (if (and (cadddr s) (not (equal? p (cadr s)))) s
                                 (list p (text-layout:adjacent old p (if (eq? direction 'backward) 'left 'right)))) '("") direction 'end))))
 
-  (edoc "Move an editor's source journal and rebase its view without changing any other selection."
-        (id model "editor view") (direction symbol "undo or redo") (scope any "undo actor scope"))
+  (edoc "Move an editor's source journal and rebase its view without changing any other selection." (id model "editor view") (direction symbol "undo or redo") (scope any "undo actor scope") (receiver id (view editor)))
   (define (history! id direction scope)
     (let-values ([(source d) (text-control:context id 'editor)])
       (mount-group-set! (mounted id) #f) (mount-goal-set! (mounted id) #f)
       (text-control:history! id source d direction scope (list-head (editor-state:state d) 3)
         (lambda (ps) (list (car ps) (car ps) (caddr ps) #f)))))
 
-  (edoc "Set or clear an editor's mark. Setting it anchors at the current caret; clearing collapses the selection."
-        (id model "editor view") (active boolean "mark activity"))
+  (edoc "Set or clear an editor's mark. Setting it anchors at the current caret; clearing collapses the selection." (id model "editor view") (active boolean "mark activity") (receiver id (view editor)))
   (define (set-mark! id active)
     (unless (boolean? active) (error 'set-mark! "expected a boolean"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -695,8 +686,7 @@
         (unless ps (refuse "Editor selection history is unavailable"))
         (publish! id source d (list (car ps) (car ps) (caddr ps)) active #t))))
 
-  (edoc "Scroll an editor viewport by displayed rows without changing its caret or selection. Uses the mounted geometry and persists only a logical top anchor."
-        (id model "editor view") (rows integer "positive down, negative up"))
+  (edoc "Scroll an editor viewport by displayed rows without changing its caret or selection. Uses the mounted geometry and persists only a logical top anchor." (id model "editor view") (rows integer "positive down, negative up") (receiver id (view editor)))
   (define (scroll! id rows)
     (unless (and (integer? rows) (exact? rows)) (error 'scroll! "expected displayed rows"))
     (let-values ([(source d) (text-control:context id 'editor)])
@@ -720,6 +710,26 @@
             (if current
               (list (list '(click primary (shift)) (keymap:call select! id p (cadr current)))
                 (list '(drag primary ()) (keymap:call select! id p (cadr current)))) '()))))))
+
+  (define (status id d active?)
+    ;; A display transform can hide the character being edited. Expose that
+    ;; character through the ordinary widget status seam, using acquired text.
+    (let* ([m (mounted id)] [mode (and (mount-mode m) (car (mount-mode m)))]
+           [transform (and active? mode (mode:render mode))]
+           [source (and transform (text-source:lookup (view:source d)))]
+           [ps (and source (editor-state:points source (text-source:revision source) d))])
+      (if (not ps) '()
+        (let* ([p (car ps)] [lines (text-source:lines source)] [line (vector-ref lines (car p))]
+               [shown (guard (ex [else #f])
+                        (transform (mode:source lines (mount-facts m)) (car p) line))]
+               [c (and (< (cdr p) (string-length line)) (string-ref line (cdr p)))])
+          (if (and c
+                (cond [(and (string? shown) (= (string-length shown) (string-length line)))
+                       (not (char=? c (string-ref shown (cdr p))))]
+                  [(and (vector? shown) (= (vector-length shown) (string-length line)))
+                   (not (equal? (string c) (vector-ref shown (cdr p))))]
+                  [else #f]))
+            (list (cons (format "  src ~c" c) #f)) '())))))
   (define (event! id source d event)
     (case (car event)
       [(text) (if (eq? (caddr event) 'paste)
@@ -745,7 +755,7 @@
       (list (cons 'snapshot snapshot) (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
         (cons 'links links)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts contexts)
-        (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
+        (cons 'event event!) (cons 'pointer-bindings pointer-bindings) (cons 'status status)
         (cons 'actions (append (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!)) commands))))
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)
                             (if (caddr b) (keymap:call move! widget:target (cadr b) #t) (keymap:call move! widget:target (cadr b)))))
@@ -756,9 +766,11 @@
         ("S-LEFT" left #t) ("S-RIGHT" right #t) ("S-UP" up #t) ("S-DOWN" down #t)))
     (keymap:bind-default! 'widget-editor "BACKSPACE" (keymap:call delete! widget:target 'backward))
     (keymap:bind-default! 'widget-editor "DELETE" (keymap:call delete! widget:target 'forward))
+    (keymap:bind-default! 'widget-editor "C-d" (keymap:call delete! widget:target 'forward))
     (keymap:bind-default! 'widget-editor "RET" (keymap:call paste! widget:target "\n"))
     (keymap:bind-default! 'widget-editor "C-@" (keymap:call set-mark! widget:target #t))
     (keymap:bind-default! 'widget-editor "C-g" (keymap:call set-mark! widget:target #f))
+    (keymap:bind-default! 'widget-editor "ESC" (keymap:call set-mark! widget:target #f))
     (for-each (lambda (b) (keymap:bind-default! 'widget-editor (car b)
                             (keymap:call (apply (cdr (assq (cadr b) commands)) (cons widget:target (cddr b))))))
       '(("C-_" undo) ("C-M-_" redo) ("C-k" kill-line) ("C-w" kill-region) ("M-w" copy-region) ("C-y" yank)

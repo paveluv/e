@@ -10,7 +10,7 @@
       "pretty-scheme" "prompt" "range" "region" "render" "routing"
       "scheme-format" "conflict-review" "conflict-source" "review-preview"
       "rewrite" "rewrite-source" "scheme-mode" "screen" "search" "store" "style"
-      "split-control" "table" "terminal" "text-source" "view" "widget" "window-control")))
+      "split-control" "table" "terminal" "text-layout" "text-source" "view" "widget" "window-control")))
 (configuration:load!)
 
 (list

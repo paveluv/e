@@ -3,7 +3,7 @@
 `C-x C-f` opens the `<finder>` app in the current window, retaining its last
 filter. On first use, the filter is prefilled with the current file's directory,
 an app's working directory, or the head's launch directory, as a full path
-starting and ending with `/`. `M-x (finder:open-directory! "/some/directory")`
+starting and ending with `/`. `M-x (finder:open! window "/some/directory")`
 resets the filter to that directory's full path.
 `M-x (edit:visit-file! path)` also opens or creates a path, with path completion.
 `C-x f` has no default binding.
@@ -209,7 +209,7 @@ Finder composes the shared entry, table and scroll widgets. `finder:open!`
 returns its app model; `widget:descendant` finds the controls:
 
 ```scheme
-(define browser (finder:open!))
+(define browser (finder:open! window))
 (define paths (widget:descendant browser 'table))
 (define input (widget:descendant browser 'table 'filter 'entry))
 (entry:set-text! input "/work/ sls")
@@ -255,7 +255,7 @@ name only; `C-x TAB` lists its keys.
 A chosen file, by Enter or by a click, opens in the focused window, and the
 files view steps behind in the recency list, so `C-x b` offers the document
 the view replaced and Enter returns to it. When the window has target links,
-`(window-host:link-target! (window 2))` say, the file opens in every target window
+`(window:link! manager finder-window target-window 'target)` say, the file opens in every target window
 instead and the finder keeps its view and the focus. A directory click
 navigates the app while keeping keyboard focus where it was. The mouse wheel
 scrolls the pointed pane by the usual fraction of its height, without opening

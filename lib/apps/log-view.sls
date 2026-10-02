@@ -1,13 +1,13 @@
 ;; Journal records are base data; text, wrapping and styles are head caches.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps log-view)
-  (export copy! create! init! move! scroll! select! set-mark! show!)
+  (export copy! create! init! move! open! scroll! select! set-mark!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation string) string:) (prefix (foundation text) text:)
 
           (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head range) range:) (prefix (head render) render:)
           (prefix (head text-layout) text-layout:) (prefix (head widget) widget:)
-          (prefix (head window-control) window-control:) (prefix (head window-host) window-host:)
+          (prefix (head window-control) window-control:)
           (prefix (service journal-source) journal-source:) (prefix (service log) log:) (prefix (state construction) construction:)
           (prefix (state view) view:))
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
@@ -329,26 +329,15 @@
                             (pointer-bindings (widget:event-frame) (list-ref event 4) (list-ref event 5)))])
             (and binding (begin (keymap:run! (cadr binding)) (set! dragging id) (widget:capture! id) #t)))] [else #f])]
       [else #f]))
-  (define (default! component)
-    (window-host:tool! (if component (format "log ~a" component) "log") (lambda (commands) (create! #f component))))
-
-  (define (show-legacy! . component)
-    (unless (and (<= (length component) 1) (for-all symbol? component)) (error 'show! "expected at most one component"))
-    (let ([root (default! (and (pair? component) (car component)))]) (window-host:pop-up-or-reuse! root) root))
 
   (edoc "Show the journal in this window, optionally filtered by component. Reuse its retained selection and following state."
         (receiver window (view window)) (window model "destination window")
         (component (list-of symbol) "optional component filter") (returns model) (public))
-  (define show!
-    (case-lambda
-      [() (show-legacy!)]
-      [(window . component)
-       (if (symbol? window) (apply show-legacy! window component)
-         (begin
-           (unless (and (<= (length component) 1) (for-all symbol? component)) (error 'show! "expected at most one component"))
-           (let ([component (and (pair? component) (car component))])
-             (window-control:open-app! window (if component (format "log ~a" component) "log")
-               (lambda (owner commands) (create! owner component))))))]))
+  (define (open! window . component)
+    (unless (and (<= (length component) 1) (for-all symbol? component)) (error 'open! "expected at most one component"))
+    (let ([component (and (pair? component) (car component))])
+      (window-control:open-app! window (if component (format "log ~a" component) "log")
+        (lambda (owner commands) (create! owner component)))))
 
   (edoc "Register the journal widget and named text commands without opening a tool." (public))
   (define (init!)

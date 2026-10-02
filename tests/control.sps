@@ -1,7 +1,7 @@
 ;; One logical normalization contract serves single and multiline controls.
 (let ([invalid? #f])
   (parameterize ([kernel:registering-module 'control-policy-fixture])
-    (register-policy! 'control-prefix 1
+    (edit:register-policy! 'control-prefix 1
       (lambda (lines positions)
         (if invalid? (values '#() positions)
           (values (list->vector (cons (string-append ">" (vector-ref lines 0)) (cdr (vector->list lines))))
@@ -13,13 +13,13 @@
              [id (view:create! head:ui-actor source kind 1 '((policy control-prefix 1))
                    (if single? '((0 . 1) (0 . 1)) '((1 . 1) (1 . 1) (0 . 0) #f)))])
         (define (line) (text-source:lines (text-source:lookup source)))
-        (define (insert-text) (if single? (entry:insert! id "x") (insert! id "x")))
+        (define (insert-text) (if single? (entry:insert! id "x") (edit:insert! id "x")))
         (widget:mount! id 'normalization) (widget:prepare! id 25 3)
         (insert-text)
         (check (list 'normalization-keeps-text-and-logical-caret-coherent kind)
           (list (line) (car (view:state (interaction:snapshot id))))
           (if single? '(#(">ax") (0 . 3)) '(#(">a" "bx") (1 . 2))))
-        (if single? (entry:undo! id) (undo! id))
+        (if single? (entry:undo! id) (edit:undo! id))
         (set! invalid? #t)
         (check (list 'normalization-is-one-undo-step-and-invalid-results-do-not-edit kind)
           (list (refused? insert-text) (line)) (list #t (list->vector before)))
@@ -108,7 +108,7 @@
   (check 'control-disable-and-reenable-do-not-resurrect-a-held-press (line) "original")
   (let-values ([(text rev) (store:snapshot source)])
     (store:edit! '(agent "control") source rev (text:make-span 0 1 0 3) '("X"))
-    (seat:sync-foreign-edits! source))
+    (text-source:open! head:ui-actor source))
   (let ([before (line)])
     (check 'control-stale-overlap-refuses-without-losing-text
       (list (refused? (lambda () (control:activate! button))) (line)) (list #t before)))
@@ -148,7 +148,7 @@
     (let-values ([(status reason) (store:edit! actor source revision (text:make-span 0 0 0 3) '("expanded")
                                     (list #f "Completion" (cons 'revision revision)))])
       (check 'entry-proposal-refuses-changed-endpoint (list status reason) '(stale revision-changed)))
-    (seat:sync-foreign-edits! source)
+    (text-source:open! head:ui-actor source)
     (check 'entry-api-refuses-old-completion-revision
       (refused? (lambda () (entry:set-text! id "expanded" revision))) #t))
   (entry:set-text! id "new") (entry:undo! id)
@@ -176,10 +176,10 @@
           (dynamic-wind void
             (lambda ()
               (entry:insert! id "X")
-              (list fired? (store:line source 0) (not (seat:buffer-of-store-id source))
+              (list fired? (store:line source 0)
                 (eq? mirror (text-source:lookup source))
                 (if remount? (view:state (interaction:snapshot id))
                   (refused? (lambda () (entry:insert! id "lost"))))))
             (lambda () (store:unsubscribe! token) (when remount? (widget:unmount! id)))))))
     '(#f #t))
-  '((#t "abcX" #t #t #t) (#t "abcX" #t #t ((0 . 0) (0 . 0)))))
+  '((#t "abcX" #t #t) (#t "abcX" #t ((0 . 0) (0 . 0)))))

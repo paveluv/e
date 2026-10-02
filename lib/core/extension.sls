@@ -34,21 +34,21 @@
          (let ([message (condition-message ex)])
            (and (string:prefix? "library " message) (string:suffix? " not found" message)))))
 
-  (edoc "Load an entry module from a local repository, selecting lib/base or lib/client before shared lib and managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are optional, one directory or a list; relative repository paths use the installation, relative library roots use the repository."
+  (edoc "Load an entry module from a local repository, selecting lib/base or lib/client before shared lib and managing compiled objects outside the checkout. Repeated loading is harmless. Additional R6RS roots are an optional list; relative repository paths use the installation, relative library roots use the repository."
         (repository directory "the extension checkout")
         (entry string "its module name, such as worksheet-mode")
-        (roots (or directory (list-of directory)) "additional R6RS source roots, one or several") (public))
+        (roots (list-of directory) "additional R6RS source roots") (public))
   (define load!
     (case-lambda
       [(repository entry) (load! repository entry '())]
       [(repository entry roots)
-       (define root-list (if (string? roots) (list roots) roots))
+       (define root-list roots)
        (unless (and (string? entry) (> (string-length entry) 0)
                     (for-all (lambda (c) (or (char-alphabetic? c) (char-numeric? c) (memv c '(#\- #\_))))
                       (string->list entry)))
          (error 'extension:load! "expected a module name" entry))
        (unless (and (list? root-list) (for-all string? root-list))
-         (error 'extension:load! "expected library root paths, one directory or a list" roots))
+         (error 'extension:load! "expected a list of library root paths" roots))
        (let* ([checkout (directory "repository" repository (kernel:installation-directory))]
               [lib (begin
                      (unless (file-directory? (string-append checkout "/lib"))
@@ -85,8 +85,9 @@
          ;; root for it goes, instead of surfacing as Chez's bare complaint
          (guard (ex [(missing-library? ex)
                      (error 'extension:load!
-                            (format "loading ~a from ~a: library ~s was not found; the directory providing it goes in the third argument, one root or a list"
-                                    entry checkout (car (condition-irritants ex))))])
+                            (format "loading ~a from ~a: library ~s was not found; the directory providing it goes in the third argument's list of roots"
+                                    entry checkout (car (condition-irritants ex))))]
+                    [else (raise ex)])
            (kernel:call-with-registration-update
              (lambda ()
                (kernel:load-module! entry))))

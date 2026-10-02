@@ -8,7 +8,7 @@
   (define (child id name) (cadr (assq name (view:children (or (interaction:snapshot id) (view:snapshot id))))))
   (define (query id) (view:source (or (interaction:snapshot id) (view:snapshot id))))
   (define (selected id) (get (view:state (interaction:snapshot (child id 'table))) 'selection))
-  (define (basis id) (get (view:state (interaction:snapshot (child id 'table))) 'basis))
+  (define (edit:basis id) (get (view:state (interaction:snapshot (child id 'table))) 'basis))
   (define document (store:create! actor "review 界" '("base" "tail") '((base . "base\ntail") (trailing . #f))))
   (define rewrite-document (store:create! actor "history" '("abc")))
   (define other-lines (append (make-list 20 "context") '("base")))
@@ -49,7 +49,7 @@
     (list (not (equal? (query a) (query b))) (store:line (output a) 0) (store:property (output a) 'read-only)
       (exists (lambda (line) (string:search line "[Widget failed" 0 (string-length line)))
         (widget:frame-lines (widget:prepare! root 240 16)))) '(#t "disk" #t #f))
-  (let ([selection (selected a)] [shown (basis a)])
+  (let ([selection (selected a)] [shown (edit:basis a)])
     (table:invoke! (child a 'table) 'mine)
     (await a)
     (check 'row-choices-project-without-settlement-or-cross-review-changes
@@ -83,9 +83,9 @@
     (begin (control:activate! (child (child a 'heading) 'settle))
       (list (store:line document 0) (store:conflicts document))) '("mine" ()))
   (check 'review-tiny-geometry-does-not-create-local-app-buffers
-    (let ([before (seat:buffers)])
+    (let ([before (store:buffer-list)])
       (for-each (lambda (size) (widget:prepare! root (car size) (cadr size))) '((0 0) (1 1) (4 2)))
-      (equal? before (seat:buffers))) #t)
+      (equal? before (store:buffer-list))) #t)
   (widget:unmount! root)
   (check 'hidden-review-releases-derived-demand
     (map (lambda (id) (list (model:demanded? (query id)) (model:demanded? (preview id)))) (list a b c)) '((#f #f) (#f #f) (#f #f)))

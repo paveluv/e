@@ -7,7 +7,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
           (prefix (head head) head:) (prefix (head interaction) interaction:)
-          (prefix (head routing) routing:) (prefix (head tui) tui:)
+          (prefix (head mouse) mouse:) (prefix (head routing) routing:) (prefix (head tui) tui:)
           (prefix (head widget) widget:)
           (prefix (service composition) composition:) (prefix (state construction) construction:) (prefix (state view) view:)
           (prefix (sys tty) tty:))
@@ -101,7 +101,7 @@
            (not (exists (lambda (p) (equal? mounted (widget:frame-id (car p)))) (widget:shown)))) (routing:cancel!)]
       [(equal? event "MOUSE-HANDLED") (routing:cancel!)]
       [else
-       (set! click #f)
+       (mouse:cancel!)
        (let ([key (if (char? event) (tty:character-event event) event)])
          (parameterize ([routing:feedback feedback!])
            (routing:input! mounted
@@ -114,15 +114,7 @@
     (unless (and mounted (assq 'message (widget:commands mounted)))
       (error 'report! "composition has no message target"))
     (widget:invoke! mounted 'message text ""))
-  (define click #f)
-  (define (mouse! handle? phase bits x y)
-    (when (and handle? (not pending?))
-      (let* ([press? (and (char=? phase #\M) (zero? (bitwise-and bits 96)) (< (bitwise-and bits 3) 3))]
-             [now (real-time)] [at (list bits x y)]
-             [double? (and press? click (equal? (car click) at) (< (- now (cdr click)) 500))])
-        (when press? (set! click (and (not double?) (cons at now))))
-        (widget:pointer! (tty:pointer-event phase bits (if double? 2 1)) (- x 1) (- y 1))))
-    (if (and (not (zero? (bitwise-and bits 32))) (= (bitwise-and bits 3) 3)) 'ignore "MOUSE-HANDLED"))
+  (define (mouse! handle? phase bits x y) (if pending? (quote ignore) (mouse:input! handle? phase bits x y)))
 
   (edoc "Prepare and admit a root, then install it at the next head command boundary. Failure leaves the old display usable and frees candidate demand. Disposition is retire or a persistent owner already retaining the previous root; false is allowed for initial or unchanged roots. Return status and the admitted binding. No startup script is run here."
         (expected list "snapshot from current or acquire!") (candidate (or model #f) "unparented view or empty root")
@@ -153,7 +145,7 @@
               (head:run-on-main!
                 (lambda ()
                   (guard (ex [else (widget:invalidate!) (head:quit!) (raise ex)])
-                    (routing:cancel!) (widget:invalidate!) (set! click #f)
+                    (routing:cancel!) (widget:invalidate!) (mouse:cancel!)
                     (interaction:adopt!
                       (append (map (lambda (row) (cons (car row) #f)) old-rows) rows))
                     (unless same? (when old (widget:detach! old)))

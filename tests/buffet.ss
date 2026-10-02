@@ -3,28 +3,35 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
-(eval
+(test-evaluate!
   '(begin
-     (import (prefix (apps buffet) buffet:) (prefix (head head) head:) (prefix (head seat) seat:)
+     (import (prefix (apps buffet) buffet:) (prefix (head head) head:) (prefix (service window) window:)
              (prefix (apps bindings) bindings:) (prefix (head binding-list) listing:)
-             (prefix (head widget) widget:) (prefix (head window-host) window-host:)
+             (prefix (head widget) widget:) (prefix (head window-control) window-control:)
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
-             (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
-             (prefix (head keymap) keymap:) (head literal)
+             (prefix (head interaction) interaction:) (prefix (head routing) routing:)
+             (prefix (head keymap) keymap:) (prefix (core kernel) kernel:)
              (prefix (head mouse) mouse:) (prefix (head mode) mode:)
-             (prefix (head catalogue-host) catalogue-host:) (prefix (head paint) paint:)
+
              (prefix (state store) store:) (prefix (state collection) collection:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (widget:init!) (window-host:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
-     (paint:window-layout)
+     (for-each kernel:load-module! '("window-control" "entry" "control" "table" "buffet" "bindings"))
+     (define manager (window:create-manager! #f))
+     (define window (window:current manager))
+     (widget:mount! manager 'buffet-test)
+     (define inspector #f)
+     (define (help-show!)
+       (unless inspector (set! inspector (bindings:create! #f '() manager)))
+       (widget:mount! inspector 'buffet-inspector)
+       (widget:prepare! inspector 240 20))
+     (define (help-hide!) (widget:unmount! inspector))
      (define (get xs key) (cdr (assq key xs)))
      (define (help-record)
        (widget:pump!)
-       (model:snapshot (view:source (interaction:snapshot (widget:descendant (seat:window-widget (seat:popup)) 'app)))))
+       (model:snapshot (view:source (interaction:snapshot inspector))))
      (define (help-rows) (apply append (map (lambda (p) (get (model:snapshot (cdr p)) 'value)) (get (get (help-record) 'value) 'parts))))
      (define (help-text)
        (string:join (map (lambda (r) (string-append (or (cadr r) "") " " (string:join (caddr r) " ") " " (cadddr r) " " (list-ref r 4))) (help-rows)) "\n"))
@@ -32,8 +39,8 @@
        (test:await name (lambda () (head:before-frame!) (predicate (help-text)))))
      (define (contains? text needle) (and (string:search text needle 0 (string-length text)) #t))
      (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
-     (define (root) (seat:buffer-fact (seat:current-buffer-mirror) 'widget-id #f))
-     (define (app) (child (root) 'app))
+     (define (root) manager)
+     (define (app) (window:document manager window))
      (define (table) (child (app) 'table))
      (define (entry) (child (child (table) 'filter) 'entry))
      (define (query) (view:source (interaction:snapshot (table))))
@@ -41,7 +48,9 @@
      (define (selection) (get (state) 'selection))
      (define (draw! id width height)
        (range:pump!) (widget:pump!)
-       (let ([f (widget:prepare! id width height)]) (widget:present! (list (list f 0 0))) f))
+       (let ([f (widget:prepare! id width (if (equal? id manager) (+ height 1) height))])
+         (widget:present! (list (list f 0 0)))
+         (if (equal? id manager) (widget:prepared (app)) f)))
      (define (settle!)
        (test:await 'buffet-ready
          (lambda ()
@@ -52,7 +61,7 @@
                     (store:line (view:source (interaction:snapshot (entry))) 0))
                   (let ([r (range:read (query) (cadr s) 0 64 '(modified flags name lines mode file archived-at archive expires-at))]) (eq? (car r) 'ready)))))))
      (define (select! b)
-       (let ([ref (catalogue-host:reference b)])
+       (let ([ref b])
          (table:select! (table) ref)
          ;; A ready prior generation may still precede a queued rename.
          ;; Wait for the selected row to include the fact this action uses.
@@ -61,42 +70,44 @@
              (settle!)
              (let* ([s (selection)] [r (collection:lookup (query) (cadr s) ref '(name))])
                (and (equal? (caddr s) ref) (eq? (car r) 'ready) (pair? (list-ref r 4))
-                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (seat:buffer-name b)))))))))
-     (define (press! . keys) (for-each dispatch:key! keys))
-     (define a (seat:new-buffer! "buffet-a"))
-     (define b (seat:new-buffer! "buffet-b"))
+                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (if (eq? (car b) 'buffer) (store:buffer-name b) (get (view:options (view:snapshot b)) 'name))))))))))
+     (define (press! . keys)
+       (for-each (lambda (key) (routing:input! manager (list 'key key (and (= (string-length key) 1) key)))) keys))
+     (define a (store:create! head:ui-actor "buffet-a" '("")))
+     (define b (store:create! head:ui-actor "buffet-b" '("")))
      (define path "/tmp/buffet-path/with-many-components/file.scm")
-     (seat:buffer-file-set! a path)
-     (seat:show-buffer-mirror! a) (seat:show-buffer-mirror! b)
+     (store:set-property! head:ui-actor a 'file path)
+     (window-control:open-document! window a) (window-control:open-document! window b)
+     (draw! manager 120 15)
      (let ([models (model:ids)])
        (test:check 'default-catalogue-neighbor-needs-no-query-or-presentation
-         (list (catalogue:neighbor head:ui-actor #f (seat:buffer-store-id a) 'next)
-           (equal? models (model:ids))) (list (seat:buffer-store-id b) #t)))
-     (buffet:open!) (settle!)
+         (list (catalogue:neighbor head:ui-actor #f a 'next)
+           (equal? models (model:ids))) (list b #t)))
+     (buffet:open! window) (settle!)
      (let* ([lines (widget:frame-lines (draw! (root) 120 15))] [heading (cadr lines)]
             [name (string:search heading "Buffer" 0 120)] [next (string:search heading "Lines" 0 120)])
        (test:check 'short-buffer-names-leave-room-for-the-full-file-path
          (list (<= (- next name 2) 12)
            (and (exists (lambda (line) (string:search line path 0 (string-length line))) (cddr lines)) #t)) '(#t #t)))
      (test:check 'default-previous-and-self-name
-       (list (caddr (selection)) (seat:buffer-name (seat:current-buffer-mirror)))
-       (list (catalogue-host:reference a) "<buffet>"))
+       (list (caddr (selection)) (get (view:options (view:snapshot (app))) 'name))
+       (list a "<buffet>"))
      (press! "RET")
-     (test:check 'enter-opens-the-previous-document (eq? (seat:current-buffer-mirror) a) #t)
-     (buffet:open!) (settle!) (press! "ESC")
-     (test:check 'escape-restores-origin (eq? (seat:current-buffer-mirror) a) #t)
-     (buffet:open!) (settle!)
+     (test:check 'enter-opens-the-previous-document (equal? (app) a) #t)
+     (buffet:open! window) (settle!) (press! "ESC")
+     (test:check 'escape-restores-origin (equal? (app) a) #t)
+     (buffet:open! window) (settle!)
      (define host (root)) (define original-app (app)) (define original-table (table)) (define original-query (query))
      (define filter-id (view:source (interaction:snapshot (entry))))
      (test:check 'internal-filter-is-not-a-switchable-document
-       (exists (lambda (b) (equal? filter-id (seat:buffer-store-id b))) (seat:buffers)) #f)
+       (store:property filter-id 'internal #f) #t)
      (let ([focus (widget:focused (root))])
-       (press! "C-x" "TAB")
+       (help-show!)
        (await-help! 'initial-binding-list (lambda (text) (contains? text "Composition")))
        (let ([text (help-text)])
          (test:check 'keys-lists-buffet-and-entry-bindings-without-changing-focus
            (list (for-all (lambda (needle) (and (string:search text needle 0 (string-length text)) #t))
-                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Global keys" "Widget commands" "app/table (table): '(model "
+                   '("buffet keys" "widget-entry keys" "C-x D" "C-u" "F6" "Widget commands" "table (table): '(model "
                      "activate" "trash" "delete" "buffet:choose!" "buffet:kill!" "buffet:delete!" "basis)"
                      "→ (widget:invoke!" "→ (widget:act!" "→ (buffet:kill!"))
              (not (string:search text "anonymous command" 0 (string-length text)))
@@ -146,7 +157,7 @@
          (test:check 'keys-follows-widget-focus
            (and (string:search text "buffet keys" 0 (string-length text))
              (not (string:search text "widget-entry keys" 0 (string-length text)))) #t))
-       (bindings:hide!) (widget:focus! (root) focus) (settle!))
+       (help-hide!) (widget:focus! (root) focus) (settle!))
      (let* ([id (table)] [options (view:options (interaction:snapshot id))]
             [activate (assq 'activate (cdr (assq 'commands options)))])
        (define (replace! action)
@@ -159,7 +170,7 @@
                                                                (list 'activate (cadr c) action (cadddr c)) c)) (cdr p))) p)) options)))
            (list (list (root) (view:generation (interaction:snapshot (root))))))
          (head:before-frame!))
-       (bindings:show!)
+       (help-show!)
        (replace! 'unregistered-action)
        (await-help! 'rewired-binding-list (lambda (text) (contains? text "unregistered-action")))
        (test:check 'keys-shows-rewired-unavailable-command-template
@@ -171,9 +182,9 @@
        (test:check 'keys-updates-restored-command
          (let ([text (help-text)])
            (not (string:search text "unregistered-action" 0 (string-length text)))) #t)
-       (bindings:hide!) (settle!))
+       (help-hide!) (settle!))
      (let ([focus (widget:focused (root))] [selected (selection)] [sort (get (get (collection:summary (query)) 'value) 'sort)])
-       (head:set-mouse-position! '(2 . 2)) (bindings:show!) (settle!) (head:before-frame!)
+       (head:set-mouse-position! '(2 . 2)) (help-show!) (settle!) (head:before-frame!)
        (await-help! 'heading-pointer-binding (lambda (text) (contains? text "table:toggle-sort!")))
        (let* ([lines (help-rows)]
               [header (cadr (assoc '(click primary ()) (mouse:bindings)))])
@@ -196,97 +207,88 @@
            (lambda (text) (not (exists (lambda (r) (and (pair? (car r)) (eq? (caar r) 'mouse))) (help-rows)))))
          (test:check 'leaving-shown-target-clears-mouse-section
            (exists (lambda (r) (and (pair? (car r)) (eq? (caar r) 'mouse))) (help-rows)) #f))
-       (head:set-mouse-position! #f) (bindings:hide!) (settle!))
+       (head:set-mouse-position! #f) (help-hide!) (settle!))
      (let ([heading (cadr (widget:frame-lines (draw! (root) 120 15)))])
        (press! "b" "u" "f" "f" "e" "t" "-" "b") (settle!)
        (test:check 'typing-from-entry-filters-in-base-without-shifting-columns
          (list (get (get (collection:summary (query)) 'value) 'count) (caddr (selection))
            (equal? heading (cadr (widget:frame-lines (draw! (root) 120 15)))))
-         (list 1 (catalogue-host:reference b) #t)))
+         (list 1 b #t)))
      (press! "C-u") (settle!)
      (define before (selection))
      (press! "UP") (settle!)
      (test:check 'arrows-from-filter-reach-table (not (equal? before (selection))) #t)
      (table:sort-by! (table) '((name descending))) (settle!)
-     (seat:show-buffer-mirror! a)
-     (buffet:previous!)
-     (test:check 'global-cycle-uses-compound-order (eq? (seat:current-buffer-mirror) b) #t)
-     (buffet:open!) (settle!)
+     (window-control:open-document! window a)
+     (buffet:previous! window)
+     (test:check 'global-cycle-uses-compound-order (equal? (app) b) #t)
+     (buffet:open! window) (settle!)
      (select! b)
      (define stale (selection)) (define stale-basis (get (state) 'basis))
-     (seat:buffer-name-set! b "buffet-b-renamed")
+     (store:rename! head:ui-actor b "buffet-b-renamed")
      (test:check 'stale-destructive-action-refuses
        (test:raises? (lambda () (buffet:kill! (app) stale stale-basis))) #t)
      (settle!) (select! b) (press! "C-k") (settle!)
      (test:check 'trash-retires-the-head-buffer
-       (list (and (store:property (seat:buffer-store-id b) 'trashed #f) #t) (memq b (seat:buffers))) '(#t #f))
+       (list (and (store:property b 'trashed #f) #t) (member b (window:documents manager window))) '(#t #f))
      (let ([text (string:join (widget:frame-lines (draw! (root) 120 15)) "\n")])
        (test:check 'archive-age-and-retention-are-presented
          (and (string:search text " ago" 0 (string-length text)) (string:search text " left" 0 (string-length text)) #t) #t))
-     (table:select! (table) (seat:buffer-store-id b)) (settle!)
+     (table:select! (table) b) (settle!)
      (press! "RET")
      (test:check 'archive-restore-preserves-identity
-       (list (seat:buffer-store-id (seat:current-buffer-mirror)) (store:property (seat:buffer-store-id b) 'trashed #f))
-       (list (seat:buffer-store-id b) #f))
-     (buffet:open!) (settle!)
-     (select! (seat:buffer-of-store-id (seat:buffer-store-id b))) (press! "C-k") (settle!)
-     (table:select! (table) (seat:buffer-store-id b)) (settle!)
+       (list (app) (store:property b 'trashed #f))
+       (list b #f))
+     (buffet:open! window) (settle!)
+     (select! b) (press! "C-k") (settle!)
+     (table:select! (table) b) (settle!)
      (press! "C-x" "D")
-     (test:check 'permanent-archive-delete (store:exists? (seat:buffer-store-id b)) #f)
+     (test:check 'permanent-archive-delete (store:exists? b) #f)
      (settle!)
-     (let* ([picker (seat:current-buffer-mirror)]
-            [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>")) '())]
-            [local (window-host:show-widget! (seat:current-window) id)])
-       (seat:show-buffer-mirror! picker) (head:before-frame!)
+     (let* ([picker (app)]
+            [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>") (catalogue . #t)) '() window)]
+            [local id])
+       (window-control:open-document! window picker) (head:before-frame!)
        (select! local)
        (let ([old (selection)] [basis (get (state) 'basis)])
+         (let* ([source (get (get (model:snapshot (query)) 'value) 'source)]
+                [before (model:revision source)])
+           (view:set-state! head:ui-actor id #f '(retained interaction))
+           ;; The neighbor request is a worker barrier, not a timing delay.
+           (catalogue:neighbor head:ui-actor (query) local 'next)
+           (test:check 'view-interaction-does-not-republish-catalogue-metadata
+             (model:revision source) before))
          (view:arrange! head:ui-actor
            (list (list id (model:revision id) '()
                    (map (lambda (p) (if (eq? (car p) 'name) '(name . "<buffet-local-renamed>") p))
                      (view:options (view:snapshot id))))) '())
-         (seat:buffer-name-set! local "<buffet-local-renamed>")
-         (test:check 'view-generation-fences-retirement
+         (test:check 'view-metadata-fences-retirement-without-a-lease-change
            (test:raises? (lambda () (buffet:kill! (app) old basis))) #t))
        (select! local) (press! "C-k")
        (test:check 'table-activation-retires-view-and-placement
-         (list (model:snapshot id) (memq local (seat:buffers))) '(#f #f))
+         (list (model:snapshot id) (member local (window:documents manager window))) '(#f #f))
        (settle!))
-     (let* ([w (seat:current-window)] [picker (seat:current-buffer-mirror)]
-            [other (window-host:split-right!)] [fork (seat:buffer-fact (seat:window-buffer other) 'widget-id #f)]
-            [fork-table (child (child fork 'app) 'table)])
-       (test:check 'split-forks-view-state-and-shares-query
-         (list (equal? host fork) (equal? original-table fork-table)
-           (equal? original-query (view:source (interaction:snapshot fork-table)))) '(#f #f #t))
+     ;; The generic window fixture covers inactive clicks and focus policy;
+     ;; retain Buffet's independent metadata/width and hover/wheel invariants.
+     (let* ([fork (view:fork! head:ui-actor original-app)]
+            [fork-table (begin (widget:mount! fork 'buffet-peer) (child fork 'table))])
+       (test:check 'forks-view-state-and-shares-query
+         (list (equal? original-table fork-table)
+           (equal? original-query (view:source (interaction:snapshot fork-table)))) '(#f #t))
        (draw! fork 27 8)
        (let ([wide (widget:frame-lines (draw! host 300 15))])
          (test:check 'split-width-does-not-truncate-peer-metadata
            (and (string:search (cadr wide) "Modified" 0 300)
-             (string:search (cadr wide) "Lines" 0 300)
              (string:search (cadr wide) "File" 0 300) (= (string-length (cadr wide)) 300)) #t))
-       (window-host:focus! other) (seat:show-buffer-mirror! a)
-       (widget:set-active! host #f)
-       (test:await 'inactive-table-ready
-         (lambda ()
-           (draw! host 120 15)
-           (let* ([s (get (view:state (interaction:snapshot original-table)) 'selection)]
-                  [r (and s (collection:rank original-query (cadr s) (catalogue-host:reference a)))])
-             (and r (eq? (car r) 'ready) (list-ref r 3)))))
-       (let* ([frame (draw! host 120 15)] [s (get (view:state (interaction:snapshot original-table)) 'selection)]
-              [generation (cadr s)]
-              [rank (list-ref (collection:rank original-query generation (catalogue-host:reference a)) 3)]
-              [row (+ 2 rank)]
-              [face (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) 0)])
-         (test:check 'inactive-pane-emphasizes-current-document face 'active)
+       (settle!)
+       (let* ([s (selection)] [rank (list-ref (collection:rank original-query (cadr s) a) 3)] [row (+ 2 rank)])
          (widget:pointer! '(pointer move none ()) 3 row)
-         (let* ([frame (draw! host 120 15)] [face (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) 0)])
-           (test:check 'hover-uses-shared-candidate-style face 'candidate-hover))
+         (let ([frame (draw! host 120 15)])
+           (test:check 'hover-uses-shared-candidate-style
+             (vector-ref (widget:frame-styles frame row (list-ref (widget:frame-lines frame) row)) 0) 'candidate-hover))
          (widget:pointer! '(scroll 0 3 cells) 3 row)
-         (test:check 'wheel-never-changes-selection
-           (get (view:state (interaction:snapshot original-table)) 'selection) s)
-         (let ([result (parameterize ([seat:app-event-focus other]) (widget:pointer! '(pointer press primary ()) 3 row))])
-           (test:check 'inactive-click-opens-in-focused-window-and-keeps-focus
-             (list (cadr result) (eq? other (seat:current-window)) (eq? picker (seat:window-buffer w)) (eq? a (seat:window-buffer other))) '(#f #t #t #t))))
-       (window-host:focus! w) (window-host:delete-others!) (widget:set-active! host #t) (settle!))
+         (test:check 'wheel-never-changes-selection (selection) s))
+       (widget:unmount! fork))
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.
      (define independent (buffet:create! #f '()))

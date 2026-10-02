@@ -7,20 +7,20 @@
           (prefix (core work-queue) work-queue:)
           (prefix (foundation text) text:)
           (prefix (head binding-list) listing:)
-          (prefix (head catalogue-host) catalogue-host:)
 
-          (prefix (head dispatch) dispatch:)
+
+
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head mode) mode:)
+
           (prefix (head mouse) mouse:)
-          (prefix (head seat) seat:)
+
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
+
           (prefix (service inspection) inspection:)
           (prefix (service log) log:)
           (prefix (service window) window:)
@@ -272,70 +272,9 @@
   (define (capture-event! id source d event)
     (case (car event) [(key) (press! id (cadr event)) #t] [(text) #t] [else #f]))
 
-  ;; The default placement is the only part that knows about windows.
-  (define default-root #f)
-  (define (live-app root)
-    (let* ([d (interaction:snapshot root)] [child (and d (assq 'app (view:children d)))]
-           [app (and child (interaction:snapshot (cadr child)))]
-           [r (and app (view:source app) (model:snapshot (view:source app)))]
-           [v (and r (get r 'value '()))])
-      (and v (equal? (get v 'owner #f) head:ui-actor)
-        (not (eq? (get v 'status #f) 'unavailable)) (cadr child))))
-  (define (active-app)
-    (and default-root
-      (exists (lambda (w) (and (equal? (seat:window-widget w) default-root) (or (not (seat:popup? w)) (> (seat:popup-rows) 0)))) (seat:windows))
-      (live-app default-root)))
-  (define (default-subject)
-    (let* ([w (seat:current-window)] [root (dispatch:input-root)] [b (seat:window-buffer w)])
-      (and (not (and default-root (equal? (seat:window-widget w) default-root)))
-        (list root (if root '(global) (append (mode:key-contexts b) '(global)))
-          (and (or (seat:app-buffer? b) (seat:buffer-read-only b)) #t) (seat:buffer-name b) '()))))
-  (define (follow!)
-    (let ([app (active-app)])
-      (when app (let ([target (default-subject)]) (when target (request! app target))))))
-  (define (ensure! target)
-    (define (tool!) (window-host:tool! "bindings" (lambda (commands) (create! #f commands (and target (car target))))))
-    (let ([root (tool!)])
-      ;; The window host survives recovery; its attachment's inspection does
-      ;; not. Retire only this placement, preserving borrowed snapshots that
-      ;; another inspector may still display as unavailable.
-      (unless (live-app root)
-        (unless (catalogue-host:retire! root (view:generation (interaction:snapshot root)))
-          (refuse "Inspection changed while reopening; try again"))
-        (set! root (tool!)))
-      (set! default-root root))
-    (when target (request! (widget:descendant default-root 'app) target)) default-root)
-
-  (edoc "Show mouse, keyboard, command and composition bindings in the default pop-up. An already visible inspector pages down."
-        (returns model))
-  (define (show-legacy!)
-    (let ([app (active-app)] [target (default-subject)])
-      (if app (begin (when target (request! app target)) (page! app 'down) default-root)
-        (let ([root (ensure! target)])
-          (if (seat:popup? (seat:current-window)) (window-host:pop-up-or-reuse! root)
-            (begin (window-host:show-widget! (seat:popup) root) (seat:show-popup! (seat:popup-default-rows)))) root))))
-
-  (edoc "Page the visible default inspector up, or show it when hidden.")
-  (define (page-up-legacy!) (let ([app (active-app)]) (if app (page! app 'up) (show!))))
-
-  (edoc "Show the inspector in the current window, following its captured subject until another window becomes active." (returns model))
-  (define (open-legacy!)
-    (let* ([target (default-subject)] [root (ensure! target)]) (window-host:show-widget! (seat:current-window) root) root))
-
-  (edoc "Capture a key or chord and show its contextual resolution, binding origin, forwarding trace and shadowed definitions in the default inspector. Return immediately; the ordinary event pump collects the keys.")
-  (define (key-legacy!)
-    (let ([root (show!)])
-      (let ([w (find (lambda (w) (and (equal? root (seat:window-widget w)) (or (not (seat:popup? w)) (> (seat:popup-rows) 0)))) (seat:windows))])
-        (when w (window-host:focus! w) (capture-key! (widget:descendant root 'app))))))
-
-  (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening.")
-  (define (hide-legacy!)
-    (when default-root
-      (for-each (lambda (w)
-                  (when (equal? (seat:window-widget w) default-root)
-                    (if (seat:popup? w) (seat:hide-popup!) (window-host:return! default-root)))) (seat:windows))))
-
-  (define (open-composed! window root)
+  (edoc "Open an inspector in an explicit window and follow focus within the supplied composition. While focus is inside any inspector, retain its preceding subject and route."
+    (receiver window (view window)) (window model "destination window") (root model "composition to follow") (returns model))
+  (define (open! window root)
     (let* ([target (composed-subject root)]
            [old (window:find-app (window-control:manager window) window "bindings")])
       (when (and old (equal? (car old) window))
@@ -355,42 +294,32 @@
         (widget:pump!)
         (when target (request! app target)) app)))
 
-  (edoc "Open an inspector in an explicit window and follow focus within the supplied composition. While focus is inside any inspector, retain its preceding subject and route."
-    (receiver window (view window)) (window model "destination window") (root model "composition to follow") (returns model))
-  (define open!
-    (case-lambda [() (open-legacy!)] [(window root) (open-composed! window root)]))
-
   (define (show-composed! root direction)
     (let* ([focus (widget:focused root)] [window (widget:invoke! root 'auxiliary)]
            [old (window:document (window-control:manager window) window)]
            [shown? (and (model:reference? old) (widget:prepared old))]
-           [app (open-composed! window root)])
+           [app (open! window root)])
       (when focus (interaction:focus! root focus))
       (when (and shown? (equal? old app)) (page! app direction)) app))
 
   (edoc "Show contextual bindings through a composition's explicit auxiliary command without moving focus. Repeating the command pages the visible inspector."
     (root model "composition with an auxiliary host") (returns model))
-  (define show! (case-lambda [() (show-legacy!)] [(root) (show-composed! root 'down)]))
+  (define (show! root) (show-composed! root 'down))
 
   (edoc "Page the composition's visible inspector upward, or show it when hidden."
     (root model "composition with an auxiliary host"))
-  (define page-up! (case-lambda [() (page-up-legacy!)] [(root) (show-composed! root 'up)]))
+  (define (page-up! root) (show-composed! root 'up))
 
   (edoc "Capture a key through the ordinary modal route and show its resolution against the preceding subject, without executing it."
     (root model "composition with an auxiliary host"))
-  (define key!
-    (case-lambda [() (key-legacy!)]
-      [(root)
-       (let ([app (show! root)])
-         (capture-key! app))]))
+  (define (key! root) (capture-key! (show! root)))
 
   (edoc "Hide a composition's auxiliary inspector through its declared hide-auxiliary command, retaining its subject and scroll position."
     (root model "composition with an auxiliary host"))
-  (define hide! (case-lambda [() (hide-legacy!)] [(root) (widget:invoke! root 'hide-auxiliary)]))
+  (define (hide! root) (widget:invoke! root 'hide-auxiliary))
 
   (edoc "Register the Bindings composition and commands; hidden inspectors do no capture or trace work." (public))
   (define (init!)
-    (let ([b (seat:find-tool-buffer "*bindings*")]) (when b (set! default-root (seat:buffer-fact b 'widget-id #f))))
     (widget:register! 'bindings 1
       (append (layout:container 'y) (list '(focus . fallback) '(contexts . (widget-bindings)) (cons 'service service!) (cons 'release release!)
                                       (cons 'actions (list (cons 'inspect inspect!) (cons 'page page!))))))
@@ -411,8 +340,6 @@
         (cons 'measure (lambda (data d axis cross measure) (if (eq? axis 'y) (let ([n (vector-length (fitted data cross))]) (list (min 1 n) n)) '(1 40))))
         (cons 'anchor (lambda (data at width) (listing:anchor (fitted data width) at)))
         (cons 'locate (lambda (data anchor width) (listing:locate (fitted data width) anchor)))))
-    (keymap:bind-default! "C-x TAB" show!) (keymap:bind-default! "C-x S-TAB" page-up!)
-    (keymap:bind-default! "C-h k" key!)
     (keymap:bind-default! 'screen "C-x TAB" (keymap:call show! widget:target))
     (keymap:bind-default! 'screen "C-x S-TAB" (keymap:call page-up! widget:target))
     (keymap:bind-default! 'screen "C-h k" (keymap:call key! widget:target))
@@ -423,4 +350,4 @@
                             (keymap:call widget:act! (keymap:call widget:descendant widget:target 'viewport) 'scroll (cadr p))))
       '(("UP" -1) ("DOWN" 1) ("C-p" -1) ("C-n" 1) ("HOME" -1000000000) ("END" 1000000000)))
     (for-each (lambda (key) (keymap:bind-default! 'widget-bindings key (keymap:call widget:invoke! widget:target 'return))) '("ESC" "C-g"))
-    (head:add-pre-redraw-hook! follow!)))
+  ))

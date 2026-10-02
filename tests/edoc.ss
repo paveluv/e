@@ -13,8 +13,8 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!)
-             (prefix (head window-host) window-host:) (foundation edoc) (prefix (core kernel) kernel:) (prefix (test) test:))
+     (import (prefix (head edit) edit:)
+             (prefix (head window-control) window-control:) (foundation edoc) (prefix (core kernel) kernel:) (prefix (test) test:))
 
      (define check test:check)
 
@@ -263,12 +263,11 @@
                (environment-symbols (interaction-environment))))
      (define documented (filter (lambda (sym) (edoc-of (top-level-value sym))) editor-procedures))
      (check 'the-command-layer-reads-back
-       (list (map argument-type (signature-arguments (car (edoc-of visit-file!))))
-             (map argument-type (signature-arguments (car (edoc-of present-log-entries!))))
-             (signature-arguments (car (edoc-of window-host:split-below!)))
-             (argument-type (signature-returns (car (edoc-of window-host:focus!))))
-             (signature-library (car (edoc-of window-host:delete!))))
-       '((file) ((list-of datum)) () boolean "(head window-host)"))
+       (list (map argument-type (signature-arguments (car (edoc-of edit:visit-file!))))
+             (map argument-type (signature-arguments (car (edoc-of edit:present-log-entries!))))
+             (map argument-type (signature-arguments (car (edoc-of window-control:split!))))
+             (signature-library (car (edoc-of window-control:close!))))
+       '((file procedure) ((list-of datum)) (model (one-of above below left right)) "(head window-control)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
                  (not (for-all (lambda (sig)

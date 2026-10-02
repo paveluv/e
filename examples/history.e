@@ -1,5 +1,5 @@
 ;; (history-example:create!) returns a nested composition, with no window.
-;; (window-host:show-widget! (seat:current-window) (history-example:create!)) hosts it.
+;; Mount the returned view in a host, or install it as a composition root.
 (import (prefix (core port) port:))
 (port:register! '(view history-choice-preview 1)
   '((input selection (or row-selection #f) (options selection))))

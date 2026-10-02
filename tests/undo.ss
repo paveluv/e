@@ -1,243 +1,218 @@
 #!/usr/bin/env scheme-script
 
 ;; Command history selects mine, all, or a named actor through the
-;; store journal, while local buffers keep snapshot history.
+;; store journal, using explicit editor views and journal result statuses.
 
 (import (chezscheme))
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
-(eval
+(test-evaluate!
   '(begin
-     (import (prefix (test) test:)
-             (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
-             (prefix (only (head edit) init!) edit:)
-             (prefix (state store) store:)
-             (prefix (foundation text) text:)
-             (prefix (foundation string) string:)
-             (prefix (head mode) mode:)
-             (prefix (core kernel) kernel:))
-
+     (import (prefix (test) test:) (prefix (head head) head:) (prefix (head widget) widget:)
+       (prefix (state store) store:) (prefix (foundation text) text:) (prefix (foundation string) string:)
+       (prefix (head mode) mode:) (prefix (core kernel) kernel:))
      (define check test:check)
-     (widget:init!) (edit:init!) (window-host:init!)
-     (store:log-retention 256)   ; the bound these checks exercise
+     (include "tests/editor-fixture.sps")
+     (store:log-retention 256)
      (define bot '(agent undo-test))
-     (define (fresh name shared?)
-       (let ([b ((if shared? seat:new-buffer! seat:new-local-buffer!) name)])
-         (seat:buffer-lines-set! b '#("base" "other"))
-         (seat:show-buffer-mirror! b)
-         (seat:goto! '(0 . 0))
-         b))
-     (define (text-of b) (vector->list (seat:buffer-lines b)))
-     (define (blocked? report) (and (string:search report "blocked" 0 (string-length report)) #t))
-     (define (nothing? report) (and (string:search report "No further" 0 (string-length report)) #t))
-
-     ;; UI edit, foreign edit, UI edit, then two undos.  The first undo
-     ;; must not erase the foreign provenance.  Both own edits can be
-     ;; undone because their inverses are disjoint from the agent's edit.
-     (define b (fresh "undo-foreign" #t))
-     (define id (seat:buffer-store-id b))
-     (insert-text! "A")
+     (define b (fresh "undo-foreign" '("base" "other")))
+     (define id b)
+     (edit:insert! editing "A")
      (store:edit! bot id (store:revision id) (text:make-span 1 0 1 0) '("G"))
-     (head:before-frame!)
-     (seat:goto! '(0 . 5))
-     (insert-text! "B")
-     (undo!)
+     (refresh!)
+     (goto! '(0 . 5))
+     (edit:insert! editing "B")
+     (edit:undo! editing)
      (check 'first-undo-preserves-foreign-text (text-of b) '("Abase" "Gother"))
-     (check 'undo-retains-foreign-provenance
-            (and (exists (lambda (entry) (equal? (cadr entry) bot)) (store:history id 256)) #t)
-            #t)
-     (check 'second-undo-applies (blocked? (undo!)) #f)
+     (check
+       'undo-retains-foreign-provenance
+       (and (exists (lambda (entry) (equal? (cadr entry) bot)) (store:history id 256)) #t)
+       #t)
+     (check
+       'second-undo-applies
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'blocked)
+       #f)
      (check 'second-undo-keeps-foreign-text (text-of b) '("base" "Gother"))
-     (check 'mine-does-not-fall-through-to-other-actors (nothing? (undo!)) #t)
-     (redo!)
-     (redo!)
+     (check
+       'mine-does-not-fall-through-to-other-actors
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'nothing)
+       #t)
+     (edit:redo! editing)
+     (edit:redo! editing)
      (check 'redo-keeps-foreign-text (text-of b) '("AbaseB" "Gother"))
-     (undo!)
+     (edit:undo! editing)
      (check 'undo-after-redo-keeps-foreign-text (text-of b) '("Abase" "Gother"))
-
-     ;; Ordinary undo/redo can traverse several entries without clearing
-     ;; the store's delta history.  Unchanged content keeps others' marks.
-     (define plain (fresh "undo-plain" #t))
-     (define plain-id (seat:buffer-store-id plain))
+     (define plain (fresh "undo-plain" '("base" "other")))
+     (define plain-id plain)
      (store:set-mark! bot plain-id 'anchor '(1 . 2))
-     (insert-text! "A")
-     (insert-text! "B")
-     (undo!)
-     (undo!)
+     (edit:insert! editing "A")
+     (edit:insert! editing "B")
+     (edit:undo! editing)
+     (edit:undo! editing)
      (check 'repeated-ordinary-undo (text-of plain) '("base" "other"))
      (check 'undo-keeps-unrelated-mark (store:mark bot plain-id 'anchor) '(1 . 2))
-     (redo!)
-     (redo!)
+     (edit:redo! editing)
+     (edit:redo! editing)
      (check 'repeated-ordinary-redo (text-of plain) '("ABbase" "other"))
-
-     ;; A reset or truncation cannot authorize restoring a head snapshot.
-     (define reset-buffer (fresh "undo-reset" #t))
-     (define reset-id (seat:buffer-store-id reset-buffer))
-     (insert-text! "A")
+     (define reset-buffer (fresh "undo-reset" '("base" "other")))
+     (define reset-id reset-buffer)
+     (edit:insert! editing "A")
      (store:reset! bot reset-id '("foreign reset"))
-     (head:before-frame!)
-     (check 'reset-gap-has-no-undo (nothing? (undo!)) #t)
+     (refresh!)
+     (check
+       'reset-gap-has-no-undo
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'nothing)
+       #t)
      (check 'reset-gap-keeps-text (text-of reset-buffer) '("foreign reset"))
-
-     (define truncated (fresh "undo-truncated" #t))
-     (define truncated-id (seat:buffer-store-id truncated))
-     (insert-text! "A")
-     (store:edit! bot truncated-id (store:revision truncated-id)
-                  (text:make-span 1 0 1 0) '("G"))
-     (do ([i 0 (+ i 1)]) ((= i 257))
-       (store:edit! bot truncated-id (store:revision truncated-id)
-                    (text:make-span 1 0 1 0) '("x") '(long "long agent action")))
-     (head:before-frame!)
+     (define truncated (fresh "undo-truncated" '("base" "other")))
+     (define truncated-id truncated)
+     (edit:insert! editing "A")
+     (store:edit! bot truncated-id (store:revision truncated-id) (text:make-span 1 0 1 0) '("G"))
+     (do ([i 0 (+ i 1)])
+         ((= i 257))
+       (store:edit! bot truncated-id (store:revision truncated-id) (text:make-span 1 0 1 0) '("x")
+         '(long "long agent action")))
+     (refresh!)
      (define truncated-text (text-of truncated))
-     (check 'truncated-provenance-refuses-undo (blocked? (undo!)) #t)
+     (check
+       'truncated-provenance-refuses-undo
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'blocked)
+       #t)
      (check 'truncated-provenance-keeps-text (text-of truncated) truncated-text)
-
-     ;; A foreign edit made by a subscriber after undo commits still
-     ;; reaches the cache.  Redo rebases its inverse, preserving that edit.
-     (define raced (fresh "undo-callback" #t))
-     (define raced-id (seat:buffer-store-id raced))
-     (insert-text! "A")
+     (define raced (fresh "undo-callback" '("base" "other")))
+     (define raced-id raced)
+     (edit:insert! editing "A")
      (define token
-       (store:subscribe! raced-id
+       (store:subscribe!
+         raced-id
          (lambda (event)
-           (when (and (eq? (car event) 'edit)
-                      (equal? (cadddr event) head:ui-actor))
-             (store:edit! bot raced-id (store:revision raced-id)
-                          (text:make-span 1 0 1 0) '("G"))))))
-     (undo!)
+           (when (and (eq? (car event) 'edit) (equal? (cadddr event) head:ui-actor))
+             (store:edit! bot raced-id (store:revision raced-id) (text:make-span 1 0 1 0) '("G"))))))
+     (edit:undo! editing)
      (store:unsubscribe! token)
      (check 'foreign-edit-during-undo-is-kept (text-of raced) '("base" "Gother"))
-     (check 'redo-after-disjoint-racing-foreign-edit-applies (blocked? (redo!)) #f)
+     (check
+       'redo-after-disjoint-racing-foreign-edit-applies
+       (eq? (call-with-values (lambda () (edit:redo! editing)) (lambda (status detail) status)) 'blocked)
+       #f)
      (check 'redo-keeps-racing-foreign-edit (text-of raced) '("Abase" "Gother"))
-
-     ;; A live overlap refuses, with no history movement or side effects.
-     (define overlap (fresh "undo-overlap" #t))
-     (define overlap-id (seat:buffer-store-id overlap))
-     (insert-text! "A")
+     (define overlap (fresh "undo-overlap" '("base" "other")))
+     (define overlap-id overlap)
+     (edit:insert! editing "A")
      (store:edit! bot overlap-id (store:revision overlap-id) (text:make-span 0 0 0 5) '("BOT"))
-     (head:before-frame!)
+     (refresh!)
      (define groups-before (store:undo-labels overlap-id))
-     (check 'overlap-refuses (blocked? (undo!)) #t)
+     (check
+       'overlap-refuses
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'blocked)
+       #t)
      (check 'overlap-keeps-foreign-text (text-of overlap) '("BOT" "other"))
      (check 'refusal-keeps-the-undo-groups (equal? (store:undo-labels overlap-id) groups-before) #t)
-     (undo-actor! bot)
+     (edit:undo-actor! bot editing)
      (check 'targeted-undo-restores-covered-own-edit (text-of overlap) '("Abase" "other"))
-     (undo!)
+     (edit:undo! editing)
      (check 'mine-can-follow-another-actors-undo (text-of overlap) '("base" "other"))
-
-     ;; Scope is a validated head preference.  A per-call choice does
-     ;; not change it, and redo follows the requester in either mode.
-     (check 'default-scope (undo-scope) 'mine)
-     (check 'invalid-scope-refuses (guard (ex [else #t]) (undo-scope 'everyone) #f) #t)
-     (check 'invalid-scope-keeps-default (undo-scope) 'mine)
-     (define scoped (fresh "undo-scoped" #t))
-     (define scoped-id (seat:buffer-store-id scoped))
-     (insert-text! "A")
+     (check 'default-scope (edit:undo-scope) 'mine)
+     (check 'invalid-scope-refuses (guard (ex [else #t]) (edit:undo-scope 'everyone) #f) #t)
+     (check 'invalid-scope-keeps-default (edit:undo-scope) 'mine)
+     (define scoped (fresh "undo-scoped" '("base" "other")))
+     (define scoped-id scoped)
+     (edit:insert! editing "A")
      (store:edit! bot scoped-id (store:revision scoped-id) (text:make-span 1 0 1 0) '("G"))
-     (head:before-frame!)
-     (parameterize ([undo-scope 'all])
-       (undo!)
+     (refresh!)
+     (parameterize ([edit:undo-scope 'all])
+       (edit:undo! editing)
        (check 'all-selects-latest-foreign-action (text-of scoped) '("Abase" "other"))
-       (undo!)
+       (edit:undo! editing)
        (check 'all-continues-to-own-action (text-of scoped) '("base" "other"))
-       (redo!)
-       (redo!)
+       (edit:redo! editing)
+       (edit:redo! editing)
        (check 'all-redo-restores-both-authors (text-of scoped) '("Abase" "Gother"))
-       (parameterize ([undo-scope 'mine]) (undo!))
+       (parameterize ([edit:undo-scope 'mine]) (edit:undo! editing))
        (check 'one-off-mine-preserves-other-author (text-of scoped) '("base" "Gother"))
-       (check 'one-off-scope-keeps-preference (undo-scope) 'all))
+       (check 'one-off-scope-keeps-preference (edit:undo-scope) 'all))
      (check 'scope-is-head-local-configuration (store:property scoped-id 'undo-scope) #f)
-     (parameterize ([undo-scope 'all]) (undo!))
+     (parameterize ([edit:undo-scope 'all]) (edit:undo! editing))
      (check 'one-off-all-undo-with-no-own-history (text-of scoped) '("base" "other"))
-     (redo!)
+     (edit:redo! editing)
      (check 'redo-a-foreign-action-while-default-is-mine (text-of scoped) '("base" "Gother"))
-     (check 'scope-restores-after-parameterize (undo-scope) 'mine)
-
-     ;; Groups remain one action even with multiple line transactions.
-     (define grouped (fresh "undo-grouped" #t))
-     (call-as-one-edit! "two lines"
-       (lambda () (insert-text! "A") (newline!) (insert-text! "B")))
+     (check 'scope-restores-after-parameterize (edit:undo-scope) 'mine)
+     (define grouped (fresh "undo-grouped" '("base" "other")))
+     (edit:call-as-one-edit!
+       "two lines"
+       (lambda ()
+         (edit:insert! editing "A")
+         (editor:insert-at! editing "\n" #f)
+         (edit:insert! editing "B")))
      (define grouped-text (text-of grouped))
-     (undo!)
+     (edit:undo! editing)
      (check 'grouped-command-undo (text-of grouped) '("base" "other"))
-     (redo!)
+     (edit:redo! editing)
      (check 'grouped-command-redo (text-of grouped) grouped-text)
-
-     ;; Whole-vector command results are edits, so both formatting and
-     ;; indentation retain undo.  Formatting also restores the local
-     ;; command's final-newline choice when that command is undone.
-     (define formatted (fresh "undo-formatted" #t))
+     (define formatted (fresh "undo-formatted" '("base" "other")))
      (mode:register! "undo-format" '() '() (lambda (line) #f))
-     (seat:with-buffer-mirror formatted (mode:choose! "undo-format"))
-     (seat:buffer-trailing-set! formatted #f)
+     (mode:choose! "undo-format" formatted)
+     (store:set-property! head:ui-actor formatted 'trailing #f)
      (mode:register-formatter! "undo-format" (lambda (b from to) '("BASE" "OTHER")))
-     (format-buffer!)
+     (edit:format-buffer! editing)
      (check 'format-applies (text-of formatted) '("BASE" "OTHER"))
-     (undo!)
+     (edit:undo! editing)
      (check 'format-undo (text-of formatted) '("base" "other"))
-     (check 'format-undo-restores-final-newline (seat:buffer-trailing formatted) #f)
-     (redo!)
+     (check 'format-undo-restores-final-newline (store:property formatted 'trailing #f) #f)
+     (edit:redo! editing)
      (check 'format-redo (text-of formatted) '("BASE" "OTHER"))
-     (check 'format-redo-restores-final-newline (seat:buffer-trailing formatted) #t)
-     (seat:buffer-trailing-set! formatted #f)
-     (format-buffer!)
-     (check 'format-can-change-only-final-newline (seat:buffer-trailing formatted) #t)
-     (undo!)
-     (check 'metadata-only-format-undo (buffer-text (seat:buffer-store-id formatted)) "BASE\nOTHER")
-     (redo!)
-     (check 'metadata-only-format-redo (buffer-text (seat:buffer-store-id formatted)) "BASE\nOTHER\n")
+     (check 'format-redo-restores-final-newline (store:property formatted 'trailing #f) #t)
+     (store:set-property! head:ui-actor formatted 'trailing #f)
+     (edit:format-buffer! editing)
+     (check 'format-can-change-only-final-newline (store:property formatted 'trailing #f) #t)
+     (edit:undo! editing)
+     (check 'metadata-only-format-undo (edit:buffer-text formatted) "BASE\nOTHER")
+     (edit:redo! editing)
+     (check 'metadata-only-format-redo (edit:buffer-text formatted) "BASE\nOTHER\n")
      (mode:register-indenter! "undo-format" (lambda (b from to) '(2 4)))
-     (indent-buffer!)
+     (edit:indent-buffer! editing)
      (check 'indent-applies (text-of formatted) '("  BASE" "    OTHER"))
-     (undo!)
+     (edit:undo! editing)
      (check 'indent-undo (text-of formatted) '("BASE" "OTHER"))
-
-     ;; Ordinary undo must not restore an old snapshot's unrelated
-     ;; final-newline flag.  Formatting does own that flag, and refuses
-     ;; its entire inverse when another actor has subsequently changed it.
-     (define foreign-fact (fresh "undo-foreign-fact" #t))
-     (define foreign-fact-id (seat:buffer-store-id foreign-fact))
-     (insert-text! "A")
+     (define foreign-fact (fresh "undo-foreign-fact" '("base" "other")))
+     (define foreign-fact-id foreign-fact)
+     (edit:insert! editing "A")
      (store:set-property! bot foreign-fact-id 'trailing #f)
-     (undo!)
-     (check 'ordinary-undo-preserves-foreign-final-newline (buffer-text (seat:buffer-store-id foreign-fact)) "base\nother")
-     (seat:with-buffer-mirror foreign-fact (mode:choose! "undo-format"))
-     (format-buffer!)
+     (edit:undo! editing)
+     (check 'ordinary-undo-preserves-foreign-final-newline (edit:buffer-text foreign-fact) "base\nother")
+     (mode:choose! "undo-format" foreign-fact)
+     (edit:format-buffer! editing)
      (store:set-property! bot foreign-fact-id 'trailing #f)
-     (check 'format-undo-refuses-foreign-fact-change (blocked? (undo!)) #t)
-     (check 'fact-conflict-keeps-entire-formatted-result (buffer-text (seat:buffer-store-id foreign-fact)) "BASE\nOTHER")
-
-     ;; The same editing guard protects history actions and fresh edits.
-     (seat:show-buffer-mirror! plain)
-     (seat:buffer-read-only-set! plain #t)
+     (check
+       'format-undo-refuses-foreign-fact-change
+       (eq? (call-with-values (lambda () (edit:undo! editing)) (lambda (status detail) status)) 'blocked)
+       #t)
+     (check 'fact-conflict-keeps-entire-formatted-result (edit:buffer-text foreign-fact) "BASE\nOTHER")
+     (show! plain)
+     (store:set-property! head:ui-actor plain 'read-only #t)
      (define protected-text (text-of plain))
-     (check 'read-only-history-commands-refuse
+     (check
+       'read-only-history-commands-refuse
        (map (lambda (command)
-              (guard (ex [(kernel:read-only-error? ex) #t] [else (raise ex)]) (command) #f))
-            (list undo! (lambda () (parameterize ([undo-scope 'all]) (undo!))) (lambda () (undo-actor! bot)) redo!))
+              (call-with-values command (lambda (status detail) (equal? (list status detail) '(refused read-only)))))
+            (list
+              (lambda () (edit:undo! editing))
+              (lambda () (parameterize ([edit:undo-scope 'all]) (edit:undo! editing)))
+              (lambda () (edit:undo-actor! bot editing))
+              (lambda () (edit:redo! editing))))
        '(#t #t #t #t))
-     ;; The store transaction still protects the buffer if its flag changed
-     ;; after the command preflight, or a caller enters the head seam directly.
-     (check 'read-only-shared-entrypoints-refuse
-       (cons (guard (ex [(kernel:refusal? ex) (condition-message ex)] [else (raise ex)])
-               (seat:store-edit! plain (text:make-span 0 0 0 0) '("bad")) #f)
-             (map (lambda (direction)
-                    (call-with-values (lambda () (seat:store-history! plain direction 'mine)) list))
-                  '(undo redo)))
+     (check
+       'read-only-shared-entrypoints-refuse
+       (cons
+         (guard (ex [(kernel:refusal? ex) (condition-message ex)] [else (raise ex)])
+           (submit! plain (text:make-span 0 0 0 0) '("bad"))
+           #f)
+         (map (lambda (direction)
+                (call-with-values (lambda () (text-source:history! head:ui-actor plain direction 'mine)) list))
+              '(undo redo)))
        '("Edit not applied: the buffer is read-only" (refused read-only) (refused read-only)))
      (check 'read-only-keeps-text (text-of plain) protected-text)
-     (seat:buffer-read-only-set! plain #f)
-
-     ;; a local buffer, a view or a tool of the head's, is not edited and has no history
-     (define local (fresh "undo-local" #f))
-     (check 'a-local-buffer-refuses-edits-and-undo
-       (list (guard (ex [(kernel:read-only-error? ex) 'read-only]) (insert-text! "A"))
-             (guard (ex [(kernel:read-only-error? ex) 'read-only]) (undo!))
-             (text-of local))
-       '(read-only read-only ("base" "other")))
-
+     (store:set-property! head:ui-actor plain 'read-only #f)
      (test:finish! 'undo)))

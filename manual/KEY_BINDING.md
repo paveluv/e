@@ -8,7 +8,7 @@ Press `C-h k`, then a key or complete chord, to inspect it in `<bindings>`.
 The report follows the captured app's input route and shows its resolved
 command, forwarding trace, binding origin, shadowed definitions and other
 contextual meanings. Capture never executes the command; Escape or `C-g`
-cancels. `(bindings:key!)` opens this same capture from M-x.
+cancels. `(bindings:key! root)` opens this same capture from M-x; `root` is the composition providing the auxiliary host.
 
 ## Inspecting bindings
 
@@ -17,7 +17,7 @@ It shows mouse bindings first, followed by the active window's keyboard
 bindings and its widget command connections. Each row shows the public API
 and its documentation. Keyboard bindings are grouped by app and mode context,
 then by global bindings. The listing fits its window, with a scrollbar and
-independent scrolling in each view. `(bindings:show!)` opens the same inspector
+independent scrolling in each view. `(bindings:show! root)` opens the same inspector
 from M-x or a script.
 
 It lists what works here: a key a nearer context takes, `RET`
@@ -39,7 +39,7 @@ global commands allowed while a prompt is open.
 `C-x TAB` again pages the listing down from wherever
 you are, and back to the top past the end, and `C-x S-TAB` pages it up; `C-x o` or `M-Down` select the
 pop-up to browse it, select text with the mouse and copy with `M-w`. The `↓` on its status
-line puts it away, as `(bindings:hide!)` does. `(bindings:open!)` shows the listing
+line puts it away, as `(bindings:hide! root)` does. `(bindings:open! window root)` shows the listing
 in the current window instead, for the buffer that window shows, and
 `C-x TAB` pages it there. Apps bind keys in their contexts to public commands.
 In `<finder>`, Enter invokes the table's `activate` connection and the listing
@@ -49,29 +49,20 @@ row saying what it takes. In the pop-up itself, an app's there, the conflicts br
 
 ## Global bindings
 
-`keymap:bind!` takes a key specification and a zero-argument command:
+`keymap:bind!` takes an optional context, a key specification and a
+zero-argument command. Bind explicit receivers through `keymap:call`:
 
 ```scheme
-(keymap:bind! "M-l" log-view:show!)
-(keymap:bind! "C-c s" edit:save!)
-(keymap:bind! "C-c C-f" edit:visit-file!)
+(keymap:bind! 'composed-window "M-l" (keymap:call log-view:open! widget:target))
+(keymap:bind! 'widget-editor "C-c s" (keymap:call edit:save! widget:target))
+(keymap:bind! 'widget-editor "M-g" (keymap:call edit:select! widget:target '(0 . 0) '(0 . 0)))
 ```
 
-Global specifications may contain any number of space-separated key events.
-This permits arbitrary prefixes; they are not limited to `C-x`. When a prefix
-is entered, e waits for the rest of the chord and displays the partial sequence
-in the echo area.
-
-A command must be a procedure callable with no arguments. Existing commands
-such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window-host:focus-next!` can be
-used directly. `keymap:call` adapts a command that needs arguments, and the
-binding then reads as the call it makes in the bindings listing and under `C-h k`;
-a lambda works too, but shows as an anonymous command:
-
-```scheme
-(keymap:bind! "M-g" (keymap:call seat:goto! '(0 . 0)))
-(keymap:bind! "C-c n" (keymap:call edit:move-vertical! 10))
-```
+Global specifications may contain any number of space-separated events.
+When a prefix is entered, e waits for the rest and displays the chord.
+A context target comes from recursive routing, so the same command works
+in an embedded editor without assuming a current window. A lambda works
+too, but appears as an anonymous command in Bindings.
 
 Two structural actions describe themselves where a lambda shows as an
 anonymous command. `keymap:call` applies a command to what producer procedures
@@ -83,14 +74,14 @@ producers and nested calls run at the key press, and their resulting values
 are inserted into the prompt. Inspecting either action never runs them:
 
 ```scheme
-(keymap:bind! "C-x k" (keymap:call edit:kill-buffer! seat:current-buffer))
+(keymap:bind! 'composed-window "C-x k" (keymap:call window-control:discard! widget:target))
 (keymap:bind! 'finder "F2"
   (keymap:call table:toggle-sort!
     (keymap:call widget:descendant widget:target 'table) 'size))
 (keymap:bind! "C-c a" (keymap:prefill edit:answer!))
 ```
 
-`C-h k` shows the first as `(edit:kill-buffer! (seat:current-buffer))` and
+Bindings shows the first with its explicit window receiver and
 the third as `λ (edit:answer! `, by the names the top level gives the
 procedures, so a rename follows.
 
@@ -185,15 +176,15 @@ cell even after keyboard input clears hover emphasis, or `#f` if unknown.
 Gestures include `(click primary ())`, `(click secondary ())`,
 `(click primary (shift))`, `(drag primary ())`, and `(wheel down ())`.
 `mouse:gesture-text` spells them for help. Actions use `keymap:call`, just
-like keyboard bindings. Legacy buffer apps expose `mouse:click!` and
-`mouse:scroll!`, which deliver input through their normal routes at the
-given screen coordinates.
+like keyboard bindings. Scripts can use `widget:pointer!` with a normalized
+pointer or scroll event and zero-based screen coordinates. The TUI adapter
+`mouse:input!` decodes terminal reports into that same route.
 
 Printable characters can also be bound. An explicit binding takes precedence
 over ordinary self-insertion:
 
 ```scheme
-(keymap:bind! ";" (keymap:call edit:type! " — "))
+(keymap:bind! 'widget-editor ";" (keymap:call edit:insert! widget:target " — "))
 ```
 
 ## Key names
@@ -227,12 +218,11 @@ Three pseudo-keys are bindable like any other. `PASTE` is the event a
 bracketed paste produces, bound to `edit:paste!`. `SELF-INSERT` is what a
 printable character without a binding of its own resolves to, in the mode's
 context first, then the global map, and its command receives the character
-through `head:typed-text`: globally `(keymap:call edit:type! head:typed-text)`
-inserts it, while in `<finder>` and `<buffet>` the context binds it to
-`extend-filter!`, so typing grows the filter. The bindings listing shows the
-pseudo-key as `any character`. `MOUSE-CLICK`
-fires in a mode's context after a text click has placed point, so a mode can
-act on the click (the markdown viewer follows links with it). Mouse reports
+through `head:typed-text`. Editor contexts bind it to an explicit insertion
+call; Entry handles typed-text events for editable filters and prompts.
+Bindings shows the pseudo-key as `any character`. Pointer bindings are
+separate widget targets, inspected through the same forwarding machinery.
+Mouse reports
 themselves are handled before key dispatch: clicks, drags, releases, and
 wheel events act directly and settle the transient echo area like keyboard
 input. Pointer motion is not a key event: it updates hover feedback on
@@ -242,9 +232,9 @@ text with a dotted underline where supported, without moving keyboard focus.
 Examples:
 
 ```scheme
-(keymap:bind! "C-c SPC" edit:set-mark-command!)
-(keymap:bind! "PGUP" edit:beginning-of-buffer!)
-(keymap:bind! "C-c LEFT" edit:beginning-of-line!)
+(keymap:bind! 'widget-editor "C-c SPC" (keymap:call edit:set-mark! widget:target #t))
+(keymap:bind! 'widget-editor "PGUP" (keymap:call edit:move! widget:target 'start))
+(keymap:bind! 'widget-editor "C-c LEFT" (keymap:call edit:move! widget:target 'home))
 ```
 
 Terminal protocols cannot distinguish every physical key combination. In
@@ -258,18 +248,18 @@ configure it to send DEL if necessary.
 not become active again:
 
 ```scheme
-(keymap:unbind! "C-v")
-(keymap:unbind! "M-w")
+(keymap:unbind! 'widget-editor "C-v")
+(keymap:unbind! 'widget-editor "M-w")
 ```
 
 Binding the same specification again replaces its effective meaning. An exact
 user binding can also reclaim a key used as a default prefix:
 
 ```scheme
-(keymap:bind! "C-h" edit:backspace!)
+(keymap:bind! 'widget-editor "C-h" (keymap:call edit:delete! widget:target 'backward))
 ```
 
-Here `C-h` runs `edit:backspace!` immediately instead of waiting for the default
+Here `C-h` deletes backward in the editor immediately instead of waiting for the default
 `C-h k` chord. A user-defined longer chord still makes its initial keys act as
 a prefix.
 
@@ -280,100 +270,32 @@ reload; configuration-owned registrations do not accumulate.
 
 ## Contextual keymaps
 
-Some interactions interpret keys using local state. Their bindings use a
-three-argument form consisting of the context, key, and semantic action:
+Widget contexts route through the focused tree. A view declares its
+contexts, capture contexts and named actions; Bindings lists those along
+the acquired route. The three-argument keymap form binds an explicit context
+to a command, using `widget:target` for its receiver. For example:
 
 ```scheme
-(keymap:bind! 'isearch "M-i" 'toggle-case)
-(keymap:unbind! 'isearch "M-c")
-(keymap:bind! 'prompt "C-u" prompt:kill!)
-(keymap:bind! 'query-replace "SPC" 'skip)
+(keymap:bind! 'widget-search "M-i"
+  (keymap:call widget:act! widget:target 'toggle-case))
+(keymap:unbind! 'widget-search "M-c")
+(keymap:bind! 'widget-prompt "M-p"
+  (keymap:call prompt:history! widget:target 'previous))
 ```
 
-The search and query-replace contexts use action symbols because the
-operation acts on the currently running search; the prompt context binds the
-`prompt:` commands, which ask the open prompt for their action. Their keys are
-individual decoded key events; global keymaps provide arbitrary multi-key
-chords.
+Named widget actions use the ordinary declared forwarding chain. Entry
+children handle text, caret motion and deletion; their host handles acceptance,
+cancellation and history. Incremental search is an ordinary search/entry
+composition, with `repeat`, `accept`, `cancel` and `toggle-case` actions.
+`C-s` repeats, `M-c` toggles case, Enter/Escape accepts, and `C-g` restores
+the starting selection. `search:replace!` performs a guarded replacement in
+an explicit editor scope; there is no separate symbolic query-replace keymap.
 
-A context may also come from a buffer's state rather than its mode. An app
-registers it with a predicate, `(mode:add-context! 'conflicted conflicted?)`
-say, and every buffer the predicate holds of has the context, before its
-mode's, so keys bound in it work only while the state holds, keep their
-other meanings elsewhere, and the bindings listing shows them only where they
-work.
-
-Buffer-mode contexts bind command procedures and complete chords. Widget
-contexts route recursively through the focused tree. Terminal views yield C-x
-and M-x in partial capture; C-] and the clickable ● / ◐ status control toggle
-that view's policy. Full capture forwards those prefixes to the child.
-Shift-PageUp/Down remain viewport commands in either state. After process exit,
-its capture context disappears and the editor child handles ordinary input.
-See [Terminal buffers](TERMINAL.md) and [Widgets](WIDGETS.md).
-
-### `isearch`
-
-Available actions are:
-
-- `repeat`: find the next match, or recall the previous needle when empty
-- `cancel`: restore the point where the search began
-- `accept`: keep the current match and leave search
-- `accept-dispatch`: accept, then run the key's global binding
-- `toggle-case`: switch this search between folded and exact matching
-- `delete-character`: remove the last character from the needle
-
-Example:
-
-```scheme
-(keymap:bind! 'isearch "M-i" 'toggle-case)
-(keymap:unbind! 'isearch "M-c")
-```
-
-Printable keys without contextual actions extend the search. Other unhandled
-keys fall through to the global map while search remains active; movement keys
-use `accept-dispatch` by default.
-
-### `prompt`
-
-Available actions are:
-
-- `accept` and `cancel`
-- `beginning`, `end`, `backward`, and `forward`
-- `up` and `down`, which move through wrapped input or prompt history
-- `delete-forward` and `delete-backward`
-- `kill` and `yank`
-- `complete` and `alternate-complete`
-- `inspect`, used by the Scheme prompt's symbol inspector
-- `newline`, used by M-x for an indented logical newline
-- `paste`
-
-Example:
-
-```scheme
-(keymap:bind! 'prompt "C-u" 'kill)
-(keymap:bind! 'prompt "M-p" 'up)
-(keymap:bind! 'prompt "M-n" 'down)
-(keymap:bind! 'prompt "M-RET" 'newline)
-```
-
-Printable keys without prompt actions insert themselves. Other unhandled keys
-are ignored by the prompt.
-
-### `query-replace`
-
-The ordinary configurable actions are:
-
-- `replace`: replace the highlighted match
-- `skip`: leave it unchanged and continue
-- `stop`: finish query-replace at this match
-
-Example:
-
-```scheme
-(keymap:bind! 'query-replace "r" 'replace)
-(keymap:bind! 'query-replace "s" 'skip)
-(keymap:bind! 'query-replace "q" 'stop)
-```
+Mode contexts and widget contexts both support complete chords. Terminal
+views yield C-x and M-x in partial capture; C-] and the clickable ● / ◐
+control toggle that view's policy. Full capture forwards those prefixes to
+the child. After process exit its capture context disappears and the editor
+child handles ordinary input. See [Terminal](TERMINAL.md) and [Widgets](WIDGETS.md).
 
 ## Inspecting bindings from Scheme
 
@@ -381,8 +303,8 @@ Example:
 unbound or has no explicit binding:
 
 ```scheme
-(keymap:binding "C-s")
-(keymap:binding 'isearch "M-c")
+(keymap:binding 'widget-editor "C-s")
+(keymap:binding 'widget-search "M-c")
 ```
 
 Code that has already read canonical events with `head:read-key-event` should use
@@ -391,7 +313,7 @@ space-separated configuration syntax:
 
 ```scheme
 (let ([event (head:read-key-event)])
-  (keymap:event-binding 'isearch event))
+  (keymap:event-binding 'widget-search event))
 ```
 
 `(head:read-key-event #f)` consumes mouse reports without applying them, which is
@@ -402,7 +324,7 @@ buffer while their state refers to the old one.
 returns one effective global key specification:
 
 ```scheme
-(keymap:command-key 'save!)
+(keymap:command-key 'eval:prompt!)
 ```
 
 `keymap:command-keys` returns every effective global binding for the command. This is
@@ -410,7 +332,7 @@ the live lookup used by describe pages, so adding, replacing, or removing a
 binding is reflected the next time the view redraws:
 
 ```scheme
-(keymap:command-keys 'eval:run!)
+(keymap:command-keys 'eval:prompt!)
 ```
 
 `keymap:command-hint` formats a list of command symbols with their current keys. It is
@@ -423,13 +345,13 @@ inside `init!`:
 
 ```scheme
 (define (init!)
-  (keymap:bind-default! "M-j" describe:at-point!))
+  (keymap:bind-default! 'widget-editor "M-j" (keymap:call describe:at-point! widget:target)))
 ```
 
 Context defaults use the corresponding three-argument form:
 
 ```scheme
-(keymap:bind-default! 'isearch "M-i" 'toggle-case)
+(keymap:bind-default! 'widget-search "M-i" (keymap:call widget:act! widget:target 'toggle-case))
 ```
 
 Defaults remain replaceable by `keymap:bind!` and `keymap:unbind!`. Registrations are

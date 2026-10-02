@@ -135,8 +135,8 @@ Shared edits made while absent move the saved positions;
 after a reset or expired history, positions clamp to the current text. Markdown
 and Describe widgets rebuild from their shared sources at the new width;
 unavailable Markdown anchors are reported until explicit navigation.
-The finder rebuilds its directory/filter/sort state and selected paths
-from a small descriptor, then rescans at the new window widths.
+Finder retains its filter, sorting and selected paths in the view graph;
+the head reacquires visible rows and fits them to its new width.
 Existing tools reopen by identity. Private documents retain their audience,
 text and undo history. Missing definitions display inert placeholders that
 preserve the saved payload. A supported old screen-6 checkpoint is imported
@@ -226,21 +226,20 @@ not interpret historical hello/error strings or negotiate an older protocol.
 
 ## What is shared and what is local
 
-| Shared, owned by the base | Local, owned by each head |
+| Base owns | Head owns |
 |---|---|
-| Buffer text, file facts, undo and redo history, marks | Windows, points, viewports and the selection |
-| Terminal processes and their screens | Prompts, `<completions>`, `<bindings>`, `<buffet>` |
-| `*copy*`, one per head through its audience, shown as `[copy]` like every buffer that is one head's alone | |
-| The log's records | `<log>` renderings and the echo area |
-| Describe's `*describe*` sources and widget view state | Markdown fitting, styles and hit maps |
-| Questions waiting for a named head | Plain local buffers with their text, checkpointed under the head's name |
-| `base-config.e`, permissions and sessions | `config.e`, key bindings, styles |
+| Document text, file facts, history and marks | Acquired text mirrors and rendering caches |
+| Terminal processes and grid state | Terminal input and grid presentation |
+| Views, logical caret/selection/top anchors, window topology and recency | Geometry, styles, frame output and device gestures |
+| Persistent app filters, sorts, environments and jobs | Visible demand, pending continuations and timing |
+| Journal records and named-head questions | Log/message presentation and transient prompts |
+| `base-config.e`, admission and sessions | `config.e`, definitions and startup recipe |
 
-Shared buffers keep file names or names such as `*scratch*`; local buffers
-wear angle brackets. [Buffers](BUFFERS.md) covers naming, conflicts, undo
+App view names use angle brackets; their models and logical state remain in
+the base even when scoped to one head's composition. [Buffers](BUFFERS.md) covers naming, conflicts, undo
 scopes, attribution and the store API; [Terminal buffers](TERMINAL.md) the
 shared terminals; [Echo area and log](LOG.md) the shared log; and
-[App buffers](APPS.md#publishing-shared-rendition) apps that publish through
+[Apps](APPS.md#publishing-terminal-rendition) apps that publish through
 the store.
 
 ## Editing together

@@ -3,10 +3,10 @@
 (elibrary (apps blame)
   (export at-point! describe init! tint-seconds)
   (import (chezscheme) (prefix (foundation text) text:)
-          (prefix (head edit) edit:) (prefix (head editor) editor:)
+          (prefix (head editor) editor:)
           (prefix (head editor-state) editor-state:) (prefix (head head) head:)
           (prefix (head style) style:) (prefix (head text-control) text-control:)
-          (prefix (head text-source) text-source:) (prefix (state store) store:))
+          (prefix (head text-source) text-source:) (prefix (service log) log:) (prefix (state store) store:))
 
   (edoc "How long another actor's newly adopted edit stays tinted, in seconds; zero disables tinting. Fractional values are accepted."
         (value number))
@@ -54,7 +54,7 @@
   (define (at-point! id)
     (let-values ([(source d) (text-control:context id 'editor 'current)])
       (let ([ps (editor-state:points (text-control:mirror source) (text-control:revision source) d)])
-        (edit:set-message! (if ps (describe (text-source:id (text-control:mirror source)) (car ps)) "Attribution position is unavailable")))))
+        (log:add! 'blame:at-point! (if ps (describe (text-source:id (text-control:mirror source)) (car ps)) "Attribution position is unavailable")))))
 
   (edoc "Register source-scoped attribution effects and their semantic faces." (public))
   (define (init!)

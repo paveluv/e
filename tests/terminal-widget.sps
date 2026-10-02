@@ -25,8 +25,8 @@
     (widget:pump!) (take)
     (check 'terminal-nests-with-readonly-editor-children-and-a-hidden-process-cursor
       (list (widget:caret frame) (car (widget:frame-lines (widget:prepared (child a))))
-        (state a) (state b) (not (seat:buffer-of-store-id source)))
-      '(#f "two     " (partial #t) (partial #t) #t))
+        (state a) (state b))
+      '(#f "two     " (partial #t) (partial #t)))
     (publish '(2 1 #t)) (widget:pump!)
     (check 'process-cursor-following-is-derived-without-view-publications
       (list (widget:caret (show! 16)) (map state (list (child a) (child b)))) (list '(1 . 1) before)))
@@ -46,10 +46,10 @@
     (store:set-properties! owner source (list (list 'clipboard 7 actor "shared clipboard") '(diagnostics "fixture diagnostic")))
     (widget:pump!) (widget:pump!)
     (check 'nested-views-share-one-clipboard-and-diagnostic-delivery
-      (list (copy-text) (- (length (log:entries 'terminal-control:present-notices!)) before)) '("shared clipboard" 2))
+      (list (edit:copy-text) (- (length (log:entries 'terminal-control:present-notices!)) before)) '("shared clipboard" 2))
     (store:set-property! owner source 'clipboard '(8 (head "another actor") "foreign clipboard"))
     (widget:pump!)
-    (check 'clipboard-replies-stay-with-their-controlling-head (copy-text) "shared clipboard"))
+    (check 'clipboard-replies-stay-with-their-controlling-head (edit:copy-text) "shared clipboard"))
   (show! 16) (widget:pointer! '(scroll 0 -3 cells) 1 0)
   (check 'ordinary-wheel-leaves-following-without-sending-process-input
     (list (cadr (state a)) (take)) '(#f ()))
@@ -76,7 +76,7 @@
   (check 'exit-removes-capture-and-retains-the-editor
     (list (exists (lambda (scope) (memq 'terminal-capture (cadr scope))) (cadr (widget:key-scopes root "C-]")))
       (refused? (lambda () (terminal:toggle-capture! a)))
-      (begin (select! (child a) '(0 . 0) '(0 . 2)) (cadddr (state (child a)))))
+      (begin (edit:select! (child a) '(0 . 0) '(0 . 2)) (cadddr (state (child a)))))
     '(#f #t #t))
   (widget:unmount! root) (actor:detach! owner)
   (check 'unmount-keeps-the-process-document (store:exists? source) #t))

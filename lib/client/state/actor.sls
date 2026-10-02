@@ -2,7 +2,7 @@
 ;; registration, delivery and open questions belong to the daemon.
 (import (only (foundation edoc) elibrary))
 (elibrary (state actor)
-  (export answer! attached audience? call-as checkpoint checkpoint! current describe detach!
+  (export answer! attached audience? call-as current describe detach!
           identity? in-audience? pending register! registered? send! subscribe! unsubscribe!)
   (import (chezscheme)
           (prefix (core client) client:)
@@ -127,19 +127,4 @@
   (define (answer! ticket answer)
     (forget-pending!)
     (client:request 'answer ticket answer))
-  (define (own-checkpoint actor . state)
-    (unless (equal? actor (client:identity)) (error 'checkpoint "a head owns its own checkpoint"))
-    (apply client:request 'checkpoint state))
-
-  (edoc "This head's last screen checkpoint, or #f."
-        (actor actor "the actor identity")
-        (returns any))
-  (define (checkpoint actor)
-    (own-checkpoint actor))
-
-  (edoc "Record this head's screen checkpoint in the base."
-        (actor actor "the actor identity")
-        (state datum "the checkpoint"))
-  (define (checkpoint! actor state)
-    (own-checkpoint actor state) (void))
 )

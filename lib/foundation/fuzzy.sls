@@ -29,7 +29,7 @@
   (define (separator? c)
     ;; The character before a word start: anything but a letter or a digit,
     ;; so that a query aligns with the parts of set-buffer-name!, of
-    ;; (seat:current-buffer-mirror) and of (buffer "*scratch*") alike.
+    ;; (store:buffer-name) and of '(buffer 7) alike.
     (not (or (char-alphabetic? c) (char-numeric? c))))
 
   (define (slot c)

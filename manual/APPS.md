@@ -12,12 +12,13 @@ typed ports and explicit command targets. `C-x TAB` opens Bindings to inspect
 the active keymaps, pointer bindings and forwarding chains. Those same public
 commands can be called from M-x or scripts with an explicit view receiver.
 
-`window-host:tool!` is the default host's entry point for a named composition;
-`window-host:show-widget!` places an existing root. These choose placement only.
-The old local-buffer registration, snapshot-output and per-window alternate
-text APIs have been removed. A widget does not render by replacing a local
-buffer. Source documents use `store:`, bounded row sets use `collection:`,
-and ordinary editor widgets provide text presentation and selection.
+`window-control:open-app!` places a named composition in an explicit window.
+Its builder receives the window lifetime owner and `open`/`return` command
+bindings, and returns a fresh unmounted app. Reopening reuses its retained
+state; splitting forks views while sharing sources. Custom compositions
+provide their own hosts. Widgets render without replacing a local buffer:
+source documents use `store:`, bounded rows use `collection:`, and editor
+views provide text presentation and selection.
 
 Examples in `examples/widgets.e`, `examples/environments.e` and
 `examples/history.e` demonstrate connected controls, isolated evaluation,
@@ -113,12 +114,12 @@ matching frame is available. Publish valid rendition to advance that view;
 the store's latest text remains readable independently. Clear `alive` or
 `manages-viewport` when returning to ordinary text. Surface-only updates wake
 the head to retry deferred adoption without forcing a full-screen repaint.
-`(seat:buffer-rendition buffer)` returns its opaque prepared frame;
-`(seat:read-rendition buffer ranges)` reads explicit `[from,to)` ranges
-given as `(from . to)` pairs without filling that cache. Both enforce current
-visibility and return `#f` when unavailable. `render:header` and `render:row`
-return owned header and `(cell-strings styles cell-link-ranges)` data from a
-frame; plain/unrequested rows return `#f`.
+For a custom surface consumer, `render:prepare` acquires a coherent frame
+from an explicit document, immutable text, text revision and bounded row
+ranges. Editor views do this on their preparation path. `render:header` and
+`render:row` return owned header and `(cell-strings styles cell-link-ranges)`
+data; plain or unrequested rows return `#f`. Retain a complete prior frame
+while the source and rendition revisions disagree.
 
 `(surface:subscribe! id proc)` subscribes to one buffer, or all buffers
 when `id` is `#f`, and returns a token for `surface:unsubscribe!`.

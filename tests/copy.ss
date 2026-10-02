@@ -7,7 +7,7 @@
 (eval
   '(begin
      (import (prefix (test) test:) (prefix (head edit) edit:)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head widget) widget:)
              (prefix (head interaction) interaction:) (prefix (service clipboard) clipboard:)
              (prefix (state store) store:) (prefix (state actor) actor:)
              (prefix (state view) view:) (prefix (state model) model:))
@@ -22,11 +22,11 @@
      (test:check 'copy-is-lazy (list (copy) (edit:copy-text)) '(#f ""))
      (edit:copy-text! "abc\n")
      (define id (copy))
-     (test:check 'copy-uses-an-actor-owned-document-without-a-seat-mirror
+     (test:check 'copy-uses-an-actor-owned-document
        (list (store:property id 'copy #f) (store:property id 'audience #f)
-         (store:property id 'disposable #f) (seat:buffer-of-store-id id)
+         (store:property id 'disposable #f)
          (edit:copy-text) (length (store:log id)))
-       (list #t (list head:ui-actor) #t #f "abc\n" 1))
+       (list #t (list head:ui-actor) #t "abc\n" 1))
      (test:check 'copies-round-trip-exactly
        (map (lambda (s) (edit:copy-text! s) (edit:copy-text)) '("" "\n" "a" "a\n\nb" "a\n\n"))
        '("" "\n" "a" "a\n\nb" "a\n\n"))

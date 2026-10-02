@@ -5,8 +5,7 @@
 The echo area shows this head's messages from the shared editor log. Each new
 entry is a separate row prefixed with the logging function's qualified name,
 so one command can report several events without overwriting earlier output.
-The area grows by shrinking windows
-to their configured minimum height. When it fills, older visible entries give
+The message widget fits within the screen composition's allocated space. When it fills, older visible entries give
 way, but remain in the log until its retention limit expires them. Other
 actors' records are available in `<log>` without interrupting this head's
 echo area.
@@ -14,7 +13,7 @@ echo area.
 The next keyboard event, mouse click, or wheel event settles the echo area back
 to its live line.
 
-Messages displayed with `paint:show-message!` are temporary indicators. They appear
+Messages displayed with `message:show!` are temporary indicators. They appear
 in the echo area but are not recorded. Prompts and modes use indicators for
 state that is useful now but not historical.
 
@@ -31,14 +30,15 @@ Code may mark a message as progress:
 A progress entry supersedes the newest visible entry from the same component
 instead of stacking. It never replaces another component's entry. Every
 progress update still receives its own record in `<log>`.
-`edit:message-progress` is the command layer's alias for `log:progress`. Its value
+`log:progress`'s value
 is local to the calling thread and captured when the record is appended, so
 concurrent or deferred delivery preserves the requested presentation.
 
 ## The `<log>` view
 
 `<log>` is a read-only widget backed by structured records. Its default tool
-is created by `(log-view:show!)` and then retained in the buffer list.
+is created by `(log-view:open! window)` and then retained in the buffer list.
+Here `window` is a window model; M-x receiver completion supplies the receiver.
 `M->` follows new entries; moving or scrolling
 away keeps the reader's place. Separate views scroll and select independently.
 The base
@@ -74,7 +74,7 @@ change it through M-x; put it in `base-config.e` to keep it across restarts.
 Filtered log views are created dynamically:
 
 ```scheme
-(log-view:show! 'eval:report!)
+(log-view:open! window 'eval:report!)
 ```
 
 This creates `<log eval:report!>` containing only that function's records.
@@ -128,9 +128,8 @@ absent. `<log base:audit-store-event!>` shows the operation's actor and compact 
 `(create id name)`, `(rename id name)`, `(delete id)`, `(property id key)`,
 `(reset id revision)`, or `(edit id revision span [history-origin])`.
 Edit records omit text payloads; undo/redo keep their existing origin data.
-These records are quiet. `seat:flush-ui-audit!` contributes `ui: …` summaries with the
-revision range of a typing burst, and local resync diagnostics. Their time
-of presentation is separate from the base's operation order.
+These records are quiet. The base operation order is independent of when
+a head presents the resulting messages.
 
 ## API
 
@@ -169,11 +168,12 @@ of presentation is separate from the base's operation order.
 - `(log:history component [selector [actor]])` derives strings for interactive
   history. The selector receives each record's datum and defaults to identity.
 - `log:register-formatter!` installs component presentation.
-- `edit:present-log-entry!` and `edit:present-log-entries!` expose the shared echo
-  presentation path.
-- `edit:set-message!` records under `edit:set-message!`; an empty string clears
-  the indicator without logging. The former `edit:message-source` override is removed.
-- `paint:show-message!` displays an explicit transient message and styles.
+- `(message:present! view entries ghost)` presents structured records in an
+  explicit message view. The default composition subscribes it to this head's
+  records; hidden log views have independent demand.
+- `(message:show! view text ghost)` displays transient text without logging.
+  A bare composition need not provide a message widget; runtime diagnostics
+  still have a log/stderr fallback.
 
 `(log:subscribe! procedure)` returns a token for `log:unsubscribe!`. The
 procedure receives `(entry presentation)`, where presentation is `#f`,

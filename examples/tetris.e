@@ -1,10 +1,10 @@
-;; Load this file, then (tetris:open!). Arrows move/rotate, Space drops,
+;; Load this file, then (tetris:open! window). Arrows move/rotate, Space drops,
 ;; p pauses, r restarts. (tetris:create!) returns a widget for any host.
 ;; Each view keeps its own game in the ordinary saved interaction state.
 (import (prefix (only (foundation edoc) expression) edoc:)
-        (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head interaction) interaction:)
+        (prefix (head head) head:) (prefix (head interaction) interaction:)
         (prefix (head keymap) keymap:) (prefix (head style) style:)
-        (prefix (head widget) widget:) (prefix (head window-host) window-host:)
+        (prefix (head widget) widget:) (prefix (head window-control) window-control:)
         (prefix (state view) view:) (prefix (sys glyph) glyph:)
         (prefix (sys sys) sys:))
 
@@ -137,7 +137,7 @@
 (for-each (lambda (face color) (style:set! face (list 'bold (list 'fg color))))
   (cdr (vector->list tetris:faces)) '(cyan yellow magenta green red blue 208))
 
-(define (tetris:create!)
-  (view:create! head:ui-actor #f 'tetris 1 '((name . "<tetris>")) (tetris:new-game)))
-(define (tetris:open!)
-  (let ([id (tetris:create!)]) (window-host:show-widget! (seat:current-window) id) id))
+(define (tetris:create! . owner)
+  (apply view:create! head:ui-actor #f 'tetris 1 '((name . "<tetris>")) (tetris:new-game) owner))
+(define (tetris:open! window)
+  (window-control:open-app! window "tetris" (lambda (owner commands) (tetris:create! owner))))

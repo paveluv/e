@@ -6,23 +6,18 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
-(define evaluate! (eval '(let () (import (prefix (core kernel) kernel:)) kernel:evaluate!)))
-
-(evaluate!
+(test-evaluate!
   '(begin
-     (import (except (head edit) init!)
-             (prefix (only (head edit) init!) edit:)
-             (prefix (head head) head:) (prefix (head seat) seat:)
-             (prefix (head catalogue-host) catalogue-host:)
+     (import (prefix (head edit) edit:)
+             (prefix (head head) head:)
              (prefix (state store) store:)
              (prefix (state model) model:)
              (prefix (state connection) connection:) (prefix (core port) port:)
              (prefix (state catalogue) catalogue:) (prefix (state collection) collection:) (prefix (head range) range:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
-             (prefix (head widget) widget:) (prefix (head window-host) window-host:)
+             (prefix (head widget) widget:)
              (prefix (head entry) entry:) (prefix (head text-source) text-source:) (prefix (foundation text) text:)
              (prefix (head control) control:) (prefix (core descriptor) descriptor:)
              (prefix (head table) table:)
@@ -32,11 +27,11 @@
              (prefix (service log) log:)
              (prefix (test) test:)
              (prefix (state actor) actor:) (prefix (state surface) surface:) (prefix (head render) render:)
-             (prefix (head paint) paint:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
-             (prefix (head dispatch) dispatch:) (prefix (head routing) routing:)
+             (prefix (head text-layout) text-layout:) (prefix (head mode) mode:) (prefix (head keymap) keymap:)
+             (prefix (head routing) routing:)
              (prefix (head prompt) prompt:) (prefix (service prompt-request) prompt-request:)
              (prefix (head search-control) search-control:)
-             (prefix (head prompt-host) prompt-host:) (prefix (head suspension) suspension:)
+             (prefix (head suspension) suspension:)
              (prefix (head layout) layout:) (prefix (head completion) completion:)
              (prefix (apps paren) paren:)
              (prefix (apps terminal) terminal:)
@@ -45,92 +40,48 @@
              (prefix (apps log-view) log-view:))
 
      (define check test:check)
-     (kernel:load-module! "widget") (edit:init!) (window-host:init!)
+     (kernel:load-module! "widget") (edit:init!)
      (define refused? test:raises?)
-     ;; Host placement must not consume a shared document with the same label.
-     (let* ([ordinary (seat:new-buffer! "<app-collision>")]
-            [id (view:create! head:ui-actor #f 'row 1 '((name . "<app-collision>")) '())]
-            [host (window-host:show-widget! (seat:current-window) id)])
-       (check 'widget-placement-preserves-shared-label-and-identity
-         (list (eq? host ordinary) (seat:buffer-name host) (seat:buffer-store-id host)
-           (seat:buffer-read-only ordinary)) '(#f "<app-collision 2>" #f #f))
-       (seat:forget-buffer! host)
-       (view:retire! head:ui-actor id (model:revision id)))
-
      (include "tests/journal-widget.sps")
-
-     ;; The ordinary buffer path validates generated hyperlink ranges too.
-     (let ([b (seat:new-buffer! "*hyperlink-test*")])
-       (seat:with-buffer-mirror b (insert-text! "https://example.com/path"))
-       (check 'buffer-link-ranges (paint:buffer-line-hyperlinks b 0)
-         '((0 24 "https://example.com/path")))
-       (kill-buffer! (seat:buffer-store-id b)))
-
-     ;; Two view identities share data, while geometry, selection and renderer
-     ;; lifetime remain independent. Reuse the app fixture and its windows.
      (entry:init!)
-     ;; Widget host hooks must leave shared buffers alone after their store
-     ;; records disappear, whether hidden or still shown in a window.
-     (let* ([was (seat:current-buffer-mirror)]
-            [shown (seat:new-buffer! "deleted while shown")]
-            [hidden (seat:new-buffer! "deleted while hidden")]
-            [ids (map seat:buffer-store-id (list shown hidden))]
-            [errors (log:entries 'seat:forget-buffer!)])
-       (seat:show-buffer-mirror! shown)
-       (for-each (lambda (id) (store:delete! '(base test) id)) ids)
-       (seat:sync-foreign-edits!)
-       (check 'widget-host-retirement-never-reads-deleted-shared-facts
-         (list (map seat:buffer-of-store-id ids)
-               (and (not (memq (seat:current-buffer-mirror) (list shown hidden))) #t)
-               (equal? errors (log:entries 'seat:forget-buffer!)))
-         '((#f #f) #t #t))
-       (seat:show-buffer-mirror! was))
      (define model-checks 0)
      (model:register-kind! 'widget-test 1 (lambda (value) (set! model-checks (+ model-checks 1)) (string? value)))
-     (let* ([root (seat:root)] [w (seat:current-window)] [was (seat:current-buffer-mirror)]
-            [owner (string-copy "widget-test-renderer")] [calls 0]
+     ;; Independent mounts share a source while caching geometry and renderer lifetime.
+     (let* ([owner "widget-test-renderer"] [calls 0]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "original")]
             [first (view:create! head:ui-actor data 'probe 1 '() 0)]
-            [second (view:create! head:ui-actor data 'probe 1 '() 0)]
-            [other (seat:make-window was 0 0 0 0 0 2 7 24 'default)]
-            [a (window-host:show-widget! w first)] [b (window-host:show-widget! other second)])
+            [second (view:create! head:ui-actor data 'probe 1 '() 0)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
-           (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
-       (define (refresh!) (for-each (lambda (buffer) ((seat:app-refresh! (seat:app-of buffer)))) (list a b)))
-       (install!)
-       (seat:show-buffer-mirror! a)
-       (seat:set-layout-root! (seat:make-layout-split 'right w other 1 2))
-       (seat:window-width-set! w 12) (seat:window-size-set! w 4)
-       (seat:window-width-set! other 24) (seat:window-size-set! other 2)
-       (refresh!)
-       (let ([before model-checks])
-         (refresh!)
-         (check 'widget-warm-frame-reuses-its-owned-model-snapshot model-checks before))
-       (check 'widget-host-bounds-and-cached-rendering
-         (list calls (map (lambda (window) (map glyph:cells (vector->list (seat:window-lines window)))) (list w other)))
-         '(2 ((12 12 12 12) (24 24))))
+           (widget:register! 'probe 1
+             (list (cons 'render (lambda (model d width height range)
+                                   (set! calls (+ calls 1))
+                                   (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq 'value model)) (view:state d)))))
+               (cons 'actions (list (cons 'choose (lambda (id)
+                                                    (let-values ([(model d inputs) (widget:context id)])
+                                                      (values (cdr (assq 'revision model)) (view:state d)))))))))))
+       (define (frames width) (widget:pump!) (list (widget:prepare! first 12 4) (widget:prepare! second width 2)))
+       (install!) (widget:mount! first 'first) (widget:mount! second 'second)
+       (let* ([shown (frames 24)] [before model-checks])
+         (frames 24)
+         (check 'widget-warm-frame-reuses-owned-snapshot
+           (list model-checks calls (map (lambda (f) (map glyph:cells (widget:frame-lines f))) shown))
+           (list before 2 '((12 12 12 12) (24 24)))))
        (interaction:set-state! head:ui-actor first 0 9)
        (check 'widget-action-uses-provisional-target-before-ack
          (list (call-with-values (lambda () (widget:act! first 'choose)) list)
-               (view:state (view:snapshot first)) (view:state (interaction:snapshot second))) '((0 9) 0 0))
-       (seat:checkpoint!)
-       (check 'widget-lifecycle-checkpoint-fences-state (view:state (view:snapshot first)) 9)
-       (model:commit! '(base test) (list (list data 0 '() "new")))
-       (refresh!)
-       (let ([before calls])
-         (seat:window-width-set! other 8) (refresh!)
-         (check 'widget-resize-only-rerenders-affected-view (- calls before) 1))
-       (kernel:retract-module! owner) (refresh!)
-       (check 'widget-unavailable-renderer-keeps-mount-without-actions
-         (list (widget:actions first) (seat:app-refresh-error (seat:app-of a))) '(() #f))
-       (install!) (refresh!)
-       (check 'widget-late-renderer-reclaims-view (widget:actions first) '(choose))
-       (seat:forget-buffer! a) (seat:forget-buffer! b)
-       (check 'widget-unmount-and-buffer-kill-retain-model-and-descriptors
+           (view:state (view:snapshot first)) (view:state (interaction:snapshot second))) '((0 9) 0 0))
+       (interaction:flush!)
+       (check 'widget-fence-publishes-state (view:state (view:snapshot first)) 9)
+       (model:commit! '(base test) (list (list data 0 '() "new"))) (frames 24)
+       (let ([before calls]) (frames 8) (check 'resize-only-renders-affected-view (- calls before) 1))
+       (kernel:retract-module! owner) (frames 8)
+       (check 'unavailable-renderer-keeps-mount-without-actions (widget:actions first) '())
+       (install!) (frames 8) (check 'late-renderer-reclaims-view (widget:actions first) '(choose))
+       (widget:unmount! first) (widget:unmount! second)
+       (check 'unmount-retains-data-and-descriptors
          (list (map (lambda (id) (view:owner (view:snapshot id))) (list first second))
-               (cdr (assq 'value (model:snapshot data))) (seat:app-of a) (seat:app-of b)) '((#f #f) "new" #f #f))
-       (seat:set-layout-root! root) (seat:show-buffer-mirror! was)
+           (cdr (assq 'value (model:snapshot data)))) '((#f #f) "new"))
        (kernel:retract-module! owner))
 
      ;; Tree mounts allocate no buffers. Reorder retains identity and state;
@@ -139,11 +90,11 @@
             [parent (view:create! head:ui-actor #f 'column 1 '() '())]
             [a (view:create! head:ui-actor data 'text 2 '() 0)]
             [b (view:create! head:ui-actor data 'text 2 '() 0)]
-            [count (length (seat:buffers))])
+            [count (length (store:buffer-list))])
        (view:arrange! head:ui-actor (list (list parent 0 (list (list 'a a 'fit) (list 'b b '(grow 1))) '())) '())
        (let ([m (widget:mount! parent 'slot)])
          (check 'recursive-mount-idempotent-with-no-adapter-buffers
-           (list (eq? m (widget:mount! parent 'slot)) (= count (length (seat:buffers)))
+           (list (eq? m (widget:mount! parent 'slot)) (= count (length (store:buffer-list)))
              (refused? (lambda () (widget:mount! parent 'another)))
              (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
          (widget:prepare! parent 20 5) (widget:focus! parent b)
@@ -161,33 +112,6 @@
              (list status (refused? (lambda () (widget:actions b))) (view:owner (view:snapshot b))) '(applied #t #f)))
          (widget:unmount! parent)
          (check 'recursive-release (map (lambda (id) (view:owner (view:snapshot id))) (list parent a)) '(#f #f))))
-
-     ;; Additional window placement forks descriptors; reopening hidden roots
-     ;; reuses their adapter and remembered interaction.
-     (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
-            [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
-            [id (view:create! head:ui-actor data 'text 2 '() 0)]
-            [b (window-host:show-widget! w id)]
-            [other (seat:make-window b 0 0 0 0 0 2 0 12 'default)]
-            [copy (seat:window-buffer other)] [fork (seat:buffer-fact copy 'widget-id #f)])
-       (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
-       (seat:show-buffer-mirror! was)
-       (check 'hidden-root-reuses-buffer (eq? b (window-host:show-widget! w id)) #t)
-       (widget:unmount! id)
-       (check 'explicitly-unmounted-adapter-remounts-on-show
-         (begin (window-host:show-widget! w id) (widget:actions id)) '(move select choose))
-       (actor:checkpoint! head:ui-actor
-         `(screen 4 1 (split right 1 1 (window 1 0 0 0 default #t #f default) (window 2 0 0 0 default #t #f default))
-            (((widget ,id) #f ()))))
-       (seat:resume!)
-       (let* ([windows (filter (lambda (w) (not (seat:popup? w))) (seat:windows))]
-              [ids (map (lambda (w) (seat:buffer-fact (seat:window-buffer w) 'widget-id #f)) windows)])
-         (check 'resume-resolves-duplicate-widget-placements-before-installing-layout
-           (list (length ids) (equal? (car ids) (cadr ids))
-                 (map (lambda (id) (view:source (view:snapshot id))) ids))
-           (list 2 #f (list data data))))
-       (window-host:delete-others!) (seat:show-buffer-mirror! was)
-       (for-each (lambda (b) (when (seat:buffer-fact b 'widget-id #f) (seat:forget-buffer! b))) (seat:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
      (let* ([events '()] [owner 'routing-fixture] [capturing? #f]
@@ -324,13 +248,13 @@
             [a (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
             [b (view:create! head:ui-actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
             [root (view:create! head:ui-actor #f 'row 1 '() '())]
-            [ambient (seat:current-buffer-mirror)])
+           )
        (define (line) (let-values ([(text rev) (store:snapshot source)]) (vector-ref text 0)))
        (define (show!) (widget:present! (list (list (widget:prepare! root 20 1) 0 0))))
        (define (foreign! start end replacement)
          (let-values ([(text rev) (store:snapshot source)])
            (store:edit! '(agent "entry-test") source rev (text:make-span 0 start 0 end) replacement))
-         (seat:sync-foreign-edits! source))
+         (text-source:open! head:ui-actor source))
        (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
        (widget:mount! root 'entry-test) (show!)
        (entry:move! a 'right) (entry:move! a 'right) (entry:move! a 'right)
@@ -392,7 +316,7 @@
        (foreign! 0 0 '("first" "second")) (show!)
        (check 'entry-external-multiline-is-an-inert-field-not-a-readonly-source
          (list (widget:caret (widget:prepared root)) (store:property source 'read-only #f)
-               (refused? (lambda () (entry:insert! a "no"))) (eq? ambient (seat:current-buffer-mirror))) '(#f #f #t #t))
+               (refused? (lambda () (entry:insert! a "no")))) '(#f #f #t))
        (widget:unmount! root) (widget:invalidate!))
 
      (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
@@ -428,14 +352,12 @@
        (widget:unmount! root) (widget:invalidate!))
 
      (model:register-kind! 'widget-view 4 string?)
-     (let* ([id (model:create! head:ui-actor 'widget-view 4 'session 'persistent '() "future descriptor")]
-            [previous (seat:current-buffer-mirror)] [b (window-host:show-widget! (seat:current-window) id)])
-       (seat:show-buffer-mirror! b)
-       ((seat:app-refresh! (seat:app-of b)))
-       (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
+     (let ([id (model:create! head:ui-actor 'widget-view 4 'session 'persistent '() "future descriptor")])
+       (widget:mount! id 'future) (widget:prepare! id 20 4)
+       (check 'unknown-descriptor-is-inspectable-without-claiming-owner
          (list (widget:actions id) (interaction:snapshot id) (cdr (assq 'value (model:snapshot id))))
          '(() #f "future descriptor"))
-       (seat:forget-buffer! b) (seat:show-buffer-mirror! previous))
+       (widget:unmount! id))
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")
@@ -451,4 +373,4 @@
      (include "tests/modal.sps")
      (include "tests/screen.sps")
      (test:finish! 'app))
-  (interaction-environment))
+)

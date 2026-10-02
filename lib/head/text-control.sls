@@ -8,7 +8,6 @@
           (prefix (foundation text) text:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
-          (prefix (head seat) seat:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (state view) view:))
@@ -137,7 +136,6 @@
                                 (let-values ([(lines rev changes points committed)
                                               (text-source:edit! head:ui-actor (list old (text-source:id m) basis) span replacement context positions)])
                                   (text-source:adopt! m basis lines rev changes)
-                                  (seat:note-ui-edit! (text-source:id m) committed)
                                   (settle! id source d m rev points state)))))) )
 
   (edoc "Apply source undo/redo and rebase a still-current view's logical positions through the same journal."

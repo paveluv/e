@@ -4,10 +4,11 @@ e can host a real pseudo-terminal inside an app buffer. Start one with
 `C-c t` or:
 
 ```scheme
-(terminal:open!)
+(terminal:open! window)
 ```
 
-The command opens `*terminal*` in the current window and starts
+Here `window` is a window model; M-x receiver completion supplies it.
+The command opens `*terminal*` in that window and starts
 `terminal:shell` as an interactive shell in the current file's directory (or
 e's current working directory for a file-less buffer). It defaults to
 `$SHELL`, falling back to `/bin/sh`. A second session is named
@@ -25,15 +26,15 @@ Set the shell in `config.e` when desired:
 Pass a shell command to run it instead:
 
 ```scheme
-(terminal:open! "top")
-(terminal:open! "python3")
-(terminal:open! "e README.md")
-(terminal:open! "legmacs README.md")
+(terminal:open! window "top")
+(terminal:open! window "python3")
+(terminal:open! window "e README.md")
+(terminal:open! window "legmacs README.md")
 ```
 
 Explicit command strings are interpreted by the configured shell with `-c`,
 so quoting, pipelines, redirection, and compound shell commands work. A bare
-`(terminal:open!)` executes the configured shell directly.
+`(terminal:open! window)` executes the configured shell directly.
 
 This is a PTY, not redirected pipes. The child sees `TERM=xterm-256color`, a
 controlling terminal, and the terminal buffer's actual row and column count.
@@ -138,7 +139,8 @@ the newly focused buffer. Status-bar clicks always remain editor-owned; clicking
 an unfocused window's capture indicator focuses it and toggles only its capture
 preference.
 
-Run `terminal:yank!` through M-x to paste the copy buffer into the child.
+Use `(terminal:paste! view (edit:copy-text))` through M-x to paste the copy
+buffer into an explicit terminal view.
 `C-]` is reserved for the toggle; to send its literal byte, evaluate
 `(terminal:send! view "\x1d;")` through M-x. `C-] C-]` now toggles twice.
 
@@ -270,10 +272,10 @@ Headless emulators record the same signatures, readable through
 ## Scheme API
 
 ```scheme
-(terminal:open! [command])
+(terminal:open! window [command])
 (terminal:send! view text)
 (terminal:toggle-capture! view)
-(terminal:close! [buffer])
+(terminal:close! buffer)
 (terminal:scrollback [lines])
 (terminal:shell [path])
 ```

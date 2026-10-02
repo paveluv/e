@@ -22,8 +22,6 @@
           (prefix (head edit) edit:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
-          (prefix (head paint) paint:)
-          (prefix (head seat) seat:)
           (prefix (head text-control) text-control:)
           (prefix (head widget) widget:)
           (prefix (service doc) doc:)
@@ -263,11 +261,7 @@
 
   ;;; Editing -------------------------------------------------------------------
 
-  (define (pretty-buffer?)
-    ;; The modes whose display hides the source characters -- they get
-    ;; the REPL-style closing and the source hint.
-    (member (mode:name-of)
-            '("pretty-scheme-clusters" "pretty-scheme-depth")))
+
 
   (define (innermost-opener lines target)
     ;; The source character of the innermost construct still open at
@@ -284,44 +278,47 @@
       (and (pair? stack) (car stack))))
 
   (edoc "Close the innermost open construct as typing a round bracket does: with the bracket the construct opened with, whatever was typed."
-        (id (list-of model) "explicit editor view; omission uses the legacy window")
+        (receiver id (view editor)) (id model "editor view")
         (edits))
-  (define (close-round! . id) (close! #\) (and (pair? id) (car id))))
+  (define (close-round! id) (close! #\) id))
 
   (edoc "Close the innermost open construct as typing a square bracket does: with the bracket the construct opened with, whatever was typed."
-        (id (list-of model) "explicit editor view; omission uses the legacy window")
+        (receiver id (view editor)) (id model "editor view")
         (edits))
-  (define (close-square! . id) (close! #\] (and (pair? id) (car id))))
+  (define (close-square! id) (close! #\] id))
 
   (define (close! typed id)
-    (define (closing lines point)
-      (case (innermost-opener lines point) [(#\[) "]"] [(#\() ")"] [else (string typed)]))
-    (if id
-      (let-values ([(source d) (text-control:context id 'editor)])
-        (edit:insert! id (closing (text-control:basis-text source d) (car (view:state d)))))
-      (edit:insert-text! (closing (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point)))))
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let ([c (case (innermost-opener
+                       (text-control:basis-text source d)
+                       (car (view:state d)))
+                 [(#\[) "]"]
+                 [(#\() ")"]
+                 [else (string typed)])])
+        (edit:insert! id c))))
+
 
   (define (toggle-mode! name document)
-    (apply mode:choose! (if (equal? (apply mode:name-of document) name) "scheme" name) document)
+    (mode:choose! (if (equal? (mode:name-of document) name) "scheme" name) document)
     (void))
 
   (edoc "Toggle a Scheme document between its normal mode and glyph pairs chosen by construct."
-    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
-  (define (pretty-scheme-clusters! . document)
+    (document buffer "document reference") (public))
+  (define (pretty-scheme-clusters! document)
     ;; Toggle the current buffer between scheme and pretty-scheme-clusters:
     ;; construct-cluster parens.
     (toggle-mode! "pretty-scheme-clusters" document))
 
   (edoc "Toggle a Scheme document between its normal mode and glyph pairs rotating with nesting depth."
-    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
-  (define (pretty-scheme-depth! . document)
+    (document buffer "document reference") (public))
+  (define (pretty-scheme-depth! document)
     ;; Toggle pretty-scheme-depth: parens by nesting level, the pair rotation
     ;; cycling as the tree deepens.
     (toggle-mode! "pretty-scheme-depth" document))
 
   (edoc "Toggle a Scheme document between its normal mode and parentheses colored by nesting depth."
-    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
-  (define (pretty-scheme-rainbow! . document)
+    (document buffer "document reference") (public))
+  (define (pretty-scheme-rainbow! document)
     ;; Toggle pretty-scheme-rainbow: plain characters, colored by nesting
     ;; level through the rainbow.
     (toggle-mode! "pretty-scheme-rainbow" document))
@@ -329,35 +326,32 @@
   (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding." (public))
   (define (init!)
     (doc:register!
-      '(((pretty-scheme:clusters!)
-         (("procedure" . "(pretty-scheme:clusters! document)")) "void"
-         ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
+      '(((pretty-scheme:clusters!) (("procedure" . "(pretty-scheme:clusters! document)"))
+         "void" ("(apps pretty-scheme)") pretty-scheme
+         "Display commands" #f
          "Toggle the supplied Scheme document between its normal mode and glyph pairs chosen by syntactic construct.")
-        ((pretty-scheme:depth!)
-         (("procedure" . "(pretty-scheme:depth! document)")) "void"
+        ((pretty-scheme:depth!) (("procedure" . "(pretty-scheme:depth! document)")) "void"
          ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
          "Toggle the supplied Scheme document between its normal mode and glyph pairs rotating with nesting depth.")
-        ((pretty-scheme:rainbow!)
-         (("procedure" . "(pretty-scheme:rainbow! document)")) "void"
-         ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
+        ((pretty-scheme:rainbow!) (("procedure" . "(pretty-scheme:rainbow! document)"))
+         "void" ("(apps pretty-scheme)") pretty-scheme
+         "Display commands" #f
          "Toggle the supplied Scheme document between its normal mode and parentheses colored by nesting depth.")))
-    ;; submodes of Scheme: its indentation, formatting, Tab policy and keys,
-    ;; with a presentation of their own
-    (mode:derive! "pretty-scheme-clusters" "scheme" '() #f rendered)
-    (mode:derive! "pretty-scheme-depth" "scheme" '() #f depth-rendered)
-    (mode:derive! "pretty-scheme-rainbow" "scheme" '() #f #f rainbow-styles)
-    ;; the closing brackets are the two hiding modes' own keys, bound in their
-    ;; contexts: elsewhere a bracket types itself
-    (for-each (lambda (context)
-                (keymap:bind-default! context ")" (keymap:call close-round! widget:target))
-                (keymap:bind-default! context "]" (keymap:call close-square! widget:target)))
-              '(pretty-scheme-clusters pretty-scheme-depth))
-    (paint:add-status-hint!
-      (lambda ()
-        (and (pretty-buffer?)
-             (let* ([p (seat:point)]
-                    [s (seat:buffer-line (seat:current-buffer-mirror) (car p))]
-                    [c (and (< (cdr p) (string-length s))
-                            (string-ref s (cdr p)))])
-               (and c (memv c '(#\( #\) #\[ #\]))
-                    (format "  src ~c" c))))))))
+    (mode:derive! "pretty-scheme-clusters" "scheme" '() #f
+      rendered)
+    (mode:derive! "pretty-scheme-depth" "scheme" '() #f
+      depth-rendered)
+    (mode:derive! "pretty-scheme-rainbow" "scheme" '() #f #f
+      rainbow-styles)
+    (for-each
+      (lambda (context)
+        (keymap:bind-default!
+          context
+          ")"
+          (keymap:call close-round! widget:target))
+        (keymap:bind-default!
+          context
+          "]"
+          (keymap:call close-square! widget:target)))
+      '(pretty-scheme-clusters pretty-scheme-depth)))
+)

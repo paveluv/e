@@ -1,7 +1,7 @@
 ;; Independent review compositions. Choices and derivation belong to the base.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps delta-log)
-  (export choose! choose-all! conflicts conflicts! create! filter! init! log open! resolve! settle! show!)
+  (export choose! choose-all! conflicts! create! filter! init! log open! resolve! settle! show!)
   (import (except (chezscheme) log)
           (prefix (core handle) handle:)
           (prefix (foundation edoc) edoc:)
@@ -104,10 +104,6 @@
   (define (show! editor revision)
     (let* ([n (edoc:type-value 'revision revision)] [e (assv n (store:log (cadr (editor:basis editor))))])
       (unless e (error 'show! "entry is no longer retained")) (log:add! 'delta-log:show! (format "~a  ~a" n (hint e)))))
-
-  (edoc "Read a document's pending reload conflicts as (revision actor labels region mine disk) records."
-        (document buffer "source document") (returns list) (public))
-  (define (conflicts document) (store:conflicts document))
 
   (edoc "Settle one document conflict with Mine, Disk or replacement lines through the store's undoable resolution."
         (document buffer "source document") (conflict conflict "pending entry") (choice (or (one-of disk mine) (list-of string)) "side or replacement")

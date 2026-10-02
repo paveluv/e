@@ -1393,7 +1393,7 @@
            ;; A hidden Finder keeps its own cursor while another view edits
            ;; their shared filter. Restart must rebase that saved cursor.
            (head-read head
-             `(let* ([was (test-document)] [app (finder:open-directory! (unquote root) (test-window))]
+             `(let* ([was (test-document)] [app (finder:open! (test-window) (unquote root))]
                      [entry (widget:descendant app 'table 'filter 'entry)])
                 (entry:insert! entry "old")
                 (test-show! was)
@@ -2060,7 +2060,7 @@
                    (rpc head 'model-retire git 0)
                    (rpc head 'conflict-review-close draft 0))
                  (for-each (lambda (ui)
-                             (head-read ui `(begin (log-view:show! (test-window)) (window-control:keep! (test-window))
+                             (head-read ui `(begin (log-view:open! (test-window)) (window-control:keep! (test-window))
                                                    (test-show! ',id) #t))) (list a b))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
@@ -2212,7 +2212,7 @@
                    (head-read a
                      `(begin
                         (interaction:flush!)
-                        (let ([saved (actor:checkpoint head:ui-actor)] [cycle (list 'cycle)])
+                        (let ([saved (client:request 'checkpoint)] [cycle (list 'cycle)])
                           (set-cdr! cycle cycle)
                           (let* ([rejected (map (lambda (value)
                                                   (guard (ex [(client:ended? ex) (raise ex)] [else #t])
@@ -3222,10 +3222,10 @@
                                [manager (widget:descendant screen 'content 'windows)]
                                [document (window:document manager (window:current manager))])
                           (list (store:line document 0) (and (store:property document 'import-origin #f) #t)
-                            (store:property document 'audience) (actor:checkpoint head:ui-actor)
+                            (store:property document 'audience) (client:request 'checkpoint)
                             (store:line (store:find-named "<hidden recovery>") 0))))
                  (head-read b '(let () (import (prefix (state actor) actor:) (prefix (head head) head:))
-                                 (and (actor:checkpoint head:ui-actor) #t))))
+                                 (and (client:request 'checkpoint) #t))))
                '(("restored" #t ((head "auto α's desk")) #f "hidden authored text") #t))
              (head-send! b "\x18;\x03;")
              (vt:emulator-resize! (vector-ref b 2) 18 100)
@@ -3234,12 +3234,12 @@
                (lambda () (head-read b '(let () (import (prefix (head tui) tui:)) (= (tui:screen-cols) 100)))))
              (test:check 'blank-recipe-has-no-editor-windows-or-implicit-keymap
                (list (head-read b
-                       '(let () (import (prefix (head head) head:) (prefix (head seat) seat:)
+                       '(let () (import (prefix (head head) head:)
                                         (prefix (head root) root:) (prefix (head widget) widget:))
-                          (list (head:quitting?) (seat:windows) (seat:buffers) (widget:shown)
+                          (list (head:quitting?) (widget:shown)
                             (cdr (assq 'root (cdr (assq 'value (root:current))))))))
                  (file-exists? (string-append root "/unhandled.txt")))
-               '((#f () () () #f) #f))
+               '((#f () #f) #f))
              (let* ([pid-path (string-append base-directory "/pid")]
                     [record (call-with-input-file pid-path read)]
                     [boot-pid '(let () (import (prefix (state store) store:)) (store:property (store:find-named "bootstrap") 'process-id))])

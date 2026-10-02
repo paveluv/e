@@ -1,8 +1,8 @@
-;; One in-flight state and one latest replacement. Used by checkpoints and
-;; widget interaction publication; callbacks never read live head state.
+;; One in-flight state and one latest replacement for widget interaction
+;; publication; callbacks never read live head state.
 (import (only (foundation edoc) elibrary))
 (elibrary (core publication)
-  (export changed? flush! make! submit!)
+  (export flush! make! submit!)
   (import (chezscheme))
 
   (define-record-type writer
@@ -44,13 +44,6 @@
   (define (make! send! notify! own)
     (let ([writer (make-writer send! notify! own (make-mutex) (make-condition) #f #f #f #f #f)])
       (fork-thread (lambda () (deliver! writer))) writer))
-
-  (edoc "Whether state differs from the last submitted snapshot."
-        (writer any "the publisher") (state any "the candidate") (returns boolean))
-  (define (changed? writer state)
-    (with-mutex (writer-lock writer)
-      (when (writer-failure writer) (raise (writer-failure writer)))
-      (not (equal? state (writer-wanted writer)))))
 
   (edoc "Queue owned state without waiting. Replace pending work, preserving the in-flight write; return whether state changed."
         (writer any "the publisher") (state any "the candidate, other than #f") (returns boolean))

@@ -9,20 +9,19 @@
 ;; -- line styles keyed by line-string identity (edits replace
 ;; strings, never mutate them), whole-text analyses by immutable text identity.
 ;;
-;; The painter imports this module directly, and the head's adopt
-;; hook is installed here: a foreign buffer adopted without a mode
-;; fact gets detection.  Exported names drop the module stem:
+;; Editors observe explicit documents for detection at acquisition. Exported
+;; names drop the module stem:
 ;; (mode:register! "scheme" '(".ss") '("scheme") styler),
 ;; (mode:of b), ((mode:line-styles m) line). Presentation callbacks
 ;; consume mode:source snapshots rather than head buffer records.
 
 (import (only (foundation edoc) elibrary))
 (elibrary (head mode)
-  (export add-context! (rename (add-mode-extension! add-extension!)) add-highlighter! (rename (assign-current-mode! assign!))
+  (export (rename (add-mode-extension! add-extension!)) add-highlighter! (rename (assign-document! assign!))
           (rename (set-buffer-mode! choose!)) derive! (rename (detect-mode detect))
           (rename (mode-extensions extensions)) (rename (find-mode find)) formatter
           highlights indent indent-on-tab! indent-on-tab? indenter (rename (mode-interpreters interpreters))
-          key-context key-contexts line-styles
+          key-contexts line-styles
           memoize-analysis mode? (rename (mode-name name))
           (rename (buffer-mode-name name-of)) (rename (mode-of of))
           (rename (refresh-buffer-modes! refresh!)) (rename (register-mode! register!))
@@ -39,7 +38,6 @@
           (prefix (foundation text) text:)
           (prefix (head head) head:)
           (prefix (head render) render:)
-          (prefix (head seat) seat:)
           (prefix (state store) store:))
 
   ;; Mode callbacks receive explicit text and only the facts they declare.
@@ -249,24 +247,14 @@
                                           (string-length first-line)))
                          (mode-interpreters m)))))))
 
-  (define (scratch-mode b)
-    ;; *scratch*, the editor's notepad, speaks Scheme without a file name
-    ;; to say so, as Emacs's *scratch* speaks Lisp
-    (and (not (seat:buffer-file b))
-         (string:prefix? "*scratch*" (seat:buffer-name b))
-         (find-mode "scheme")))
-
-  (define (detected-mode b)
-    (or (detect-mode (or (seat:buffer-file b)
-                       (seat:buffer-fact b 'source-file #f))
-          (seat:buffer-line b 0))
-        (scratch-mode b)))
-
   (define documents (make-hashtable equal-hash equal?))
   (define (document-mode id first facts)
     (define (fact key) (cond [(assq key facts) => cdr] [else #f]))
     (or (detect-mode (or (fact 'file) (fact 'source-file)) first)
       (and (not (fact 'file)) (string:prefix? "*scratch*" (store:buffer-name id)) (find-mode "scheme"))))
+
+  (edoc "Detect a document's mode from its file and first line, choosing Scheme for scratch documents. Resume automatic detection."
+    (id buffer "document") (public))
   (define (assign-document! id)
     (let-values ([(text revision facts) (store:snapshot-state id)])
       (let ([m (document-mode id (vector-ref text 0) facts)])
@@ -289,11 +277,6 @@
                 (list (cons 'mode (and m (mode-name m))) '(mode-auto . #t))
                 (property:select facts '(mode mode-auto file source-file)))))))))
 
-  (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
-        (b (record buffer) "the buffer"))
-  (define (assign-mode! b)
-    (set-mode-of! b (detected-mode b) #t))
-
   (edoc "The registered mode called name, or #f."
         (name mode "the mode's name")
         (returns (or (record mode) #f)))
@@ -301,79 +284,29 @@
     (and (string? name)
          (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name)))))
 
-  (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
-        (name (or mode #f) "the mode's name, or #f for none")
-        (b (list-of buffer) "the shared document, at most one"))
-  (define (set-buffer-mode! name . b)
-    ;; how transcript buffers get their highlighting, and how a user picks
-    ;; a mode by hand
-    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
-    (let* ([name (and name (edoc:type-value 'mode name))] [m (and name (find-mode name))])
-      (when (and name (not m)) (error 'mode "mode is not registered" name))
-      (if (null? b) (set-mode-of! (seat:current-buffer-mirror) m #f)
-        (let ([id (edoc:type-value 'buffer (car b))])
-          (hashtable-set! documents id #t)
-          (store:set-properties! head:ui-actor id (list (cons 'mode name) '(mode-auto . #f)))))))
+  (edoc "Assign a registered mode to an explicit document, or none with false. This choice overrides automatic detection until assign! is called."
+    (name (or mode #f) "mode name, or false") (id buffer "document"))
+  (define (set-buffer-mode! name id)
+    (when (and name (not (find-mode name))) (error 'mode "mode is not registered" name))
+    (edoc:type-value 'buffer id)
+    (hashtable-set! documents id #t)
+    (store:set-properties! head:ui-actor id (list (cons 'mode name) '(mode-auto . #f))))
 
-  (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
-        (b (list-of buffer) "the shared document, at most one") (public))
-  (define (assign-current-mode! . b)
-    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
-    (if (null? b) (assign-mode! (seat:current-buffer-mirror)) (assign-document! (edoc:type-value 'buffer (car b)))))
-
-  (edoc "The keymap context of a buffer's mode, named after it, or false."
-        (b (record buffer) "the buffer") (returns (or symbol #f)))
-  (define (key-context b)
-    (let ([name (seat:buffer-fact b 'mode #f)]) (and name (find-mode name) (string->symbol name))))
-
-  ;; A context a buffer has by its state rather than its mode: merge while
-  ;; its text holds conflict markers, say.  The app binding keys in it
-  ;; registers the context with the predicate; the registration retracts
-  ;; with the module.  Such a context comes before the mode's.
-  (define state-contexts (kernel:make-registry))
-
-  (edoc "Register a keymap context a buffer has while a predicate holds of it, before its mode's contexts: (mode:add-context! 'conflicted conflicted?) say, by the app that binds keys in the context."
-        (name symbol "the context")
-        (holds? procedure "(holds? buffer) giving whether the buffer has the context now") (public))
-  (define (add-context! name holds?)
-    (unless (and (symbol? name) (procedure? holds?))
-      (error 'add-context! "expected a context name and a predicate" name holds?))
-    (kernel:registry-add! state-contexts (cons name holds?)))
-
-  (define (state-contexts-of b)
-    ;; the registered contexts whose predicates hold of b; a raising
-    ;; predicate withholds its context rather than taking a key down
-    (fold-right (lambda (entry acc) (if (guard (ex [else #f]) ((cdr entry) b)) (cons (car entry) acc) acc))
-                '() (kernel:registry-items state-contexts)))
-
-  (edoc "Read a mode's inherited key contexts, nearest first. The legacy buffer adapter also prepends its state contexts."
-        (source any "resolved mode, false, or legacy buffer") (returns (list-of symbol)))
+  (edoc "Read a mode's inherited key contexts, nearest first."
+    (source (or (record mode) #f) "resolved mode") (returns (list-of symbol)))
   (define (key-contexts source)
-    (if (seat:buffer? source) (append (state-contexts-of source) (key-contexts (find-mode (seat:buffer-fact source 'mode #f))))
-      (let loop ([m source] [out '()])
-        (if (not m) (reverse out)
-          (loop (and (mode-parent m) (find-mode (mode-parent m))) (cons (string->symbol (mode-name m)) out))))))
+    (let loop ([m source] [out '()])
+      (if (not m) (reverse out)
+        (loop (and (mode-parent m) (find-mode (mode-parent m))) (cons (string->symbol (mode-name m)) out)))))
 
-  (edoc "The name of a buffer's mode, the current buffer's without an argument, or #f without one."
-        (b (list-of buffer) "the shared document, at most one")
-        (returns (or string #f)))
-  (define (buffer-mode-name . b)
-    ;; The name of b's mode, or #f without one.
-    (let ([m (apply mode-of b)]) (and m (mode-name m))))
+  (edoc "Read the registered mode name of an explicit document, or false without one."
+    (id buffer "document") (returns (or string #f)))
+  (define (buffer-mode-name id)
+    (let ([m (mode-of id)]) (and m (mode-name m))))
 
-  (edoc "A buffer's mode record, the current buffer's without an argument, or #f."
-        (b (list-of buffer) "the shared document, at most one")
-        (returns (or (record mode) #f)))
-  (define (mode-of . b)
-    (unless (<= (length b) 1) (error 'mode-of "expected at most one buffer"))
-    (let ([n (if (null? b) (seat:buffer-fact (seat:current-buffer-mirror) 'mode #f)
-               (store:property (edoc:type-value 'buffer (car b)) 'mode #f))])
-      (and n (find-mode n))))
-
-  (define (set-mode-of! b m . auto?)
-    (seat:buffer-facts-set! b
-      (cons (cons 'mode (and m (mode-name m)))
-            (if (pair? auto?) (list (cons 'mode-auto (car auto?))) '()))))
+  (edoc "Resolve an explicit document's mode in this head's registry, or false."
+    (id buffer "document") (returns (or (record mode) #f)))
+  (define (mode-of id) (find-mode (store:property id 'mode #f)))
 
   ;;; Indenters and formatters ------------------------------------------------------
 
@@ -527,17 +460,6 @@
       (if (pair? ids) (filter (lambda (id) (not (hashtable-contains? documents id))) (map (lambda (id) (edoc:type-value 'buffer id)) ids))
         (filter (lambda (id) (if (store:exists? id) #t (begin (hashtable-delete! documents id) #f)))
           (vector->list (hashtable-keys documents)))))
-    (when (null? ids)
-      (for-each (lambda (b)
-                  (when (and (not (seat:buffer-fact b 'mode #f)) (seat:buffer-mode-auto b))
-                    (let ([m (detected-mode b)])
-                      (when m (set-mode-of! b m #t)))))
-                (seat:buffers))))
-
-  ;;; The head's adopt hook -------------------------------------------------------
-
-  ;; a foreign buffer adopted with no mode fact yet gets detection,
-  ;; recorded as the shared fact
-  (define adopt-hooked (seat:set-adopt-hook! assign-mode!))
+  )
 
 ) ;; library (mode)

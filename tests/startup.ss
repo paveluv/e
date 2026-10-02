@@ -40,8 +40,7 @@
        (and (string:search text needle 0 (string-length text)) #t))
      (define (start-head)
        ;; Chez invokes libraries lazily; a reference must stay in the scope.
-       (eval '(begin (import (prefix (head head) head:) (prefix (head seat) seat:))
-                (seat:initialize!) head:ui-actor)))
+       (eval '(begin (import (prefix (head head) head:)) head:ui-actor)))
 
      ;; One lifecycle driver for both streams, including a caller-owned port
      ;; that must remain usable until every callback and capture reader ends.
@@ -118,7 +117,6 @@
                           [else '()])]
               [expected (list 'head (if (eq? kind 'suffix) (string-append seed " 3") seed))]
               [events (test:recorder)]
-              [registered-at-creation? #f]
               [abandon (condition (make-error) (make-message-condition "abandon initializer"))])
          (for-each (lambda (name) (actor:register! (list 'head name) void)) occupied)
          ;; The base can predate this head. Initial discovery must honor
@@ -131,11 +129,7 @@
              (list (list "public before import" 'all)
                    (list "private before import" (list expected))
                    (list "hidden before import" '((head "elsewhere"))))))
-         (store:subscribe! #f
-           (lambda (event)
-             (events event)
-             (when (and (eq? (car event) 'create) (string=? (caddr event) "*scratch*"))
-               (set! registered-at-creation? (actor:registered? (list-ref event 3))))))
+         (store:subscribe! #f events)
          (when (eq? kind 'named)
            (actor:subscribe!
              (lambda (batch)
@@ -159,26 +153,11 @@
                            (startup:call-with-options args start-head)
                            (raise abandon)))))
                    (lambda (ex) (eq? ex abandon))) #t)
-               (test:check 'named-before-shared-state
-                 (list (eval 'head:ui-actor) registered-at-creation?
-                       (map (lambda (event) (list-ref event 3))
-                            (filter (lambda (event) (and (eq? (car event) 'create)
-                                                         (string=? (caddr event) "*scratch*")))
-                                    (events)))
-                       (list-ref (actor:describe expected) 4)
-                       (actor:send! expected 'wake))
-                 (list expected #t (list expected) 'all #t))
-               (store:create! '(agent startup) "after import" '("alive"))
-               (eval '(head:before-frame!))
-               (test:check 'root-subscription-and-marks-stay-live
-                 (list (eval '(map seat:buffer-name (seat:buffers)))
-                       (store:mark expected (store:find-named "*scratch*") 'point))
-                 ;; a buffer in this head's audience alone shows in square brackets
-                 (list (if (eq? kind 'named)
-                           '("*scratch*" "public before import" "[private before import]"
-                             "during claim" "after import")
-                           '("*scratch*" "public before import" "[private before import]" "after import"))
-                       '(0 . 0)))))))
+               (test:check 'head-claim-allocates-no-implicit-editor-state
+                 (list (eval 'head:ui-actor) (actor:registered? expected)
+                   (store:find-named "*scratch*")
+                   (list-ref (actor:describe expected) 4) (actor:send! expected 'wake))
+                 (list expected #t #f 'all #t))))))
 
      (define (suite)
        (test:check 'capture-lifetime

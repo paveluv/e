@@ -280,9 +280,9 @@
   '(((head head) read-key-event) ((head suspension) wait!)))
 
 (define editing-procedures
-  ;; (library-name . names) whose call edits the current buffer's text: what
+  ;; (library-name . names) whose call edits document text: what
   ;; a command declaring (edits) must reach
-  '(((head edit) check-editable!)))
+  '(((head text-source) edit! history!) ((service document) reread!)))
 
 (define macro-calls
   ;; (macro . procedure) within one library: a syntax form standing for a
@@ -610,15 +610,16 @@
 ;;         9 library 10 exported name 11 bang? 12 bodies 13 fresh result (unknown, #t or #f)
 ;;         14 edits-direct? 15 edits?
 
-(define (resolve-name path sym)
+(define (resolve-name path sym . visited)
   ;; the definition key a symbol denotes in the library at path, or
   ;; standard, or unknown; an alias resolves to what it names
-  (let ([own (cons path sym)])
+  (let* ([own (cons path sym)] [seen (if (pair? visited) (car visited) '())])
     (cond
+      [(member own seen) 'unknown]
       [(and (hashtable-contains? all-definitions own)
             (pair? (vector-ref (hashtable-ref all-definitions own #f) 0)))
        (let ([other (cadr (vector-ref (hashtable-ref all-definitions own #f) 0))])
-         (if (eq? other sym) 'unknown (resolve-name path other)))]
+         (resolve-name path other (cons own seen)))]
       [(hashtable-contains? all-definitions own) own]
       [else
        (let loop ([specs (import-specs (cadr (entry-at path)))])
@@ -630,7 +631,9 @@
                       (let* ([exports (exports-of (cadr (entry-at (car origin))))]
                              [internal (let ([e (assq (cdr origin) exports)]) (if e (cdr e) (cdr origin)))]
                              [key (cons (car origin) internal)])
-                        (if (hashtable-contains? all-definitions key) (resolve-name (car origin) internal) 'unknown))]))))])))
+                        ;; A renamed re-export may name an import, without a
+                        ;; local definition. Follow that library's imports too.
+                        (resolve-name (car key) (cdr key) (cons own seen)))]))))])))
 
 (define (prompting-key? key)
   (and (pair? key)

@@ -1,4 +1,4 @@
-;; Load, then (environment-example:open!). Each panel is a prompt/result
+;; Load, then (environment-example:open! window). Each panel is a prompt/result
 ;; composition. The first two share definitions; the third is independent.
 ;; Jobs and authored drafts stay in the base. Unmounting a panel keeps them;
 ;; close its environment explicitly when finished with its jobs and handles.
@@ -33,16 +33,17 @@
     (view:arrange! who (list (list root 0 (list (list 'title title 'fit) (list 'prompt prompt '(grow 1)))
                                (list (cons 'draft draft)))) '()) root))
 
-(define (environment-example:open!)
-  (let* ([recipe (list (cons 'directory (current-directory)) '(roots)
-                   '(imports (chezscheme) (prefix (service resource) resource:)) '(values (seed . 10)))]
-         [shared (environment:create! head:ui-actor recipe 'persistent)]
-         [independent (environment:create! head:ui-actor recipe 'persistent)]
-         [a (environment-example:panel! shared "Shared environment — A")]
-         [b (environment-example:panel! shared "Shared environment — B")]
-         [c (environment-example:panel! independent "Independent environment")]
-         [root (view:create! head:ui-actor #f 'row 1 '() '())])
-    (view:arrange! head:ui-actor
-      (list (list root 0 (list (list 'first a '(grow 1)) (list 'second b '(grow 1)) (list 'third c '(grow 1))) '())) '())
-    (window-host:show-widget! (seat:current-window) root)
-    (list root shared independent)))
+(define (environment-example:open! window)
+  (window-control:open-app! window "environments"
+    (lambda (owner commands)
+      (let* ([recipe (list (cons 'directory (current-directory)) '(roots)
+                       '(imports (chezscheme) (prefix (service resource) resource:)) '(values (seed . 10)))]
+             [shared (environment:create! head:ui-actor recipe 'persistent)]
+             [independent (environment:create! head:ui-actor recipe 'persistent)]
+             [a (environment-example:panel! shared "Shared environment — A")]
+             [b (environment-example:panel! shared "Shared environment — B")]
+             [c (environment-example:panel! independent "Independent environment")]
+             [root (view:create! head:ui-actor #f 'row 1 '() '() owner)])
+        (view:arrange! head:ui-actor
+          (list (list root 0 (list (list 'first a '(grow 1)) (list 'second b '(grow 1)) (list 'third c '(grow 1))) '())) '())
+        root))))

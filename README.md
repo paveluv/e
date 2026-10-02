@@ -134,9 +134,9 @@ $ ~/.e/e --name work
 `C-x C-c` detaches that screen. Attach with the same name to restore its
 layout, positions and local buffers; use a different name for an independent
 screen. Shared edits and terminal processes continue while no screen is
-attached. `M-x (main:shutdown!)` saves shared text and head checkpoints, then
+attached. `M-x (lifecycle:shutdown!)` saves shared text and persistent view state, then
 stops the base and all its screens. It asks about local drafts, live processes
-and other screens. Set `(main:shutdown-on-exit #t)` in `config.e` to use
+and other screens. Set `(lifecycle:shutdown-on-exit #t)` in `config.e` to use
 this shutdown when the last screen quits.
 `e --restart --name work` also starts the replacement base and reattaches.
 All graceful stops, including `kill -TERM PID`, use the same save path;
@@ -194,8 +194,8 @@ rows; choosing one creates it and its missing parents. A trailing `/` creates
 directories only. Existing files are opened without replacement. In both
 Finder and Buffet, click column headings or use `F1`–`F6` to cycle ascending,
 descending and off, with multiple sort keys in the order you add them.
-`M-x (edit:visit-file! (file "~/notes.txt"))` uses the same file and directory
-creation logic.
+`M-x (screen:open-file! screen "~/notes.txt")` uses the same file and directory
+creation logic; Tab supplies the screen receiver at its argument.
 
 ## Scheme at the center
 
@@ -203,17 +203,19 @@ The live top-level environment exposes the published editor API and loaded
 modules. You can call it via `M-x`:
 
 ```scheme
-M-x (store:buffer-name (seat:current-buffer))
-M-x (search:replace! "old" "new")
-M-x (log-view:show! 'eval:report!)
-M-x (terminal:open!)
+M-x (store:buffer-name '(buffer 17))
+M-x (search:replace! editor "old" "new")
+M-x (log-view:open! window 'eval:report!)
+M-x (terminal:open! window)
 M-x (describe:this terminal:open!)
 ```
 
 Module APIs use their prefixes, including the command layer: `edit:`, `head:`,
 `log-view:`, `terminal:`. Paths are strings such as `"~/notes.txt"`;
-buffer and model references are quoted data, such as `'(buffer 17)`. Only the
-temporary `(window 2)` selector is bare. A single `!` marks an effectful
+buffer and model references are quoted data, such as `'(buffer 17)` and
+`'(model 42)`. In these examples, `editor`, `window` and `screen` stand for
+explicit model references; Tab at a receiver argument offers the applicable
+views from the context where M-x started. A single `!` marks an effectful
 procedure; interactive commands use the same suffix, with prompting recorded
 in their documentation metadata.
 

@@ -49,7 +49,7 @@ Customize `md-h1` through `md-h4`, `md-quote`, `md-link` and `md-code` with
 ## Scheme API
 
 ```scheme
-(markdown:view! [source-buffer]) ; default-window entry point; returns root view
+(markdown:view! window [source-buffer]) ; explicit window; returns page view
 (markdown:create! actor document commands [source-row]) ; reusable composition
 (markdown:create-view! actor owner document [source-row])     ; presentation leaf
 (markdown:edit! view)            ; ask its host to open the source

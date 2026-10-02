@@ -11,19 +11,14 @@
           (prefix (apps markdown) markdown:)
           (prefix (core kernel) kernel:)
           (prefix (foundation string) string:)
-          (prefix (head catalogue-host) catalogue-host:)
-          (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head mode) mode:)
-          (prefix (head seat) seat:)
           (prefix (head style) style:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service reference) reference:)
@@ -40,7 +35,7 @@
     ;; result, so it reports none; logging it also delivers the base's first
     ;; records, and every later one replaces the line in place
     (reference:fetch!)
-    (parameterize ([edit:message-progress #t])
+    (parameterize ([log:progress #t])
       (log:add! 'describe:fetch-data! "Fetching the reference corpus..." #t))
     (void))
 
@@ -68,29 +63,6 @@
     (find (lambda (sym) (and (top-level-bound? sym) (eq? (top-level-value sym) value)))
           (environment-symbols (interaction-environment))))
 
-  (edoc "Show documentation in an independent Markdown page and return its source document. An optional explicit page changes that receiver only."
-        (name (or symbol string procedure) "the documented name")
-        (receiver (list-of buffer) "optional reference source document") (returns (or buffer #f)))
-  (define (describe-legacy! name . receiver)
-    (unless (<= (length receiver) 1) (error 'describe! "expected at most one page"))
-    (let* ([name (cond [(string? name) (string->symbol name)]
-                       [(symbol? name) name]
-                       [else (or (top-level-name name) name)])]
-           [id (if (null? receiver)
-                 (reference:create! head:ui-actor name (keymap:command-keys name))
-                 (let ([page (reference:page head:ui-actor (car receiver))])
-                   (and page (reference:select! head:ui-actor (car page) (cadr page)
-                               name (keymap:command-keys name)))))])
-      (if (not id)
-        (edit:set-message! (format "No documentation for ~a" name))
-        (begin
-          (seat:adopt-store-buffer! id)
-          (let* ([root (window-host:tool! "describe" (lambda (commands) (create-page! #f id commands)) (format "describe:~a" id))]
-                 [b (catalogue-host:resolve! root)])
-            (if (window-host:pop-up-or-reuse! root) (edit:set-message! "")
-              (edit:set-message! (format "~a: see ~a" name (seat:buffer-name b)))))))
-      id))
-
   (define (describe-composed! name host page)
     (let* ([host (or (widget:command-owner host 'auxiliary) (error 'describe "no auxiliary host"))]
            [name (cond [(string? name) (string->symbol name)] [(symbol? name) name] [else (or (top-level-name name) name)])]
@@ -115,9 +87,8 @@
     (unless (<= (length destination) 2) (error 'describe! "expected host and optional page"))
     (let ([host (if (pair? destination) (car destination)
                   (let ([focus (widget:focused)]) (and focus (widget:command-owner focus 'auxiliary))))])
-      (if (and host (pair? host) (eq? (car host) 'model))
-        (describe-composed! name host (if (pair? destination) (cdr destination) '()))
-        (apply describe-legacy! name destination))))
+      (unless host (error 'describe! "no auxiliary host"))
+      (describe-composed! name host (if (pair? destination) (cdr destination) '()))))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
         (name symbol "the name, unquoted"))
@@ -126,59 +97,16 @@
       [(_ name) (describe! 'name)]))
 
 
-  ;;; The symbol at point ---------------------------------------------------------
-
-  (define (scheme-delimiter? c)
-    (or (char-whitespace? c)
-        (memv c '(#\( #\) #\[ #\] #\{ #\} #\" #\; #\' #\` #\,))))
-
-  (define (symbol-at-point)
-    ;; The symbol the cursor is on -- or just after, as at the end of a
-    ;; word -- in the current buffer; #f when point is not at one.
-    (let* ([b (seat:current-buffer-mirror)]
-           [p (seat:point)]
-           [s (seat:buffer-line b (car p))]
-           [n (string-length s)]
-           [on? (lambda (i)
-                  (and (>= i 0) (< i n)
-                       (not (scheme-delimiter? (string-ref s i)))))]
-           [col (cond [(on? (cdr p)) (cdr p)]
-                      [(on? (- (cdr p) 1)) (- (cdr p) 1)]
-                      [else #f])])
-      (and col
-           (let ([start (let back ([i col]) (if (on? (- i 1)) (back (- i 1)) i))]
-                 [end (let fwd ([i col]) (if (on? i) (fwd (+ i 1)) i))])
-             (string->symbol (substring s start end))))))
-
-  (define (scheme-buffer?)
-    ;; Scheme under any dress: the scheme mode itself and the
-    ;; pretty-scheme-* renderings, which draw the same buffer text.
-    (let ([m (mode:name-of)])
-      (and m (or (string=? m "scheme")
-                 (string:prefix? "pretty-scheme" m)))))
-
-  (edoc "Show the describe page of the symbol under the cursor in a Scheme buffer.")
-  (define (describe-at-point-legacy!)
-    ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
-    (cond [(not (scheme-buffer?))
-           (edit:set-message! "Not a Scheme buffer")]
-          [(symbol-at-point) => describe!]
-          [else (edit:set-message! "No symbol at point")])
-    (void))
-
   (edoc "Describe the symbol at an explicit Scheme editor's caret through its containing composition. The text and point come from acquired editor state."
     (receiver id (view editor)) (id model "editor view"))
-  (define describe-at-point!
-    (case-lambda
-      [() (describe-at-point-legacy!)]
-      [(id)
-       (let-values ([(source d inputs) (widget:context id 'current)])
-         (let* ([document (view:source d)]
-                [name (cond [(assq 'mode (view:options d)) => cdr] [else (store:property document 'mode #f)])]
-                [text (text-source:lookup document)] [point (car (view:state d))])
-           (if (and name (or (equal? name "scheme") (string:prefix? "pretty-scheme" name)))
-             (describe-input! (vector-ref (text-source:lines text) (car point)) (cdr point) id)
-             (head:report! "Not a Scheme buffer"))))]))
+  (define (describe-at-point! id)
+    (let-values ([(source d inputs) (widget:context id 'current)])
+      (let* ([document (view:source d)]
+             [name (cond [(assq 'mode (view:options d)) => cdr] [else (store:property document 'mode #f)])]
+             [text (text-source:lookup document)] [point (car (view:state d))])
+        (if (and name (or (equal? name "scheme") (string:prefix? "pretty-scheme" name)))
+            (describe-input! (vector-ref (text-source:lines text) (car point)) (cdr point) id)
+            (head:report! "Not a Scheme buffer")))))
 
   (edoc "Describe the Scheme name at an explicit input caret, without reading a buffer's point."
         (text string "Scheme input") (pos integer "character offset") (host (list-of model) "optional containing composition"))
@@ -252,22 +180,6 @@
          (("procedure" . "(mode:add-extension! mode extension)")) "void"
          ("(head mode)") mode "Mode customization" #f
          "Associate an additional filename extension such as `.foo` with an existing mode such as `scheme`, without replacing that mode's implementation. Configuration-owned associations are reapplied dynamically and disappear when removed from config.e.")
-        ((seat:set-app-cursor-visible!)
-         (("procedure" . "(seat:set-app-cursor-visible! buffer visibility)")) "buffer"
-         ("(head head)") head "App buffers" #f
-         "Set app cursor visibility to a boolean or a procedure receiving the window token. This supports per-window cursor hiding while an app viewport is detached from its live cursor.")
-        ((seat:set-app-presentation!)
-         (("procedure" . "(seat:set-app-presentation! buffer sticky-lines seat:scrollbar [wrap cursor-style])"))
-         "buffer" ("(head head)") head "App buffers" #f
-         "Configure presentation shared by every window showing an app. `sticky-lines` is a nonnegative count of leading rows fixed above the scrollable body; `scrollbar` is #f, #t, `left`, or `right`; optional `wrap` is #t, #f, or `default`; optional `cursor-style` is `block`, `underline`, `bar`, a `blinking-` variant of those, or `default`.")
-        ((seat:buffer-window-size)
-         (("procedure" . "(seat:buffer-window-size buffer)")) "pair or #f"
-         ("(head head)") head "App buffers" #f
-         "Return `(rows . columns)` for the preferred window displaying `buffer`, choosing the focused window when it displays the buffer, or #f when it is not visible.")
-        ((seat:add-buffer-kill-hook!)
-         (("procedure" . "(seat:add-buffer-kill-hook! procedure)")) "unspecified"
-         ("(head head)") head "Buffer lifecycle" #f
-         "Register a module-owned cleanup procedure called with a buffer immediately before it is killed. Errors are recorded in the log without preventing the kill.")
         ((head:add-shutdown-hook!)
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(head head)") head "Editor lifecycle" #f
@@ -280,15 +192,10 @@
          (("thread parameter" . "lifecycle:shutdown-on-exit")) "boolean"
          ("(head lifecycle)") lifecycle "Editor lifecycle" #f
          "Default #f: quitting detaches this screen. Set #t to review shutting down the base when this is the last participating head. The base decides atomically; cancelling keeps the last head open. Restricted heads always detach normally.")
-        ((paint:add-buffer-status-hint!)
-         (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
-         ("(head paint)") paint "Buffer lifecycle" #f
-         "Register a module-owned status hint procedure called as `(procedure buffer active?)` for every window. It may return a string, a `(string . style)` pair, or #f.")
         ((describe:fetch-data!)
          (("procedure" . "(describe:fetch-data!)")) "void"
          ("(apps describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
-    (keymap:bind-default! "C-h f" (keymap:prefill describe!))
     (keymap:bind-default! 'screen "C-h f" (keymap:prefill describe!))
     (keymap:bind-default! 'widget-editor "M-." (keymap:call describe-at-point! widget:target))
-    (keymap:bind-default! "M-." describe-at-point!)))
+  ))

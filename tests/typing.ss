@@ -1,6 +1,6 @@
 #!/usr/bin/env scheme-script
 
-;; Typing through the dispatcher: a run of typed characters, backspaces and
+;; Typing through the widget router: a run of typed characters, backspaces and
 ;; forward deletes is one undo step and one batch of the delta log, each
 ;; key its own entry, a typo and its correction together; moving point or
 ;; any other command starts a new run, and a run stops at twenty keys.
@@ -9,39 +9,38 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
-(eval
+(test-evaluate!
   '(begin
      (import (prefix (test) test:)
-             (rename (head edit) (init! edit-init!))
-             (head literal)
-             (prefix (apps delta-log) delta-log:)
-             (prefix (head dispatch) dispatch:)
-             (prefix (head head) head:) (prefix (head seat) seat:)
-             (prefix (head window-host) window-host:)
+             (prefix (core kernel) kernel:)
+             (prefix (head edit) edit:)
+             (prefix (head head) head:)
+             (prefix (head routing) routing:)
+             (prefix (head widget) widget:)
              (prefix (head keymap) keymap:)
              (prefix (state store) store:))
 
      (define check test:check)
-     (edit-init!)
-     (window-host:init!)
-     (delta-log:init!)
-     (define b (seat:new-buffer! "typing"))
-     (seat:show-buffer-mirror! b)
-     (seat:goto! '(0 . 0))
-     (define (text) (vector->list (seat:buffer-lines b)))
-     (define (type! s) (for-each dispatch:key! (string->list s)))
-     (define (press! key . times) (do ([n (if (pair? times) (car times) 1) (- n 1)]) ((= n 0)) (dispatch:key! key)))
-     (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror))) i)))))
+     (kernel:load-module! "widget") (kernel:load-module! "edit")
+     (define b (store:create! head:ui-actor "typing" '("")))
+     (define editor (edit:create-view! head:ui-actor b '()))
+     (widget:mount! editor 'typing)
+     (widget:present! (list (list (widget:prepare! editor 40 5) 0 0)))
+     (define (text) (let-values ([(lines revision) (store:snapshot b)]) (vector->list lines)))
+     (define (type! s)
+       (for-each (lambda (ch) (routing:input! editor (list 'text (string ch) 'keyboard))) (string->list s)))
+     (define (press! key . times)
+       (do ([n (if (pair? times) (car times) 1) (- n 1)]) ((= n 0)) (routing:input! editor (list 'key key))))
+     (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (store:log b) i)))))
      (define (same-batch? . is) (for-all (lambda (i) (equal? (batch-at i) (batch-at (car is)))) (cdr is)))
-     (define (label) (cadr (car (store:undo-labels (seat:buffer-store-id b)))))
+     (define (label) (cadr (car (store:undo-labels b))))
 
      ;; typed characters are entries of one batch under one label; moving
      ;; point starts a new run
      (type! "abc")
      (check 'typed-characters-are-entries-of-one-batch
-       (list (text) (length (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))) (same-batch? 0 1 2) (label)) '(("abc") 3 #t "insert \"abc\""))
+       (list (text) (length (store:log b)) (same-batch? 0 1 2) (label)) '(("abc") 3 #t "insert \"abc\""))
      (press! "LEFT")
      (type! "xz")
      (check 'moving-point-starts-a-new-run (list (text) (same-batch? 0 1) (same-batch? 1 2)) '(("abxzc") #t #f))
@@ -81,7 +80,7 @@
        (list (text) (same-batch? 0 1 2) (same-batch? 2 3) (label))
        (list (list (string-append "one" (make-string 25 #\a))) #t #f "delete \"\\n\""))
      (define (unchanged) #t)
-     (keymap:bind! "F12" unchanged)
+     (keymap:bind! 'widget-editor "F12" unchanged)
      (type! "x") (press! "F12") (type! "y") (press! "C-_")
      (check 'a-command-with-no-text-or-selection-change-ends-typing
        (text) (list (string-append "one" (make-string 25 #\a) "x")))

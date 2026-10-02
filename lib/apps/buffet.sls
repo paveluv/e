@@ -4,7 +4,7 @@
   (export choose! create! delete! init! kill! next! open! previous!)
   (import (chezscheme)
           (prefix (foundation string) string:)
-          (prefix (head catalogue-host) catalogue-host:)
+
 
           (prefix (head control) control:)
           (prefix (head entry) entry:)
@@ -12,16 +12,17 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head seat) seat:)
+
           (prefix (head table) table:)
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
+
           (prefix (service file) file:)
           (prefix (service window) window:)
           (prefix (state catalogue) catalogue:)
           (prefix (state collection) collection:)
           (prefix (state construction) construction:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:))
 
@@ -91,10 +92,15 @@
     (let* ([row (selected-row id selection basis)] [ref (car row)])
       (unless (eq? (caddr row) 'live) (error 'kill! "choose a live document"))
       (if (eq? (car ref) 'buffer)
-        (let ([b (catalogue-host:resolve! ref)])
-          (archive! row 'trash)
-          (when b (seat:forget-buffer! b)))
-        (unless (catalogue-host:retire! ref (cadr row)) (error 'kill! "document changed; choose it again")))))
+        (archive! row 'trash)
+        (let* ([r (caddar (cadr (model:snapshots (list ref))))] [d (and r (get r 'value #f))])
+          (unless (and d (equal? (cadr row)
+                                 (list (view:generation d) (get (view:options d) 'name #f)
+                                   (get (view:options d) 'audience 'all)))
+                    (get (view:options d) 'catalogue #f))
+            (error 'kill! "document changed; choose it again"))
+          (let-values ([(status current) (view:retire! head:ui-actor ref (get r 'revision #f))])
+            (unless (eq? status 'applied) (error 'kill! "document changed; choose it again" status)))))))
 
   (edoc "Permanently delete a selected Trash or Backups item against its shown version. Live documents and files on disk are never deleted."
         (receiver id (view buffet)) (id model "Buffet view") (selection row-selection "shown selection") (basis datum "shown result basis"))
@@ -103,50 +109,22 @@
       (when (eq? (caddr row) 'live) (error 'delete! "choose a Trash or Backups item"))
       (archive! row 'delete)))
 
-  (define (default!) (window-host:tool! "buffet" (lambda (commands) (create! #f commands))))
-
-  (define (open-legacy!)
-    (let* ([was (seat:current-buffer-mirror)] [host (default!)]
-           [previous (or (find (lambda (b) (and (not (eq? b was))
-                                                (not (equal? (seat:buffer-fact b 'tool-key #f) "*buffet*")))) (seat:buffers)) was)]
-           [b (window-host:show-widget! (seat:current-window) host)]
-           [host (seat:buffer-fact b 'widget-id #f)] [app (child host 'app)]
-           [table (child app 'table)] [entry (child (child table 'filter) 'entry)])
-      (seat:show-buffer-mirror! b)
-      (entry:delete! entry 'all)
-      (widget:focus! host entry)
-      (widget:pump!)
-      (table:select! table (catalogue-host:reference previous))
-      app))
-
   (edoc "Open Buffet in this window, clearing its filter and selecting the previous retained document. Other panes share query preferences but keep independent selection and scrolling."
-        (receiver window (view window)) (window model "destination window; omission uses the legacy host")
+        (receiver window (view window)) (window model "destination window")
         (returns model "Buffet view"))
-  (define open!
-    (case-lambda
-      [() (open-legacy!)]
-      [(window)
-       (let* ([manager (window-control:manager window)]
-              [found (window:find-app manager window "buffet")]
-              [recent (window:documents manager window)]
-              [previous (find (lambda (ref) (not (and found (equal? ref (cadr found)))))
-                          (if (pair? recent) (cdr recent) '()))]
-              [fallback (window:document manager window)]
-              [app (window-control:open-app! window "buffet" create!)] )
-         (widget:pump!)
-         (let* ([table (child app 'table)] [entry (child (child table 'filter) 'entry)])
-           (entry:delete! entry 'all)
-           (widget:focus! app entry)
-           (table:select! table (or previous fallback))) app)]))
-
-  (define (switch! direction)
-    (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
-           [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (seat:current-buffer-mirror)) direction)]
-           [b (and ref (catalogue-host:resolve! ref))])
-      (when ref
-        (cond [(not b) (window-host:open-document! host ref)]
-          [(equal? (seat:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
-          [else (seat:show-buffer-mirror! b)]))))
+  (define (open! window)
+    (let* ([manager (window-control:manager window)]
+           [found (window:find-app manager window "buffet")]
+           [recent (window:documents manager window)]
+           [previous (find (lambda (ref) (not (and found (equal? ref (cadr found)))))
+                           (if (pair? recent) (cdr recent) '()))]
+           [fallback (window:document manager window)]
+           [app (window-control:open-app! window "buffet" create!)] )
+      (widget:pump!)
+      (let* ([table (child app 'table)] [entry (child (child table 'filter) 'entry)])
+        (entry:delete! entry 'all)
+        (widget:focus! app entry)
+        (table:select! table (or previous fallback))) app))
 
   (define (switch-window! window direction)
     (let* ([manager (window-control:manager window)] [found (window:find-app manager window "buffet")]
@@ -155,12 +133,12 @@
       (when ref (window-control:open-document! window ref))))
 
   (edoc "Switch this window to the next live document in Buffet's unfiltered compound order, wrapping at the end. Before Buffet exists, use the default name order without creating a table."
-        (receiver window (view window)) (window model "window; omission uses the legacy host"))
-  (define next! (case-lambda [() (switch! 'next)] [(window) (switch-window! window 'next)]))
+        (receiver window (view window)) (window model "destination window"))
+  (define (next! window) (switch-window! window 'next))
 
   (edoc "Switch this window to the previous live document in Buffet's unfiltered compound order, wrapping at the beginning. Before Buffet exists, use the default name order without creating a table."
-        (receiver window (view window)) (window model "window; omission uses the legacy host"))
-  (define previous! (case-lambda [() (switch! 'previous)] [(window) (switch-window! window 'previous)]))
+        (receiver window (view window)) (window model "destination window"))
+  (define (previous! window) (switch-window! window 'previous))
 
   (define (ready-value cells name)
     (let ([p (assq name cells)]) (and p (eq? (cadr p) 'ready) (caddr p))))
@@ -217,10 +195,6 @@
     (for-each (lambda (n column) (keymap:bind-default! 'buffet (format "F~a" n) (keymap:call table:toggle-sort! target-table column)))
       '(1 2 3 4 5 6) '(modified flags name lines mode file))
     (for-each (lambda (key) (keymap:bind-default! 'buffet key (keymap:call widget:invoke! widget:target 'return))) '("ESC" "C-g"))
-    (keymap:bind-default! "C-x b" open!)
-    (keymap:bind-default! "C-x C-b" open!)
-    (keymap:bind-default! "M-S-UP" previous!)
-    (keymap:bind-default! "M-S-DOWN" next!)
     (for-each (lambda (key) (keymap:bind-default! 'composed-window key (keymap:call open! widget:target))) '("C-x b" "C-x C-b"))
     (keymap:bind-default! 'composed-window "M-S-UP" (keymap:call previous! widget:target))
     (keymap:bind-default! 'composed-window "M-S-DOWN" (keymap:call next! widget:target))))

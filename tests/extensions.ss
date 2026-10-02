@@ -109,6 +109,10 @@
          (put "failed/lib/external-retry.sls" (entry 'external-retry '(collection helper)))
          (put "plugin/lib/needs-absent.sls"
            '(library (needs-absent) (export init!) (import (chezscheme) (absent collection)) (define (init!) (void))))
+         (call-with-output-file (path "plugin/lib/bad-contract.sls")
+           (lambda (out)
+             (pretty-print '(import (only (foundation edoc) elibrary)) out)
+             (pretty-print '(elibrary (bad-contract) (export init!) (import (chezscheme)) (define (init!) (void))) out)))
          (put "conflict/lib/core/kernel.sls" '(library (core kernel) (export) (import (rnrs))))
          (put "shadow/external-probe.sls" (entry 'external-probe '(other helper)))
          (chmod (path "plugin/lib") #o555)
@@ -126,8 +130,6 @@
            (extension:load! "../plugin" "external-probe" '("../deps"))
            (let ([roots (library-directories)])
              (extension:load! (path "plugin") "external-probe" '("../deps"))
-             ;; one root may be given as a string
-             (extension:load! (path "plugin") "external-probe" "../deps")
              (test:check 'one-line-load-is-idempotent-and-keeps-checkout-clean
                (list (eval '(external-probe:value)) starts (equal? roots (library-directories))
                      (list-sort string<? (directory-list (path "plugin"))))
@@ -136,10 +138,11 @@
              (let ([objects (cdr (assoc (path "plugin/lib") (library-directories)))])
                (and (file-exists? (string-append objects "/external-probe.so"))
                     (not (file-exists? (path "plugin/eo"))))) #t)
-           (test:check 'an-entry-shadowing-e-and-a-missing-entry-are-refused
+           (test:check 'invalid-entry-and-non-list-library-roots-are-refused
              (map test:raises?
                (list (lambda () (extension:load! "../conflict" "kernel"))
-                     (lambda () (extension:load! "../plugin" "missing")))) '(#t #t))
+                     (lambda () (extension:load! "../plugin" "missing"))
+                     (lambda () (extension:load! "../plugin" "external-probe" "../deps")))) '(#t #t #t))
            (let ([complaint (lambda (thunk) (guard (ex [else (condition-message ex)]) (thunk) "no error"))]
                  [mentions? (lambda (text . parts)
                               (for-all (lambda (part) (and (string:search text part 0 (string-length text)) #t)) parts))])
@@ -148,8 +151,9 @@
                      (mentions? (complaint (lambda () (extension:load! "../conflict" "kernel"))) "kernel" "not to the checkout")
                      (mentions? (complaint (lambda () (extension:load! "../plugin" "needs-absent"))) "(absent collection)" "third argument")
                      (mentions? (complaint (lambda () (extension:load! "../nowhere" "x"))) "repository")
-                     (mentions? (complaint (lambda () (extension:load! "../plugin" "external-probe" "../nowhere"))) "library root"))
-               '(#t #t #t #t #t)))
+                     (mentions? (complaint (lambda () (extension:load! "../plugin" "external-probe" '("../nowhere")))) "library root")
+                     (mentions? (complaint (lambda () (extension:load! "../plugin" "bad-contract"))) "export has no edoc"))
+               '(#t #t #t #t #t #t)))
            (test:check 'published-module-keeps-its-source
              (parameterize ([library-directories (cons (cons (path "shadow") (path "objects")) (library-directories))])
                (kernel:module-source "external-probe"))

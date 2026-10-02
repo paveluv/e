@@ -3,24 +3,24 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
-(eval
+(test-evaluate!
   '(begin
      (import (prefix (test) test:) (prefix (apps bindings) bindings:)
              (prefix (head binding-list) listing:)
-             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head keymap) keymap:)
-             (prefix (head widget) widget:) (prefix (head window-host) window-host:) (prefix (head interaction) interaction:)
-             (prefix (head mouse) mouse:) (prefix (head paint) paint:) (prefix (head dispatch) dispatch:) (prefix (head routing) routing:)
+             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (service window) window:) (prefix (head keymap) keymap:)
+             (prefix (head widget) widget:) (prefix (head window-control) window-control:)
+             (prefix (core kernel) kernel:) (prefix (state store) store:) (prefix (head interaction) interaction:)
+             (prefix (head mouse) mouse:)  (prefix (head routing) routing:)
              (prefix (foundation string) string:) (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state actor) actor:))
      (define check test:check)
      (define (get r k) (cdr (assq k r)))
      (define (contains? s needle) (and (string:search s needle 0 (string-length s)) #t))
      (define (text rows) (string:join (map (lambda (r) (format "~s" r)) rows) "\n"))
-     (widget:init!) (edit:init!) (window-host:init!) (bindings:init!)
+     (for-each kernel:load-module! '("window-control" "edit" "bindings"))
      (keymap:bind-default! 'inspection-test "M-q" edit:kill-line!)
      (keymap:bind-default! 'inspection-test "M-w" edit:kill-line!)
-     (keymap:bind-default! 'inspection-test "C-k" edit:end-of-line!)
+     (keymap:bind-default! 'inspection-test "C-k" (keymap:call edit:move! widget:target 'end))
      (keymap:bind-default! 'inspection-test "M-z" (lambda () #f))
      (let* ([capture (listing:capture (listing:basis #f '(inspection-test global) #f '()) '())]
             [rows (car capture)] [s (text rows)]
@@ -28,7 +28,7 @@
        (check 'binding-facts-group-keys-and-retain-anonymous-and-named-actions
          (list (cadar rows) (contains? s "anonymous command")
            (exists (lambda (r) (and (member "M-q" (caddr r)) (member "M-w" (caddr r)) #t)) rows)
-           (exists (lambda (r) (and (member "C-k" (caddr r)) (contains? (cadddr r) "end-of-line!"))) rows)
+           (exists (lambda (r) (and (member "C-k" (caddr r)) (contains? (cadddr r) "move!"))) rows)
            (contains? (text readonly) "kill-line!") (cadr capture)) '("Mouse bindings" #t #t #t #f #f))
        (check 'fitting-preserves-logical-anchors-across-widths
          (let* ([wide (listing:fit rows 220)] [narrow (listing:fit rows 60)]
@@ -46,7 +46,8 @@
          (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP")
          (keymap:sequence-text (keymap:spec "DELETE")) (keymap:sequence-text (keymap:spec "C-M-SPC")))
        '("M-BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC"))
-     (define source (seat:window-widget (seat:current-window)))
+     (define source (view:create! head:ui-actor #f 'text 2 '() '(0)))
+     (widget:mount! source 'inspection-subject)
      (define a (bindings:create! #f '() source))
      (define query (view:source (view:snapshot a)))
      (define root (view:create! head:ui-actor #f 'row 1 '() '()))
@@ -95,10 +96,11 @@
      (bindings:page! a 'down) (pump!)
      (check 'paging-moves-only-the-selected-inspection-viewport (list (and (anchor a) #t) (anchor b)) '(#t #f))
      (let ([before (model:revision query)] [at (anchor a)])
-       (head:set-mouse-position! '(10 . 3)) (pump!)
+       (mouse:input! #t #\M 35 10 3) (pump!)
        (widget:pointer! '(scroll 0 2 lines) 10 3) (pump!)
+       (mouse:cancel!) (head:set-mouse-position! #f) (pump!)
        (check 'self-hover-and-wheel-preserve-subject-and-do-not-republish
-         (list (= before (model:revision query)) (not (equal? at (anchor a)))) '(#t #t)))
+         (list (= before (model:revision query)) (not (equal? at (anchor a))) (mouse:position)) '(#t #t (10 . 3))))
      (for-each (lambda (size) (widget:prepare! root (car size) (cadr size))) '((0 0) (1 1) (5 2)))
      (define executed 0)
      (keymap:bind-default! 'global "C-c F11" (lambda () (set! executed (+ executed 1))))
@@ -123,43 +125,35 @@
        (keymap:bind-default! 'inspection-test "F12" edit:kill-line!) (head:before-frame!)
        (check 'hidden-inspectors-release-demand-and-do-not-publish
          (list (model:demanded? query) (= before (model:revision query))) '(#f #t)))
-     ;; The default host has only placement policy; its data is the same model.
-     (head:set-mouse-position! #f)
-     (define shown (bindings:show!))
-     (paint:window-layout) (head:before-frame!)
-     (check 'default-placement-shows-a-widget-without-a-local-listing-copy
-       (list (equal? shown (seat:window-widget (seat:popup)))
-         (seat:buffer-name (seat:window-buffer (seat:popup)))
-         (vector-length (seat:buffer-lines (seat:window-buffer (seat:popup))))) '(#t "<bindings>" 1))
-     (keymap:run! (keymap:call widget:invoke! (widget:descendant shown 'app) 'return)) (head:before-frame!)
-     (check 'default-return-restores-an-empty-popup (seat:popup-rows) 0)
-     ;; A named host outlives its attachment's transient inspection. Exercise
-     ;; both departure (an unavailable snapshot) and recovery (no subtree).
+     ;; A persistent window outlives its transient inspection query. Cover
+     ;; both departure (unavailable) and recovery (absent), without a second
+     ;; copy of the screen's auxiliary-placement tests.
+     (define manager (window:create-manager! #f))
+     (define window (window:current manager))
+     (widget:mount! manager 'inspection-lifetime)
+     (window-control:open-document! window (store:create! head:ui-actor "inspection subject" '("")))
+     (define (show!)
+       (widget:pump!) (widget:present! (list (list (widget:prepare! manager 80 12) 0 0))))
+     (show!)
      (for-each
        (lambda (reason)
-         (set! shown (bindings:show!))
-         (let* ([app (widget:descendant shown 'app)] [query (view:source (interaction:snapshot app))])
-           (test:await 'default-inspection-ready
-             (lambda () (head:before-frame!) (eq? 'ready (get (get (model:snapshot query) 'value) 'status))))
+         (let* ([shown (bindings:open! window manager)] [query (view:source (interaction:snapshot shown))])
+           (test:await 'inspection-ready (lambda () (show!) (eq? 'ready (get (get (model:snapshot query) 'value) 'status))))
            (case reason
              [(departed)
               (let ([r (model:snapshot query)])
                 (model:commit! head:ui-actor
                   (list (list query (get r 'revision) (get r 'references)
                           (map (lambda (p) (if (eq? (car p) 'status) '(status . unavailable) p)) (get r 'value))))))]
-             [(restored)
-              (for-each (lambda (id) (model:retire! head:ui-actor id (model:revision id)))
-                (cons query (map car (view:tree app))))])
-           (head:before-frame!)
-           (let* ([fresh (bindings:show!)] [app (widget:descendant fresh 'app)]
-                  [source (view:source (interaction:snapshot app))])
+             [(restored) (model:retire! head:ui-actor query (model:revision query))])
+           (show!)
+           (let* ([fresh (bindings:open! window manager)] [source (view:source (interaction:snapshot fresh))])
              (test:await 'reopened-inspection-ready
-               (lambda () (head:before-frame!) (eq? 'ready (get (get (model:snapshot source) 'value) 'status))))
-             (check (list 'default-inspection-is-rebuilt reason)
+               (lambda () (show!) (eq? 'ready (get (get (model:snapshot source) 'value) 'status))))
+             (check (list 'inspection-is-rebuilt reason)
                (list (not (equal? shown fresh)) (model:snapshot shown)
-                 (equal? fresh (seat:window-widget (seat:popup)))
-                 (and (model:snapshot query) #t))
-               (list #t #f #t (eq? reason 'departed))))))
+                 (window:document manager window) (and (model:snapshot query) #t))
+               (list #t #f fresh (eq? reason 'departed))))))
        '(restored departed))
      (include "tests/inspection.sps")
      (test:finish! 'bindings)))

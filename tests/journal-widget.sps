@@ -34,7 +34,7 @@
          [end (string-length (string:trim-spaces text #f))])
     (log-view:select! b (list (car p) 0 end) (list (car p) 0 (- end 4)))
     (log-view:copy! b)
-    (test:await 'journal-copy (lambda () (pump!) (string=? (copy-text) "last"))))
+    (test:await 'journal-copy (lambda () (pump!) (string=? (edit:copy-text) "last"))))
   (let ()
     (kernel:retract-module! 'journal-ui)
     (parameterize ([kernel:registering-module 'journal-ui]) (log-view:init!))
@@ -66,9 +66,9 @@
   (ready a "record-179")
   (log-view:copy! a)
   (test:await 'journal-copy-across-pages
-    (lambda () (pump!) (string:suffix? "record-179" (copy-text))))
+    (lambda () (pump!) (string:suffix? "record-179" (edit:copy-text))))
   (check 'journal-copy-keeps-record-order-with-no-page-duplication
-    (length (string:lines (copy-text))) 81)
+    (length (string:lines (edit:copy-text))) 81)
   (widget:unmount! root)
   (log:retention 4096))
 

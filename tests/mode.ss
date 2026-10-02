@@ -3,20 +3,18 @@
 ;; The mode registry: registration and lookup, detection by extension
 ;; and interpreter line, hand-chosen modes, the memoized stylers, and
 ;; re-resolution after a re-registration.  Headless: (head) supplies
-;; both store-backed and local buffers.  Run from the repository root.
+;; explicit documents only.  Run from the repository root.
 
 (import (chezscheme))
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
-
-(eval
+(test-evaluate!
   '(begin
-     (import (prefix (test) test:) (head literal)
+     (import (prefix (test) test:)
              (prefix (core kernel) kernel:)
              (prefix (head mode) mode:)
-             (prefix (head head) head:) (prefix (head seat) seat:)
+             (prefix (head head) head:)
              (prefix (state store) store:)
              (only (chezscheme) format box unbox set-box!)
              (prefix (modes scheme-mode) scheme-mode:) (prefix (apps pretty-scheme) pretty-scheme:)
@@ -24,6 +22,7 @@
 
 
      (define check test:check)
+     (define (fresh name) (store:create! head:ui-actor name '("")))
 
      ;; -- registration and lookup -------------------------------------
 
@@ -41,39 +40,39 @@
 
      ;; -- detection -----------------------------------------------------------
 
-     (define by-file (seat:new-buffer! "x.probe"))
-     (seat:buffer-file-set! by-file "/nowhere/x.probe")
-     (seat:with-buffer-mirror by-file (mode:assign!))
-     (check 'detect-by-extension (mode:name-of (seat:buffer-store-id by-file)) "probe")
-     (check 'detected-is-auto (seat:buffer-mode-auto by-file) #t)
+     (define by-file (fresh "x.probe"))
+     (store:set-property! head:ui-actor by-file (quote file) "/nowhere/x.probe")
+     (mode:assign! by-file)
+     (check 'detect-by-extension (mode:name-of by-file) "probe")
+     (check 'detected-is-auto (store:property by-file (quote mode-auto)) #t)
 
-     (define by-interpreter (seat:new-buffer! "script"))
-     (seat:buffer-lines-set! by-interpreter (vector "#!/usr/bin/env probesh" "x"))
-     (seat:with-buffer-mirror by-interpreter (mode:assign!))
-     (check 'detect-by-interpreter (mode:name-of (seat:buffer-store-id by-interpreter)) "probe")
+     (define by-interpreter (fresh "script"))
+     (store:reset! head:ui-actor by-interpreter (vector "#!/usr/bin/env probesh" "x"))
+     (mode:assign! by-interpreter)
+     (check 'detect-by-interpreter (mode:name-of by-interpreter) "probe")
 
-     (define plain (seat:new-buffer! "notes.txt"))
-     (seat:buffer-file-set! plain "/nowhere/notes.txt")
-     (seat:with-buffer-mirror plain (mode:assign!))
-     (check 'detect-nothing (mode:name-of (seat:buffer-store-id plain)) #f)
-     (check 'of-nothing (mode:of (seat:buffer-store-id plain)) #f)
+     (define plain (fresh "notes.txt"))
+     (store:set-property! head:ui-actor plain (quote file) "/nowhere/notes.txt")
+     (mode:assign! plain)
+     (check 'detect-nothing (mode:name-of plain) #f)
+     (check 'of-nothing (mode:of plain) #f)
 
      ;; -- choosing by hand ----------------------------------------------------
 
-     (seat:with-buffer-mirror plain (mode:choose! "probe"))
-     (check 'chosen (list (mode:name-of (seat:buffer-store-id plain)) (mode:key-context plain)) '("probe" probe))
-     (check 'chosen-is-not-auto (seat:buffer-mode-auto plain) #f)
-     (seat:with-buffer-mirror plain (mode:choose! #f))
-     (check 'unchosen (mode:of (seat:buffer-store-id plain)) #f)
+     (mode:choose! "probe" plain)
+     (check 'chosen (list (mode:name-of plain) (car (mode:key-contexts (mode:of plain)))) '("probe" probe))
+     (check 'chosen-is-not-auto (store:property plain (quote mode-auto)) #f)
+     (mode:choose! #f plain)
+     (check 'unchosen (mode:of plain) #f)
 
      ;; the optional buffer goes as its literal or by name
      (mode:choose! "probe" (store:find-named "notes.txt"))
      (check 'chosen-by-literal (mode:name-of (store:find-named "notes.txt")) "probe")
      (check 'mode-rejects-name-coercion (test:raises? (lambda () (mode:choose! "probe" "notes.txt"))) #t)
-     (check 'chosen-by-name (list (mode:name-of (store:find-named "notes.txt")) (mode:name-of (seat:buffer-store-id plain))) '("probe" "probe"))
+     (check 'chosen-by-name (list (mode:name-of (store:find-named "notes.txt")) (mode:name-of plain)) '("probe" "probe"))
      (mode:choose! #f (store:find-named "notes.txt"))
      (mode:assign! (store:find-named "notes.txt"))
-     (check 'assigned-by-name (list (mode:of (store:find-named "notes.txt")) (seat:buffer-mode-auto plain)) '(#f #t))
+     (check 'assigned-by-name (list (mode:of (store:find-named "notes.txt")) (store:property plain (quote mode-auto))) '(#f #t))
 
      (check 'adoption-distinguishes-undetected-and-explicit-no-mode
        (map (lambda (choice)
@@ -82,53 +81,37 @@
                              (if (eq? choice 'missing) '() (list (cons 'mode choice) '(mode-auto . #f)))))]
                      [events '()]
                      [token (store:subscribe! id (lambda (event) (set! events (cons event events))))]
-                     [b (seat:adopt-store-buffer! id)])
+                     [_ (mode:refresh! id)])
                 (store:unsubscribe! token)
-                (list (mode:name-of (seat:buffer-store-id b)) (seat:buffer-mode-auto b) (length events))))
+                (list (mode:name-of id) (store:property id 'mode-auto) (length events))))
          '(missing #f "probe"))
        '(("probe" #t 2) (#f #f 0) ("probe" #f 0)))
 
      ;; Observers see the mode and whether it was detected as one choice.
-     (define atomic-mode (seat:new-buffer! "atomic.probe"))
-     (seat:buffer-file-set! atomic-mode "/nowhere/atomic.probe")
+     (define atomic-mode (fresh "atomic.probe"))
+     (store:set-property! head:ui-actor atomic-mode (quote file) "/nowhere/atomic.probe")
      (define mode-observations '())
      (define mode-token
-       (store:subscribe! (seat:buffer-store-id atomic-mode)
+       (store:subscribe! atomic-mode
          (lambda (event)
            (when (eq? (car event) 'property)
              (set! mode-observations
-               (cons (list (mode:name-of (seat:buffer-store-id atomic-mode)) (seat:buffer-mode-auto atomic-mode))
+               (cons (list (mode:name-of atomic-mode) (store:property atomic-mode (quote mode-auto)))
                      mode-observations))))))
-     (seat:with-buffer-mirror atomic-mode (mode:choose! "probe"))
+     (mode:choose! "probe" atomic-mode)
      (check 'manual-mode-choice-is-atomic mode-observations '(("probe" #f) ("probe" #f)))
      (set! mode-observations '())
-     (seat:with-buffer-mirror atomic-mode (mode:assign!))
+     (mode:assign! atomic-mode)
      (check 'detected-mode-choice-is-atomic mode-observations '(("probe" #t) ("probe" #t)))
      (store:unsubscribe! mode-token)
-
-     ;; A local buffer uses the same mode API, without a store twin.
-     (define local (seat:new-local-buffer! "*local-mode*"))
-     (seat:buffer-lines-set! local (vector "#!/usr/bin/env probesh" "local"))
-     (seat:with-buffer-mirror local (mode:assign!))
-     (check 'local-detection (seat:with-buffer-mirror local (mode:name-of)) "probe")
-     (check 'local-detected-is-auto (seat:buffer-mode-auto local) #t)
-     (check 'local-has-no-twin (seat:buffer-store-id local) #f)
-     (seat:with-buffer-mirror local (mode:choose! "probe"))
-     (check 'local-chosen (seat:with-buffer-mirror local (mode:name-of)) "probe")
-     (check 'local-chosen-is-not-auto (seat:buffer-mode-auto local) #f)
-     (check 'local-line-styles
-            (vector->list ((mode:line-styles (seat:with-buffer-mirror local (mode:of))) "abc"))
-            '(keyword keyword keyword))
-     (seat:with-buffer-mirror local (mode:choose! #f))
-     (check 'local-mode-cleared (seat:with-buffer-mirror local (mode:of)) #f)
 
      ;; -- extensions added later ----------------------------------------------
 
      (mode:add-extension! "probe" ".pr2")
-     (define by-addition (seat:new-buffer! "y.pr2"))
-     (seat:buffer-file-set! by-addition "/nowhere/y.pr2")
-     (seat:with-buffer-mirror by-addition (mode:assign!))
-     (check 'detect-by-added-extension (mode:name-of (seat:buffer-store-id by-addition)) "probe")
+     (define by-addition (fresh "y.pr2"))
+     (store:set-property! head:ui-actor by-addition (quote file) "/nowhere/y.pr2")
+     (mode:assign! by-addition)
+     (check 'detect-by-added-extension (mode:name-of by-addition) "probe")
      (check 'bad-extension-refused
             (guard (ex [else 'refused]) (mode:add-extension! "probe" "pr3"))
             'refused)
@@ -138,7 +121,7 @@
 
      ;; -- memoized line styles ------------------------------------------------
 
-     (define styles-of (mode:line-styles (mode:of (seat:buffer-store-id by-file))))
+     (define styles-of (mode:line-styles (mode:of by-file)))
      (define line (string #\a #\b #\c))
      (set-box! styler-calls 0)
      (check 'line-styles (vector->list (styles-of line)) '(keyword keyword keyword))
@@ -147,11 +130,11 @@
      (check 'line-styles-memoized-by-identity (unbox styler-calls) 1)
      (styles-of (string #\a #\b #\c))
      (check 'line-styles-fresh-string (unbox styler-calls) 2)
-     (check 'plain-buffer-styles ((mode:line-styles (mode:of (seat:buffer-store-id plain))) "abc") #f)
+     (check 'plain-buffer-styles ((mode:line-styles (mode:of plain)) "abc") #f)
 
      (mode:register! "raiser" '(".raise") '() (lambda (s) (error 'raiser "boom")))
-     (seat:with-buffer-mirror plain (mode:choose! "raiser"))
-     (check 'raising-styler-paints-plain ((mode:line-styles (mode:of (seat:buffer-store-id plain))) "abc") #f)
+     (mode:choose! "raiser" plain)
+     (check 'raising-styler-paints-plain ((mode:line-styles (mode:of plain)) "abc") #f)
 
      ;; Explicit text presentations share analysis without any head buffer.
 
@@ -186,8 +169,8 @@
      (mode:refresh!)
      (store:unsubscribe! refresh-token)
      (check 'refresh-resolves-replaced-modes-without-rewriting-unchanged-facts
-       (list (eq? (mode:find "probe") old) (eq? (mode:of (seat:buffer-store-id by-file)) (mode:find "probe"))
-             (mode:name-of (seat:buffer-store-id by-file)) refresh-writes)
+       (list (eq? (mode:find "probe") old) (eq? (mode:of by-file) (mode:find "probe"))
+             (mode:name-of by-file) refresh-writes)
        '(#f #t "probe" 0))
 
      ;; A derived mode follows live behavior, while detection and keys stay
@@ -209,19 +192,19 @@
        (map (lambda (name) (mode:required-facts (mode:find name)))
          '("grandchild" "render-child" "replaced-child" "no-such-mode"))
        '((parent-fact) (child-fact parent-fact) (child-fact) ()))
-     (seat:with-buffer-mirror plain (mode:choose! "grandchild"))
+     (mode:choose! "grandchild" plain)
      (define derived-line (string-copy "abc"))
-     ((mode:line-styles (mode:of (seat:buffer-store-id plain))) derived-line)
+     ((mode:line-styles (mode:of plain)) derived-line)
      (mode:indent-on-tab! "parent" #f)
      (check 'derivation-retains-own-detection-and-key-context
        (list (mode:name (mode:detect "x.parent" ""))
              (mode:name (mode:detect "x.child" ""))
-             (mode:interpreters (mode:find "child")) (mode:key-context plain)
+             (mode:interpreters (mode:find "child")) (car (mode:key-contexts (mode:of plain)))
              (eq? (mode:formatter "child") old-indent) (mode:indent-on-tab? "child"))
        '("parent" "child" () grandchild #t #f))
      (parent! (lambda (s) (make-vector (string-length s) 'string)) new-indent)
      (check 'parent-replacement-updates-presentation-operations-and-cached-styles
-       (list (vector->list ((mode:line-styles (mode:of (seat:buffer-store-id plain))) derived-line))
+       (list (vector->list ((mode:line-styles (mode:of plain)) derived-line))
              (map (lambda (get) (eq? (get (mode:find "child")) new-indent))
                (list mode:render mode:row-styles))
              (eq? (mode:indenter "grandchild") new-indent)
@@ -240,7 +223,7 @@
        (list (eq? (mode:styles (mode:find "styled-child")) probe-styler)
              (eq? (mode:render (mode:find "styled-child")) new-indent)
              (eq? (mode:indenter "styled-child") new-indent)
-             (mode:key-contexts plain))
+             (mode:key-contexts (mode:of plain)))
        '(#t #t #t (grandchild child parent)))
      (mode:derive! "orphan" "absent" '())
      (check 'a-parent-registered-later-is-followed-by-name
@@ -250,42 +233,42 @@
        '(#f #t))
      ;; an extension loaded after its files are open: deriving the mode that
      ;; claims their ending assigns it to them at once, as the worksheet does
-     (define late (seat:new-buffer! "notes.late"))
-     (seat:buffer-file-set! late "/tmp/notes.late")
-     (seat:with-buffer-mirror late (mode:assign!))
-     (define before-derivation (mode:name-of (seat:buffer-store-id late)))
+     (define late (fresh "notes.late"))
+     (store:set-property! head:ui-actor late (quote file) "/tmp/notes.late")
+     (mode:assign! late)
+     (define before-derivation (mode:name-of late))
      (mode:derive! "late" "parent" '(".late"))
      (check 'deriving-a-mode-assigns-it-to-open-buffers-with-its-ending
-       (list before-derivation (mode:name-of (seat:buffer-store-id late))) '(#f "late"))
+       (list before-derivation (mode:name-of late)) '(#f "late"))
      ;; a mode's source edited to claim one more ending, then reloaded: its
      ;; re-registration gives the open buffers with that ending the mode
-     (define newly (seat:new-buffer! "notes.newly"))
-     (seat:buffer-file-set! newly "/tmp/notes.newly")
-     (seat:with-buffer-mirror newly (mode:assign!))
-     (define before-reregistration (mode:name-of (seat:buffer-store-id newly)))
+     (define newly (fresh "notes.newly"))
+     (store:set-property! head:ui-actor newly (quote file) "/tmp/notes.newly")
+     (mode:assign! newly)
+     (define before-reregistration (mode:name-of newly))
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "parent" '(".parent" ".newly") '("parentsh") probe-styler))
      (check 'reregistering-a-mode-with-a-new-ending-assigns-it-to-open-buffers
-       (list before-reregistration (mode:name-of (seat:buffer-store-id newly)) (mode:name-of (seat:buffer-store-id late))) '(#f "parent" "late"))
+       (list before-reregistration (mode:name-of newly) (mode:name-of late)) '(#f "parent" "late"))
      ;; a detected or chosen mode stays when others register: registration
      ;; is additive, and a mode chosen by hand follows only its own name
-     (seat:with-buffer-mirror late (mode:choose! "parent"))
+     (mode:choose! "parent" late)
      (parameterize ([kernel:registering-module 'derived-parent])
        (mode:register! "thief" '(".newly" ".late") '() probe-styler))
-     (define stolen (seat:new-buffer! "z.newly"))
-     (seat:buffer-file-set! stolen "/tmp/z.newly")
-     (seat:with-buffer-mirror stolen (mode:assign!))
+     (define stolen (fresh "z.newly"))
+     (store:set-property! head:ui-actor stolen (quote file) "/tmp/z.newly")
+     (mode:assign! stolen)
      (check 'registration-takes-only-buffers-without-a-mode
-       (list (mode:name-of (seat:buffer-store-id newly)) (mode:name-of (seat:buffer-store-id late)) (mode:name-of (seat:buffer-store-id stolen))) '("parent" "parent" "thief"))
+       (list (mode:name-of newly) (mode:name-of late) (mode:name-of stolen)) '("parent" "parent" "thief"))
      (parent! probe-styler new-indent)
      (check 'a-chosen-mode-stays-through-its-reregistration
-       (list (mode:name-of (seat:buffer-store-id late)) (eq? (mode:of (seat:buffer-store-id late)) (mode:find "parent"))) '("parent" #t))
+       (list (mode:name-of late) (eq? (mode:of late) (mode:find "parent"))) '("parent" #t))
      (check 'a-derivation-cycle-is-refused-and-preserves-the-existing-parent
        (list (test:raises? (lambda () (mode:derive! "parent" "grandchild" '())))
              (mode:extensions (mode:find "parent"))) '(#t (".parent")))
      (kernel:retract-module! 'derived-parent)
      (check 'missing-parent-loses-presentation-but-keeps-child-and-local-overrides
-       (list (mode:name-of (seat:buffer-store-id plain)) ((mode:line-styles (mode:of (seat:buffer-store-id plain))) derived-line)
+       (list (mode:name-of plain) ((mode:line-styles (mode:of plain)) derived-line)
              (mode:render (mode:find "child")) (eq? (mode:formatter "child") old-indent))
        '("grandchild" #f #f #t))
 
@@ -293,20 +276,19 @@
      ;; pretty-scheme's displays are submodes of Scheme: they indent, format
      ;; and take Tab as Scheme does, with a presentation of their own
      (scheme-mode:init!)
-     (let* ([before (seat:buffers)]
-            [id (store:create! head:ui-actor "canonical.sls" '("(list 1)") '((file . "/missing/canonical.sls")))]
+     (let* ([id (store:create! head:ui-actor "canonical.sls" '("(list 1)") '((file . "/missing/canonical.sls")))]
             [events 0] [token (store:subscribe! id (lambda (_) (set! events (+ events 1))))])
        (mode:refresh! id) (mode:refresh! id)
-       (check 'canonical-mode-initialization-needs-no-buffer-mirror-and-publishes-once
-         (list (mode:name-of id) (store:property id 'mode-auto) events (equal? before (seat:buffers)))
-         '("scheme" #t 2 #t))
+       (check 'mode-observation-publishes-once
+         (list (mode:name-of id) (store:property id 'mode-auto) events)
+         '("scheme" #t 2))
        (mode:choose! #f id) (mode:refresh!)
        (check 'canonical-explicit-none-survives-automatic-refresh
          (list (mode:name-of id) (store:property id 'mode-auto)
            (test:raises? (lambda () (mode:choose! "unknown-mode" id)))) '(#f #f #t))
        (mode:assign! id)
-       (check 'canonical-mode-commands-do-not-adopt-a-legacy-mirror
-         (list (mode:name-of id) (store:property id 'mode-auto) (equal? before (seat:buffers))) '("scheme" #t #t))
+       (check 'explicit-assignment-restores-detection
+         (list (mode:name-of id) (store:property id 'mode-auto)) '("scheme" #t))
        (store:unsubscribe! token))
      (pretty-scheme:init!)
      (let ([id (store:find-named "canonical.sls")])

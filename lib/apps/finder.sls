@@ -1,7 +1,7 @@
 ;; Filesystem composition: base queries, shared controls, explicit host placement.
 (import (only (foundation edoc) elibrary))
 (elibrary (apps finder)
-  (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
+  (export choose! complete! create! enter! init! navigate! open! parent! show-hidden toggle-hidden!)
   (import (chezscheme)
           (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
@@ -14,11 +14,9 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
           (prefix (service directory) directory:)
           (prefix (service file) file:)
           (prefix (service file-query) file-query:)
@@ -196,32 +194,17 @@
       [(cancel) (hashtable-delete! completing id) #f]
       [else #f]))
 
-  (define (default!)
-    (window-host:tool! "finder" (lambda (commands) (create! #f commands (seat:default-directory)))))
-  (define (show!)
-    (let* ([b (window-host:show-widget! (seat:current-window) (default!))]
-           [host (seat:buffer-fact b 'widget-id #f)] [app (child host 'app)])
-      (seat:show-buffer-mirror! b) (focus-entry! app) (widget:pump!) app))
-
-  (edoc "Reopen the retained Finder with its filter intact; first use starts in the current document's directory."
-        (receiver window (view window)) (window model "destination window; omission uses the legacy host") (returns model "Finder view"))
-  (define open!
-    (case-lambda
-      [() (show!)]
-      [(window)
-       (let* ([document (window:document (window-control:manager window) window)]
-              [path (and (handle:buffer? document) (store:property document 'file #f))]
-              [app (window-control:open-app! window "finder"
-                     (lambda (owner commands) (create! owner commands (if path (file:directory-part path) "."))))])
-         (widget:pump!) (focus-entry! app) app)]))
-
-  (edoc "Open the retained Finder and navigate to a directory, clearing other filter keys."
-        (receiver window (view window)) (directory directory "directory to list")
-        (window model "destination window; omission uses the legacy host") (returns model))
-  (define open-directory!
-    (case-lambda
-      [(directory) (let ([app (show!)]) (navigate! app directory) app)]
-      [(directory window) (let ([app (open! window)]) (navigate! app directory) app)]))
+  (edoc "Reopen this window's retained Finder with its filter intact; first use starts in its document's directory. An optional directory navigates there and clears other filter keys."
+        (receiver window (view window)) (window model "destination window")
+        (directory (list-of directory) "optional directory to list") (returns model "Finder view"))
+  (define (open! window . directory)
+    (unless (and (<= (length directory) 1) (for-all string? directory)) (error 'open! "expected at most one directory"))
+    (let* ([document (window:document (window-control:manager window) window)]
+           [path (and (handle:buffer? document) (store:property document 'file #f))]
+           [app (window-control:open-app! window "finder"
+                  (lambda (owner commands) (create! owner commands (if path (file:directory-part path) "."))))])
+      (widget:pump!) (focus-entry! app)
+      (when (pair? directory) (navigate! app (car directory))) app))
 
   (define (escaped text)
     (apply string-append (map (lambda (c)
@@ -343,6 +326,4 @@
     (for-each (lambda (n column) (keymap:bind-default! 'finder (format "F~a" n) (keymap:call table:toggle-sort! target-table column)))
       '(1 2 3 4 5 6) '(name size modified created permissions count))
     (for-each (lambda (key) (keymap:bind-default! 'finder key (keymap:call widget:invoke! widget:target 'return))) '("ESC" "C-g"))
-    (keymap:bind-default! "C-x C-f" open!)
-    (keymap:bind-default! 'composed-window "C-x C-f" (keymap:call open! widget:target))
-    (seat:set-directory-opener! open-directory!)))
+    (keymap:bind-default! 'composed-window "C-x C-f" (keymap:call open! widget:target))))

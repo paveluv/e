@@ -12,7 +12,7 @@
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head prompt) prompt:) (prefix (head search-control) search-control:)
-          (prefix (head search-host) search-host:)
+          (prefix (head search-panel) search-panel:)
           (prefix (head text-control) text-control:) (prefix (head text-source) text-source:)
           (prefix (head widget) widget:) (prefix (state model) model:) (prefix (state view) view:))
 
@@ -64,12 +64,9 @@
         (begin (preview-service! id #f)
           (search-control:repeat! (widget:descendant id 'search) (if backwards? 'previous 'next)) #t))))
 
-  (edoc "Start incremental search in an explicit editor's composed window. C-s repeats, M-c toggles case, Return accepts and C-g returns to the safely rebased origin. Omission uses the temporary legacy host."
+  (edoc "Start incremental search in an explicit editor's composed window. C-s repeats, M-c toggles case, Return accepts and C-g returns to the safely rebased origin."
         (receiver id (view editor)) (id model "editor"))
-  (define search!
-    (case-lambda
-      [() (search-host:open! #f (if (search-fold-case) 'smart 'exact))]
-      [(id) (search-host:open! id (if (search-fold-case) 'smart 'exact))]))
+  (define (search! id) (search-panel:open! id (if (search-fold-case) (quote smart) (quote exact))))
 
   ;;; Matching -----------------------------------------------------------------------
 
@@ -134,13 +131,12 @@
 
   (edoc "Install search, its scoped needle-completion presentation and default C-s/M-% bindings." (public))
   (define (init!)
-    (search-host:init!)
+    (search-panel:init!)
     (prompt:register-presentation! 'needle make-preview)
     (widget:register! 'needle-preview 1
       (append (remp (lambda (p) (eq? (car p) 'measure)) (layout:container 'y))
         (list (cons 'service preview-service!) (cons 'actions (list (cons 'complete preview-next!)))
           (cons 'measure (lambda (data d axis cross child)
                            (if (eq? axis 'y) '(0 6) '(0 1)))))))
-    (keymap:bind-default! "C-s" search!)
     (keymap:bind-default! 'widget-editor "C-s" (keymap:call search! widget:target))
     (keymap:bind-default! 'widget-editor "M-%" (keymap:prefill replace! widget:target))))

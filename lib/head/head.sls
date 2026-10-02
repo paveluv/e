@@ -4,7 +4,7 @@
 (elibrary (head head)
   (export add-color-scheme-hook! add-mail-hook! add-pre-redraw-hook!
     add-publication-hook! add-shutdown-hook! after-key!
-    before-frame! call-uninterrupted call-with-interrupt
+    before-frame! call-with-interrupt
     current-keys defer-frame! finish-frame! frame-presented!
     host-color-scheme in-main-pump input-live? interrupted?
     key! last-command make-interrupted mouse-position publish! quit!
@@ -282,7 +282,7 @@
   (define (current-keys)
     the-current-keys)
 
-  (edoc "The text the key being dispatched types, a one-character string, or #f for a key that is no character: what a SELF-INSERT binding's command receives, (keymap:call edit:type! head:typed-text) say."
+  (edoc "The text the key being dispatched types, a one-character string, or #f for a key that is no character: a SELF-INSERT binding can use (keymap:call edit:insert! widget:target head:typed-text)."
         (returns (or string #f)))
   (define (typed-text)
     (let ([keys (current-keys)])
@@ -490,18 +490,6 @@
     (unless (eq? on isig-on?)
       (set! isig-on? on)
       (sys:terminal-isig! on)))
-
-  (edoc "Run an interaction during which C-g is an ordinary key rather than an interrupt."
-        (thunk thunk "the interaction")
-        (returns any "what the thunk returns")
-        (effects internal))
-  (define (call-uninterrupted thunk)
-    ;; run thunk as an interaction: C-g is a key while it lasts
-    (let ([old isig-on?])
-      (dynamic-wind
-        (lambda () (set-isig! #f))
-        thunk
-        (lambda () (set-isig! old)))))
 
   (edoc "Run a computation that C-g interrupts, raising an interrupted condition."
         (thunk thunk "the computation")

@@ -64,11 +64,12 @@ The API is query-only: e never runs a Git command that changes the repository.
 
 ## History browser
 
-`C-x g` or M-x `(git-view:log!)` opens a Git browser for the repository
-containing the current file. `git-view:log-of!` browses another one:
+`C-x g` opens a Git browser for the repository containing the window's file.
+`git-view:open!` takes a window model and an optional repository path. M-x
+receiver completion supplies the window; scripts can pass it explicitly:
 
 ```scheme
-(git-view:log-of! "/src/e")
+(git-view:open! window "/src/e")
 ```
 
 The table lists the latest 20 commits. Enter or click a commit to expand its

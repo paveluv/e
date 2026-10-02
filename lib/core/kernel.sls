@@ -745,15 +745,10 @@
     ;; (compiling it when stale) and run its init!, if any, owning its
     ;; registrations.
     (let ([lib (module-library name)])
-      ;; every module but one arrives prefixed in the editor's top level,
+      ;; every module arrives prefixed in the editor's top level,
       ;; exactly as code imports it -- M-x says (store:edit! ...) and
-      ;; (edit:save! ...) too. Only the temporary (window n) selector from
-      ;; (literal) remains bare until window records migrate to models.
-      (eval (if (string=? name "literal")
-                `(import ,lib)
-                `(import (prefix ,lib
-                                 ,(string->symbol
-                                    (string-append name ":")))))
+      ;; (edit:save-file! ...) too. Values remain ordinary quoted Scheme data.
+      (eval `(import (prefix ,lib ,(string->symbol (string-append name ":"))))
             (interaction-environment))
       (edoc:restore-types! (format "~s" lib))
       (when (memq 'init! (library-exports lib))

@@ -118,7 +118,7 @@
   (define columns
     '((modified "Modified" integer) (flags "Flags" (list-of buffer-flag)) (name "Buffer" string)
       (lines "Lines" integer) (mode "Mode" string) (file "File" string)
-      (version "Version" integer) (archive "Archive" (one-of live backup trash)) (archived-at "Archived" integer)
+      (version "Version" datum) (archive "Archive" (one-of live backup trash)) (archived-at "Archived" integer)
       (expires-at "Expires" integer)))
   (define (document m)
     (let ([trashed (get m 'trashed #f)] [backup (get m 'backup #f)])
@@ -136,7 +136,11 @@
       (and r (eq? (get r 'kind #f) 'widget-view) (model:available? id) (descriptor:valid? d)
         (let* ([options (descriptor:options d)] [name (get options 'name #f)])
           (and (get options 'catalogue #f)
-            (list (list id (list (cons 'name name) (cons 'version (descriptor:generation d))
+            ;; A lease generation alone misses unowned configuration changes.
+            ;; Witness catalogue identity/routing, never interaction sequence
+            ;; or state: cursor/hover publication must not churn this index.
+            (list (list id (list (cons 'name name)
+                             (cons 'version (list (descriptor:generation d) name (get options 'audience 'all)))
                              '(flags) '(mode . "widget") '(archive . live)) '())
               (get options 'audience 'all)))))))
   (define (cell r name) (assq name (cadr r)))

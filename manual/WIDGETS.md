@@ -196,12 +196,13 @@ TUI. Creation rows show italic names and an italic `[create]` suffix;
 pending cells show `[Pending]`. Semantic row roles compose with the normal
 choice/hover styles. Providers supply facts, never terminal widths or ANSI.
 
-`window-host:tool!` retains a named composition for this head. Its builder receives
-explicit `open` and `return` command bindings and returns an unmounted app
-view. Show the returned host with `window-host:show-widget!`; simultaneous placements
-fork views over shared sources. The host owns origin, MRU and inactive-panel
-click routing. An optional app `current` binding receives the focused document
-key (or false while the tool has focus), for local emphasis.
+`window-control:open-app!` retains a named composition in an explicit
+window. Its builder receives a lifetime owner and `open`/`return` command
+bindings, returning a fresh unmounted view scoped to that window. Reopening
+reuses it; another placement forks the view over its sources. The base
+manager owns recency and origin; the head adapts inactive-panel routing.
+An optional `current` command receives the focused document key, or false
+while the tool is focused, for local emphasis.
 
 Embedded compositions supply their own command bindings. They do not use an
 implicit current window. `widget:host` returns the opaque mounting slot;
@@ -397,23 +398,25 @@ for listed views. Hidden views retain their identity across detach and
 restart. Retiring a view removes its entry and unlinks its parent while preserving
 borrowed sources. Released children keep their explicit membership; becoming a
 root never exposes a previously private control.
-`catalogue-host:reference` and `catalogue-host:resolve!` are default window
-placement adapters; a retained view without a placement can be mounted with
-`window-host:show-widget!`. There is no head contribution stream or local-token
-database. Model notifications update only affected catalogue metadata;
-selection, repaint and generated text never republish rows.
+Catalogue rows already contain canonical buffer or model references;
+placement does not convert them to head-local objects. Model notifications
+update affected metadata only. Selection and painting never republish rows.
 
 `store:metadata` reads a coherent `(epoch ((id metadata-or-false) ...))`
 without copying text or history; an optional list restricts it to those IDs.
 Each row includes a `version` witness for content, facts and lifetime.
+Catalogue view rows use `(ownership-generation name audience)` as their
+metadata witness. Rename and routing changes invalidate a shown action even
+on an unowned view; caret, scroll and interaction publication do not rebuild
+the catalogue. Shared document versions remain the store's integer witnesses.
 `store:archive!` takes actor, ID, reviewed version and `trash`, `restore` or
 `delete`, returning status and current metadata. It refuses stale versions
 and incompatible states atomically. Unrelated buffer changes do not invalidate
 the witness. Restoration retains history and uses the usual unique-name
 policy; permanent deletion requires an archive and never deletes a disk file.
 Validate the query basis at dispatch as well. A refusal refreshes the view
-without retrying the action. The host still retires displayed buffers through
-`seat:forget-buffer!`, which moves windows to surviving buffers.
+without retrying the action. Window managers observe retirement and choose surviving retained
+documents through their normal fallback policy.
 
 ## Prepared collections
 
@@ -617,10 +620,10 @@ After restarting the base, evaluate in a head:
 (define data
   (model:create! (actor:current) 'example-text 1
     'session 'persistent '() "first\nsecond\nthird"))
-(define first (view:create! (actor:current) data 'text 2 '() 0))
-(define second (view:create! (actor:current) data 'text 2 '() 0))
-(window-host:show-widget! (seat:current-window) first)
-(window-host:show-widget! (window-host:split-right!) second)
+(window-control:open-app! window "example"
+  (lambda (owner commands)
+    (view:create! (actor:current) data 'text 2 '() 0 owner)))
+(window-control:split! window 'right)
 ```
 
 Each view selects a row with Up/Down or a click. To scroll a long value,
@@ -1049,8 +1052,8 @@ when an existing presentation is reused. Unknown presentations refuse before
 changing the window. `ESC` returns hosted apps to their saved document origin.
 
 The composed app openers accept an explicit window: `buffet:open!`,
-`finder:open!`, `markdown:view!`, `terminal:open!`, `git-view:log!`,
-`log-view:show!`, `delta-log:open!` and `delta-log:conflicts!`. Their contextual
+`finder:open!`, `markdown:view!`, `terminal:open!`, `git-view:open!`,
+`log-view:open!`, `delta-log:open!`. Their contextual
 bindings supply that window automatically. `C-x C-l` opens rewrite review;
 `C-x l` toggles line numbers.
 
@@ -1067,10 +1070,10 @@ existing subscriptions. The head coalesces structural changes, acquires the
 new tree and source demand on its pump, and releases removed presentations.
 Ordinary selection, hover and painting do not acquire the tree.
 
-The ordinary editor continues to use the `window-host:` adapter, including its
-existing splits and key bindings. For example, its current-window split command
-is `(window-host:split-right!)`; `window:` never accepts the adapter's temporary
-`(window n)` values. Defining or loading the service creates no windows or work.
+The ordinary editor uses this same base manager, assembled in `start.e`.
+`window-control:split!` accepts an explicit window model and direction.
+There is no parallel record-based host or second dispatcher. Loading service
+definitions creates no manager, window or background work.
 
 ## Installing a head root
 
@@ -1303,7 +1306,8 @@ or short to exercise clipping; click either entry to edit their common source.
         (list overlay 0 (list (list 'content column '(grow 1))) '())
         (list scroll 0 (list (list 'content overlay '(grow 1))) '()))
   '())
-(window-host:show-widget! (seat:current-window) scroll)
+;; An embedded host may mount this root directly; a window app's
+;; construction must instead scope it to the supplied lifetime owner.
 ```
 
 The caller creates the source. Mounting, splitting or closing views never
@@ -1315,13 +1319,11 @@ tree and returns a head-local runtime handle. Repeating that attachment is
 idempotent; attaching the same root to another slot is refused. Children have
 no adapter buffers and share batched source subscriptions.
 
-`window-host:show-widget!` supplies the existing-window adapter. Showing a root
-in a second window, including an ordinary window split, forks its descriptors
-while sharing sources. Reopening a hidden root reuses its adapter and state.
-The window adapter unmounts hidden roots before the next frame, after the
-invoking action has returned. A restored hidden adapter stays unmounted until
-shown. Embedded hosts manage their mounts explicitly with `widget:mount!`
-and `widget:unmount!`; window visibility never releases an embedded host.
+The default window manager unmounts hidden presentations after the action
+returns. Reopening reuses their logical state; splitting forks descriptors
+while sharing sources. `window-control:open-app!` owns construction and
+placement for named apps. Embedded hosts manage their mounts explicitly
+with `widget:mount!` and `widget:unmount!`.
 `widget:arrange!` stages source demand before committing an owned topology
 change. Fence interaction before reading expected parent revisions; a stale
 revision refuses the batch. Reordering preserves child identities; unlinking releases their
@@ -1336,10 +1338,9 @@ already acquired state and never invoke this barrier. For an unmounted model,
 read an authoritative `model:snapshots` packet; `model:snapshot` only reads an
 existing subscription.
 
-`widget:unmount!`, or killing the adapter buffer, fences publication, releases
+`widget:unmount!` fences publication, releases
 subscriptions and relinquishes the owner generation. It keeps the underlying
-model and descriptor. Detach checkpoints retain widget IDs, not generated
-text. Disconnect also releases connection-owned subscriptions, including
+model and descriptor. The root binding retains widget IDs, not generated text. Disconnect also releases connection-owned subscriptions, including
 explicit API demand. Reattach claims visible views and restores acknowledged state. A missing
 renderer or unavailable model produces a placeholder with actions disabled;
 installing the definition makes the existing mount usable.
@@ -1348,14 +1349,14 @@ including edits made while the head was detached. Repeated preparation, hover
 and resizing read local snapshots. Measurement and rendering share immutable
 descriptor reads within each preparation pass.
 
-An unsupported view descriptor itself remains an inert adapter with its
+An unsupported view descriptor itself remains an inert presentation with its
 original ID and no claimed interaction owner. Its complete envelope can be
 inspected with `model:snapshot`; recovery and subsequent saves preserve it.
 
 The [model API](MODELS.md) describes canonical envelopes, ownership, recovery
 and the distinction between remote `view:` reads and local `interaction:`
 reads. The head automatically queues interaction after presentation and
-fences it before lifecycle checkpoints. Geometry never crosses that seam.
+fences it before lifecycle transitions. Geometry never crosses that seam.
 
 ## Recursive layout and presentation
 
@@ -1451,9 +1452,9 @@ and top anchor when a composition leaves follow mode.
 
 `(edit:create-view! actor document-id options)` creates an unmounted `editor`
 view over an existing store document. Mount it directly, compose it with
-other views, or pass its root to `window-host:show-widget!`. With `()` or
+other views, or build it with the owner supplied by `window-control:open-app!`. With `()` or
 `((wrap . default))`, wrapping follows the document's `wrap` fact, then
-`paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
+`text-layout:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
 The editor reserves the last column for `\` on continued wrapped rows, and
 shows `$` when unwrapped text extends past the right edge. A document's
 `clean` wrap setting suppresses these markers and uses the full width;
@@ -1461,7 +1462,7 @@ shows `$` when unwrapped text extends past the right edge. A document's
 one-column editors never replace content with an edge marker.
 `((read-only . #t))` prevents edits and undo through this view without making
 the shared document read-only. Selection and copying remain available.
-Caret movement uses the same `paint:scroll-margin` as ordinary windows.
+Caret movement uses the same `text-layout:scroll-margin` as ordinary windows.
 The `text` output port exposes
 single-line sources, like Entry; multiline sources do not satisfy that
 string-field contract. [examples/editor.e](../examples/editor.e) places wrapped and
@@ -1472,12 +1473,11 @@ as zero-based `(row . character)` pairs at the descriptor's text basis.
 Widths, wrapped segments and desired display columns remain in the head.
 Ordinary document windows also retain a separate editor view for each
 document they visit. Switching away and back restores that window's selection;
-splitting creates an independent selection over the same text. The outer
-checkpoint retains view identities, so resume reuses their saved state.
+splitting creates an independent selection over the same text. The root binding retains view identities, so resume reuses their saved state.
 Ordinary windows route keyboard input, mouse selection and body painting
 through these same editor widgets, while keeping the actual document as
 their buffer. Gutters, scrollbars and status bars belong to the outer host.
-Current-window editing, formatting and undo commands use that window's editor
+Editing, formatting and undo commands take that window's explicit editor
 view. `edit:call-as-one-edit!` groups commands across ordinary and nested views:
 one undo step per document, with a common batch and the outermost scope's label.
 Mode metadata is acquired outside painting; warm navigation and
@@ -1485,6 +1485,10 @@ resizing use the shared mirror without requesting text or publishing geometry.
 
 The canonical commands take an explicit view, written `'(model N)` at M-x:
 
+- `edit:selection id` returns owned `(caret anchor top marked?)` data at the
+  editor's acquired text basis, without publication or a remote read. Capture
+  it together with `edit:basis` before deferred extension work; missing history
+  refuses rather than guessing coordinates.
 - `edit:select! id caret anchor` establishes a selection, or clears it when
   the endpoints agree. It also recovers from unavailable selection history.
 - `edit:move! id direction [extend]` accepts `left`, `right`, `up`, `down`,
@@ -1512,8 +1516,7 @@ The canonical commands take an explicit view, written `'(model N)` at M-x:
   desired column and mark. Direction is negative up or positive down; fraction
   is a positive divisor of the allocated height. A page lands the caret in
   the middle; paging outward at an already reached edge selects that edge.
-  This replaces `page-window!` and `page-window-fraction!`. The temporary
-  two-argument form operates on the current window.
+  The editor receiver is always explicit.
 - Expression motion, marking, killing and transposition take the same explicit
   view: for example, `(edit:forward-expression! id)`, `(edit:mark-form! id)` and
   `(edit:transpose-expressions! id)`. Their ordinary Control-Meta bindings work

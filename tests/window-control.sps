@@ -8,10 +8,10 @@
           (prefix (apps markdown) markdown:)
           (prefix (service filesystem) filesystem:)
           (prefix (foundation edoc) edoc:))
-  (let ([before (list (model:ids) (seat:buffers) (seat:windows))])
+  (let ([before (list (model:ids) (store:buffer-list))])
     (kernel:load-module! "window-control")
     (check 'window-controls-load-without-allocating-an-editor-host
-      (list (model:ids) (seat:buffers) (seat:windows)) before))
+      (list (model:ids) (store:buffer-list)) before))
   (actor:call-as head:ui-actor
     (lambda ()
       (let* ([document (store:create! head:ui-actor "construction source" '("keep"))]

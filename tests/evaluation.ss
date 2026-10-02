@@ -3,18 +3,17 @@
 (import (chezscheme))
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
-(eval
+(test-evaluate!
   '(begin
      (import (prefix (apps eval) eval:) (prefix (head edit) edit:)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:) (prefix (head echo) echo:)
+             (prefix (head head) head:) (prefix (head widget) widget:)
              (prefix (service log) log:) (prefix (test) test:)
              (prefix (head suspension) suspension:) (prefix (head text-source) text-source:)
              (prefix (state store) store:) (prefix (state view) view:) (prefix (state model) model:)
              (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
-     (widget:init!) (edit:init!) (window-host:init!)
+     (for-each kernel:load-module! '("widget" "edit"))
      (define (run thunk) (eval:call-with-evaluation! "test evaluation" thunk))
      (define (output channel)
        (map cdr (filter (lambda (d) (eq? (car d) channel))
@@ -33,24 +32,26 @@
                (eval:status stopped) (head:interrupted? (eval:condition stopped))))
        '(error #t interrupted #t))
 
-     (define b (seat:new-buffer! "evaluation"))
-     (seat:show-buffer-mirror! b)
+     (define b (store:create! head:ui-actor "evaluation" '("")))
+     (define editor (edit:create-view! head:ui-actor b '()))
+     (widget:mount! editor 'evaluation-editor)
+     (widget:present! (list (list (widget:prepare! editor 80 12) 0 0)))
      (define nested
        (run (lambda ()
-              (edit:insert-text! "outer")
+              (edit:insert! editor "outer")
               (display "outer\n")
               (let ([inner (run (lambda ()
-                                  (edit:insert-text! "inner")
+                                  (edit:insert! editor "inner")
                                   (display "inner\n")
                                   (display "warning" (current-error-port))
                                   42))])
                 (car (eval:values inner))))))
      (test:check 'nested-evaluation-streams-each-line-once
        (list (eval:values nested) (output 'stdout)
-             (output 'stderr) (edit:buffer-text (seat:buffer-store-id b)))
-       '((42) ("inner" "outer") ("warning") "outerinner\n"))
-     (edit:undo!)
-     (test:check 'nested-edits-share-one-undo (edit:buffer-text (seat:buffer-store-id b)) "\n")
+             (output 'stderr) (edit:buffer-text b))
+       '((42) ("inner" "outer") ("warning") "outerinner"))
+     (edit:undo! editor)
+     (test:check 'nested-edits-share-one-undo (edit:buffer-text b) "")
 
      (define handler (keyboard-interrupt-handler))
      (define descriptors (test:fd-count))
@@ -70,22 +71,22 @@
          (set! result
            (run (lambda ()
                   (set! batch (text-source:current-batch head:ui-actor))
-                  (edit:insert-text! "before") (display "before pause\n")
+                  (edit:insert! editor "before") (display "before pause\n")
                   (suspension:wait! (lambda (t) (set! ticket t) void))
                   (display "after pause" (current-error-port))
-                  (edit:insert-text! "after")
+                  (edit:insert! editor "after")
                   (not (equal? batch (text-source:current-batch head:ui-actor))))))))
      (test:check 'suspended-evaluation-releases-process-state
        (list result (text-source:current-batch head:ui-actor)
          (= descriptors (test:fd-count)) (eq? handler (keyboard-interrupt-handler))) '(#f #f #t #t))
-     (edit:insert-text! "other")
+     (edit:insert! editor "other")
      (suspension:resolve! ticket #t) (suspension:drain! raise)
      (test:check 'evaluation-resumes-with-new-capture-and-batch
        (list (eval:status result) (eval:values result) (car (output 'stdout)) (car (output 'stderr))
          (= descriptors (test:fd-count))) '(ok (#t) "before pause" "after pause" #t))
-     (edit:undo!)
-     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text (seat:buffer-store-id b)) "beforeother\n")
-     (edit:undo!) (edit:undo!)
+     (edit:undo! editor)
+     (test:check 'resumed-evaluation-keeps-intervening-edit-undo-separate (edit:buffer-text b) "beforeother")
+     (edit:undo! editor) (edit:undo! editor)
 
      (eval:report! nested 'probe)
      (test:check 'extension-label-is-data-without-mx-history
@@ -96,10 +97,6 @@
      (test:check 'explicit-input-records-the-exchange
        (list (log:history 'eval:report! car) (log:datum (car (log:entries 'eval:report!))))
        '(("#f") ("#f" . "#f")))
-     (echo:set-text! "before")
-     (define spoken (run (lambda () (echo:set-text! "command message") (void))))
-     (eval:report! spoken 'probe)
-     (test:check 'void-report-preserves-the-command-message (echo:text) "command message")
      (let ([values-to-copy '((app describe) ((model 17) (model 18)) #((agent helper) "a\"b"))])
        (eval:report! (run (lambda () (apply values values-to-copy))) 'probe)
        (test:check 'copied-multiple-values-are-an-executable-expression
@@ -108,7 +105,7 @@
          (eval:report! (run (lambda () (list (current-output-port)))) 'probe)
          (test:check 'opaque-result-does-not-overwrite-a-usable-copy (edit:copy-text) copied)))
      ;; Explicit editor commands use one coherent source and selection without
-     ;; adopting a legacy mirror or borrowing the focused editor's point.
+     ;; borrowing the focused editor's point.
      (let* ([source (store:create! head:ui-actor "evaluation receiver" '("(+ 1 2)" "(* 3 4)"))]
             [other (store:create! head:ui-actor "evaluation bystander" '("999"))]
             [root (view:create! head:ui-actor #f 'row 1 '() '())]
@@ -126,7 +123,7 @@
        (edit:select! a '(0 . 7) '(0 . 7))
        (test:check 'explicit-expression-and-buffer-evaluation-share-captured-receiver
          (list (result eval:last-expression!) (result eval:top-level-form!) (result eval:run!)
-           (widget:focused root) (seat:buffer-of-store-id source)) (list "3" "3" "12" b #f))
+           (widget:focused root)) (list "3" "3" "12" b))
        (store:edit! head:ui-actor source (store:revision source) (text:make-span 0 0 0 0) '("000 "))
        (text-source:open! head:ui-actor source)
        (test:check 'evaluation-reads-text-at-the-captured-selection-revision (result eval:last-expression!) "3")
@@ -135,7 +132,7 @@
        (view:retire! head:ui-actor root (model:revision root)))
 
      ;; A library compiled on import announces itself as a compile record for
-     ;; the log alone; a broken one fails the evaluation, which the echo shows.
+     ;; the log alone; a broken one fails the evaluation, which the notification host shows.
      (define root (format "/tmp/e-eval-compile-~a-~a" (get-process-id) (random 1000000)))
      (define (library! name text)
        (call-with-output-file (string-append root "/probe/" name ".sls") (lambda (p) (display text p))))
@@ -150,7 +147,7 @@
                            [(compile) (set! shown (cons presentation shown))]
                            [(stdout) (set! printed (cons (cons (cdr (log:datum e)) presentation) printed))]))))
      (run (lambda () (display "haha")))
-     (test:check 'ordinary-output-still-reaches-the-echo-area printed '(("haha" . append)))
+     (test:check 'ordinary-output-requests-appended-presentation printed '(("haha" . append)))
      (define stdout-before (length (output 'stdout)))
      (define-values (compiled failed)
        (parameterize ([library-directories (cons (cons root root) (library-directories))]

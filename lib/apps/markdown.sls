@@ -17,16 +17,15 @@
           (prefix (head layout) layout:)
           (prefix (head markdown-control) control:)
           (prefix (head markdown-layout) markdown-layout:)
-          (prefix (head seat) seat:)
           (prefix (head style) style:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (service window) window:)
           (prefix (state construction) construction:)
+          (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:))
 
@@ -57,8 +56,14 @@
               (list text 0 '() (list (list 'commands (list 'open-uri root 'open-link '()) (list 'open-source root 'open-source '()))))) '()) root))))
   (define (check-source! id document)
     (let-values ([(source d inputs) (widget:context (widget:descendant id 'text) 'current)])
-      (unless (equal? document (get (get (get source 'value '()) 'details '()) 'document #f))
-        (error 'markdown "the presentation's source changed"))))
+      ;; Query details describe the current parsed result and disappear while
+      ;; it is being refreshed. The recipe owns the stable document identity.
+      (let* ([ref (get (get source 'value '()) 'source #f)]
+             [recipe (and ref (model:snapshot ref))])
+        (unless (and recipe (eq? (get recipe 'kind #f) 'markup-source)
+                  (equal? document (get (get recipe 'value '()) 'document #f))
+                  (store:exists? document))
+          (error 'markdown "the presentation's source changed")))))
 
   (edoc "Open this presentation's source at a reviewed logical position. Rebase through retained edits before asking the explicit host; unavailable history refuses."
         (id model "Markdown page") (document buffer "source identity") (revision integer "shown basis")
@@ -90,44 +95,26 @@
              (widget:invoke! id 'open value
                (if (or (string:suffix? ".md" target) (string:suffix? ".markdown" target)) '((presentation . markdown)) '())))))]))
 
-  (define (view-legacy! . source)
-    (unless (<= (length source) 1) (error 'view! "expected at most one source"))
-    (let* ([document (or (if (pair? source) (car source) (seat:current-buffer))
-                       (error 'view! "Markdown needs a base document"))]
-           [row (if (equal? document (seat:current-buffer)) (car (seat:point)) 0)]
-           [root (window-host:tool! (string-append "markdown " (store:buffer-name document))
-                   (lambda (commands) (create! head:ui-actor #f document commands row)) (format "markdown:~s" document))])
-      (let* ([host (window-host:show-widget! (seat:current-window) root)]
-             [actual (seat:buffer-fact host 'widget-id #f)])
-        (control:locate! (widget:descendant actual 'app 'text) row) actual)))
-
   (edoc "Show Markdown in an explicit window, revealing the current source row. The window retains an independent presentation; source text, file state and undo history are unchanged. C-c v returns to the source."
         (receiver window (view window)) (window model "window")
         (source (list-of buffer) "optional source, default this window's document") (returns model))
-  (define view!
-    (case-lambda
-      [() (view-legacy!)]
-      [(window . source)
-       (if (and (pair? window) (eq? (car window) 'buffer)) (view-legacy! window)
-         (begin
-           (unless (<= (length source) 1) (error 'view! "expected at most one source"))
-           (let* ([document (if (pair? source) (car source) (window:document (window-control:manager window) window))]
-                  [child (assq 'document (view:children (interaction:snapshot window)))]
-                  [d (and child (interaction:snapshot (cadr child)))]
-                  [point (if (and d (eq? (view:kind d) 'editor) (equal? (view:source d) document)) (car (view:state d)) '(0 . 0))])
-             (window-control:open-document! window document (list '(presentation . markdown) (cons 'point point))))))]))
+  (define (view! window . source)
+    (unless (<= (length source) 1) (error 'view! "expected at most one source"))
+    (let* ([document (if (pair? source) (car source) (window:document (window-control:manager window) window))]
+           [child (assq 'document (view:children (interaction:snapshot window)))]
+           [d (and child (interaction:snapshot (cadr child)))]
+           [point (if (and d (eq? (view:kind d) 'editor) (equal? (view:source d) document)) (car (view:state d)) '(0 . 0))])
+      (window-control:open-document! window document (list '(presentation . markdown) (cons 'point point)))))
 
   (edoc "Register Markdown composition, presentation, faces and source/view commands." (public))
   (define (init!)
     (control:register! edit:copy-text!)
     (widget:register! 'markdown-page 1
       (append (layout:container 'y) (list (cons 'actions (list (cons 'open-link open-link!) (cons 'open-source open-source!))))))
-    (window-host:register-presentation! 'markdown (lambda (document commands position) (create! head:ui-actor #f document commands (car position))))
     (window-control:register-presentation! 'markdown
       (lambda (owner document commands) (create! head:ui-actor owner document commands))
       (lambda (id point) (control:locate! (widget:descendant id 'text) (car point))))
     (for-each (lambda (face) (style:set! (car face) (cdr face)))
       '((md-h1 bold underline) (md-h2 bold) (md-h3 bold italic) (md-h4 italic)
         (md-quote italic (foreground bright-black)) (md-link underline (foreground 33)) (md-code reset)))
-    (keymap:bind-default! 'markdown "C-c v" view!)
     (keymap:bind-default! 'composed-window "C-c v" (keymap:call view! widget:target))))

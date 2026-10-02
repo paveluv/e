@@ -10,17 +10,16 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
 (eval
   '(begin
-     (import (except (head edit) init!) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
-             (prefix (only (head edit) init!) edit:) (prefix (state store) store:) (prefix (foundation text) text:)
+     (import (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head widget) widget:)
+             (prefix (state store) store:) (prefix (foundation text) text:)
              (prefix (head layout) layout:) (prefix (state view) view:) (prefix (core kernel) kernel:) (prefix (service log) log:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window-host:init!)
+     (kernel:load-module! "widget") (kernel:load-module! "edit")
      ;; Load through the kernel so a reload below replaces the real module.
      ;; Fresh procedures resolve through the top level after that reload.
      (kernel:load-module! "blame")
@@ -28,8 +27,8 @@
      (define (at-point!) ((top-level-value 'blame:at-point!) a))
 
      (define id (store:create! head:ui-actor "blame-naming" '("")))
-     (define a (create-view! head:ui-actor id '()))
-     (define b (create-view! head:ui-actor id '()))
+     (define a (edit:create-view! head:ui-actor id '()))
+     (define b (edit:create-view! head:ui-actor id '()))
      (define root (view:create! head:ui-actor #f 'blame-fixture 1 '() '()))
      (define faces '(blame-1 blame-2 blame-3 blame-4 blame-5 blame-6))
      (widget:register! 'blame-fixture 1 (layout:container 'x))
@@ -128,15 +127,15 @@
      (tint-seconds! 8)
      (store:edit! '(agent rival) id (store:revision id) (text:make-span 0 0 0 2) '("BL"))
      (pump!)
-     (move! a '(0 . 0))
+     (edit:move! a '(0 . 0))
      (at-point!)
      (check 'blame-names-the-rival-at-point
-       (list (equal? (ranges a) (ranges b)) (not (seat:buffer-of-store-id id))
+       (list (equal? (ranges a) (ranges b))
          (exists (lambda (entry)
                    (let ([text (log:format-entry entry)])
                      (and (string:search text "(agent rival) wrote this at revision" 0 (string-length text)) #t)))
            (log:entries)))
-       '(#t #t #t))
+       '(#t #t))
      (widget:unmount! root)
 
      (test:finish! 'blame)))

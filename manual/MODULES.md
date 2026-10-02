@@ -73,19 +73,13 @@ default editor. `tui:enter!` and `tui:leave!` manage terminal modes independentl
 of any root widget. Diagnostics use `head:report!`, with a log/stderr fallback
 when no composition supplies a display.
 
-The existing window policy is temporarily isolated in `seat`, initialized
-explicitly by the default launcher. Its buffer mirrors, window records and
-screen checkpoints are separate from the engine. `paint` composes that host's
-windows and echo area through `tui`; extensions do not need either adapter to
-mount a widget.
-
-`dispatch:key!` handles a key through the current app and keymaps. Incremental
-search is an entry composition routed through that ordinary event pump;
-the default host supplies its temporary input root and editor target.
-The command layer installs the loop's file opener, quit command and after-key
-hook through `seat:set-file-opener!`, `seat:set-quit-command!` and
-`head:set-after-key!`. Commands and apps can use these head libraries without
-importing the runtime entrypoint `(main)`.
+The default editor in `start.e` explicitly constructs a screen, window
+manager, messages and prompt host. `window:` owns logical topology, document
+recency and links in the base; `window-control:` adapts geometry and input in
+the head. `root:` admits the chosen composition and the same pump runs an
+empty root, this editor or a custom composition. Keyboard routing follows
+the root's recursive widget contexts, including modal prompts and search.
+Importing a library never selects a window or installs a private input loop.
 
 `path:expand` expands leading `~` and `~/`; `path:canonical` makes a name
 absolute and resolves dot components and repeated separators textually.
@@ -110,18 +104,14 @@ expiry, so removing an overlay or reloading its module leaves no timer worker.
 This is a main-thread presentation API; background changes still notify the
 head through `head:wake-main!` or `head:run-on-main!`.
 
-`paint:redraw!` refreshes terminal size and window tiling before running that
-head preparation, including direct redraws during a prompt. Hooks can read
-`tui:screen-cols` and window widths for the current frame. A hook that
-presents a message may reenter redraw; publish its state before calling out.
-Preparation finishes before the frame's synchronized terminal update begins.
-An alternative `head:set-frame-hook!` callback owns the complete frame,
-including `head:before-frame!` after establishing geometry. It receives a
-`coalesce?` boolean, passed to `tui:render!`. `head:redraw!` uses this same
-hook for explicit frames; the pump also uses it for wakeups and deadlines.
-`head:set-key-handler!` selects the composition's keyboard adapter.
-Widget key/chord routing lives in `routing`; `dispatch` retains the temporary
-default window host's keyboard policy. The head drains its endpoint before
+A frame hook establishes geometry, runs `head:before-frame!`, prepares the
+root and publishes through `tui:render!`. Preparation finishes before the
+synchronized terminal write; input uses only successfully displayed frames.
+`head:set-frame-hook!` selects this adapter and receives a `coalesce?` flag.
+`head:redraw!` uses the same hook for explicit frames, wakeups and deadlines.
+`routing` supplies recursive key/chord handling; `head:set-key-handler!`
+selects the composition's keyboard adapter.
+The head drains its endpoint before
 composition preparation, so base events, actor messages and text invalidations
 continue to arrive without a window host. Text dependencies refresh after store
 cache invalidation, independent of subscriber registration order.
@@ -187,8 +177,7 @@ The entry can be `lib/my-mode.sls`, declaring `(my-mode)`, or
 the kernel publishes its exports as `my-mode:` and owns its registrations
 just like a bundled module. Helpers are ordinary imported libraries.
 Relative checkout paths start at e's installation, not the current buffer.
-An optional third argument adds R6RS source roots, one directory or a list
-of them, relative to the checkout or absolute, with `~` supported; at M-x a
+An optional third argument adds a list of R6RS source roots, relative to the checkout or absolute, with `~` supported; at M-x a
 root completes as a directory, inside the string and inside each element of
 the quoted list:
 
@@ -219,11 +208,11 @@ For example, put this in a separate checkout's `lib/greeting.sls`:
 (elibrary (greeting)
   (export hello! init!)
   (import (chezscheme)
-          (prefix (head edit) edit:)
+          (prefix (service log) log:)
           (prefix (head keymap) keymap:))
 
   (edoc "Show a greeting in the echo area.")
-  (define (hello!) (edit:set-message! "Hello from an extension"))
+  (define (hello!) (log:add! 'greeting:hello! "Hello from an extension"))
 
   (define (init!) (keymap:bind-default! "C-c h" hello!)))
 ```
@@ -477,19 +466,16 @@ completion does the asking, and a key that used to prompt opens M-x with the
 call typed up to its argument: `C-c a` gives `λ (edit:answer! `. Such keys
 are bound structurally, from the procedures themselves rather than spelled
 names: `(keymap:bind! "C-c a" (keymap:prefill edit:answer!))` opens M-x
-pre-filled, and `(keymap:bind! "C-x k" (keymap:call edit:kill-buffer!
-seat:current-buffer))` calls the command on what the producers return when
-the key is pressed. `C-h k` shows both as the call they make, by the names
-the top level gives the procedures, so a rename follows.
+pre-filled. A receiver-aware binding such as
+`(keymap:bind! 'widget-editor "C-c s" (keymap:call edit:save! widget:target))`
+uses the explicit target supplied by its context. Bindings shows its executable
+expression and forwarding chain without evaluating producer procedures.
 
-A command acts on the current window, buffer or region, or takes its
-target as a required argument, never both; the scope forms retarget it for
-the extent of a body: `seat:with-buffer`, `seat:with-window` and
-`edit:with-region`, dynamic and invisible to the apps. Each is one form
-with no procedure beside it, so M-x offers one spelling.
-`edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors should be
-raised normally; the command loop reports unexpected conditions in the echo
-area and log.
+Commands take explicit document or view references. There is no dynamic
+current-buffer scope: capture the receiver, source basis and desired selection
+before deferred work, then use guarded operations on that receiver.
+`edit:call-as-one-edit!` groups mutations into a labeled undo step. Errors
+raise normally; the command loop reports unexpected conditions.
 
 Foreground commands use one `sys` owner. `sys:open-process` takes a nonempty
 list of argument strings, executes them directly and searches `PATH` for a
@@ -556,16 +542,16 @@ refresh revisits observed documents after registry changes.
 Completing types describe values and offer choices; they never create
 top-level constructors. Paths, mode names and key spellings remain strings,
 styles and link tags remain symbols, and revisions remain numbers. For
-example, use `(mode:choose! "scheme")`, `(edit:visit-file! "notes.txt")`
-and `(keymap:bind! "C-x w" window-host:split-right!)`.
+example, use `(mode:choose! "scheme" document)` and
+`(keymap:bind! 'widget-editor "C-c e" (keymap:call eval:run! widget:target))`.
 Mode names accept nonempty strings; `mode:find` separately queries the
 registry. Operations validate their own arguments, and `edoc:type-accepts?`
 is available for generic typed tools.
 
-Buffer commands take `'(buffer id)` values. Resolve names explicitly with
-`store:find-named`, or select `seat:current-buffer`. The temporary window
-adapter still accepts `(window n)` and numeric selectors such as
-`(window-host:focus! 2)` until windows have model identities.
+Buffer commands take `'(buffer id)` values; `store:find-named` resolves names.
+Windows, editors and other views take `'(model id)` values. M-x offers
+applicable receivers from its captured widget context. A displayed window
+number is a manager-local selector: `window:numbered` resolves it once.
 
 Whole-text presentation callbacks receive `(source row line)`. The source is
 an explicit snapshot made by `(mode:source lines facts)`, with immutable text
@@ -602,13 +588,10 @@ selection, and wrapping consistent with what is displayed.
 
 ## Highlighting and formatting
 
-`paint:add-highlighter!` registers redraw-time ranges shaped as `(row start
-end)` or `(row start end face)` in the selected window, or `(buffer row start
-end face)` / `(window row start end face)` with explicit scope. Search, bracket
-matching, selections, and app candidates use this mechanism.
-`paint:hover-ranges` builds a window-scoped `hover` range from a clickable
-text hit test; see [App buffers](APPS.md). It shares click and navigation
-geometry and keeps mouse emphasis separate from keyboard selection.
+`mode:add-highlighter!` registers logical source annotations. Editor views
+project them into their own geometry together with selections and effects.
+Clickable widgets declare pointer bindings using the same targets as their
+actions; hover emphasis belongs to the head adapter, never shared text.
 
 Language layout remains modular through `mode:register-indenter!` and
 `mode:register-formatter!`. See [Formatting](FORMATTING.md).

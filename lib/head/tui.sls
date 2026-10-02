@@ -5,7 +5,7 @@
   (export ansi! begin-frame! bell? call-with-output
     cursor-style! display-editor-line! draw-root! emit-runs! enter!
     erase-screen! fit goto! input-delay invalidate-screen-cache!
-    leave! mark-size-dirty! paint! placements preparing?
+    leave! paint!
     redraw-lock render! reset-cursor-style! screen-cols
     screen-live? screen-rows set-placements! set-screen-cols!
     set-screen-live! set-screen-rows! terminal-size! title!
@@ -291,11 +291,8 @@
 
   ;;; The frame driver ----------------------------------------------------------------
 
-  ;; The screen's size, whether the terminal is ours, the viewport
-  ;; logic that keeps point visible, the echo area's painting, the
-  ;; cursor, the title, the visual bell -- and the frame itself:
-  ;; redraw! composes one under the redraw lock (size, echo geometry,
-  ;; layout, view refresh, viewports, painting, cursor).
+  ;; Widget hosts prepare geometry and logical state. This backend owns
+  ;; terminal size, transactional output, row diffs, cursor and feedback.
 
   (define rows 24)
   (define cols 80)
@@ -319,10 +316,6 @@
         (n integer "the columns"))
   (define (set-screen-cols! n)
     (set! cols n))
-
-  (edoc "Note that the terminal size may have changed, so the next frame measures it again.")
-  (define (mark-size-dirty!)
-    (set! size-dirty? #t))
 
   (edoc "Say whether the screen is the editor's to paint; leaving it forgets the row cache and the bell."
         (on? boolean "whether painting may proceed"))
@@ -427,13 +420,6 @@
                      [preparing-shadow #f])
         (thunk))))
 
-  (edoc "Whether a frame is currently being drawn into a private output packet." (returns boolean))
-  (define (preparing?) (and (preparing-shadow) #t))
-
-  (edoc "The current frame's widget placements, each a prepared frame followed by its screen column and row."
-        (returns list) (effects internal))
-  (define (placements) (shadow-widgets (current-shadow)))
-
   (edoc "Stage the widget placements to publish after successful frame output."
         (placements list "(prepared-frame column row) entries"))
   (define (set-placements! placements) (shadow-widgets-set! (current-shadow) placements))
@@ -454,6 +440,11 @@
                 (display-editor-line! cells cells #f '() links 0 styles #f cols
                   (if (vector? cells) (vector-length cells) (string-length cells)))))))))
     (let ([caret (and frame (widget:caret frame))])
+      ;; Feedback belongs to the backend, so blank and custom compositions
+      ;; share the same bell without requiring an echo-area widget.
+      (when (and (bell?) (> rows 0))
+        (goto! rows 1)
+        (ansi! "\x1b;[7m" (make-string cols #\space) "\x1b;[0m"))
       (when caret (goto! (+ 1 (cdr caret)) (+ 1 (car caret))))
       (cursor-style! "\x1b;[1 q")
       (ansi! (if caret "\x1b;[?25h" "\x1b;[?25l"))))
@@ -503,8 +494,10 @@
       ;; nested frame goes to the real terminal, never into the outer packet.
       (lambda ()
         (let retry ()
-          (prepare-bell!)
           (prepare)
+          ;; before-frame! consumes the previous deadline. Register feedback
+          ;; after that preparation, alongside this frame's new demands.
+          (prepare-bell!)
           (let* ([basis shown-shadow]
                  [shadow (make-shadow (vector-map (lambda (row) row) (shadow-rows basis))
                            (shadow-view basis) (shadow-cursor basis) (shadow-title basis) (shadow-widgets basis))]

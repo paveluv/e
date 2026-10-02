@@ -4,12 +4,11 @@
 
 (include "tests/roots.ss")
 (test-roots! 'base)
-(test-host!)
 
 (eval
   '(begin
      (import (prefix (apps terminal) terminal:) (prefix (service vt) vt:) (prefix (test) test:)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head paint) paint:) (prefix (head tui) tui:))
+     )
 
      (define check test:check)
 
@@ -1181,35 +1180,31 @@
 
      ;; The publication boundary owns text, rendition, geometry and facts;
      ;; no generated face registration or head callback is needed to read it.
-     (let ([emulator (vt:make-emulator 1 5)] [calls (test:recorder)])
-       (dynamic-wind
-         (lambda () (seat:set-repaint-hook! (lambda () (calls 'repaint))))
-         (lambda ()
-           (vt:emulator-feed! emulator
-             "\x1b;[31m\x1b;]8;id=wide;https://frame.example\x1b;\\界\x1b;]8;;\x1b;\\q\x301;Z\x1b;[6 q")
-           (let* ([frame (vt:emulator-frame emulator)]
-                  [row (car (cadr frame))])
-             (check 'frame-pairs-text-rendition-cursor-and-facts
-               frame
-               '(#("界q\x301;Z ")
-                 ((0 #("0;31" "0;31" "0;31" "0;31" plain)
-                   #(("https://frame.example" "wide") ("https://frame.example" "wide") #f #f #f)
-                   ((clusters (1 . 2) (2 . 1) (1 . 1) (1 . 1)))))
-                 (0 4 #t) (1 5) ((cursor-style . bar))))
-             (string-set! (vector-ref (car frame) 0) 0 #\X)
-             (string-set! (vector-ref (cadr row) 0) 0 #\X)
-             (string-set! (car (vector-ref (caddr row) 0)) 0 #\X)
-             (set-car! (caddr frame) 99)
-             (set-car! (car (cdar (cadddr row))) 99)
-             (check 'frame-mutation-cannot-change-the-emulator
-               (list (vector-ref (vt:emulator-screen emulator) 0)
-                     (style-at emulator 0 0)
-                     (vector-ref (vector-ref (vt:emulator-hyperlinks emulator) 0) 0)
-                     (caddr (vt:emulator-frame emulator)))
-               '("界q\x301;Z " "0;31" ("https://frame.example" "wide") (0 4 #t))))
-           (head:run-deferred!)
-           (check 'frame-feed-and-read-do-not-call-the-head (calls) '()))
-         (lambda () (seat:set-repaint-hook! tui:invalidate-screen-cache!)))
+     (let ([emulator (vt:make-emulator 1 5)])
+       (let ()
+         (vt:emulator-feed! emulator
+           "\x1b;[31m\x1b;]8;id=wide;https://frame.example\x1b;\\界\x1b;]8;;\x1b;\\q\x301;Z\x1b;[6 q")
+         (let* ([frame (vt:emulator-frame emulator)]
+                [row (car (cadr frame))])
+           (check 'frame-pairs-text-rendition-cursor-and-facts
+             frame
+             '(#("界q\x301;Z ")
+               ((0 #("0;31" "0;31" "0;31" "0;31" plain)
+                 #(("https://frame.example" "wide") ("https://frame.example" "wide") #f #f #f)
+                 ((clusters (1 . 2) (2 . 1) (1 . 1) (1 . 1)))))
+               (0 4 #t) (1 5) ((cursor-style . bar))))
+           (string-set! (vector-ref (car frame) 0) 0 #\X)
+           (string-set! (vector-ref (cadr row) 0) 0 #\X)
+           (string-set! (car (vector-ref (caddr row) 0)) 0 #\X)
+           (set-car! (caddr frame) 99)
+           (set-car! (car (cdar (cadddr row))) 99)
+           (check 'frame-mutation-cannot-change-the-emulator
+             (list (vector-ref (vt:emulator-screen emulator) 0)
+                   (style-at emulator 0 0)
+                   (vector-ref (vector-ref (vt:emulator-hyperlinks emulator) 0) 0)
+                   (caddr (vt:emulator-frame emulator)))
+             '("界q\x301;Z " "0;31" ("https://frame.example" "wide") (0 4 #t))))
+       )
        (let* ([links (vt:emulator-hyperlinks emulator)]
               [uri (car (vector-ref (vector-ref links 0) 0))])
          (string-set! uri 0 #\X)

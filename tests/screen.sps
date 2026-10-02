@@ -22,8 +22,7 @@
   (for-each kernel:load-module! '("finder" "buffet" "markdown" "delta-log" "bindings" "describe"))
   (actor:call-as head:ui-actor
     (lambda ()
-      (let* ([before (list (seat:windows) (seat:buffers))]
-             [screen ((get recipe 'entry) (list (cons 'head head:ui-actor) '(saved . #f)))]
+      (let* ([screen ((get recipe 'entry) (list (cons 'head head:ui-actor) '(saved . #f)))]
              [area (cadr (assq 'content (view:children (view:snapshot screen))))]
              [manager (cadr (assq 'windows (view:children (view:snapshot area))))]
              [window (window:current manager)]
@@ -49,8 +48,8 @@
           (routing:input! screen '(key "C-x" #f)) (routing:input! screen '(key "3" "3")) (show!)
           (check 'shipped-screen-edits-and-splits-without-legacy-placement
             (list (get recipe 'profile) (length (window:list manager)) (store:line scratch 0)
-              (equal? editor (widget:focused screen)) (list (seat:windows) (seat:buffers)))
-            (list "editor" 2 "Screen" #t before)))
+              (equal? editor (widget:focused screen)))
+            (list "editor" 2 "Screen" #t)))
         (call-with-output-file file (lambda (p) (display "Visited" p)) 'replace)
         (screen:open-file! screen file) (show!)
         (let* ([focus (widget:focused screen)] [count (length (window:list manager))]
@@ -100,10 +99,10 @@
           (check 'auxiliary-return-hides-instead-of-switching-to-another-retained-tool
             (length (view:children (view:snapshot area))) 1))
         (let ([document (window:document manager window)])
-          (check 'screen-file-request-places-canonical-document-without-a-buffer-mirror
-            (list (store:line document 0) (seat:buffer-of-store-id document)
+          (check 'screen-file-request-places-canonical-document-and-restores-its-root
+            (list (store:line document 0)
               ((get recipe 'entry) (list (cons 'head head:ui-actor) (list 'saved (list 'value (cons 'root screen))))))
-            (list "Visited" #f screen)))
+            (list "Visited" screen)))
         (routing:input! screen '(key "C-x" #f)) (routing:input! screen '(key "C-f" #f)) (show!)
         (let ([finder (window:document manager window)])
           (check 'screen-finder-key-uses-an-owned-app-and-explicit-window-binding
@@ -163,16 +162,15 @@
                     (begin (routing:input! screen '(key "ESC" #f)) (window:document manager window)))
                   (list kind window document))))
             (list (lambda () (delta-log:open! window)) (lambda () (delta-log:conflicts! window))
-              (lambda () (git-view:log-of! file window)) (lambda () (log-view:show! window)))
+              (lambda () (git-view:open! window file)) (lambda () (log-view:open! window)))
             '(delta-review delta-review git-history log))
           (let ([terminal (terminal:open! window "exit 0")])
             (show!)
             (check 'composed-terminal-launch-places-its-base-owned-document
               (list (window:document manager window)
                 (view:kind (view:snapshot (widget:descendant window 'document)))
-                (seat:buffer-of-store-id terminal)
                 (refused? (lambda () (window-control:open-document! window terminal '((point 0 . 0))))))
-              (list terminal 'terminal #f #t))
+              (list terminal 'terminal #t))
             (vt:close! terminal)))
         (widget:unmount! screen)
         (view:retire! head:ui-actor screen (model:revision screen))

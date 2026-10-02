@@ -3,7 +3,7 @@
 e is a live Scheme environment. Both evaluation commands run code in the
 editor's interaction environment: the same top level used by `config.e` and
 the module loader, with Chez Scheme, every loaded module's exports under its
-prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and the temporary bare `(window n)` selector from `(head literal)`.
+prefix (`edit:`, `store:`, `head:`, `keymap:`, ...) and ordinary quoted model references, including windows.
 Paths and mode names are strings, styles are symbols, and buffer/model/actor
 references are quoted data. Definitions
 persist for the rest of the session and are immediately available to later
@@ -17,7 +17,7 @@ evaluations.
 the label `λ`, and evaluates it:
 
 ```scheme
-λ (store:buffer-name (seat:current-buffer))
+λ (store:buffer-name (store:find-named "*scratch*"))
 λ (define answer 42)
 λ answer
 ```
@@ -67,7 +67,7 @@ While the prompt is active:
 
 Symbol completion matches contiguous segments beginning at the start of a
 symbol or immediately after `-` or `:`. Segments may appear in a different
-order: `splitright` and `rightsplit` both find `window-host:split-right!`. Each
+order: `windowcontrol` and `controlwindow` both find `window-control:split!`. Each
 character occurrence can be used only once, so `xx` requires two `x` characters.
 Matching is case-sensitive; other punctuation, including `_`, does not create
 a boundary. Longer intact segments, fewer reorderings, and matches nearer the
@@ -75,23 +75,22 @@ beginning rank first.
 
 Typed `-` and `:` stay inside literal segments, just like letters, and a
 segment may lead with one, anchored to the same separator in the name: `:sp`
-finds `head:split-window` but not `head:window-split`, `.sls` finds the
-`.sls` files and not `sls-mode`, and `s-b` abbreviates `window-host:split-below!`
-as `s` + `-b`, while `b-s` does not, since no `-s` follows a `b` there. A
+would find a symbol named `head:split-window` but not `head:window-split`, `.sls` finds the
+`.sls` files and not `sls-mode`, and `w-c` abbreviates `window-control:split!`
+as `w` + `-c`, while `c-w` does not, since no `-w` follows a `c` there. A
 separator alone is no segment, so `ker:` still cannot abbreviate `kernel:`;
 the one exception is a name's first character, so `*` finds `*scratch*`.
-You can omit separators when typing prefixes: `spwir` finds
-`window-host:split-right!` as `sp` + `wi` + `r`. Reordering still works with
-punctuation when the literal pieces exist: `rightwindow-host:` can match
-`window-host:split-right!` as `right` + `window-host:`.
+You can omit separators when typing prefixes: `spwico` finds
+`window-control:split!` as `sp` + `wi` + `co`. Reordering still works with
+punctuation when the literal pieces exist: `splitwindow-control:` can match
+`window-control:split!` as `split` + `window-control:`.
 
 Tab chooses a longest extension that the original query can match and that
 still matches every candidate. This preserves exactly the same match set,
-including its boundary constraints. For example, `splitwindow` and
-`windowsplit` normalize to `window-host:split-` while all four split commands
-remain. Adding `r` would lose the other three, so it is not inserted yet.
-Typing `r` and pressing Tab then produces `window-host:split-right!`, including
-the `!`.
+including its boundary constraints. The shared extension depends on the
+live environment's symbols.
+No inserted character may eliminate one of the current matches, and a
+unique match includes its final `!`.
 The same rule applies to separators: `ker:` cannot abbreviate the literal
 prefix `kernel:`. Tab cannot add a colon after `ker` merely because all
 matches contain one.
@@ -110,15 +109,14 @@ Tab acts on the datum at point. A partial symbol completes as above. A datum
 that is final, a closed string, a closed form, or a string value at its dead
 end, is settled instead: Tab closes each enclosing form whose operator has a
 fixed arity once its arguments are all there, innermost first, and where more
-are due steps one space on to the next argument. So `(edit:save-file!
-"~/ddd"` Tab gives `(edit:save-file! "~/ddd")`, whether or not `~/ddd` exists.
-Had the command taken two arguments, the cursor would step to the second. A Tab with exactly one
+are due steps one space on to the next argument. For example, after a receiver and path have been supplied to
+`edit:save-file!`, Tab closes its form whether or not that path exists.
+If a required argument is still missing, the cursor steps to that argument. A Tab with exactly one
 match inserts that symbol, closes the list, and settles the same way:
 a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
 argument, and a completed last argument closes the form. A closed form is then
-settled as an argument of its parent, so `(seat:window-index (head:curr` Tab
-yields `(seat:window-index (seat:current-window))`. Optional and rest parameters,
+settled as an argument of its parent, using the parent's documented argument type. Optional and rest parameters,
 syntax, unbound names, quoted or quasiquoted forms, and text after the
 cursor all leave the input alone, and Tab says `[No symbol]`; a symbol
 nothing matches stays as typed, with `[No match]`. Comments and character literals
@@ -143,21 +141,20 @@ inserts just the symbol. The prompt's help row counts the matches and names
 what they are, such as `12 matches of file` or `4 matches of symbol`.
 
 At a documented argument, Tab offers values of its type, compatible producers
-and variables. `(seat:show-buffer! ` offers buffer names with their portable
+and variables. `(edit:buffer-text ` offers buffer names with their portable
 references, file paths, modes and modified state beside them. Typing `scr` finds `*scratch*`; selecting
 it inserts `'(buffer 17)` (with its actual ID). Explicit `'(buffer` input searches
 reference spellings instead. No name lookup is hidden in the inserted value.
-`(seat:current-buffer)` and `(edit:new-buffer! name)` are compatible producers;
-head mirror constructors are not. A variable holding a reference is offered
+`store:find-named` is a compatible producer; references do not have
+constructor procedures. A variable holding a reference is offered
 by its variable name.
 
 Tab uses the same fuzzy matcher for names and symbols, extending a filter
 without changing its matches and inserting the actual value when one remains.
 Readable labels never become alternative values. Producer formals are shown
 for guidance and do not participate in matching. The operator position of a
-nested form takes the enclosing argument's type: `(seat:show-buffer! (cu`
-completes to `(seat:current-buffer)` rather than to every
-symbol. Inside quoted data, completion offers values without another quote,
+nested form takes the enclosing argument's type: `(edit:buffer-text (fi`
+offers compatible buffer-producing procedures rather than every symbol. Inside quoted data, completion offers values without another quote,
 never producer calls or variables. A `(list-of T)` argument completes its
 elements as `T`, recursively: `(extension:load! "x" "y" '("../sch` lists
 directories. Explicit `(quote ...)` and quasiquotes follow the same rule;
@@ -166,25 +163,25 @@ A `one-of` type offers its literals, a boolean `#t` and `#f`.
 Completing types keep ordinary Scheme values: a mode is `"scheme"`, a file
 path is `"manual/EVAL.md"`, a style is `'ghost`, and a revision is a number.
 Tab completes `(mode:choose! "sch` to `(mode:choose! "scheme"`; a bare `sch`
-inserts the same quoted string. It never adds a type constructor.
+inserts the same quoted string, then asks for the document argument. It never adds a type constructor.
 A `model` argument offers live model references as `'(model 7)`, with the
 model kind beside each choice. References in a quoted collection appear
 without another quote: `'((model 7) (model 8))`. Variables and expressions
 producing references work as arguments too.
-A string value completes as a session: `(edit:visit-file! "man` lists the
+A string value completes as a session: `(file:read "man` lists the
 paths under `manual/`; with several matches
 Tab extends the path to their longest common prefix, as a shell does; a
 sole match is inserted whole, open while it still completes, a directory
 say, and the literal closes only at a dead end, where completing from the
-value would offer nothing but the value itself. So `(edit:visit-file! "man`
-Tab gives `(edit:visit-file! "manual/` with the manual's entries
+value would offer nothing but the value itself. So `(file:read "man`
+Tab gives `(file:read "manual/` with the manual's entries
 listed at once, and `"manual/EVAL.m` Tab completes `"manual/EVAL.md"`,
 closed and settled; a directory argument closes at a directory without
 subdirectories. A name with a space completes like any other; a quote or a
 backslash in a name is escaped as the string literal holds it, `quo\"te.txt`,
 and a token typed with its escapes reads the same way. `~` and `/` lead the
 home and the root directory though the
-matcher has no segment for them: `(edit:visit-file! ~` Tab opens `"~/`,
+matcher has no segment for them: `(file:read ~` Tab opens `"~/`,
 a bare `/` opens `"/` unless a symbol containing `/` is among the
 matches, and the same holds at a directory argument. How paths
 are offered is the `file:completion` parameter: `fuzzy`, the default, lists
@@ -363,9 +360,9 @@ the M-x expression history.
 Open the live log view through the buffer list or with:
 
 ```scheme
-(log-view:show!)
-(log-view:show! 'eval:report!)
-(log-view:show! 'eval:call-with-evaluation!)
+(log-view:open! window)
+(log-view:open! window 'eval:report!)
+(log-view:open! window 'eval:call-with-evaluation!)
 ```
 
 The result is posted after both output streams close, so it remains the final
@@ -390,7 +387,8 @@ the commands' current key bindings, including user rebinding from `config.e`.
 (eval:copy-result #t)
 
 ;; Optional key rebinding examples.
-(keymap:bind! "C-c e" eval:run!)
+(keymap:bind! 'widget-editor "C-c e"
+  (keymap:call eval:run! widget:target))
 (keymap:bind! "M-X" eval:prompt!)
 ```
 
