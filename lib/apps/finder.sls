@@ -16,7 +16,7 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service directory) directory:)
           (prefix (service file) file:)
           (prefix (service file-query) file-query:)
@@ -45,9 +45,9 @@
   (define show-hidden (make-parameter #f (lambda (v) (unless (boolean? v) (error 'show-hidden "expected boolean")) v)))
 
   (edoc "Create an unmounted Finder with explicit open (document reference) and return host commands. An optional existing filesystem query shares filter, hidden policy and sort; selection, navigation history and geometry belong to each view."
-        (commands list "host command bindings") (directory directory "initial directory")
+        (owner (or model #f) "lifetime owner, false for a session root") (commands list "host command bindings") (directory directory "initial directory")
         (shared (list-of row-source) "optional existing filesystem query") (returns model))
-  (define (create! commands directory . shared)
+  (define (create! owner commands directory . shared)
     (unless (<= (length shared) 1) (error 'create! "expected at most one query"))
     (let* ([q (if (pair? shared) (car shared)
                 (car (filesystem:create-query! head:ui-actor
@@ -58,13 +58,13 @@
            [source (read-model (get v 'source #f))])
       (unless (and filter (eq? (get source 'kind #f) 'filesystem-source))
         (error 'create! "expected a filesystem query with an editable filter" q))
-      (let* ([root (view:create! head:ui-actor q 'finder 1 (list (cons 'commands commands)) '((history)))]
-             [table (table:create! head:ui-actor q '(name size modified created permissions count) '((identity . name) (presentation finder 1) (selection-policy . suggest)))]
-             [row (view:create! head:ui-actor filter 'filter 1 '((spacing . normal)) '())]
-             [label (view:create! head:ui-actor #f 'label 1 '((text . "Filter:")) '())]
+      (let* ([root (view:create! head:ui-actor q 'finder 1 (list (cons 'commands commands)) '((history)) owner)]
+             [table (table:create! head:ui-actor root q '(name size modified created permissions count) '((identity . name) (presentation finder 1) (selection-policy . suggest)))]
+             [row (view:create! head:ui-actor filter 'filter 1 '((spacing . normal)) '() root)]
+             [label (view:create! head:ui-actor #f 'label 1 '((text . "Filter:")) '() root)]
              [entry (view:create! head:ui-actor filter 'entry 1 '((presentation finder 1) (policy rooted-path 1) (context))
-                      (make-list 2 (cons 0 (string-length (get v 'input-filter (get v 'filter ""))))))]
-             [status (view:create! head:ui-actor q 'finder-status 1 '() '())]
+                      (make-list 2 (cons 0 (string-length (get v 'input-filter (get v 'filter ""))))) root)]
+             [status (view:create! head:ui-actor q 'finder-status 1 '() '() root)]
              [d (view:snapshot table)])
         (view:arrange! head:ui-actor
           (list (list row 0 (list (list 'label label 'fit) (list 'entry entry 'fit) (list 'status status 'fit)) '((spacing . normal)))
@@ -190,9 +190,9 @@
       [else #f]))
 
   (define (default!)
-    (window:tool! "finder" (lambda (commands) (create! commands (seat:default-directory)))))
+    (window-host:tool! "finder" (lambda (commands) (create! #f commands (seat:default-directory)))))
   (define (show!)
-    (let* ([b (window:show-widget! (seat:current-window) (default!))]
+    (let* ([b (window-host:show-widget! (seat:current-window) (default!))]
            [host (seat:buffer-fact b 'widget-id #f)] [app (child host 'app)])
       (seat:show-buffer-mirror! b) (focus-entry! app) (widget:pump!) app))
 

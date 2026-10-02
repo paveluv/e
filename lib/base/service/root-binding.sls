@@ -5,7 +5,7 @@
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core operation) operation:)
           (prefix (service log) log:) (prefix (service policy) policy:) (prefix (state actor) actor:)
-          (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
+          (prefix (state model) model:) (prefix (state view) view:))
 
   (define (field r key) (cdr (assq key r)))
   (define (nonempty? x) (and (string? x) (> (string-length x) 0)))
@@ -118,9 +118,8 @@
     (let ([v (field r 'value)])
       ;; Canonical models are already gone. IDs never repeat, and the intent
       ;; survives both output deletion and an interruption before this commit.
-      (for-each (lambda (id) (store:delete! '(base composition) id)) (field v 'cleanup))
       (let-values ([(status rows)
-                    (model:commit! '(base composition)
+                    (view:finish-disposal! '(base composition) (field v 'cleanup)
                       (list (change r (field v 'attachment) (field v 'initialized?) (field v 'root) '())))])
         (values status (car rows)))))
 

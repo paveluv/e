@@ -17,7 +17,7 @@
   '(begin
      (import (prefix (foundation wire) wire:) (prefix (sys sys) sys:) (prefix (test) test:)
              (prefix (fixture) fixture:)
-             (prefix (foundation string) string:) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (service vt) vt:))
+             (prefix (foundation string) string:) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:) (prefix (foundation text) text:) (prefix (service vt) vt:))
 
      (define encoded wire:encode)
      (define (raw text)
@@ -1015,32 +1015,45 @@
                        (stop-reviewed head) (length (archive-paths)))
                  (list (archive-paths) #f '(closing shutdown) (+ 1 (length bad)))))))
          ;; Reuse the final restore process for both binding-schema migration
-         ;; and interrupted output disposal. Buffer 3 was already deleted.
+         ;; and interrupted composition/window output disposal. Buffers 3 and
+         ;; 5 were already deleted before the interrupted cleanup completed.
          (write-forms path
            (list
-             `(session 3 0 4 (buffers ((buffer 1) 0 "owned output" #("discard") ())
-                                      ((buffer 2) 0 "borrowed text" #("keep") ())) (checkpoints)
-                (models 3
+             `(session 3 0 6 (buffers ((buffer 1) 0 "owned output" #("discard") ())
+                                      ((buffer 2) 0 "borrowed text" #("keep") ())
+                                      ((buffer 4) 0 "window output" #("discard") ())) (checkpoints)
+                (models 5
                   ,(map cons '(id kind schema scope persistence revision actor references value)
                      '((model 1) composition-binding 1 (head "restored with archives") persistent 4 (base composition) ()
                        ((profile . "legacy") (attachment . #f) (initialized? . #t) (root . #f))))
                   ,(map cons '(id kind schema scope persistence revision actor references value)
                      '((model 2) composition-binding 2 (head "restored with archives") persistent 4 (base composition) ((buffer 1) (buffer 3))
-                       ((profile . "pending") (attachment . #f) (initialized? . #t) (root . #f) (cleanup (buffer 1) (buffer 3)))))))))
+                       ((profile . "pending") (attachment . #f) (initialized? . #t) (root . #f) (cleanup (buffer 1) (buffer 3)))))
+                  ,(map cons '(id kind schema scope persistence revision actor references value)
+                     (list '(model 3) 'widget-view 3 'session 'persistent 1 '(head "restored with archives")
+                       '((model 4) (buffer 4) (buffer 5))
+                       (descriptor:with
+                         (descriptor:make #f 'window-manager 2
+                           '((head head "restored with archives") (selected model 4) (links) (cleanup (buffer 4) (buffer 5))) '())
+                         '((children (layout (model 4) (grow 1)))))))
+                  ,(map cons '(id kind schema scope persistence revision actor references value)
+                     (list '(model 4) 'widget-view 3 '(model 3) 'persistent 0 '(head "restored with archives") '()
+                       (descriptor:with (descriptor:make #f 'window 1 '((number . 1)) '()) '((parent model 3)))))))))
          (chmod path #o600)
          (fixture:call-with-base root base-directory
            (lambda (base)
              (set! test-base base)
              (let ([head (connect)])
                (hello head '(head "restored with archives"))
-               (let* ([packet (rpc head 'model-read '((model 1) (model 2)))]
+               (let* ([packet (rpc head 'model-read '((model 1) (model 2) (model 3)))]
                       [rows (map caddr (cadr packet))])
-                 (test:check 'composition-recovery-upgrades-bindings-and-finishes-interrupted-disposal
+                 (test:check 'recovery-upgrades-bindings-and-finishes-composition-and-window-disposal
                    (list (rpc head 'buffers) (car (rpc head 'snapshot '(buffer 2)))
                      (map (lambda (r) (cdr (assq 'schema r))) rows)
-                     (map (lambda (r) (cdr (assq 'cleanup (cdr (assq 'value r))))) rows)
+                     (map (lambda (r) (cdr (assq 'cleanup (cdr (assq 'value r))))) (list-head rows 2))
+                     (descriptor:cleanup (cdr (assq 'value (caddr rows))))
                      (map (lambda (r) (cdr (assq 'references r))) rows))
-                   '(((buffer 2)) #("keep") (2 2) (() ()) (() ()))))
+                   '(((buffer 2)) #("keep") (2 2 3) (() ()) () (() () ((model 4))))))
                (let ([notice (rpc head 'startup-notice)])
                  (test:check 'successful-restore-distinguishes-retained-archives-from-a-new-failure
                    (list (occurrences notice "restored a session saved")
@@ -1293,7 +1306,7 @@
                   [saved-widget (head-read head
                                   '(let ([id (view:create! head:ui-actor '(model 999999) 'text 1 '() '(4 2))]
                                          [was (seat:current-buffer-mirror)])
-                                     (window:show-widget! (seat:current-window) id)
+                                     (window-host:show-widget! (seat:current-window) id)
                                      (seat:show-buffer-mirror! was) (seat:checkpoint!) id))]
                   [launcher (start-command '("--restart" "--name" "restart desk") 100)])
              (head-wait 'accepted-restart-question launcher
@@ -1348,7 +1361,7 @@
                                              (map (lambda (key) (cdr (assq key status))) '(fingerprint wire-version instance)))))
                         heads))
                  (list 1 #t expected #t (make-list 2 (list (fingerprint) (+ wire:version 1) (cdr replacement)))))
-               (head-read launcher `(begin (window:show-widget! (seat:current-window) (quote (unquote saved-widget))) #t))
+               (head-read launcher `(begin (window-host:show-widget! (seat:current-window) (quote (unquote saved-widget))) #t))
                (head-wait 'restarted-widget-placeholder launcher (lambda () (head-sees? launcher "[Unavailable widget")))
                (test:check 'restart-reclaims-view-generation-without-losing-unavailable-data-state
                  (head-read launcher
@@ -2037,7 +2050,7 @@
                    (rpc head 'model-retire git 0)
                    (rpc head 'conflict-review-close draft 0))
                  (for-each (lambda (ui)
-                             (head-read ui `(begin (log-view:show!) (window:delete-others!)
+                             (head-read ui `(begin (log-view:show!) (window-host:delete-others!)
                                                    (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) #t))) (list a b))
                  (let ([model (rpc head 'model-create 'wire-value 1 'session 'transient '() "first")])
                    (define (checks) (call-with-input-file (string-append root "/model-checks") read))
@@ -2110,9 +2123,9 @@
                                       (list root 0 (list (list 'body overlay '(grow 1))) '())) '())
                               (list root left right source)))]
                         [root-view (car composition)] [left (cadr composition)] [right (caddr composition)] [source (cadddr composition)])
-                   (head-read a `(begin (window:show-widget! (seat:current-window) ',root-view)
-                                        (window:show-widget! (window:split-right!) (quote (unquote missing))) #t))
-                   (head-read b `(begin (window:show-widget! (seat:current-window) (quote (unquote second))) #t))
+                   (head-read a `(begin (window-host:show-widget! (seat:current-window) ',root-view)
+                                        (window-host:show-widget! (window-host:split-right!) (quote (unquote missing))) #t))
+                   (head-read b `(begin (window-host:show-widget! (seat:current-window) (quote (unquote second))) #t))
                    (for-each (lambda (ui) (head-wait 'widget-mounted ui (lambda () (head-sees? ui "> alpha")))) (list a b))
                    (head-send! a "\x1b;[B")
                    (head-wait 'widget-keyboard-selection a (lambda () (head-sees? a "> beta")))
@@ -2164,7 +2177,7 @@
                      (head-read a `(begin (entry:insert! ',right "X") (vector-ref (text-source:lines (text-source:lookup ',source)) 0)))
                      "off rXote seed")
                    (head-read a `(begin (for-each (lambda (b) (seat:forget-buffer! b)) (filter (lambda (b) (equal? ',root-view (seat:buffer-fact b 'widget-id #f))) (seat:buffers))) (for-each (lambda (b) (seat:forget-buffer! b)) (filter (lambda (b) (equal? (quote (unquote missing)) (seat:buffer-fact b (quote widget-id) #f))) (seat:buffers)))
-                                        (window:delete-others!) (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) #t))
+                                        (window-host:delete-others!) (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) #t))
                    (head-read
                      b
                      `(begin
@@ -2628,16 +2641,46 @@
                  ;; Reuse this head and base for the root protocol. The launcher
                  ;; still starts the default host; installation takes the same
                  ;; pump and terminal output path over at a command boundary.
-                 (head-read b '(begin (kernel:load-module! "root") #t))
+                 (test:check 'window-service-uses-the-shared-registered-operation-contract
+                   (head-read b
+                     '(let* ([manager (window:create-manager!)] [first (window:current manager)]
+                             [second (window:split! manager first 'right)]
+                             [text (store:create! head:ui-actor "wire placement" '("borrowed text"))]
+                             [app (view:create! head:ui-actor text 'label 1 '((name . "<wire app>") (catalogue . #t)) '() second)])
+                        (window:select! manager second)
+                        (window:link! manager first second 'follow)
+                        (window:open-document! manager second text)
+                        (window:open-document! manager second app)
+                        (let ([before (list (equal? (window:list manager) (list first second))
+                                        (equal? (window:document manager second) app)
+                                        (equal? (window:documents manager second) (list app text))
+                                        (equal? (window:current manager) second)
+                                        (equal? (window:numbered manager 2) second)
+                                        (equal? (window:links manager) (list (list first second 'follow))))])
+                          (let ([after (list (begin (window:return! manager second app)
+                                               (equal? (window:document manager second) text))
+                                         (window:close! manager second)
+                                         (null? (window:links manager))
+                                         (equal? (window:current manager) first)
+                                         (and (not (view:snapshot app)) (string=? (store:line text 0) "borrowed text")))])
+                            (store:delete! head:ui-actor text)
+                            (append before after)))))
+                   '(#t #t #t #t #t #t #t #t #t #t #t))
+                 (head-read b '(begin (kernel:load-module! "root") (kernel:load-module! "window-control") #t))
                  (let* ([pair
                          (head-read b
                            '(begin
                               (root:acquire! "wire-root")
-                              (let* ([source (store:create! head:ui-actor "root text" '("Root editor") '((internal . #t)))]
-                                     [view (edit:create-view! head:ui-actor source '())])
+                              (let* ([source (store:create! head:ui-actor "root text" '("Root editor"))]
+                                     [view (window:create-manager!)])
                                 (root:install! (root:current) view #f)
                                 (list view source))))]
                         [view (car pair)] [source (cadr pair)])
+                   (head-wait 'root-client-admits-empty-window b
+                     (lambda () (head-read b `(equal? (map (lambda (shown) (widget:frame-id (car shown))) (widget:shown)) (list ',view)))))
+                   ;; Adding a document after mounting must acquire its subtree
+                   ;; and source from the base without a head-side arrange.
+                   (head-read b `(begin (window-control:open-document! (window:current ',view) ',source) #t))
                    (head-wait 'root-client-adopts-registered-operation b (lambda () (head-sees? b "Root editor")))
                    (head-send! b "Z")
                    (head-wait 'root-input-uses-recursive-route b (lambda () (head-sees? b "ZRoot editor")))
@@ -2689,7 +2732,7 @@
                             (= (occurrences frames "\x1b;[?2026h")
                                (occurrences frames "\x1b;[?2026l")))))
                    (head-read a `(begin (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',scroll))
-                                        (window:split-right!) #t))
+                                        (window-host:split-right!) #t))
                    ;; A PTY read may end between row text and the frame's
                    ;; closing marker. Both capture boundaries need a frame.
                    (head-wait 'split-before-scroll a (lambda () (and (head-sees? a "scrolling") (frame-complete?))))
@@ -2738,7 +2781,7 @@
                    (head-read a '(begin (kernel:retract-module! 'wire-resize) #t))
                    (vt:emulator-resize! (vector-ref a 2) 24 80)
                    (sys:resize-terminal-process! (vector-ref a 0) 24 80)
-                   (head-read a `(begin (window:delete-others!)
+                   (head-read a `(begin (window-host:delete-others!)
                                         (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) #t))
                    (rpc head 'delete scroll))
                  (test:check 'attached-private-doc-source-and-local-rendering
@@ -2778,7 +2821,7 @@
                    (test:check 'terminal-output-keeps-authorship-without-tints
                      (map head-blame (list a b))
                      (make-list 2 (list '() (cdr (assq 'app (caddr (rpc head 'snapshot terminal-id)))))))
-                   (head-read a '(begin (window:delete-others!) (seat:set-copy-text! "screen A kill") #t))
+                   (head-read a '(begin (window-host:delete-others!) (seat:set-copy-text! "screen A kill") #t))
                    (head-read b '(begin (seat:set-copy-text! "screen B kill")
                                         (terminal:toggle-capture! (seat:window-widget (seat:current-window))) #t))
                    (test:check 'shared-terminal-capture-is-local-to-each-head
@@ -2917,12 +2960,12 @@
                        (head-read again
                          `(begin
                             (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',plain))
-                            (window:split-right!) (window:focus-next!)
+                            (window-host:split-right!) (window-host:focus-next!)
                             (let ([source (seat:adopt-store-buffer! ',source)])
                               (seat:with-buffer-mirror source (mode:choose! "markdown"))
                               (seat:show-buffer-mirror! source) (seat:goto! '(4 . 0))
                               (markdown:view!))
-                            (window:focus-next!) (window:set-wrap! #f) (window:split-below!)
+                            (window-host:focus-next!) (window-host:set-wrap! #f) (window-host:split-below!)
                             ;; the user's tree is the root split's first subtree;
                             ;; the root itself holds the pop-up
                             (let ([rest (seat:layout-split-first (seat:root))])

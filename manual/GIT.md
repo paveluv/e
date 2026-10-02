@@ -86,7 +86,7 @@ The patch is a read-only editor over generated base text, with normal selection
 and copy. Metadata, hunk headers, additions and deletions have distinct styles.
 It has no visited file; selecting a file never edits the working tree.
 
-`(git-view:create! path)` creates the same table/patch composition without a
+`(git-view:create! owner path)` creates the same table/patch composition without a
 window, for embedding in other hosts. `git-view:refresh!` takes this explicit
 view. The base `git-source:` API exposes lazy history and patch queries for
 other presentations.

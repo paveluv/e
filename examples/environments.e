@@ -13,7 +13,7 @@
                   (string:join (vector->list (cadr outcome)) "\n"))]
            [d (view:snapshot id)]
            [draft (environment-example:get (view:options d) 'draft)]
-           [result (eval:create-result-view! head:ui-actor job)]
+           [result (eval:create-result-view! head:ui-actor #f job)]
            [prompt (eval:create-model-prompt! env generation draft (list (list 'accepted id 'accepted '())))])
       (widget:arrange!
         (list (list id (environment-example:get (caddar (cadr (model:snapshots (list id)))) 'revision)
@@ -44,5 +44,5 @@
          [root (view:create! head:ui-actor #f 'row 1 '() '())])
     (view:arrange! head:ui-actor
       (list (list root 0 (list (list 'first a '(grow 1)) (list 'second b '(grow 1)) (list 'third c '(grow 1))) '())) '())
-    (window:show-widget! (seat:current-window) root)
+    (window-host:show-widget! (seat:current-window) root)
     (list root shared independent)))

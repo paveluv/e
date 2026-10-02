@@ -101,14 +101,14 @@
       (map (lambda (line) (glyph:fit line width)) (list-head (list-tail lines start) (min (cdr range) (- (length lines) start))))))
 
   (edoc "Compose a job's shared output editor and bounded result/diagnostic summary. Views borrow the job; splitting, unmounting and resizing never execute code, allocate workers or retain another result handle. Release the job explicitly through environment:release!."
-    (actor actor "view creator") (job model "base evaluation job") (returns model "unmounted result composition") (public))
-  (define (create-result-view! actor job)
+    (actor actor "view creator") (owner (or model #f) "lifetime owner, false for a session root") (job model "base evaluation job") (returns model "unmounted result composition") (public))
+  (define (create-result-view! actor owner job)
     (model:snapshots (list job))
     (let ([v (model-value job 'evaluation-job)])
       (unless v (error 'create-result-view! "evaluation job is unavailable" job))
-      (let* ([root (view:create! actor job 'evaluation-result 1 '() '() job)]
-             [output (edit:create-view! actor (cdr (assq 'output v)) '((read-only . #t)))]
-             [summary (view:create! actor job 'evaluation-summary 1 '() '() job)])
+      (let* ([root (view:create! actor job 'evaluation-result 1 '() '() owner)]
+             [output (edit:create-view! actor (cdr (assq 'output v)) '((read-only . #t)) root)]
+             [summary (view:create! actor job 'evaluation-summary 1 '() '() root)])
         (view:arrange! actor (list (list root 0 (list (list 'output output '(grow 1)) (list 'result summary 'fit)) '())) '()) root)))
 
   ;;; Symbol completion -------------------------------------------------------

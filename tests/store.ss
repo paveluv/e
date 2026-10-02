@@ -23,6 +23,7 @@
              (prefix (core port) port:)
              (prefix (service file) file:)
              (prefix (service composition) composition:)
+             (prefix (service window) window:)
              (prefix (service policy) policy:)
              (prefix (state actor) actor:)
              (prefix (service prompt-request) prompt-request:)
@@ -45,6 +46,7 @@
      (file:absolute "/tmp") ; initialize the concrete filename type
      (include "tests/model.sps")
      (include "tests/composition.sps")
+     (include "tests/manager.sps")
      (include "tests/connection.sps")
      (include "tests/collection.sps")
      (include "tests/catalogue.sps")

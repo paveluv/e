@@ -27,16 +27,24 @@
   (define (generation) definition-generation)
   (define roots (make-hashtable equal-hash equal?))
   (define nodes (make-hashtable equal-hash equal?))
-  (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable bundle) (mutable staged?)))
+  (define-record-type mount (fields id slot (mutable subscription) (mutable ids) (mutable tree) (mutable bundle) (mutable staged?)))
 
   (edoc "The opaque host slot supplied when this tree was mounted."
         (id model "mounted view or descendant") (returns any) (effects internal))
   (define (host id) (mount-slot (node-root (mounted id))))
 
   (define retain-focus? (make-parameter #f))
+  (define pointer-origin (make-parameter #f))
 
-  (edoc "Keep the outer host's focus after this pointer action; embedded actions can open into another host without focusing their panel.")
-  (define (keep-host-focus!) (retain-focus? #t))
+  (edoc "Keep the host and logical focus from before this pointer gesture, including captured release actions. Never restore across a changed composition or a separately moved focus. Keyboard calls leave logical focus unchanged.")
+  (define (keep-host-focus!)
+    (retain-focus? #t)
+    (let* ([origin (pointer-origin)] [root (and origin (car origin))] [d (and root (read-view root))]
+           [frame (and d (focus-frame root))])
+      (when (and frame (= (view:generation d) (caddr origin))
+              (member (view:focus d) (list (cadr origin) (cadddr origin)))
+              (or (not (cadr origin)) (member (cadr origin) (focusable frame))))
+        (set-focus! root (cadr origin)))))
   (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret) (mutable activity)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
@@ -53,6 +61,7 @@
   ;; Subscribers run on publisher/client threads. They only enqueue a
   ;; coalesced refresh; mount caches and source demand belong to the pump.
   (define notifications (make-eq-hashtable))
+  (define tree-notifications (make-eq-hashtable))
   (define notification-lock (make-mutex))
   (define pump-thread (get-thread-id))
   (define (release-service! id)
@@ -65,10 +74,8 @@
 
   (edoc "Service mounted controls outside frame preparation; acquire demand, adopt results and release obsolete definitions.")
   (define (pump!)
-    (for-each (lambda (refresh) (refresh))
-      (with-mutex notification-lock
-        (let ([ready (vector->list (hashtable-values notifications))])
-          (hashtable-clear! notifications) ready)))
+    (drain-notifications! notifications)
+    (drain-notifications! tree-notifications)
     (vector-for-each
       (lambda (id)
         (let ([n (hashtable-ref nodes id #f)])
@@ -85,6 +92,11 @@
                 (interaction:set-state! head:ui-actor parent #f anchor))))))
       (hashtable-keys pending-scroll))
     (vector-for-each (lambda (id) (reveal! id (hashtable-ref pending-reveal id #f))) (hashtable-keys pending-reveal)))
+  (define (drain-notifications! pending)
+    (for-each (lambda (refresh) (refresh))
+      (with-mutex notification-lock
+        (let ([ready (vector->list (hashtable-values pending))])
+          (hashtable-clear! pending) ready))))
   (define (service-node! id)
     (let* ([d (read-view id)] [entry (definition d)] [old (hashtable-ref services id #f)])
       (unless (eq? old entry)
@@ -144,7 +156,7 @@
 
   (edoc "Register a head definition owned by the defining module; reject unknown and duplicate fields."
         (kind symbol "widget kind") (schema integer "positive version")
-        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures. Contexts may be a list or a read-only (id descriptor) provider using already acquired state; never perform I/O there."))
+        (definition list "actions, contexts, focus, capture; optional render, measure, layout and event procedures. Focus is #t, #f or fallback (accept only without focusable descendants). Contexts may be a list or a read-only (id descriptor) provider using already acquired state; never perform I/O there."))
   (define (register! kind schema definition)
     (unless (and (symbol? kind) (integer? schema) (exact? schema) (> schema 0) (list? definition)
               (let loop ([rest definition] [seen '()])
@@ -160,7 +172,7 @@
                         [(contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
                         [(capture-contexts) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all symbol? (cdr p))))]
                         [(yield) (or (procedure? (cdr p)) (and (list? (cdr p)) (for-all string? (cdr p))))]
-                        [(focus) (boolean? (cdr p))]
+                        [(focus) (or (boolean? (cdr p)) (eq? (cdr p) 'fallback))]
                         [(source-receiver) (symbol? (cdr p))]
                         [(receivers)
                          (and (list? (cdr p))
@@ -443,6 +455,9 @@
                        ;; revoke the underlying view's ownership.
                        (cons (car row) (and r (field r 'value #f))))))
               (caddr (mount-bundle mount)))))
+        (unless (or (mount-staged? mount) (tree-current? mount))
+          (with-mutex notification-lock
+            (hashtable-set! tree-notifications mount (lambda () (refresh-tree! mount)))))
         (for-each (lambda (id) (let ([n (hashtable-ref nodes id #f)]) (when n (node-mirrored-set! n #f)))) (mount-ids mount))
         (head:wake-main!))
       (define (acquire)
@@ -490,6 +505,20 @@
   (define (unsubscribe! token)
     ((caddr token))
     (model:unsubscribe! (car token)) (connection:unsubscribe! (cadr token)))
+  (define (tree-current? mount)
+    (define (shape d) (and d (list (view:children d) (view:source d))))
+    (for-all (lambda (row) (equal? (shape (cdr row)) (shape (read-view (car row))))) (mount-tree mount)))
+  (define (refresh-tree! mount)
+    ;; Domain operations can change containment without a head-side arrange.
+    ;; Acquire only after that change, on the pump, never while painting.
+    (when (and (eq? mount (hashtable-ref roots (mount-id mount) #f)) (not (tree-current? mount)))
+      (let* ([tree (view:tree (mount-id mount))]
+             [tree (if (null? tree) (list (cons (mount-id mount) #f)) tree)]
+             [old (mount-subscription mount)])
+        (interaction:reconcile! tree)
+        (let ([token (subscribe! mount tree)])
+          (reconcile! mount (rows (mount-id mount)))
+          (mount-subscription-set! mount token) (unsubscribe! old)))))
   (define (reconcile! mount tree)
     (let ([ids (map car tree)])
       (for-each (lambda (id)
@@ -502,7 +531,7 @@
             (if (and old (eq? (node-root old) mount))
               (begin (node-mirrored-set! old #f) (node-key-set! old #f))
               (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f #f))))) tree)
-      (mount-ids-set! mount ids)))
+      (mount-ids-set! mount ids) (mount-tree-set! mount tree)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
         (id model "root view") (slot any "head-local host identity") (returns any))
@@ -514,7 +543,7 @@
            (lambda ()
              (let-values ([(status d) (interaction:claim! head:ui-actor id)])
                (unless (memq status '(applied unavailable)) (error 'mount! "view cannot be mounted" status id))
-               (let* ([m (make-mount (datum:copy id) slot #f '() #f #f)] [tree (rows id)])
+               (let* ([m (make-mount (datum:copy id) slot #f '() '() #f #f)] [tree (rows id)])
                  (guard (ex [else
                              (when (mount-subscription m) (unsubscribe! (mount-subscription m)))
                              (when d (interaction:release! head:ui-actor id (view:generation d)))
@@ -532,7 +561,7 @@
       (error 'stage! "candidate overlaps a mounted tree or is unavailable"))
     (kernel:call-with-runtime-registrations
       (lambda ()
-        (let ([m (make-mount (datum:copy (caar tree)) slot #f '() #f #t)])
+        (let ([m (make-mount (datum:copy (caar tree)) slot #f '() '() #f #t)])
           (guard (ex [else (discard! m) (raise ex)])
             (interaction:call-with-preview tree
               (lambda ()
@@ -562,6 +591,7 @@
     (dispose-mount! candidate))
 
   (define (dispose-mount! m)
+    (with-mutex notification-lock (hashtable-delete! tree-notifications m))
     (let ([id (mount-id m)])
       (hashtable-delete! roots id)
       (hashtable-delete! preparations id)
@@ -883,6 +913,7 @@
   (edoc "The shown frame supplying the current pointer event's source basis, or #f." (returns any))
   (define event-frame (make-parameter #f))
   (define pointer-capture #f)
+  (define capture-origin #f)
   (define capture-button #f)
   (define discarded-button #f)
   (define pointer-event (make-parameter #f))
@@ -892,7 +923,7 @@
     (when pointer-capture
       (set! cancelled-gestures (cons (cons pointer-capture (list 'cancel reason)) cancelled-gestures))
       (set! discarded-button capture-button))
-    (set! pointer-capture #f) (set! capture-button #f))
+    (set! pointer-capture #f) (set! capture-button #f) (set! capture-origin #f))
   (define (defer-leave!)
     (when hover-target
       (set! cancelled-gestures (cons (cons hover-target '(pointer leave none () 0 0)) cancelled-gestures)))
@@ -929,8 +960,8 @@
     (when (and hover-target (not (eligible-pointer? hover-target))) (defer-leave!)))
   (define (focus-order f)
     (if (or (zero? (caddr (frame-clip f))) (zero? (cadddr (frame-clip f)))) '()
-      (append (if (field (frame-definition f) 'focus #f) (list (frame-id f)) '())
-        (apply append (map focus-order (frame-children f))))))
+      (let ([children (apply append (map focus-order (frame-children f)))] [focus (field (frame-definition f) 'focus #f)])
+        (append (if (and focus (or (not (eq? focus 'fallback)) (null? children))) (list (frame-id f)) '()) children))))
   (define (focusable f)
     (filter (lambda (id) (live-frame? (find-frame f id))) (focus-order f)))
   (define (path id)
@@ -951,8 +982,11 @@
   (edoc "Focus a visible accepting descendant within the root's current modal scope. Hidden roots retain their remembered target."
         (root model "root view") (id model "descendant view"))
   (define (focus! root id)
-    (let* ([frame (focus-frame root)] [d (read-view root)] [old (and d (view:focus d))])
-      (unless (and frame d (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
+    (let ([frame (focus-frame root)])
+      (unless (and frame (read-view root) (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
+      (set-focus! root id)))
+  (define (set-focus! root id)
+    (let* ([d (read-view root)] [old (and d (view:focus d))])
       (unless (equal? old id)
         (let common ([before (path old)] [after (path id)])
           (if (and (pair? before) (pair? after) (equal? (car before) (car after))) (common (cdr before) (cdr after))
@@ -967,10 +1001,12 @@
   (define (ensure-focus! root)
     (let* ([frame (focus-frame root)] [choices (if frame (focusable frame) '())]
            [d (read-view root)] [old (and d (view:focus d))]
+           [within (and frame old (find-frame frame old))]
            [previous (or old (hashtable-ref last-focus root #f))]
            [past (let ([old-frame (shown-root root)]) (if old-frame (focus-order old-frame) '()))]
            [tail (and previous (member previous past))]
            [next (or (and (member old choices) old)
+                   (and within (let ([choices (focusable within)]) (and (pair? choices) (car choices))))
                    (and tail (find (lambda (id) (member id choices)) (cdr tail)))
                    (and tail (find (lambda (id) (member id choices)) (reverse (list-head past (- (length past) (length tail))))))
                    (and (pair? choices) (car choices)))])
@@ -1059,7 +1095,7 @@
       (unless (and f e (eq? (cadr e) 'press) (not (eq? (caddr e) 'none))
                 (equal? id (frame-id f)) (live-frame? f))
         (error 'capture! "capture requires a live shown press target" id))
-      (set! pointer-capture f) (set! capture-button (caddr e))))
+      (set! pointer-capture f) (set! capture-button (caddr e)) (set! capture-origin (pointer-origin))))
 
   (edoc "Cancel a root's pointer gesture when its host hides, blurs or loses the device; retain logical focus."
         (root model "root") (reason symbol "cancellation reason"))
@@ -1132,9 +1168,15 @@
           (when hover-target (send! (frame-id hover-target) '(pointer leave none () 0 0) hover-target))
           (set! hover-target f)))
       (and root
-        (begin
+        (parameterize ([pointer-origin
+                        (if captured capture-origin
+                          (and (eq? (car event) 'pointer) (eq? (cadr event) 'press)
+                            (let ([d (read-view (frame-id root))])
+                              (and d (list (frame-id root) (view:focus d) (view:generation d) (and f (frame-id f)))))))])
           (when (and f (live-frame? f))
             (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'press) (field (frame-definition f) 'focus #f)
+                    (or (not (eq? (field (frame-definition f) 'focus #f) 'fallback))
+                      (member (frame-id f) (focusable f)))
                     ;; A focusable control may allocate more space than its
                     ;; interactive content. Reuse its declared hit area.
                     (let ([bindings (field (frame-definition f) 'pointer-bindings #f)])
@@ -1172,7 +1214,7 @@
                                             (cddddr event)) target))
                                 (loop (cdr ids)))))))))))))
           (when (and (eq? (car event) 'pointer) (eq? (cadr event) 'release) (eq? (caddr event) capture-button))
-            (set! pointer-capture #f) (set! capture-button #f))
+            (set! pointer-capture #f) (set! capture-button #f) (set! capture-origin #f))
           (list (frame-id root) (and (not (retain-focus?)) f (eq? (car event) 'pointer) (eq? (cadr event) 'press)
                                      (field (frame-definition f) 'focus #f)))))))
 

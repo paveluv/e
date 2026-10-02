@@ -162,7 +162,7 @@
      (let ()
        (define actor head:ui-actor)
        (define source (store:create! actor "Markdown widget" '("# Hello" "" "|one|two|" "|---|---|" "|words here|many more words here|")))
-       (define a (markdown:create-view! actor source))
+       (define a (markdown:create-view! actor #f source))
        (define b (view:fork! actor a))
        (define query (view:source (view:snapshot a)))
        (define root (view:create! actor #f 'row 1 '() '()))
@@ -225,7 +225,7 @@
        (define opened #f)
        (define source (store:create! actor "Long Markdown"
                         (apply append (map (lambda (i) (list (format "[Link ~a](target~a.md)" i i) "")) (iota 100)))))
-       (define child (markdown:create-view! actor source))
+       (define child (markdown:create-view! actor #f source))
        (define root (view:create! actor #f 'markdown-test 1 '() '()))
        (define (state) (view:state (interaction:snapshot child)))
        (define (show!)

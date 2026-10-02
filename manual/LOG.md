@@ -78,7 +78,7 @@ Filtered log views are created dynamically:
 ```
 
 This creates `<log eval:report!>` containing only that function's records.
-`(log-view:create! component)` returns an unmounted view for a custom host;
+`(log-view:create! owner component)` returns an unmounted view for a custom host;
 use `#f` for all components. Selection anchors name a record, line and
 character, independent of wrapping. `M-w` copies across bounded pages and
 cancels when the selected result changes or expires.

@@ -9,7 +9,7 @@
      (import (prefix (test) test:) (prefix (apps bindings) bindings:)
              (prefix (head binding-list) listing:)
              (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head keymap) keymap:)
-             (prefix (head widget) widget:) (prefix (head window) window:) (prefix (head interaction) interaction:)
+             (prefix (head widget) widget:) (prefix (head window-host) window-host:) (prefix (head interaction) interaction:)
              (prefix (head mouse) mouse:) (prefix (head paint) paint:) (prefix (head dispatch) dispatch:) (prefix (head routing) routing:)
              (prefix (foundation string) string:) (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state actor) actor:))
@@ -17,7 +17,7 @@
      (define (get r k) (cdr (assq k r)))
      (define (contains? s needle) (and (string:search s needle 0 (string-length s)) #t))
      (define (text rows) (string:join (map (lambda (r) (format "~s" r)) rows) "\n"))
-     (widget:init!) (edit:init!) (window:init!) (bindings:init!)
+     (widget:init!) (edit:init!) (window-host:init!) (bindings:init!)
      (keymap:bind-default! 'inspection-test "M-q" edit:kill-line!)
      (keymap:bind-default! 'inspection-test "M-w" edit:kill-line!)
      (keymap:bind-default! 'inspection-test "C-k" edit:end-of-line!)
@@ -47,7 +47,7 @@
          (keymap:sequence-text (keymap:spec "DELETE")) (keymap:sequence-text (keymap:spec "C-M-SPC")))
        '("M-BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC"))
      (define source (seat:window-widget (seat:current-window)))
-     (define a (bindings:create! '() source))
+     (define a (bindings:create! #f '() source))
      (define query (view:source (view:snapshot a)))
      (define root (view:create! head:ui-actor #f 'row 1 '() '()))
      (define b (view:fork! head:ui-actor a))
@@ -79,7 +79,11 @@
              (and (widget:prepared root) #t) #t))
          (lambda () (release #t) (model:unsubscribe! watch)))
        (test:await 'inspection-latest-subject
-         (lambda () (pump!) (equal? source (car (get (get (model:snapshot query) 'value) 'subject))))))
+         (lambda ()
+           (pump!)
+           (let-values ([(shown d inputs) (widget:context (widget:descendant a 'viewport 'content 'listing))])
+             (and (equal? source (car (get (get (model:snapshot query) 'value) 'subject)))
+               (= (get shown 'revision) (model:revision (view:source d))))))))
      (let* ([leaf (widget:descendant a 'viewport 'content 'listing)] [d (interaction:snapshot leaf)]
             [r (model:snapshot (view:source d))] [heading (car (get r 'value))] [label (cadr heading)]
             [start (list (car heading) 0 0)] [end (list (car heading) 0 (string-length label))])
@@ -105,7 +109,8 @@
      (routing:input! root '(key "F11" #f)) (pump!)
      (test:await 'captured-key-published
        (lambda () (pump!)
-         (contains? (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)) "C-c F11")))
+         (let ([result (text (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value))])
+           (and (contains? result "C-c F11") (contains? result "Resolved in global")))))
      (let ([rows (get (model:snapshot (cdr (assq 'listing (get (get (model:snapshot query) 'value) 'parts)))) 'value)])
        (check 'key-inspector-reports-resolution-without-executing-it
          (list executed (not (assq 'reader (view:children (interaction:snapshot a))))

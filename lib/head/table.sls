@@ -304,9 +304,9 @@
               (unless (equal? signature (session-signature s)) (session-signature-set! s signature) (repaint! s))))))))
 
   (edoc "Create a table, or a single-column list, over a base collection. Each view keeps its own selection and geometry."
-        (actor datum "creator") (query row-source "collection") (columns list "stable column names")
+        (actor datum "creator") (owner (or model #f) "lifetime owner, false for a session root") (query row-source "collection") (columns list "stable column names")
         (configuration (list-of list) "optional alist: kind table|list, identity column, presentation (name schema), selection-policy retain|suggest after filter changes, cell-commands column-to-command alist") (returns model "root view"))
-  (define (create! actor query columns . configuration)
+  (define (create! actor owner query columns . configuration)
     (unless (and (list? columns) (pair? columns) (for-all symbol? columns) (distinct? columns)
               (<= (length configuration) 1)) (error 'create! "invalid table columns/options"))
     (let* ([config (if (null? configuration) '() (car configuration))]
@@ -324,10 +324,10 @@
         (error 'create! "invalid table presentation" config))
       (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain)))
                         (if profile (list (cons 'presentation profile)) '()) (if (null? cells) '() (list (cons 'cell-commands cells))))]
-             [root (view:create! actor query kind 1 options '((selection . #f) (basis)))]
-             [heading (and (eq? kind 'table) (view:create! actor #f 'table-heading 1 '() '()))]
-             [scroll (view:create! actor #f 'scroll 1 '() #f)]
-             [body (view:create! actor #f 'table-body 1 '() '())])
+             [root (view:create! actor query kind 1 options '((selection . #f) (basis)) owner)]
+             [heading (and (eq? kind 'table) (view:create! actor #f 'table-heading 1 '() '() root))]
+             [scroll (view:create! actor #f 'scroll 1 '() #f root)]
+             [body (view:create! actor #f 'table-body 1 '() '() root)])
         (view:arrange! actor
           (list (list root 0 (append (if heading (list (list 'heading heading 'fit)) '()) (list (list 'body scroll '(grow 1)))) options)
             (list scroll 0 (list (list 'rows body '(grow 1))) '())) '()) root)))

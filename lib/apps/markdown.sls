@@ -20,7 +20,7 @@
           (prefix (head style) style:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state store) store:)
@@ -41,11 +41,11 @@
       (values text styles links rows)))
 
   (edoc "Compose a Markdown document with source/link commands. The host's open command receives a document reference and optional point/presentation preferences. Child text has its own selection and viewport."
-        (actor actor "creator") (document buffer "borrowed source") (commands list "explicit host commands")
+        (actor actor "creator") (owner (or model #f) "lifetime owner, false for a session root") (document buffer "borrowed source") (commands list "explicit host commands")
         (origin (list-of integer) "optional source row") (returns model) (public))
-  (define (create! actor document commands . origin)
-    (let* ([text (apply control:create-view! actor document origin)]
-           [root (view:create! actor #f 'markdown-page 1 (list (cons 'commands commands)) '())])
+  (define (create! actor owner document commands . origin)
+    (let* ([root (view:create! actor #f 'markdown-page 1 (list (cons 'commands commands)) '() owner)]
+           [text (apply control:create-view! actor root document origin)])
       (view:arrange! actor
         (list (list root 0 (list (list 'text text '(grow 1))) (list (cons 'commands commands)))
           (list text 0 '() (list (list 'commands (list 'open-uri root 'open-link '()) (list 'open-source root 'open-source '()))))) '()) root))
@@ -91,9 +91,9 @@
     (let* ([document (or (if (pair? source) (car source) (seat:current-buffer))
                        (error 'view! "Markdown needs a base document"))]
            [row (if (equal? document (seat:current-buffer)) (car (seat:point)) 0)]
-           [root (window:tool! (string-append "markdown " (store:buffer-name document))
-                   (lambda (commands) (create! head:ui-actor document commands row)) (format "markdown:~s" document))])
-      (let* ([host (window:show-widget! (seat:current-window) root)]
+           [root (window-host:tool! (string-append "markdown " (store:buffer-name document))
+                   (lambda (commands) (create! head:ui-actor #f document commands row)) (format "markdown:~s" document))])
+      (let* ([host (window-host:show-widget! (seat:current-window) root)]
              [actual (seat:buffer-fact host 'widget-id #f)])
         (control:locate! (widget:descendant actual 'app 'text) row) actual)))
 
@@ -102,7 +102,7 @@
     (control:register! edit:copy-text!)
     (widget:register! 'markdown-page 1
       (append (layout:container 'y) (list (cons 'actions (list (cons 'open-link open-link!) (cons 'open-source open-source!))))))
-    (window:register-presentation! 'markdown (lambda (document commands position) (create! head:ui-actor document commands (car position))))
+    (window-host:register-presentation! 'markdown (lambda (document commands position) (create! head:ui-actor #f document commands (car position))))
     (for-each (lambda (face) (style:set! (car face) (cdr face)))
       '((md-h1 bold underline) (md-h2 bold) (md-h3 bold italic) (md-h4 italic)
         (md-quote italic (foreground bright-black)) (md-link underline (foreground 33)) (md-code reset)))

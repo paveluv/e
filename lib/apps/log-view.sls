@@ -5,7 +5,7 @@
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation string) string:) (prefix (foundation text) text:)
           (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head range) range:) (prefix (head render) render:)
-          (prefix (head text-layout) text-layout:) (prefix (head widget) widget:) (prefix (head window) window:)
+          (prefix (head text-layout) text-layout:) (prefix (head widget) widget:) (prefix (head window-host) window-host:)
           (prefix (service journal-source) journal-source:) (prefix (service log) log:) (prefix (state view) view:))
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
@@ -118,8 +118,8 @@
           (when (session-copy s) (service-copy! id s)))
         (when (eq? (session-status s) 'unavailable)
           (session-page-set! s #f) (session-intent-set! s #f)))))
-  (define (busy? id d)
-    (let ([s (hashtable-ref sessions id #f)])
+  (define (busy? data d)
+    (let ([s (hashtable-ref sessions (car data) #f)])
       (or (not s) (eq? (session-status s) 'pending) (and (session-intent s) #t))))
   (define (geometry id d width height)
     (let* ([s (hashtable-ref sessions id #f)] [p (and s (session-page s))] [state (view:state d)]
@@ -224,10 +224,10 @@
                   (loop next (- left 1))))))))))
 
   (edoc "Create an unmounted journal view with independent logical selection, scrolling and tail following. False shows all components."
-        (component (or symbol #f) "component filter") (returns model) (public))
-  (define (create! component)
+        (owner (or model #f) "lifetime owner, false for a session root") (component (or symbol #f) "component filter") (returns model) (public))
+  (define (create! owner component)
     (let ([query (journal-source:create! head:ui-actor component)])
-      (view:create! head:ui-actor query 'log 1 '() '(#f #f #f #f #t) query)))
+      (view:create! head:ui-actor query 'log 1 '() '(#f #f #f #f #t) owner)))
 
   (edoc "Select journal anchors (record-key line character), independent of wrapping."
         (receiver id (view log)) (id model "journal view") (caret list "active anchor") (fixed list "fixed anchor"))
@@ -325,13 +325,13 @@
             (and binding (begin (keymap:run! (cadr binding)) (set! dragging id) (widget:capture! id) #t)))] [else #f])]
       [else #f]))
   (define (default! component)
-    (window:tool! (if component (format "log ~a" component) "log") (lambda (commands) (create! component))))
+    (window-host:tool! (if component (format "log ~a" component) "log") (lambda (commands) (create! #f component))))
 
   (edoc "Pop up the default journal or a component-filtered journal. The same retained tool resumes its selection and following state."
         (component (list-of symbol) "optional component filter") (returns model) (public))
   (define (show! . component)
     (unless (and (<= (length component) 1) (for-all symbol? component)) (error 'show! "expected at most one component"))
-    (let ([root (default! (and (pair? component) (car component)))]) (window:pop-up-or-reuse! root) root))
+    (let ([root (default! (and (pair? component) (car component)))]) (window-host:pop-up-or-reuse! root) root))
 
   (edoc "Register the journal widget and named text commands without opening a tool." (public))
   (define (init!)

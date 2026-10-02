@@ -14,13 +14,13 @@
 
 (eval
   '(begin
-     (import (except (head edit) init!) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
+     (import (except (head edit) init!) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:) (prefix (state store) store:) (prefix (foundation text) text:)
              (prefix (head layout) layout:) (prefix (state view) view:) (prefix (core kernel) kernel:) (prefix (service log) log:)
              (prefix (foundation string) string:) (prefix (test) test:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      ;; Load through the kernel so a reload below replaces the real module.
      ;; Fresh procedures resolve through the top level after that reload.
      (kernel:load-module! "blame")

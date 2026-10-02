@@ -14,7 +14,7 @@
 (eval
   '(begin
      (import (except (head edit) init!)
-             (prefix (head window) window:) (foundation edoc) (prefix (core kernel) kernel:) (prefix (test) test:))
+             (prefix (head window-host) window-host:) (foundation edoc) (prefix (core kernel) kernel:) (prefix (test) test:))
 
      (define check test:check)
 
@@ -265,10 +265,10 @@
      (check 'the-command-layer-reads-back
        (list (map argument-type (signature-arguments (car (edoc-of visit-file!))))
              (map argument-type (signature-arguments (car (edoc-of present-log-entries!))))
-             (signature-arguments (car (edoc-of window:split-below!)))
-             (argument-type (signature-returns (car (edoc-of window:focus!))))
-             (signature-library (car (edoc-of window:delete!))))
-       '((file) ((list-of datum)) () boolean "(head window)"))
+             (signature-arguments (car (edoc-of window-host:split-below!)))
+             (argument-type (signature-returns (car (edoc-of window-host:focus!))))
+             (signature-library (car (edoc-of window-host:delete!))))
+       '((file) ((list-of datum)) () boolean "(head window-host)"))
      (check 'documented-clauses-match-their-formals
        (filter (lambda (sym)
                  (not (for-all (lambda (sig)

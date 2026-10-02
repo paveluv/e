@@ -95,13 +95,13 @@
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head render) render:)
-          (prefix (head terminal-state) terminal-state:)
           (prefix (head text-source) text-source:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
           (prefix (state model) model:)
           (prefix (state store) store:)
+          (prefix (state terminal-state) terminal-state:)
           (prefix (state view) view:))
 
   ;;; The records ----------------------------------------------------------------
@@ -242,7 +242,7 @@
         (let* ([peer (and the-current (eq? (window-buffer the-current) b) (window-document-view the-current))]
                [id (or old
                      (if terminal?
-                       (if peer (begin (interaction:flush!) (view:fork! head:ui-actor peer)) (terminal-state:create! head:ui-actor source))
+                       (if peer (begin (interaction:flush!) (view:fork! head:ui-actor peer)) (terminal-state:create! head:ui-actor #f source))
                        (editor-state:create! head:ui-actor source
                          (cons (cons 'wrap (window-wrap-raw w)) (if (popup? w) '((read-only . #t)) '())))))])
           (let-values ([(status d) (interaction:claim! head:ui-actor id)])
@@ -3060,7 +3060,7 @@
         thunk
         (lambda () (set! the-current prev)))))
 
-  (edoc "Run body with a window temporarily selected, without telling the apps; the selection returns on exit and on escape: (with-window (window 2) (window:split-right!))."
+  (edoc "Run body with a window temporarily selected, without telling the apps; the selection returns on exit and on escape: (with-window (window 2) (window-host:split-right!))."
         (w window "the window to select")
         (body (list-of any) "the forms to run"))
   (define-syntax with-window

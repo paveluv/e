@@ -17,7 +17,7 @@
       (if (seat:buffer-store-id b) (seat:buffer-store-id b)
         (seat:buffer-fact b 'widget-id #f))))
 
-  (edoc "Resolve a document reference in the default window host, adopting shared text when needed. A widget without a local placement returns false; window:show-widget! can mount it."
+  (edoc "Resolve a document reference in the default window host, adopting shared text when needed. A widget without a local placement returns false; window-host:show-widget! can mount it."
         (ref any "buffer or model reference") (returns (or (record buffer) #f)))
   (define (resolve! ref)
     (and (list? ref)

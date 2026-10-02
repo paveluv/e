@@ -1,5 +1,5 @@
 ;; (history-example:create!) returns a nested composition, with no window.
-;; (window:show-widget! (seat:current-window) (history-example:create!)) hosts it.
+;; (window-host:show-widget! (seat:current-window) (history-example:create!)) hosts it.
 (import (prefix (core port) port:))
 (port:register! '(view history-choice-preview 1)
   '((input selection (or row-selection #f) (options selection))))
@@ -12,10 +12,10 @@
     (cons 'render (lambda (text d width height range)
                     (if (zero? (car range)) (list (glyph:fit text width)) '())))))
 (history-view:register! 'file-choice 1
-  (lambda (query)
-    (let* ([who head:ui-actor] [root (view:create! who #f 'row 1 '() '())]
-           [table (table:create! who query '(name))]
-           [preview (view:create! who #f 'history-choice-preview 1 '((selection . #f)) '())])
+  (lambda (owner query)
+    (let* ([who head:ui-actor] [root (view:create! who #f 'row 1 '() '() owner)]
+           [table (table:create! who root query '(name))]
+           [preview (view:create! who #f 'history-choice-preview 1 '((selection . #f)) '() root)])
       (view:arrange! who
         (list (list root 0 (list (list 'table table '(grow 1)) (list 'preview preview '(grow 1))) '())) '())
       (connection:bind! who root (list (list preview 'selection #f (list table 'selection)))) root)))
@@ -32,4 +32,4 @@
     (history:append! who history 0 (list 'text 1 text) text (list text))
     (history:append! who history 1 (list 'result 1 job) #f (list env job))
     (history:append! who history 2 (list 'file-choice 1 query) #f (list query))
-    (history-view:create! history 3)))
+    (history-view:create! #f history 3)))

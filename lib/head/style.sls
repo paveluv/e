@@ -202,6 +202,8 @@
         (chrome ((foreground bright-black)))
         (ghost ((foreground bright-black) italic))
         (header ((foreground 252) (background 240)))
+        (status (reverse))
+        (status-inactive (reverse (foreground bright-black)))
         (hover (bold dotted-underline (underline-color 242)))
         (comment ((foreground bright-black)))
         (error ((foreground red)))

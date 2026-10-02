@@ -8,7 +8,7 @@
   '(begin
      (import (prefix (apps buffet) buffet:) (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (apps bindings) bindings:) (prefix (head binding-list) listing:)
-             (prefix (head widget) widget:) (prefix (head window) window:)
+             (prefix (head widget) widget:) (prefix (head window-host) window-host:)
              (prefix (head table) table:) (prefix (head entry) entry:)
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
@@ -19,7 +19,7 @@
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (state catalogue) catalogue:) (prefix (state connection) connection:)
              (prefix (foundation string) string:) (prefix (test) test:))
-     (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
+     (widget:init!) (window-host:init!) (entry:init!) (control:init!) (table:init!) (buffet:init!) (bindings:init!)
      (paint:window-layout)
      (define (get xs key) (cdr (assq key xs)))
      (define (help-record)
@@ -232,7 +232,7 @@
      (settle!)
      (let* ([picker (seat:current-buffer-mirror)]
             [id (view:create! head:ui-actor #f 'row 1 '((name . "<buffet-local>")) '())]
-            [local (window:show-widget! (seat:current-window) id)])
+            [local (window-host:show-widget! (seat:current-window) id)])
        (seat:show-buffer-mirror! picker) (head:before-frame!)
        (select! local)
        (let ([old (selection)] [basis (get (state) 'basis)])
@@ -248,7 +248,7 @@
          (list (model:snapshot id) (memq local (seat:buffers))) '(#f #f))
        (settle!))
      (let* ([w (seat:current-window)] [picker (seat:current-buffer-mirror)]
-            [other (window:split-right!)] [fork (seat:buffer-fact (seat:window-buffer other) 'widget-id #f)]
+            [other (window-host:split-right!)] [fork (seat:buffer-fact (seat:window-buffer other) 'widget-id #f)]
             [fork-table (child (child fork 'app) 'table)])
        (test:check 'split-forks-view-state-and-shares-query
          (list (equal? host fork) (equal? original-table fork-table)
@@ -259,7 +259,7 @@
            (and (string:search (cadr wide) "Modified" 0 300)
              (string:search (cadr wide) "Lines" 0 300)
              (string:search (cadr wide) "File" 0 300) (= (string-length (cadr wide)) 300)) #t))
-       (window:focus! other) (seat:show-buffer-mirror! a)
+       (window-host:focus! other) (seat:show-buffer-mirror! a)
        (widget:set-active! host #f)
        (test:await 'inactive-table-ready
          (lambda ()
@@ -282,15 +282,15 @@
          (let ([result (parameterize ([seat:app-event-focus other]) (widget:pointer! '(pointer press primary ()) 3 row))])
            (test:check 'inactive-click-opens-in-focused-window-and-keeps-focus
              (list (cadr result) (eq? other (seat:current-window)) (eq? picker (seat:window-buffer w)) (eq? a (seat:window-buffer other))) '(#f #t #t #t))))
-       (window:focus! w) (window:delete-others!) (widget:set-active! host #t) (settle!))
+       (window-host:focus! w) (window-host:delete-others!) (widget:set-active! host #t) (settle!))
      ;; Two unmounted constructors are independent; explicit query reuse is
      ;; borrowing, so releasing the first view cannot disconnect its sibling.
-     (define independent (buffet:create! '()))
+     (define independent (buffet:create! #f '()))
      (let ([transient (catalogue:create-source! head:ui-actor "/home" 'transient)])
        (test:check 'transient-owner-cannot-orphan-a-persistent-filter
          (test:raises? (lambda () (catalogue:create-query! head:ui-actor transient))) #t)
        (model:retire! head:ui-actor transient (get (model:snapshot transient) 'revision)))
-     (define borrowed (buffet:create! '() original-query))
+     (define borrowed (buffet:create! #f '() original-query))
      (widget:mount! borrowed 'embedded)
      (draw! borrowed 44 8)
      (test:check 'constructor-sharing-is-explicit

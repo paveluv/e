@@ -13,7 +13,7 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (core kernel) kernel:)
              (prefix (head expression) expression:)
@@ -24,7 +24,7 @@
              (prefix (modes scheme-mode) scheme-mode:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (define (fresh name lines)
        (let ([b (seat:new-buffer! name)])
          (seat:buffer-lines-set! b (list->vector lines))

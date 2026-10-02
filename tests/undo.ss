@@ -13,7 +13,7 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (state store) store:)
              (prefix (foundation text) text:)
@@ -22,7 +22,7 @@
              (prefix (core kernel) kernel:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (store:log-retention 256)   ; the bound these checks exercise
      (define bot '(agent undo-test))
      (define (fresh name shared?)

@@ -55,7 +55,7 @@
                 (cons (string-append "\"" value "\"")
                   (map (lambda (span) (list (+ 1 (cadr span)) (+ 1 (caddr span)) 'mark))
                     (cond [(assq 'matches attributes) => cdr] [else '()])))))))
-    (let* ([table (table:create! actor query '(size name) '((identity . name) (presentation range-fixture 1)))] [before reads])
+    (let* ([table (table:create! actor #f query '(size name) '((identity . name) (presentation range-fixture 1)))] [before reads])
       (define (show width . height)
         (let ([frame (widget:prepare! table width (if (null? height) 10 (car height)))]) (widget:present! (list (list frame 0 0))) frame))
       (define (selection) (field (view:state (interaction:snapshot table)) 'selection))

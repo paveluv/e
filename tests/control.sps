@@ -29,7 +29,7 @@
 
 ;; Composition exercises real entry actions, command references and captures.
 (let* ([actor head:ui-actor] [source (store:create! actor "control text" '("original"))]
-       [filter (control:create-filter! actor source "Filter:" "[ready]")]
+       [filter (control:create-filter! actor #f source "Filter:" "[ready]")]
        [entry (cadr (assq 'entry (view:children (view:snapshot filter))))]
        [button (view:create! actor #f 'action-text 1
                  (list '(text . "Replace") '(enabled . #t) (list 'commands (list 'activate entry 'insert '("new")))) '())]

@@ -18,7 +18,7 @@
           (prefix (head mouse) mouse:)
           (prefix (head seat) seat:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service inspection) inspection:)
           (prefix (service log) log:)
           (prefix (state model) model:)
@@ -188,10 +188,10 @@
         [else #f])))
 
   (edoc "Create an unmounted inspector for an explicit mounted subject, or false for global keys. The composition has a standard scroll viewport and per-width layout; only demanded views capture live facts."
-        (commands list "explicit host commands") (root (or model #f) "mounted subject") (returns model) (public))
-  (define (create! commands root)
+        (owner (or model #f) "lifetime owner, false for a session root") (commands list "explicit host commands") (root (or model #f) "mounted subject") (returns model) (public))
+  (define (create! owner commands root)
     (let* ([created (inspection:create! head:ui-actor (subject root) '(mouse listing))] [source (car created)]
-           [app (view:create! head:ui-actor source 'bindings 1 (list (cons 'commands commands)) '() source)]
+           [app (view:create! head:ui-actor source 'bindings 1 (list (cons 'commands commands)) '() owner)]
            [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f app)]
            [content (view:create! head:ui-actor #f 'column 1 '() '() app)]
            [status (view:create! head:ui-actor source 'binding-list 1 '() '() app)]
@@ -266,7 +266,7 @@
     (let ([app (active-app)])
       (when app (let ([target (default-subject)]) (when target (request! app target))))))
   (define (ensure! target)
-    (define (tool!) (window:tool! "bindings" (lambda (commands) (create! commands (and target (car target))))))
+    (define (tool!) (window-host:tool! "bindings" (lambda (commands) (create! #f commands (and target (car target))))))
     (let ([root (tool!)])
       ;; The window host survives recovery; its attachment's inspection does
       ;; not. Retire only this placement, preserving borrowed snapshots that
@@ -284,28 +284,28 @@
     (let ([app (active-app)] [target (default-subject)])
       (if app (begin (when target (request! app target)) (page! app 'down) default-root)
         (let ([root (ensure! target)])
-          (if (seat:popup? (seat:current-window)) (window:pop-up-or-reuse! root)
-            (begin (window:show-widget! (seat:popup) root) (seat:show-popup! (seat:popup-default-rows)))) root))))
+          (if (seat:popup? (seat:current-window)) (window-host:pop-up-or-reuse! root)
+            (begin (window-host:show-widget! (seat:popup) root) (seat:show-popup! (seat:popup-default-rows)))) root))))
 
   (edoc "Page the visible default inspector up, or show it when hidden.")
   (define (page-up!) (let ([app (active-app)]) (if app (page! app 'up) (show!))))
 
   (edoc "Show the inspector in the current window, following its captured subject until another window becomes active." (returns model) (public))
   (define (open!)
-    (let* ([target (default-subject)] [root (ensure! target)]) (window:show-widget! (seat:current-window) root) root))
+    (let* ([target (default-subject)] [root (ensure! target)]) (window-host:show-widget! (seat:current-window) root) root))
 
   (edoc "Capture a key or chord and show its contextual resolution, binding origin, forwarding trace and shadowed definitions in the default inspector. Return immediately; the ordinary event pump collects the keys.")
   (define (key!)
     (let ([root (show!)])
       (let ([w (find (lambda (w) (and (equal? root (seat:window-widget w)) (or (not (seat:popup? w)) (> (seat:popup-rows) 0)))) (seat:windows))])
-        (when w (window:focus! w) (capture-key! (widget:descendant root 'app))))))
+        (when w (window-host:focus! w) (capture-key! (widget:descendant root 'app))))))
 
   (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening." (public))
   (define (hide!)
     (when default-root
       (for-each (lambda (w)
                   (when (equal? (seat:window-widget w) default-root)
-                    (if (seat:popup? w) (seat:hide-popup!) (window:return! default-root)))) (seat:windows))))
+                    (if (seat:popup? w) (seat:hide-popup!) (window-host:return! default-root)))) (seat:windows))))
 
   (edoc "Register the Bindings composition and commands; hidden inspectors do no capture or trace work." (public))
   (define (init!)

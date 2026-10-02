@@ -10,6 +10,7 @@
           (prefix (service root-binding) root-binding:)
           (prefix (service vt) vt:)
           (prefix (state actor) actor:)
+          (prefix (state manager) manager:)
           (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:)
@@ -25,7 +26,7 @@
   (define rejected-archive #f)
   (define notice-pending? #f)
 
-  (define (upgrade-model r) (root-binding:upgrade (view:upgrade r)))
+  (define (upgrade-model r) (manager:upgrade (root-binding:upgrade (view:upgrade r))))
 
   (define (upgrade value)
     ;; Session 3 tags document identities. Convert only fields owned by a

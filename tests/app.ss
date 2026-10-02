@@ -22,7 +22,7 @@
              (prefix (state catalogue) catalogue:) (prefix (state collection) collection:) (prefix (head range) range:)
              (prefix (state view) view:)
              (prefix (head interaction) interaction:)
-             (prefix (head widget) widget:) (prefix (head window) window:)
+             (prefix (head widget) widget:) (prefix (head window-host) window-host:)
              (prefix (head entry) entry:) (prefix (head text-source) text-source:) (prefix (foundation text) text:)
              (prefix (head control) control:) (prefix (core descriptor) descriptor:)
              (prefix (head table) table:)
@@ -45,12 +45,12 @@
              (prefix (apps log-view) log-view:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (kernel:load-module! "widget") (edit:init!) (window-host:init!)
      (define refused? test:raises?)
      ;; Host placement must not consume a shared document with the same label.
      (let* ([ordinary (seat:new-buffer! "<app-collision>")]
             [id (view:create! head:ui-actor #f 'row 1 '((name . "<app-collision>")) '())]
-            [host (window:show-widget! (seat:current-window) id)])
+            [host (window-host:show-widget! (seat:current-window) id)])
        (check 'widget-placement-preserves-shared-label-and-identity
          (list (eq? host ordinary) (seat:buffer-name host) (seat:buffer-store-id host)
            (seat:buffer-read-only ordinary)) '(#f "<app-collision 2>" #f #f))
@@ -93,7 +93,7 @@
             [first (view:create! head:ui-actor data 'probe 1 '() 0)]
             [second (view:create! head:ui-actor data 'probe 1 '() 0)]
             [other (seat:make-window was 0 0 0 0 0 2 7 24 'default)]
-            [a (window:show-widget! w first)] [b (window:show-widget! other second)])
+            [a (window-host:show-widget! w first)] [b (window-host:show-widget! other second)])
        (define (install!)
          (parameterize ([kernel:registering-module owner])
            (widget:register! (quote probe) 1 (list (cons (quote render) (lambda (model descriptor width height range) (define state (view:state descriptor)) (set! calls (+ calls 1)) (make-list (+ height 2) (format "~a ~a 界界界界界界界界" (cdr (assq (quote value) model)) state)))) (cons (quote actions) (list (cons (quote choose) (lambda (id) (let-values ([(model descriptor inputs) (widget:context id)]) (values (cdr (assq (quote revision) model)) (view:state descriptor)))))))))))
@@ -163,15 +163,15 @@
      (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [data (model:create! head:ui-actor 'widget-test 1 'session 'persistent '() "shared")]
             [id (view:create! head:ui-actor data 'text 2 '() 0)]
-            [b (window:show-widget! w id)]
+            [b (window-host:show-widget! w id)]
             [other (seat:make-window b 0 0 0 0 0 2 0 12 'default)]
             [copy (seat:window-buffer other)] [fork (seat:buffer-fact copy 'widget-id #f)])
        (check 'placement-forks-only-views (list (equal? id fork) (view:source (view:snapshot fork))) (list #f data))
        (seat:show-buffer-mirror! was)
-       (check 'hidden-root-reuses-buffer (eq? b (window:show-widget! w id)) #t)
+       (check 'hidden-root-reuses-buffer (eq? b (window-host:show-widget! w id)) #t)
        (widget:unmount! id)
        (check 'explicitly-unmounted-adapter-remounts-on-show
-         (begin (window:show-widget! w id) (widget:actions id)) '(move select choose))
+         (begin (window-host:show-widget! w id) (widget:actions id)) '(move select choose))
        (actor:checkpoint! head:ui-actor
          `(screen 4 1 (split right 1 1 (window 1 0 0 0 default #t #f default) (window 2 0 0 0 default #t #f default))
             (((widget ,id) #f ()))))
@@ -182,7 +182,7 @@
            (list (length ids) (equal? (car ids) (cadr ids))
                  (map (lambda (id) (view:source (view:snapshot id))) ids))
            (list 2 #f (list data data))))
-       (window:delete-others!) (seat:show-buffer-mirror! was)
+       (window-host:delete-others!) (seat:show-buffer-mirror! was)
        (for-each (lambda (b) (when (seat:buffer-fact b 'widget-id #f) (seat:forget-buffer! b))) (seat:buffers)))
 
      ;; A bare composition exercises the same routing used by window hosts.
@@ -399,7 +399,7 @@
 
      (model:register-kind! 'widget-view 4 string?)
      (let* ([id (model:create! head:ui-actor 'widget-view 4 'session 'persistent '() "future descriptor")]
-            [previous (seat:current-buffer-mirror)] [b (window:show-widget! (seat:current-window) id)])
+            [previous (seat:current-buffer-mirror)] [b (window-host:show-widget! (seat:current-window) id)])
        (seat:show-buffer-mirror! b)
        ((seat:app-refresh! (seat:app-of b)))
        (check 'widget-unknown-descriptor-is-inspectable-without-claiming-an-owner
@@ -409,6 +409,7 @@
 
      (include "tests/control.sps")
      (include "tests/editor-widget.sps")
+     (include "tests/window-control.sps")
      (include "tests/terminal-widget.sps")
      (include "tests/prompt-widget.sps")
      (include "tests/search-control.sps")

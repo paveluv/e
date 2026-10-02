@@ -25,7 +25,7 @@
              (prefix (foundation string) string:)
              (prefix (core kernel) kernel:)
              (prefix (head dispatch) dispatch:)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (head keymap) keymap:)
              (prefix (head mode) mode:)
@@ -40,7 +40,7 @@
              (only (chezscheme) format get-process-id mkdir delete-file delete-directory))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (define (bound-to context key) (let ([hit (keymap:resolved-binding context (list key))]) (and hit (keymap:binding-action (cdr hit)))))
      (delta-log:init!)
      (define dir (format "/tmp/e-reload-~a" (get-process-id)))

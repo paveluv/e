@@ -78,9 +78,9 @@
       (for-each
         (lambda (row)
           (let* ([id (car row)] [canonical (cdr row)] [local (hashtable-ref owned id #f)])
-            (when (and local (or (not canonical) (>= (view:generation canonical) (view:generation local))))
+            (when (or (not local) (not canonical) (>= (view:generation canonical) (view:generation local)))
               (let ([next (and canonical (equal? owner (view:owner canonical))
-                            (if (and (= (view:generation local) (view:generation canonical))
+                            (if (and local (= (view:generation local) (view:generation canonical))
                                   (> (view:sequence local) (view:sequence canonical)))
                               (descriptor:with canonical
                                 (map (lambda (key) (assq key local)) '(sequence basis state focus))) canonical))])

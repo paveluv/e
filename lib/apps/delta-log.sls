@@ -16,7 +16,7 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service change-preview) change-preview:)
           (prefix (service conflict-review) conflict-review:)
           (prefix (service conflict-source) conflict-source:)
@@ -114,29 +114,29 @@
     (let-values ([(status detail) (store:resolve! head:ui-actor (current-document) (edoc:type-value 'conflict conflict) choice 'any)])
       (head:before-frame!) (log:add! 'delta-log:resolve! (format "~a ~s" status detail)) status))
 
-  (edoc "Create an unmounted conflict or rewrite review with an independent draft, bounded table and read-only preview. The ordered document scope is explicit; rewrite accepts exactly one document. Commands contain the host's return target. Removing a view preserves its draft; retiring the query removes its owned draft and output."
-        (commands list "host commands") (kind (one-of conflicts rewrite) "review kind")
+  (edoc "Create an unmounted conflict or rewrite review with an independent draft, bounded table and read-only preview. The ordered document scope is explicit; rewrite accepts exactly one document. Commands contain the host's return target. Retiring the app removes its private preview and output, preserving the borrowed query and draft; retiring the query removes its owned draft."
+        (owner (or model #f) "lifetime owner, false for a session root") (commands list "host commands") (kind (one-of conflicts rewrite) "review kind")
         (documents (list-of buffer) "borrowed source documents") (returns model) (public))
-  (define (create! commands kind documents)
+  (define (create! owner commands kind documents)
     (unless (and (memq kind '(conflicts rewrite)) (list? documents)
               (or (eq? kind 'conflicts) (= (length documents) 1))) (error 'create! "invalid review scope"))
     (let* ([draft (if (eq? kind 'conflicts) (conflict-review:create! head:ui-actor documents) (rewrite:create! head:ui-actor (car documents)))]
            [q (collection:create! head:ui-actor draft "" '() 'persistent (list draft))]
-           [root (view:create! head:ui-actor q 'delta-review 1 (list (cons 'commands commands) (cons 'review kind)) '() q)]
+           [root (view:create! head:ui-actor q 'delta-review 1 (list (cons 'commands commands) (cons 'review kind)) '() owner)]
            [p (review-preview:create! head:ui-actor draft root)]
-           [table (table:create! head:ui-actor q
+           [table (table:create! head:ui-actor root q
                     (if (eq? kind 'conflicts) '(buffer revision actor position mine disk) '(revision actor position removed inserted state choice))
                     (append '((presentation review 1))
                       (if (eq? kind 'conflicts) '((identity . buffer) (cell-commands (mine . mine) (disk . disk))) '((identity . inserted)))))]
-           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() q)]
-           [preview (view:create! head:ui-actor (car p) 'review-preview-panel 1 '() '() q)]
-           [status (view:create! head:ui-actor (car p) 'review-status 1 '() '() q)]
+           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root)]
+           [preview (view:create! head:ui-actor (car p) 'review-preview-panel 1 '() '() root)]
+           [status (view:create! head:ui-actor (car p) 'review-status 1 '() '() root)]
            [editor (view:create! head:ui-actor (cadr p) 'editor 1
-                     '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) q)]
+                     '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) root)]
            [d (view:snapshot table)]
            [button (lambda (label action args)
                      (view:create! head:ui-actor #f 'action-text 1
-                       (list (cons 'text label) '(enabled . #t) (list 'commands (list 'activate root action args))) '() q))]
+                       (list (cons 'text label) '(enabled . #t) (list 'commands (list 'activate root action args))) '() root))]
            [buttons (append (if (eq? kind 'conflicts)
                               (list (list 'mine (button "Mine (all)" 'choose-all '(mine)) 'fit)
                                 (list 'disk (button "Disk (all)" 'choose-all '(disk)) 'fit)) '())
@@ -203,9 +203,8 @@
           (let ([selected (find (lambda (p) (memq (cadr p) '(match conflict-mine-current conflict-disk-current))) (caddr annotations))])
             (when selected (editor:move! editor (cons (caar selected) (cadar selected))))
             (interaction:set-state! head:ui-actor id #f key))))))
-  (define (busy? id d)
-    (let-values ([(source d inputs) (widget:context id 'current)])
-      (eq? (get (get source 'value '()) 'status #f) 'pending)))
+  (define (busy? source d)
+    (eq? (get (get source 'value '()) 'status #f) 'pending))
   (define (status-text id source inputs)
     (let ([v (get source 'value '())])
       (cond [(eq? (get v 'status #f) 'unavailable) "[Preview unavailable; refresh the selection]"]
@@ -220,8 +219,8 @@
           (list text (list 0 (string-length text) (if (eq? name 'mine) 'conflict-mine 'conflict-disk))) (list text)))))
   (define target-table (keymap:call widget:descendant widget:target 'table))
   (define (show-review! name kind documents window)
-    (let* ([host (window:tool! name (lambda (commands) (create! commands kind documents)) (format "~a:~s" kind documents))])
-      (window:show-widget! window host)
+    (let* ([host (window-host:tool! name (lambda (commands) (create! #f commands kind documents)) (format "~a:~s" kind documents))])
+      (window-host:show-widget! window host)
       (let ([app (child host 'app)]) (widget:focus! host (child (child (child app 'table) 'body) 'rows)) app)))
 
   (edoc "Open a retained rewrite review of the current document in the chosen window, current by default."

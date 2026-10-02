@@ -12,7 +12,7 @@
   '(begin
      (import (prefix (test) test:)
              (except (head edit) init!)
-             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:)
              (prefix (apps search) search:)
              (prefix (service search-request) search-request:)
@@ -25,7 +25,7 @@
      (define bot '(agent position-test))
      (define check test:check)
      (include "tests/search-request.sps")
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (store:log-retention 256)   ; the bound these checks exercise
      (define (fresh name lines . local?)
        (let ([b ((if (and (pair? local?) (car local?)) seat:new-local-buffer! seat:new-buffer!) name)])

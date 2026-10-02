@@ -12,7 +12,7 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service file) file:)
           (prefix (service git-source) git-source:)
           (prefix (state model) model:)
@@ -22,16 +22,16 @@
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
 
   (edoc "Create an unmounted Git browser with a history table and an independent read-only patch editor. Enter or click a commit to expand its files, then select a file to inspect its patch. No window is created."
-        (path file "path inside the repository") (returns model) (public))
-  (define (create! path)
+        (owner (or model #f) "lifetime owner, false for a session root") (path file "path inside the repository") (returns model) (public))
+  (define (create! owner path)
     (let* ([query (git-source:create! head:ui-actor path)]
-           [root (view:create! head:ui-actor query 'git-history 1 '() '() query)]
+           [root (view:create! head:ui-actor query 'git-history 1 '() '() owner)]
            [patch (git-source:create-patch! head:ui-actor root)]
-           [table (table:create! head:ui-actor query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
-           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '())]
-           [label (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '())]
+           [table (table:create! head:ui-actor root query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
+           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root)]
+           [label (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '() root)]
            [refresh (view:create! head:ui-actor #f 'action-text 1
-                      (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '())]
+                      (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '() root)]
            [preview (view:create! head:ui-actor (car patch) 'git-patch 1 '() '() (car patch))]
            [editor (view:create! head:ui-actor (cadr patch) 'editor 1
                      '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch))]
@@ -57,9 +57,8 @@
   (define (refresh! id)
     (git-source:refresh! head:ui-actor (view:source (interaction:snapshot id)))
     (git-source:refresh! head:ui-actor (view:source (interaction:snapshot (child id 'patch)))))
-  (define (busy? id d)
-    (let* ([r (model:snapshot (view:source d))] [v (and r (get r 'value '()))])
-      (and v (eq? (get v 'status #f) 'pending))))
+  (define (busy? source d)
+    (eq? (get (get source 'value '()) 'status #f) 'pending))
   (define (present proc)
     (lambda (cell cells attributes) (list (if (eq? (car cell) 'ready) (proc (cadr cell) attributes) ""))))
   (define (date seconds attributes)
@@ -75,9 +74,9 @@
   (edoc "Open the retained Git browser for a path in the current window. Different paths retain independent queries and selections."
         (path file "path inside the repository") (returns model))
   (define (log-of! path)
-    (let* ([path (file:expand path)] [root (window:tool! (string-append "git " (file:abbreviate path))
-                                             (lambda (commands) (create! path)) (string-append "git:" path))])
-      (window:show-widget! (seat:current-window) root)
+    (let* ([path (file:expand path)] [root (window-host:tool! (string-append "git " (file:abbreviate path))
+                                             (lambda (commands) (create! #f path)) (string-append "git:" path))])
+      (window-host:show-widget! (seat:current-window) root)
       (let ([app (child root 'app)]) (widget:focus! root (child (child (child app 'table) 'body) 'rows)) app)))
 
   (edoc "Open Git history for the current file, or the working directory. Repository work remains asynchronous.")

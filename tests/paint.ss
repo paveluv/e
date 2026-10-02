@@ -55,7 +55,7 @@
      (import (prefix (head paint) paint:) (prefix (head tui) tui:) (prefix (head widget) widget:)
              (prefix (head edit) edit:) (prefix (head dispatch) dispatch:)
              (prefix (head entry) entry:) (prefix (state store) store:)
-             (prefix (head interaction) interaction:) (prefix (head window) window:)
+             (prefix (head interaction) interaction:) (prefix (head window-host) window-host:)
              (prefix (state model) model:) (prefix (state view) view:)
              (prefix (head pacing) pacing:)
              (prefix (head spinner) spinner:)
@@ -682,7 +682,7 @@
 
      ;; The visible frame owns hit geometry, including across partial output
      ;; and uncertain terminal writes. No extra test process or timing wait.
-     (widget:init!) (window:init!)
+     (widget:init!) (window-host:init!)
      ;; A partial overlay must not mutate the full-width child's lent style
      ;; row or an earlier frame, including when that child is cached.
      (widget:register! 'style-row 1
@@ -710,7 +710,7 @@
             [text (view:create! head:ui-actor source 'text 2 '() 0)]
             [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f)])
        (view:arrange! head:ui-actor (list (list scroll 0 (list (list 'text text 'fit)) '())) '())
-       (let* ([b (window:show-widget! w scroll)] [first (widget:prepare! scroll 6 2)])
+       (let* ([b (window-host:show-widget! w scroll)] [first (widget:prepare! scroll 6 2)])
          (check 'scroll-renders-only-its-visible-range (widget:frame-lines first) '("> a   " "  b   "))
          (widget:act! scroll 'scroll 2)
          (check 'scroll-anchor-is-logical-and-selection-independent
@@ -748,7 +748,7 @@
      (let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
             [source (store:create! head:ui-actor "entry paint" '("abcdef"))]
             [id (view:create! head:ui-actor source 'entry 1 '() '((0 . 2) (0 . 0)))]
-            [b (window:show-widget! w id)])
+            [b (window-host:show-widget! w id)])
        (let ([output (painted paint:redraw!)])
          (check 'entry-selection-and-blinking-block-reach-the-window-painter
            (list (contains? output (style:code 'selection)) (contains? output "\x1b;[1 q")) '(#t #t)))
@@ -766,8 +766,8 @@
        (seat:buffer-lines-set! b (list->vector (cons (make-string 180 #\a) (make-list 30 "界éz"))))
        (seat:show-buffer-mirror! b) (seat:window-line-numbers-set! w #t)
        (tui:set-screen-cols! 100) (tui:set-screen-rows! 24)
-       (let* ([other (window:split-right!)] [a (seat:window-editor w)] [c (seat:window-editor other)])
-         (window:focus! w)
+       (let* ([other (window-host:split-right!)] [a (seat:window-editor w)] [c (seat:window-editor other)])
+         (window-host:focus! w)
          (let ([running (painted (lambda () (parameterize ([paint:cursor-in-echo #t]) (paint:place-cursor!))))])
            (check 'ordinary-editing-restores-blinking-block-after-evaluation
              (list (contains? running "\x1b;[3 q") (contains? (painted paint:redraw!) "\x1b;[1 q")) '(#t #t)))
@@ -795,7 +795,7 @@
            (list (list-head (view:state (interaction:snapshot a)) 2)
              (test:raises? (lambda () (edit:insert! (seat:window-editor (seat:popup)) "denied"))))
            '(((1 . 4) (1 . 0)) #t))
-         (window:clear-pop-up!)
+         (window-host:clear-pop-up!)
          (edit:end-of-buffer!) (painted paint:redraw!)
          (let ([bottom (car (view:state (interaction:snapshot a)))]
                [top (seat:window-top w)])

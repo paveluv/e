@@ -1,7 +1,7 @@
 ;; Portable view data shared by the base and head implementations of view.
 (import (only (foundation edoc) elibrary))
 (elibrary (core descriptor)
-  (export basis children commands focus generation head? kind make options owned owner parent references schema sequence source state valid? with)
+  (export basis children cleanup commands focus generation head? kind make options owned owner parent references schema sequence source state valid? with)
   (import (except (rnrs) parent) (prefix (core identity) identity:) (prefix (foundation datum) datum:))
   (define keys '(source kind schema parent children options generation owner sequence basis state focus))
   (define (natural? n) (and (integer? n) (exact? n) (>= n 0)))
@@ -36,6 +36,10 @@
   (edoc "Read explicitly owned per-view model resources. Borrowed sources are separate; owned resources fork and retire with this view."
         (d list "descriptor") (returns list))
   (define (owned d) (cond [(assq 'owned (options d)) => cdr] [else '()]))
+
+  (edoc "Read pending output disposal. These buffer identities belong to already-retired resources; the durable intent remains until deletion finishes."
+        (d list "descriptor") (returns list))
+  (define (cleanup d) (cond [(assq 'cleanup (options d)) => cdr] [else '()]))
   (define (commands? xs)
     (and (list? xs)
       (for-all (lambda (x) (and (list? x) (= (length x) 4) (symbol? (car x))
@@ -85,6 +89,7 @@
          (catalogue-options? (options d))
          (commands? (commands d))
          (list? (owned d)) (for-all (lambda (id) (id? id '(model))) (owned d)) (unique? (owned d))
+         (list? (cleanup d)) (for-all (lambda (id) (id? id '(buffer))) (cleanup d)) (unique? (cleanup d))
          (natural? (generation d)) (or (not (owner d)) (head? (owner d)))
          (natural? (sequence d)) (or (not (basis d)) (natural? (basis d)))
          (or (not (focus d)) (id? (focus d) '(model)))))
@@ -102,4 +107,4 @@
   (edoc "The source and child resource references of a descriptor." (d list "descriptor") (returns list))
   (define (references d)
     (fold-left (lambda (out id) (if (member id out) out (append out (list id)))) '()
-      (append (if (source d) (list (source d)) '()) (map cadr (children d)) (map cadr (commands d)) (owned d)))))
+      (append (if (source d) (list (source d)) '()) (map cadr (children d)) (map cadr (commands d)) (owned d) (cleanup d)))))

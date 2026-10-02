@@ -15,7 +15,7 @@
   (define (revision id) (get (record id) 'revision #f))
 
   (edoc "Register an explicit history presentation recipe. The module-owned factory receives portable data and returns a fresh unmounted view. Registration never evaluates saved data; absent definitions show an inert marker."
-    (kind symbol "recipe kind") (schema integer "positive version") (factory procedure "data -> unmounted view") (public))
+    (kind symbol "recipe kind") (schema integer "positive version") (factory procedure "owner and data -> unmounted owned view") (public))
   (define (register! kind schema factory)
     (unless (and (symbol? kind) (integer? schema) (positive? schema) (procedure? factory))
       (error 'register! "expected kind, positive schema and factory"))
@@ -24,12 +24,12 @@
   (define (release! id)
     (let ([s (hashtable-ref sessions id #f)])
       (when s (range:release! (car s)) (hashtable-delete! sessions id))))
-  (define (child! data)
+  (define (child! owner data)
     (let* ([recipe (get data 'recipe #f)] [f (factory recipe)])
-      (if f ((cdr f) (caddr recipe))
+      (if f ((cdr f) owner (caddr recipe))
         (view:create! head:ui-actor #f 'label 1
           (list (cons 'text (format "[Unavailable presentation: ~a ~a]" (car recipe) (cadr recipe))) '(face . ghost)
-            '(history-missing . #t)) '()))))
+            '(history-missing . #t)) '() owner))))
   (define (service! id frame)
     (let* ([d (interaction:snapshot id)] [query (view:source d)]
            [token (or (hashtable-ref sessions id #f)
@@ -59,7 +59,7 @@
                                                 (not (get (view:options (view:snapshot (cadr c))) 'history-missing #f)))) old rows))]
                        [children (if same? old
                                    (map (lambda (r i) (list (string->symbol (format "item-~a" i))
-                                                        (child! (caddr (assq 'item (caddr r)))) '(grow 1))) rows (iota (length rows))))]
+                                                        (child! id (caddr (assq 'item (caddr r)))) '(grow 1))) rows (iota (length rows))))]
                        [options (list (cons 'page-size size) (cons 'items keys))])
                   (if same? (set-car! (cdr token) signature)
                     (begin
@@ -90,23 +90,23 @@
         "[Text projection unavailable]")))
 
   (edoc "Create an independently paged history composition. At most page-size child presentations are mounted; sizing and typography remain in the head. Source items/jobs survive hiding and view retirement."
-    (source model "history") (page-size integer "1 through 16 visible items") (returns model) (public))
-  (define (create! source page-size)
+    (owner (or model #f) "lifetime owner, false for a session root") (source model "history") (page-size integer "1 through 16 visible items") (returns model) (public))
+  (define (create! owner source page-size)
     (unless (and (integer? page-size) (<= 1 page-size 16)) (error 'create! "expected page size 1 through 16"))
     (let* ([who head:ui-actor] [query (collection:create! who source "" '() 'persistent '())]
-           [root (view:create! who query 'history 1 (list (cons 'page-size page-size) '(items)) '(0))]
-           [navigation (view:create! who #f 'row 1 '((spacing . normal)) '())]
+           [root (view:create! who query 'history 1 (list (cons 'page-size page-size) '(items)) '(0) owner)]
+           [navigation (view:create! who #f 'row 1 '((spacing . normal)) '() root)]
            [buttons (map (lambda (text delta)
                            (view:create! who #f 'action-text 1
-                             (list (cons 'text text) '(enabled . #t) (list 'commands (list 'activate root 'move (list delta)))) '()))
+                             (list (cons 'text text) '(enabled . #t) (list 'commands (list 'activate root 'move (list delta)))) '() root))
                       '("Previous" "Next") (list (- page-size) page-size))])
       (view:arrange! who (list (list navigation 0 (map (lambda (name child) (list name child 'fit)) '(previous next) buttons) '((spacing . normal)))
                            (list root 0 (list (list 'navigation navigation 'fit)) (list (cons 'page-size page-size) '(items)))) '()) root))
 
   (edoc "Register history composition, standard text/result recipes and named page commands." (public))
   (define (init!)
-    (register! 'text 1 (lambda (document) (edit:create-view! head:ui-actor document '((read-only . #t)))))
-    (register! 'result 1 (lambda (job) (eval:create-result-view! head:ui-actor job)))
+    (register! 'text 1 (lambda (owner document) (edit:create-view! head:ui-actor document '((read-only . #t)) owner)))
+    (register! 'result 1 (lambda (owner job) (eval:create-result-view! head:ui-actor owner job)))
     (widget:register! 'history 1
       (append (layout:container 'y)
         (list (cons 'service service!) (cons 'release release!) '(contexts . (widget-history))

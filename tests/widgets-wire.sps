@@ -20,7 +20,7 @@
          (prompt:create! wire-prompt-request '((label . "Wire prompt:"))
            (list (list 'accepted wire-prompt-host 'accepted '()))))
        (view:arrange! head:ui-actor (list (list wire-prompt-host 0 (list (list 'prompt wire-prompt-view '(grow 1))) '())) '())
-       (window:show-widget! (seat:current-window) wire-prompt-host)
+       (window-host:show-widget! (seat:current-window) wire-prompt-host)
        #t))
   (head-wait 'prompt-control-is-shown a (lambda () (head-sees? a "Wire prompt:")))
   (head-send! a "val\t\t")
@@ -100,8 +100,9 @@
        [answer-a (head-read a `(cadr (assq 'answer (view:children (interaction:snapshot ',root-a)))))]
        [query (head-read a `(view:source (interaction:snapshot ',table-a)))]
        [root-b (head-read b `(begin (load ,example)
-                               (let ([root (view:fork! head:ui-actor ',root-a)])
-                                 (window:show-widget! (seat:current-window) root) root)))]
+                               (let* ([retainer (view:create! head:ui-actor #f 'vertical 1 '() '())]
+                                      [root (view:fork! head:ui-actor ',root-a (list (cons 'owner retainer)))])
+                                 (window-host:show-widget! (seat:current-window) root) root)))]
        [table-b (head-read b `(cadr (assq 'table (view:children (interaction:snapshot ',root-b)))))])
   (define (key ui table)
     (head-read ui `(let ([s (cdr (assq 'selection (view:state (interaction:snapshot ',table))))]) (and s (caddr s)))))
@@ -174,7 +175,7 @@
   (head-read b `(begin (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) (head:before-frame!) #t))
   (test:await 'last-hidden-collection-releases-base-work
     (lambda () (eq? (cdr (assq 'status (cdr (assq 'value (rpc head 'collection-summary query))))) 'pending)))
-  (head-read a `(begin (window:show-widget! (seat:current-window) ',root-a) #t))
+  (head-read a `(begin (window-host:show-widget! (seat:current-window) ',root-a) #t))
   (head-wait 'hidden-collection-resumes-retained-recipe a (lambda () (equal? (key a table-a) "beta.ss")))
   (for-each
     (lambda (ui root)
@@ -293,9 +294,9 @@
   (let* ([before (head-read a '(catalogue-host:reference (seat:current-buffer-mirror)))]
          [host (head-read a `(begin
                                (kernel:load-modules! '("finder"))
-                               (let* ([host (window:tool! "finder-wire"
-                                              (lambda (commands) (finder:create! commands ,root ',query)))]
-                                      [b (window:show-widget! (seat:current-window) host)])
+                               (let* ([host (window-host:tool! "finder-wire"
+                                              (lambda (commands) (finder:create! #f commands ,root ',query)))]
+                                      [b (window-host:show-widget! (seat:current-window) host)])
                                  (seat:show-buffer-mirror! b) host)))])
     (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
     (test:check 'contextual-finder-and-table-completion-need-no-wire-reads

@@ -24,7 +24,7 @@
           (prefix (head routing) routing:)
           (prefix (head seat) seat:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (sys tty) tty:))
 
   ;; Keyboard input clears hover emphasis, not the physical pointer location.
@@ -98,14 +98,14 @@
         [(seat:window-button-at (- x 1) (- y 1)) =>
          (lambda (control)
            (let ([action (car control)] [w (cdr control)])
-             (unless (seat:popup? w) (window:focus! w))
+             (unless (seat:popup? w) (window-host:focus! w))
              (if (or (procedure? action) (keymap:call-action? action))
                (if (procedure? action) (action) (keymap:run! action))
                (case action
-                 [(below) (window:split-below!)]
-                 [(right) (window:split-right!)]
-                 [(close) (window:delete!)]
-                 [(clear) (window:clear-pop-up!)])))
+                 [(below) (window-host:split-below!)]
+                 [(right) (window-host:split-right!)]
+                 [(close) (window-host:delete!)]
+                 [(clear) (window-host:clear-pop-up!)])))
            "MOUSE-HANDLED")]
         [(seat:divider-at (- x 1) (- y 1)) =>
          (lambda (divider)
@@ -114,7 +114,7 @@
            ;; and still arms the drag
            (when (eq? (car divider) 'below)
              (seat:window-at (- x 1) (- y 1)
-               (lambda (entry) (window:focus! (car entry)))))
+               (lambda (entry) (window-host:focus! (car entry)))))
            (seat:set-drag! divider)
            "MOUSE-HANDLED")]
         [else
@@ -123,7 +123,7 @@
              (let ([w (car entry)] [start (cadr entry)] [height (caddr entry)])
                (cond
                  [(= (- y 1) (+ start height))        ; the status bar
-                  (window:focus! w)
+                  (window-host:focus! w)
                   "MOUSE-HANDLED"]
                  [(and (seat:window-scrollbar-column w)
                        (= (- x 1) (seat:window-scrollbar-column w)))
@@ -131,7 +131,7 @@
                   ;; take focus and do not invoke the row's click action.
                   (let ([old (seat:current-window)])
                     (unless (seat:app-buffer? (seat:window-buffer w))
-                      (window:focus! w))
+                      (window-host:focus! w))
                     (seat:set-current! w)
                     (when (and (seat:app-buffer? (seat:window-buffer w))
                                (memq old (seat:windows)))
@@ -166,7 +166,7 @@
                                (arm-text-selection! double?)])))
                     "MOUSE-HANDLED")]
                  [else                                ; a text row
-                  (window:focus! w)
+                  (window-host:focus! w)
                   (seat:goto! (paint:window-position w start height x y))
                   (arm-text-selection! double?)
                   (seat:set-drag! (cons w (seat:window-buffer w)))
@@ -317,7 +317,7 @@
         (begin
           (when (cadr result)
             (let ([w (find (lambda (w) (equal? (car result) (seat:window-widget w))) (seat:windows))])
-              (when w (window:focus! w))))
+              (when w (window-host:focus! w))))
           (if (and motion? (eq? button 'none)) 'ignore "MOUSE-HANDLED")))))
 
   (define (apply-mouse-event! handle? c b x y)

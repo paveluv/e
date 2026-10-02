@@ -1,4 +1,4 @@
-;; window.sls -- the window commands: the library (window).
+;; Temporary commands over the legacy head layout, pending widget migration.
 ;;
 ;; Focus, splits, resizing and deletion over the head's layout tree, the
 ;; per-window settings, wrap and line numbers, and the placement
@@ -9,7 +9,7 @@
 ;; owned by the module for reload.
 
 (import (only (foundation edoc) elibrary))
-(elibrary (head window)
+(elibrary (head window-host)
   (export clear-pop-up! delete! delete-others! display! focus! focus-down! focus-left! focus-next! focus-right! focus-up! init! link! link-target! linked (rename (links-data links)) open-document! pop-up-or-reuse! register-link-tag! register-presentation! resize! return! set-line-numbers! set-wrap! show-widget! split-above! split-below! split-left! split-right! toggle-line-numbers! toggle-wrap! tool! unlink!)
   (import (rnrs)
           (only (chezscheme) format void quotient)

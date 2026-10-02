@@ -33,7 +33,7 @@
     (wait q 2)
     (test:check 'catalogue-lists-explicit-entries-regardless-of-parent-without-generated-lines
       (list (map cadr (rows q)) (assq 'lines (caddar (rows q)))) (list (list listed root) '(lines absent)))
-    (let* ([host (window:show-widget! (seat:current-window) root)] [barrier (query!)])
+    (let* ([host (window-host:show-widget! (seat:current-window) root)] [barrier (query!)])
       (wait barrier 2)
       (test:check 'window-host-reference-keeps-base-identity
         (list (catalogue-host:reference host) (eq? host (catalogue-host:resolve! root))) (list root #t))
@@ -52,14 +52,14 @@
       (model:retire! head:ui-actor barrier (model:revision barrier)))
     ;; Removal releases borrowed children but never opts a control into the
     ;; catalogue merely because it has become a named root.
-    (let ([host (window:show-widget! (seat:current-window) root)])
+    (let ([host (window-host:show-widget! (seat:current-window) root)])
       (test:check 'own-mounted-view-retires-atomically
         (list (catalogue-host:retire! root (view:generation (view:snapshot root))) (memq host (seat:buffers))) '(#t #f)))
     (wait q 1)
     (test:check 'released-controls-stay-private-and-listed-apps-stay-visible
       (list (map cadr (rows q)) (view:parent (view:snapshot child)) (view:parent (view:snapshot listed)))
       (list (list listed) #f #f))
-    (let ([host (window:show-widget! (seat:current-window) container)])
+    (let ([host (window-host:show-widget! (seat:current-window) container)])
       (test:check 'explicit-catalogue-opt-out-survives-default-window-placement
         (assq 'catalogue (view:options (view:snapshot container))) '(catalogue . #f))
       (seat:forget-buffer! host))

@@ -54,7 +54,7 @@
 
   (define modules
     '("activity" "actor" "catalogue" "collection" "composition" "connection" "daemon" "datum" "diff" "doc" "document" "endpoint" "environment" "extension" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "operation" "path" "policy" "port" "row"
-      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "history" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "wire" "work-queue"))
+      "change-preview" "conflict-review" "conflict-source" "git" "git-source" "history" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "window" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
   ;; The hello supplies no grants. Agent write access must be selected here.
@@ -104,6 +104,7 @@
               (let ([result (kernel:load-config! 'base)])
                 (when (condition? result) (raise result)))
               (root-binding:resume! #f)
+              (for-each (lambda (failure) (log:add! 'base:call-with-runtime failure)) (view:resume!))
               ;; the trash expires by age: at startup, then at each daily rotation
               (store:expire-trash! '(base e))))
           (thunk))
@@ -166,7 +167,9 @@
       [(view-read) (arity 1) (view:snapshot (car args))]
       [(view-tree) (arity 1) (view:tree (car args))]
       [(view-arrange) (control!) (arity 2) (call-with-values (lambda () (apply view:arrange! actor args)) list)]
-      [(view-fork) (control!) (arity 1) (view:fork! actor (car args))]
+      [(view-fork) (control!)
+       (unless (<= 1 (length args) 2) (error 'wire "view-fork expects optional ownership and command receiver options"))
+       (apply view:fork! actor args)]
       [(view-claim) (control!) (arity 1) (call-with-values (lambda () (apply view:claim! actor args)) list)]
       [(view-publish) (control!) (arity 1) (call-with-values (lambda () (view:publish! actor (car args))) list)]
       [(view-set) (control!) (arity 3) (call-with-values (lambda () (apply view:set-state! actor args)) list)]

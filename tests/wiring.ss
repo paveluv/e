@@ -158,14 +158,14 @@
      (check 'window-numbers-are-reused-and-print-as-literals
        (read-editor
          '(let ([indices (lambda () (list-sort < (map seat:window-index (seat:windows))))])
-            (window:split-below!) (window:split-below!)
+            (window-host:split-below!) (window-host:split-below!)
             (let ([split (indices)])
-              (window:focus! (window 1)) (window:delete!)
+              (window-host:focus! (window 1)) (window-host:delete!)
               (paint:window-layout)
               (let ([deleted (indices)])
-                (window:split-below!)
+                (window-host:split-below!)
                 (let ([reused (indices)] [literal (format "~s" (window 2))])
-                  (window:focus! (window 1)) (window:delete-others!)
+                  (window-host:focus! (window 1)) (window-host:delete-others!)
                   (list split deleted reused literal))))))
        '((0 1 2 3) (0 2 3) (0 1 2 3) "(window 2)"))
      (check 'status-lines-lead-with-the-number
@@ -175,8 +175,8 @@
      (check 'the-pop-up-is-window-0-and-stays-out-of-the-way
        (read-editor
          '(list (seat:window-index (seat:popup)) (seat:popup-rows)
-                (window:focus! (window 0)) (eq? (window:focus-next!) (seat:current-window))
-                (begin (window:delete!) (seat:window-index (seat:current-window)))
+                (window-host:focus! (window 0)) (eq? (window-host:focus-next!) (seat:current-window))
+                (begin (window-host:delete!) (seat:window-index (seat:current-window)))
                 (seat:window? (seat:layout-split-first (seat:root)))
                 (eq? (seat:layout-split-second (seat:root)) (seat:popup))))
        '(0 0 #f #t 1 #t #t))
@@ -188,12 +188,12 @@
                 [position (lambda ()
                             (let ([leaves (seat:layout-leaves (seat:layout-split-first (seat:root)))])
                               (- (length leaves) (length (memq (seat:current-window) leaves)))))])
-            (window:split-above!)
+            (window-host:split-above!)
             (let ([above (list (position) (seat:layout-split-orientation (rest)))])
-              (window:delete-others!)
-              (window:split-left!)
+              (window-host:delete-others!)
+              (window-host:split-left!)
               (let ([left (list (position) (seat:layout-split-orientation (rest)))])
-                (window:delete-others!)
+                (window-host:delete-others!)
                 (list above left)))))
        '((1 below) (1 right)))
 
@@ -203,7 +203,7 @@
        (read-editor
          '(let ([id (store:create! '(app surface-live) "*surface-live*"
                                    '("界e\x301;Z") '((read-only . #t) (wrap . #t)))])
-            (window:delete-others!)
+            (window-host:delete-others!)
             (seat:scrollbar #f)
             (surface:publish! id #f 0
               '((0 #("31" "31" "1" #f)
@@ -262,7 +262,7 @@
                                 (caddr (reference:page head:ui-actor receiver))
                                 (store:line receiver 0))])
                   (kernel:retract-module! 'wired-reference-fixture)
-                  (window:delete-others!) result)))))
+                  (window-host:delete-others!) result)))))
        '(#t #t #t #t #t markdown:view! "**keys**: C-c F12  "))
 
      ;; Local work still requires review. The base remains writable while

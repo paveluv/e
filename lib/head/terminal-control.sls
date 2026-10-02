@@ -5,9 +5,9 @@
   (import (chezscheme) (prefix (core kernel) kernel:)
     (prefix (head editor) editor:) (prefix (head head) head:)
     (prefix (head interaction) interaction:) (prefix (head keymap) keymap:) (prefix (head render) render:)
-    (prefix (head terminal-state) terminal-state:) (prefix (head text-source) text-source:)
+    (prefix (head text-source) text-source:)
     (prefix (head widget) widget:) (prefix (service log) log:)
-    (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state view) view:))
+    (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state terminal-state) terminal-state:) (prefix (state view) view:))
 
   (define-record-type mount (fields (mutable facts) (mutable offered) (mutable pointer) toggle))
   (define mounts (make-hashtable equal-hash equal?))

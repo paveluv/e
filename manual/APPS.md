@@ -12,8 +12,8 @@ typed ports and explicit command targets. `C-x TAB` opens Bindings to inspect
 the active keymaps, pointer bindings and forwarding chains. Those same public
 commands can be called from M-x or scripts with an explicit view receiver.
 
-`window:tool!` is the default host's entry point for a named composition;
-`window:show-widget!` places an existing root. These choose placement only.
+`window-host:tool!` is the default host's entry point for a named composition;
+`window-host:show-widget!` places an existing root. These choose placement only.
 The old local-buffer registration, snapshot-output and per-window alternate
 text APIs have been removed. A widget does not render by replacing a local
 buffer. Source documents use `store:`, bounded row sets use `collection:`,

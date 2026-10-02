@@ -69,12 +69,12 @@
              [else (memq phase '(move leave))])))]))
 
   (edoc "Compose a label, an existing single-line text entry and status text; the root exposes the entry's text output."
-        (actor datum "creator") (source list "text buffer reference") (label string "label") (status string "status text") (returns model "root view"))
-  (define (create-filter! actor source label status)
-    (let* ([root (view:create! actor source 'filter 1 '((spacing . normal)) '())]
-           [label (view:create! actor #f 'label 1 (list (cons 'text label)) '())]
-           [entry (view:create! actor source 'entry 1 '() '((0 . 0) (0 . 0)))]
-           [status (view:create! actor #f 'label 1 (list (cons 'text status) '(role . ghost)) '())])
+        (actor datum "creator") (owner (or model #f) "lifetime owner, false for a session root") (source list "text buffer reference") (label string "label") (status string "status text") (returns model "root view"))
+  (define (create-filter! actor owner source label status)
+    (let* ([root (view:create! actor source 'filter 1 '((spacing . normal)) '() owner)]
+           [label (view:create! actor #f 'label 1 (list (cons 'text label)) '() root)]
+           [entry (view:create! actor source 'entry 1 '() '((0 . 0) (0 . 0)) root)]
+           [status (view:create! actor #f 'label 1 (list (cons 'text status) '(role . ghost)) '() root)])
       (view:arrange! actor (list (list root 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1)) (list 'status status 'fit)) '((spacing . normal)))) '())
       root))
 

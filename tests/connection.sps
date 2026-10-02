@@ -101,6 +101,28 @@
       (test:check 'connection-fork-remaps-owned-edges-atomically
         (list (connection:bindings copy) (list-head (connection:read b2 'in) 2))
         (list (list (list b2 'in (list a2 'out))) '(ready "A"))))
+    (let* ([lifetime (model:create! author 'connection-fixture 1 'session 'transient '() '())]
+           [retainer (view:create! author #f 'row 1 '() '() lifetime)]
+           [source (view:create! author #f 'row 1 '() '() lifetime)]
+           [a1 (view:create! author #f 'connected-fixture 1 '((fallback . "a")) '((text . "A")) source)]
+           [b1 (view:create! author #f 'connected-fixture 1 '((fallback . "b")) '((text . "B")) source)]
+           [bound (begin (view:arrange! author (list (list source 0 (list (list 'a a1 'fit) (list 'b b1 'fit)) '())) '())
+                    (bind source b1 #f (list a1 'out)))]
+           [notices (test:recorder)] [token (model:subscribe! #f notices)]
+           [copy (view:fork! author source (list (cons 'owner retainer)))] [children (view:children (view:snapshot copy))]
+           [a2 (cadar children)] [b2 (cadadr children)] [plan (view:disposal retainer)])
+      (model:unsubscribe! token)
+      (test:check 'connection-retained-fork-preserves-transient-lifetime-including-bindings
+        (list (length (notices)) (length (car plan))
+          (for-all (lambda (r) (eq? (field r 'persistence) 'transient)) (car plan))
+          (connection:bindings copy) (list-head (connection:read b2 'in) 2)
+          (view:owned (view:snapshot retainer)) (view:parent (view:snapshot copy)))
+        (list 1 5 #t (list (list b2 'in (list a2 'out))) '(ready "A") (list copy) #f))
+      (view:retire! author retainer (model:revision retainer))
+      (test:check 'connection-retained-fork-disposal-does-not-release-original-bindings
+        (list (map (lambda (r) (model:snapshot (field r 'id))) (car plan))
+          (connection:bindings source) (list-head (connection:read b1 'in) 2))
+        (list (make-list 5 #f) (list (list b1 'in (list a1 'out))) '(ready "A"))))
     (view:claim! '(head "foreign") root)
     (test:check 'connection-foreign-owned-view-refuses-rewire
       (bind root b (list a 'out) #f) 'owned)

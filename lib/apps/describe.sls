@@ -20,7 +20,7 @@
           (prefix (head seat) seat:)
           (prefix (head style) style:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service reference) reference:)
@@ -53,9 +53,9 @@
             (hashtable-set! refreshed id context)
             (let ([page (reference:page head:ui-actor (view:source d))])
               (when page (reference:select! head:ui-actor (car page) (cadr page) (caddr page) (keymap:command-keys (caddr page))))))))))
-  (define (create-page! document commands)
-    (let* ([page (view:create! head:ui-actor document 'describe 1 '() '())]
-           [body (markdown:create! head:ui-actor document commands)])
+  (define (create-page! owner document commands)
+    (let* ([page (view:create! head:ui-actor document 'describe 1 '() '() owner)]
+           [body (markdown:create! head:ui-actor page document commands)])
       (view:arrange! head:ui-actor (list (list page 0 (list (list 'body body '(grow 1))) '())) '()) page))
 
   (define (top-level-name value)
@@ -81,9 +81,9 @@
         (edit:set-message! (format "No documentation for ~a" name))
         (begin
           (seat:adopt-store-buffer! id)
-          (let* ([root (window:tool! "describe" (lambda (commands) (create-page! id commands)) (format "describe:~a" id))]
+          (let* ([root (window-host:tool! "describe" (lambda (commands) (create-page! #f id commands)) (format "describe:~a" id))]
                  [b (catalogue-host:resolve! root)])
-            (if (window:pop-up-or-reuse! root) (edit:set-message! "")
+            (if (window-host:pop-up-or-reuse! root) (edit:set-message! "")
               (edit:set-message! (format "~a: see ~a" name (seat:buffer-name b)))))))
       id))
 

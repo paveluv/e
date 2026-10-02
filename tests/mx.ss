@@ -15,7 +15,7 @@
 (eval
   '(begin
      (import (except (head edit) init!) (head literal) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
-             (prefix (head window) window:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
+             (prefix (head window-host) window-host:) (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
              (prefix (only (head edit) init!) edit:) (prefix (foundation text) text:)
              (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
@@ -30,7 +30,7 @@
              (prefix (head control) control:) (prefix (head entry) entry:) (prefix (head layout) layout:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (kernel:load-module! "region")
      (kernel:load-module! "literal")
      (check 'loading-modules-does-not-publish-value-constructors
@@ -41,7 +41,7 @@
        (lambda (case)
          (check (list 'settle (car case)) (settled (car case)) (cons (cadr case) (string-length (cadr case)))))
        '(;; a nullary operator closes its form; one taking arguments steps to the first
-         ("(window:split-right!" "(window:split-right!)")
+         ("(window-host:split-right!" "(window-host:split-right!)")
          ("(seat:window-index" "(seat:window-index ")
          ;; the last argument closes the form, an earlier one steps on
          ("(seat:window-index (seat:current-window" "(seat:window-index (seat:current-window))")
@@ -57,7 +57,7 @@
          ("(define foo" "(define foo")
          ("(no-such-procedure-here" "(no-such-procedure-here")
          ;; a quoted or quasiquoted form is data
-         ("'(window:split-right!" "'(window:split-right!")
+         ("'(window-host:split-right!" "'(window-host:split-right!")
          ("`(seat:current-window" "`(seat:current-window")
          ("(list '(seat:current-window" "(list '(seat:current-window")
          ;; too many arguments already: nothing to close
@@ -253,7 +253,7 @@
      (check 'literals-and-strings-complete-in-place
        (list (has? "'clean" (labels "(seat:buffer-wrap-set! b ")) (has? "#f" (labels "(seat:buffer-wrap-set! b "))
              ;; the language's types offer their own values but no producers
-             (length (labels "(seat:buffer-wrap-set! b ")) (labels "(window:set-wrap! ")
+             (length (labels "(seat:buffer-wrap-set! b ")) (labels "(window-host:set-wrap! ")
              (has-prefix? "manual/" (labels "(visit-file! \"man"))
              (has? "*scratch*" (labels "(seat:show-buffer! *scr"))
              ;; an undocumented operator falls back to symbols
@@ -285,11 +285,11 @@
      ;; closed string is never completed further, existing or not
      (check 'a-final-datum-settles-the-forms-around-it
        (list (settled "(save-file! \"~/ddd\"") (settled "(save-file! \"~/ddd")
-             (settled "(seat:show-buffer! '(buffer 1)") (settled "(window:split-right! ")
+             (settled "(seat:show-buffer! '(buffer 1)") (settled "(window-host:split-right! ")
              (settled "(seat:set-window-buffer! (window 1)") (settled "(seat:set-window-buffer! (window 1) ")
              (labels "(extension:load! \"x\" \"y\"") (labels "(visit-file! \"manual/\""))
        '(("(save-file! \"~/ddd\")" . 20) ("(save-file! \"~/ddd\")" . 20)
-         ("(seat:show-buffer! '(buffer 1))" . 31) ("(window:split-right!)" . 21)
+         ("(seat:show-buffer! '(buffer 1))" . 31) ("(window-host:split-right!)" . 26)
          ("(seat:set-window-buffer! (window 1) " . 36) ("(seat:set-window-buffer! (window 1) " . 36) #f #f))
 
      ;; ~ and / lead the home and the root directory, though the matcher has

@@ -263,22 +263,128 @@
       (test:check 'view-ancestor-witness-prevents-concurrent-cycle
         (list (length (filter (lambda (status) (eq? status 'applied)) results))
               (and (view:parent (view:snapshot x)) (view:parent (view:snapshot y)))) '(1 #f))))
-  (let* ([root (view:create! author #f 'column 1 '() '())]
-         [resource (model:create! author 'sample 1 root 'persistent '() '("private"))]
-         [prepared? #f] [rolled-back? #f])
+  (let* ([root (view:create! author #f 'copy-fixture 1 '() '())]
+         [resource (model:create! author 'sample 1 root 'transient '() '("private"))]
+         [failure #f] [rolled-back? #f] [output #f] [retainer #f])
+    (view:register-copy! 'copy-fixture 1
+      (lambda (options state mapped)
+        (values
+          (map (lambda (p)
+                 (case (car p)
+                   [(target) (cons 'target (mapped (cdr p)))]
+                   [(owned) (if (eq? failure 'ownership) '(owned) p)]
+                   [else p])) options)
+          (map mapped state))))
     (view:register-resource-kind! 'sample 1
       (lambda (actor r)
-        (set! prepared? #t)
+        (set! output (store:create! author "prepared copy output" '("") '((internal . #t))))
         ;; A concurrent interaction wins after resource preparation.
-        (view:set-state! author root #f 'moved)
-        (values (lambda (mapped) (list 'sample 1 (mapped root) 'persistent '() '("copy"))) '()
-          (lambda () (set! rolled-back? #t))))
-      (lambda (r) '()))
-    (view:arrange! author (list (list root 0 '() (list (list 'owned resource)))) '())
-    (let ([before (model:ids)])
-      (test:check 'view-fork-rolls-back-prepared-resources-on-witness-race
-        (list (test:raises? (lambda () (view:fork! author root))) prepared? rolled-back?
-          (equal? before (model:ids)) (view:state (view:snapshot root))) '(#t #t #t #t moved))))
+        (case failure
+          [(race) (view:set-state! author root #f 'moved)]
+          [(owner-change) (view:set-state! author retainer #f 'changed)]
+          [(owner-retire) (view:retire! author retainer (model:revision retainer))])
+        (let ([prepared output]
+              [staged (and (eq? failure 'prepared-persistent) (model:create! author 'sample 1 'session 'persistent '() '("prepared")))])
+          (values (lambda (mapped) (list 'sample 1 (mapped (get r 'scope)) (get r 'persistence)
+                                     (if staged (list prepared staged) (list prepared)) '("copy")))
+            (if staged (list (cons root staged)) '())
+            (lambda ()
+              (when staged (model:retire! author staged (model:revision staged)))
+              (store:delete! author prepared) (set! rolled-back? #t)))))
+      (lambda (r) (get r 'references)))
+    (view:arrange! author (list (list root 0 '()
+                                  (list (list 'owned resource) (cons 'target resource) (cons 'literal resource)))) '())
+    (view:set-state! author root #f (list resource '(buffer 99)))
+    (let* ([copy (view:fork! author root)] [d (view:snapshot copy)] [copied-resource (car (view:owned d))])
+      (test:check 'view-kind-copy-maps-private-data-without-guessing-literal-identities
+        (list (view:options d) (view:state d) (get (model:snapshot copied-resource) 'scope))
+        (list (list (list 'owned copied-resource) (cons 'target copied-resource) (cons 'literal resource))
+          (list copied-resource '(buffer 99)) copy)))
+    (let* ([external (view:create! author #f 'container 1 '() '())]
+           [borrowed (store:create! author "borrowed copy text" '("keep"))]
+           [child (view:create! author borrowed 'label 1 '() '() external)]
+           [destination (view:create! author #f 'container 1 '() '())])
+      (view:arrange! author
+        (list (list root (model:revision root) (list (list 'child child 'fit)) (view:options (view:snapshot root)))) '())
+      (view:claim! author destination)
+      (let* ([originals (map model:snapshot (list root child resource))] [notices (test:recorder)]
+             [token (model:subscribe! #f notices)] [lease (view:generation (view:snapshot destination))]
+             [copy (view:fork! author root (list (cons 'owner destination)))] [copied-child (cadar (view:children (view:snapshot copy)))]
+             [copied-resource (car (view:owned (view:snapshot copy)))])
+        (model:unsubscribe! token)
+        (test:check 'view-retained-fork-owns-one-closed-unmounted-copy-in-one-transaction
+          (list (view:owned (view:snapshot destination)) (view:children (view:snapshot destination))
+            (view:generation (view:snapshot destination)) (length (notices))
+            (map (lambda (id) (get (model:snapshot id) 'scope)) (list copy copied-child copied-resource))
+            (get (model:snapshot copied-resource) 'persistence)
+            (map (lambda (row) (view:owner (cdr row))) (view:tree copy))
+            (map model:snapshot (list root child resource)))
+          (list (list copy) '() lease 1 (list destination copy copy) 'transient '(#f #f) originals))
+        (let* ([committed (test:gate)] [release (test:gate)] [block? #t]
+               [token (model:subscribe! (list destination)
+                        (lambda (event)
+                          (when (and block? (not (model:snapshot copy)))
+                            (set! block? #f) (committed #t) (test:await 'view-disposal-release release))))]
+               [worker (test:worker
+                         (lambda () (call-with-values (lambda () (view:retire! author copy (model:revision copy)))
+                                      (lambda (status record) status))))])
+          (test:await 'view-disposal-committed committed)
+          (test:check 'retained-view-retirement-removes-ownership-and-preserves-output-cleanup-before-deletion
+            (list (view:owned (view:snapshot destination)) (descriptor:cleanup (view:snapshot destination))
+              (store:exists? output) (map model:snapshot (list copy copied-child copied-resource)))
+            (list '() (list output) #t '(#f #f #f)))
+          (view:resume!) (view:resume!) (release #t)
+          (test:check 'retained-view-retirement-finishes-after-idempotent-recovery (worker) 'applied)
+          (model:unsubscribe! token))
+        (test:check 'view-retained-fork-disposal-keeps-originals-and-borrowed-text
+          (list (map model:snapshot (list copy copied-child copied-resource)) (store:exists? output)
+            (store:line borrowed 0) (map model:snapshot (list root child resource)))
+          (list '(#f #f #f) #f "keep" originals))
+        (view:retire! author destination (model:revision destination))))
+    (test:check 'view-fork-rolls-back-output-on-invalid-copy-rule-and-source-or-retainer-races
+      (map (lambda (reason)
+             (view:set-state! author root #f (list resource '(buffer 99)))
+             (set! retainer (view:create! author #f 'container 1 '() '()))
+             (set! failure reason) (set! rolled-back? #f)
+             (let* ([before (model:ids)] [refused? (test:raises? (lambda () (view:fork! author root (list (cons 'owner retainer)))))])
+               (list refused? rolled-back? (store:exists? output)
+                 (equal? (if (eq? reason 'owner-retire) (remove retainer before) before) (model:ids)))))
+           '(ownership race owner-change owner-retire))
+      (make-list 4 '(#t #t #f #t)))
+    (set! failure #f)
+    (let* ([lifetime (model:create! author 'sample 1 'session 'transient '() '("lifetime"))]
+           [destination (view:create! author #f 'container 1 '() '() lifetime)]
+           [previous-output output] [before (model:ids)])
+      (test:check 'view-retained-fork-refuses-incompatible-persistence-before-preparing
+        (list (test:raises? (lambda () (view:fork! author root (list (cons 'owner destination)))))
+          (equal? before (model:ids)) (equal? previous-output output)) '(#t #t #t))
+      (let* ([prototype (view:create! author #f 'container 1 '() '() lifetime)]
+             [resource (model:create! author 'sample 1 prototype 'transient '() '("private"))])
+        (view:arrange! author (list (list prototype 0 '() (list (list 'owned resource)))) '())
+        (set! failure 'prepared-persistent) (set! rolled-back? #f)
+        (let ([before (model:ids)])
+          (test:check 'view-retained-fork-rolls-back-prepared-models-with-incompatible-persistence
+            (list (test:raises? (lambda () (view:fork! author prototype (list (cons 'owner destination)))))
+              rolled-back? (store:exists? output) (equal? before (model:ids))) '(#t #t #f #t)))))
+    (set! failure #f)
+    (let* ([destination (view:create! author #f 'container 1 '() '())] [before (model:ids)] [previous-output output])
+      (view:claim! '(head "foreign") destination)
+      (test:check 'view-retained-fork-refuses-foreign-owner-before-resource-preparation
+        (list (test:raises? (lambda () (view:fork! author root (list (cons 'owner destination)))))
+          (equal? before (model:ids)) (equal? previous-output output)) '(#t #t #t))))
+  (let* ([host (view:create! author #f 'container 1 '() '())]
+         [destination (view:create! author #f 'container 1 '() '())]
+         [template (view:create! author host 'label 1
+                     (list (list 'commands (list 'open host 'open (list host)))) '())]
+         [copy (view:fork! author template (list (cons 'owner destination) (list 'receivers (list host destination))))]
+         [d (view:snapshot copy)] [before (model:ids)])
+    (test:check 'fork-rebinds-only-explicit-command-receivers-and-rejects-ambiguous-or-unused-mappings
+      (list (view:source d) (descriptor:commands d)
+        (map (lambda (rows)
+               (test:raises? (lambda () (view:fork! author template (list (cons 'receivers rows))))))
+          (list (list (list host destination) (list host destination)) (list (list destination host))))
+        (equal? before (model:ids)))
+      (list host (list (list 'open destination 'open (list host))) '(#t #t) #t)))
   (let* ([legacy (saved 1 'widget-view 1 (list '(model 3) 'text 1 7 author 9 2 '(4 2)))]
          [upgraded (view:upgrade legacy)] [d (get upgraded 'value)]
          [before (car (exported))])

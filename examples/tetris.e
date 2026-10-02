@@ -4,7 +4,7 @@
 (import (prefix (only (foundation edoc) expression) edoc:)
         (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head interaction) interaction:)
         (prefix (head keymap) keymap:) (prefix (head style) style:)
-        (prefix (head widget) widget:) (prefix (head window) window:)
+        (prefix (head widget) widget:) (prefix (head window-host) window-host:)
         (prefix (state view) view:) (prefix (sys glyph) glyph:)
         (prefix (sys sys) sys:))
 
@@ -140,4 +140,4 @@
 (define (tetris:create!)
   (view:create! head:ui-actor #f 'tetris 1 '((name . "<tetris>")) (tetris:new-game)))
 (define (tetris:open!)
-  (let ([id (tetris:create!)]) (window:show-widget! (seat:current-window) id) id))
+  (let ([id (tetris:create!)]) (window-host:show-widget! (seat:current-window) id) id))

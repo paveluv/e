@@ -8,7 +8,7 @@
   '(begin
      (import (prefix (apps finder) finder:) (prefix (head edit) edit:)
              (prefix (core kernel) kernel:) (prefix (head head) head:) (prefix (head seat) seat:)
-             (prefix (head widget) widget:) (prefix (head window) window:)
+             (prefix (head widget) widget:) (prefix (head window-host) window-host:)
              (prefix (head entry) entry:) (prefix (head table) table:)
              (prefix (head control) control:) (prefix (head range) range:)
              (prefix (head interaction) interaction:) (prefix (head dispatch) dispatch:)
@@ -21,7 +21,7 @@
              (prefix (state collection) collection:) (prefix (state model) model:)
              (prefix (state view) view:) (prefix (state store) store:)
              (prefix (sys glyph) glyph:) (prefix (sys sys) sys:) (prefix (test) test:))
-     (widget:init!) (window:init!) (entry:init!) (control:init!) (table:init!) (finder:init!) (edit:init!)
+     (widget:init!) (window-host:init!) (entry:init!) (control:init!) (table:init!) (finder:init!) (edit:init!)
      (define check test:check)
      (define root (format "/tmp/e-files-~a-~a" (get-process-id) (random 1000000)))
      (define (path name) (string-append root "/" name))
@@ -76,11 +76,6 @@
            (map (lambda (i) (string-ref s i))
              (filter (lambda (i) (let ([r (vector-ref styles i)]) (if (pair? r) (memq role r) (eq? r role)))) (iota (string-length s)))))))
      (define (select! key) (table:select! table key) (settle!))
-     (define (complete!)
-       (finder:complete! app)
-       (test:await 'finder-completion-applied
-         (lambda () (draw!) (let ([v (metadata)])
-                              (and (eq? (get v 'status) 'ready) (null? (get (get v 'details) 'completion)))))))
      (settle!)
      (check 'finder-starts-focused-in-entry-with-real-row-keys
        (list (equal? (widget:focused host) entry) (seat:buffer-name (seat:current-buffer-mirror))
@@ -111,8 +106,12 @@
      (check 'directory-history-retraces-route (filter-text) (path "small/nested/"))
      (press! "LEFT" "LEFT" "RIGHT" "RIGHT")
      (check 'rapid-left-right-retains-all-navigation-intent (filter-text) (path "small/nested/"))
-     (filter! (path "small")) (complete!) (settle!)
-     (check 'base-completion-enters-unique-directory (filter-text) (path "small/"))
+     (filter! (path "small")) (finder:complete! app)
+     ;; An empty completion field also describes the moment before the worker
+     ;; starts. Wait for the observable result, not that ambiguous idle state.
+     (test:await 'base-completion-enters-unique-directory
+       (lambda () (draw!) (equal? (filter-text) (path "small/"))))
+     (settle!)
      (entry:insert! entry " ") (draw!)
      (check 'separator-projects-as-conjunction (visible? " ∧ ") #t)
      (press! "BACKSPACE")
@@ -242,7 +241,7 @@
      (finder:open!) (settle!)
      ;; The same composition works unmounted from a window with an explicit
      ;; host command; it never finds or replaces the current window itself.
-     (let* ([destination #f] [other (finder:create! '() root)]
+     (let* ([destination #f] [other (finder:create! #f '() root)]
             [receiver (view:create! head:ui-actor #f 'finder-fixture 1 '() '())])
        (widget:register! 'finder-fixture 1 (list (cons 'actions (list (cons 'open (lambda (id ref) (set! destination ref)))))))
        (let ([d (view:snapshot other)])

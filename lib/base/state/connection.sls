@@ -279,8 +279,10 @@
   (edoc "Allocate a composition fork and its internal bindings in one model transaction; sources outside the fork remain borrowed."
         (actor actor "creator") (originals list "view and owned resource envelopes")
         (build procedure "new model IDs -> allocation specifications")
-        (guards list "resource-owner envelopes to witness") (aliases list "prepared old-to-new resource references") (returns list))
-  (define (fork! actor originals build guards aliases)
+        (guards list "resource-owner envelopes to witness") (aliases list "prepared old-to-new resource references")
+        (update (list-of procedure) "optional pure copied IDs -> guarded neighbor changes") (returns list))
+  (define (fork! actor originals build guards aliases . update)
+    (define (updates ids) (if (null? update) '() ((car update) ids)))
     (define witnesses
       (fold-left (lambda (out r) (if (exists (lambda (old) (equal? (field r 'id) (field old 'id))) out) out (cons r out)))
         originals guards))
@@ -290,8 +292,9 @@
                      (when (and old (not (= (cadr old) (field r 'revision))))
                        (error 'fork! "resource owner changed during fork; retry"))
                      (if old out (cons (witness r) out)))) changes witnesses))
+    (unless (and (<= (length update) 1) (for-all procedure? update)) (error 'fork! "expected one update builder"))
     (if (null? (model:ids 'connection-topology))
-      (or (model:allocate! actor (length originals) build (lambda (ids) (map witness witnesses)))
+      (or (model:allocate! actor (length originals) build (lambda (ids) (with-witnesses (updates ids))))
         (error 'fork! "composition changed during fork; retry"))
       (let-values ([(top records edges) (capture)])
         (let* ([old-ids (map (lambda (r) (field r 'id)) originals)]
@@ -301,16 +304,18 @@
           (define (mapped ids id) (cond [(assoc id (mapping ids)) => cdr] [else id]))
           (or (model:allocate! actor count
                 (lambda (ids)
-                  (append (build (list-head ids n))
-                    (map (lambda (r)
-                           (let* ([owner (mapped ids (field r 'scope))]
-                                  [es (map (lambda (e) (list (mapped ids (car e)) (cadr e)
-                                                         (list (mapped ids (caaddr e)) (cadr (caddr e)))))
-                                        (filter (lambda (e) (member (car e) old-ids)) (field r 'value)))])
-                             (list 'connection-bindings 1 owner (field r 'persistence)
-                               (unique (cons owner (apply append (map (lambda (e) (list (car e) (caaddr e))) es)))) es))) owned)))
+                  (let* ([specs (build (list-head ids n))]
+                         [allocated (map (lambda (r spec) (cons (field r 'id) spec)) originals specs)])
+                    (append specs
+                      (map (lambda (r)
+                             (let* ([owner (mapped ids (field r 'scope))]
+                                    [es (map (lambda (e) (list (mapped ids (car e)) (cadr e)
+                                                           (list (mapped ids (caaddr e)) (cadr (caddr e)))))
+                                          (filter (lambda (e) (member (car e) old-ids)) (field r 'value)))])
+                               (list 'connection-bindings 1 owner (cadddr (cdr (assoc (field r 'scope) allocated)))
+                                 (unique (cons owner (apply append (map (lambda (e) (list (car e) (caaddr e))) es)))) es))) owned))))
                 (lambda (ids)
-                  (with-witnesses (append (map witness records)
+                  (with-witnesses (append (updates (list-head ids n)) (map witness records)
                                     (list (if (null? owned) (witness top)
                                             (advance top (append (map (lambda (r id) (cons (mapped ids (field r 'scope)) id)) owned (list-tail ids n))
                                                            (owners top)))))))))

@@ -7,5 +7,5 @@
          [root (view:create! who #f 'row 1 '() '())])
     (view:arrange! who
       (list (list root 0 (list (list 'wrapped left '(grow 1)) (list 'unwrapped right '(grow 1))) '())) '())
-    (window:show-widget! (seat:current-window) root)
+    (window-host:show-widget! (seat:current-window) root)
     root))

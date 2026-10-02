@@ -24,9 +24,9 @@
       (let ([disk (append (make-list 20 "context") '("other disk"))])
         (store:reload! bot other disk (list (cons 'base (string:join disk "\n")) '(trailing . #f))))
       (control:init!) (table:init!)))
-  (define a (delta-log:create! '() 'conflicts (list document other)))
-  (define b (delta-log:create! '() 'conflicts (list document)))
-  (define c (delta-log:create! '() 'rewrite (list rewrite-document)))
+  (define a (delta-log:create! #f '() 'conflicts (list document other)))
+  (define b (delta-log:create! #f '() 'conflicts (list document)))
+  (define c (delta-log:create! #f '() 'rewrite (list rewrite-document)))
   (define copy (view:fork! actor a))
   (define root (view:create! actor #f 'row 1 '() '()))
   (define (preview id) (query (child id 'preview)))
@@ -46,7 +46,9 @@
   (widget:mount! root 'review-fixture)
   (for-each await (list a b c copy))
   (check 'independent-review-widgets-borrow-sources-and-own-output
-    (list (not (equal? (query a) (query b))) (store:line (output a) 0) (store:property (output a) 'read-only)) '(#t "disk" #t))
+    (list (not (equal? (query a) (query b))) (store:line (output a) 0) (store:property (output a) 'read-only)
+      (exists (lambda (line) (string:search line "[Widget failed" 0 (string-length line)))
+        (widget:frame-lines (widget:prepare! root 240 16)))) '(#t "disk" #t #f))
   (let ([selection (selected a)] [shown (basis a)])
     (table:invoke! (child a 'table) 'mine)
     (await a)
@@ -93,6 +95,8 @@
       (list (model:snapshot p) (store:exists? out) (store:exists? (output a)) (and (model:snapshot (query a)) #t)) '(#f #f #t #t)))
   (let ([q (query a)] [p (preview a)] [out (output a)])
     (model:retire! actor q (model:revision q))
-    (test:await 'review-resource-retirement (lambda () (not (model:snapshot p))))
-    (check 'query-retirement-deletes-owned-output-not-original
-      (list (store:exists? out) (store:exists? document)) '(#f #t))))
+    (check 'borrowed-query-retirement-does-not-own-the-app
+      (and (model:snapshot a) (model:snapshot p) (store:exists? out)) #t)
+    (view:retire! actor a (model:revision a))
+    (check 'app-retirement-deletes-owned-output-not-original
+      (list (model:snapshot p) (store:exists? out) (store:exists? document)) '(#f #f #t))))

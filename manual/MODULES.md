@@ -553,7 +553,7 @@ Completing types describe values and offer choices; they never create
 top-level constructors. Paths, mode names and key spellings remain strings,
 styles and link tags remain symbols, and revisions remain numbers. For
 example, use `(mode:choose! "scheme")`, `(edit:visit-file! "notes.txt")`
-and `(keymap:bind! "C-x w" window:split-right!)`.
+and `(keymap:bind! "C-x w" window-host:split-right!)`.
 Mode names accept nonempty strings; `mode:find` separately queries the
 registry. Operations validate their own arguments, and `edoc:type-accepts?`
 is available for generic typed tools.
@@ -561,7 +561,7 @@ is available for generic typed tools.
 Buffer commands take `'(buffer id)` values. Resolve names explicitly with
 `store:find-named`, or select `seat:current-buffer`. The temporary window
 adapter still accepts `(window n)` and numeric selectors such as
-`(window:focus! 2)` until windows have model identities.
+`(window-host:focus! 2)` until windows have model identities.
 
 Whole-text presentation callbacks receive `(source row line)`. The source is
 an explicit snapshot made by `(mode:source lines facts)`, with immutable text

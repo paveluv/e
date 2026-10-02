@@ -63,7 +63,7 @@ is entered, e waits for the rest of the chord and displays the partial sequence
 in the echo area.
 
 A command must be a procedure callable with no arguments. Existing commands
-such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window:focus-next!` can be
+such as `edit:save!`, `edit:undo!`, `edit:beginning-of-buffer!`, and `window-host:focus-next!` can be
 used directly. `keymap:call` adapts a command that needs arguments, and the
 binding then reads as the call it makes in the bindings listing and under `C-h k`;
 a lambda works too, but shows as an anonymous command:

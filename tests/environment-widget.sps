@@ -56,7 +56,7 @@
           (completion-state:finish! s))
         ((completion:source-release b)))
       (include "tests/history.sps")
-      (let* ([view (eval:create-result-view! who job)] [fork (view:fork! who view)]
+      (let* ([view (eval:create-result-view! who #f job)] [fork (view:fork! who view)]
              [children (test:child-pids)]
              [draft (store:create! who "model prompt" '("(+ private-name 1)") '((internal . #t)))]
              [prompt (eval:create-model-prompt! env 1 draft '())])

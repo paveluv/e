@@ -18,7 +18,7 @@
   (define (choose! id reply row)
     (git-view:choose! id (list (query id) (cadr reply) (cadr row)) (caddr reply)))
   (parameterize ([kernel:registering-module 'git-view-test]) (git-view:init!))
-  (let* ([a (git-view:create! ".")] [b (git-view:create! "lib")]
+  (let* ([a (git-view:create! #f ".")] [b (git-view:create! #f "lib")]
          [qa (query a)] [qb (query b)] [patch (child a 'patch)] [qp (query patch)]
          [document (query (child patch 'text))])
     (check 'git-creation-does-not-start-work (get (get (model:snapshot qa) 'value) 'generation) 0)

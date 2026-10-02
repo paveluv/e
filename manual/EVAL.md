@@ -67,7 +67,7 @@ While the prompt is active:
 
 Symbol completion matches contiguous segments beginning at the start of a
 symbol or immediately after `-` or `:`. Segments may appear in a different
-order: `splitright` and `rightsplit` both find `window:split-right!`. Each
+order: `splitright` and `rightsplit` both find `window-host:split-right!`. Each
 character occurrence can be used only once, so `xx` requires two `x` characters.
 Matching is case-sensitive; other punctuation, including `_`, does not create
 a boundary. Longer intact segments, fewer reorderings, and matches nearer the
@@ -76,21 +76,21 @@ beginning rank first.
 Typed `-` and `:` stay inside literal segments, just like letters, and a
 segment may lead with one, anchored to the same separator in the name: `:sp`
 finds `head:split-window` but not `head:window-split`, `.sls` finds the
-`.sls` files and not `sls-mode`, and `s-b` abbreviates `window:split-below!`
+`.sls` files and not `sls-mode`, and `s-b` abbreviates `window-host:split-below!`
 as `s` + `-b`, while `b-s` does not, since no `-s` follows a `b` there. A
 separator alone is no segment, so `ker:` still cannot abbreviate `kernel:`;
 the one exception is a name's first character, so `*` finds `*scratch*`.
 You can omit separators when typing prefixes: `spwir` finds
-`window:split-right!` as `sp` + `wi` + `r`. Reordering still works with
-punctuation when the literal pieces exist: `rightwindow:` can match
-`window:split-right!` as `right` + `window:`.
+`window-host:split-right!` as `sp` + `wi` + `r`. Reordering still works with
+punctuation when the literal pieces exist: `rightwindow-host:` can match
+`window-host:split-right!` as `right` + `window-host:`.
 
 Tab chooses a longest extension that the original query can match and that
 still matches every candidate. This preserves exactly the same match set,
 including its boundary constraints. For example, `splitwindow` and
-`windowsplit` normalize to `window:split-` while all four split commands
+`windowsplit` normalize to `window-host:split-` while all four split commands
 remain. Adding `r` would lose the other three, so it is not inserted yet.
-Typing `r` and pressing Tab then produces `window:split-right!`, including
+Typing `r` and pressing Tab then produces `window-host:split-right!`, including
 the `!`.
 The same rule applies to separators: `ker:` cannot abbreviate the literal
 prefix `kernel:`. Tab cannot add a colon after `ker` merely because all

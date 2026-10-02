@@ -7,14 +7,14 @@
 (eval
   '(begin
      (import (prefix (test) test:) (prefix (core kernel) kernel:)
-             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window) window:)
+             (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:)
              (prefix (head widget) widget:) (prefix (head interaction) interaction:) (prefix (head range) range:)
              (prefix (head mode) mode:) (prefix (modes md-mode) md-mode:)
              (prefix (apps markdown) markdown:) (prefix (state collection) collection:)
              (prefix (state view) view:) (prefix (state store) store:)
              (prefix (service file) file:) (prefix (foundation text) text:))
      (define check test:check)
-     (collection:init!) (widget:init!) (edit:init!) (window:init!) (md-mode:init!)
+     (collection:init!) (widget:init!) (edit:init!) (window-host:init!) (md-mode:init!)
      (parameterize ([kernel:registering-module 'markdown-test]) (markdown:init!))
      (define b (seat:new-buffer! "notes.md"))
      (seat:buffer-lines-set! b '#("# Heading" "" "one" "two" "" "# Tail"))
@@ -68,7 +68,7 @@
      (delete-file path) (delete-directory directory)
      ;; Retirement leaves an explicit unavailable presentation and cannot
      ;; reopen the removed source through a stale command.
-     (window:show-widget! w root)
+     (window-host:show-widget! w root)
      (pump!)
      (store:delete! head:ui-actor document)
      (test:await 'markdown-retired-source

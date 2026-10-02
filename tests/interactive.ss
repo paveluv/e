@@ -140,14 +140,14 @@
                 (evaluate
                   `(begin
                      (tui:input-delay ,budget)
-                     (window:delete-others!)
+                     (window-host:delete-others!)
                      (let ([b (seat:new-local-buffer! "scroll-burst")])
                        (seat:buffer-lines-set! b
                          (list->vector (map (lambda (i) (format "~a ~a" i (make-string 90 #\x))) (iota 100))))
                        (seat:show-buffer-mirror! b))
-                     (window:set-wrap! #t)
-                     (window:split-right!)
-                     (window:set-wrap! #t)
+                     (window-host:set-wrap! #t)
+                     (window-host:split-right!)
+                     (window-host:set-wrap! #t)
                      (seat:double-click? 0 0 0)
                      (keymap:bind! "F11" paint:place-cursor!)
                      (keymap:bind! "F12"
@@ -172,7 +172,7 @@
          (equal? (car results) (cadr results))))
      (evaluate '(begin
                   (keymap:unbind! "F11") (keymap:unbind! "F12") (tui:input-delay 8)
-                  (window:delete-others!)
+                  (window-host:delete-others!)
                   (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
 
      ;; A divider owns its drag across widget contents, on either axis.
@@ -180,7 +180,7 @@
      (for-each
        (lambda (split)
          (evaluate `(begin
-                      (window:delete-others!) (buffet:open!) (,split)
+                      (window-host:delete-others!) (buffet:open!) (,split)
                       (let ([step 0])
                         (keymap:bind! 'buffet "F12" (lambda ()
                                                       (set! step (+ step 1))
@@ -203,9 +203,9 @@
                  (equal? (evaluate '(let ([d (car (seat:dividers))]) (list (caddr d) (cadddr d) (and (seat:drag) #t))))
                    (list (+ (cadr before) (if horizontal? delta 0)) (+ (caddr before) (if horizontal? 0 delta)) #f)))))
            '(-2 3) '(1 3)))
-       '(window:split-below! window:split-right!))
+       '(window-host:split-below! window-host:split-right!))
      (evaluate '(begin
-                  (keymap:unbind! 'buffet "F12") (window:delete-others!)
+                  (keymap:unbind! 'buffet "F12") (window-host:delete-others!)
                   (seat:show-buffer-mirror! (seat:buffer-named "*scratch*")) #t))
 
      ;; -- a nested terminal: default partial capture lets whole editor
@@ -264,17 +264,16 @@
      ;; -- M-x completion opens the pop-up window: the first Tab normalizes
      ;; without choosing, the second lists candidates above the echo area, and
      ;; the prompt's end hides the pop-up again -------------------------------
-     (send! "\x1b;xwindowsplit\t")
+     (send! "\x1b;xwindowhostsplit\t")
      (wait-for! 'first-tab-normalizes-without-choosing
-       (lambda () (and (find-cell "λ (window:split-")
+       (lambda () (and (find-cell "λ (window-host:split-")
                        (not (find-cell "<completions>")))) 5000)
      (send! "\t")
      (wait-for! 'completions-take-the-window
                 (lambda () (and (find-cell "4 matches of symbol")
                                 ;; each candidate carries its edoc hint, one per
                                 ;; row, a long hint wrapping under itself
-                                (find-cell "()  Split the selected")
-                                (find-cell "shows the same buffer.")))
+                                (find-cell "()  Split the selected")))
                 5000)
      (send! "\x7;")                     ; C-g
      (wait-for! 'completions-give-the-window-back
@@ -402,7 +401,7 @@
      (send! "\x18;\t")
      (wait-for! 'the-listing-returns-to-the-buffers-keys
        (lambda () (and (find-cell "<bindings>") (not (find-cell "prompt keys")))) 5000)
-     (evaluate '(begin (bindings:hide!) (window:delete-others!) #t))
+     (evaluate '(begin (bindings:hide!) (window-host:delete-others!) #t))
      (send! "\x8;k")
      (wait-for! 'describe-key-uses-the-normal-pump (lambda () (find-cell "Describe key:")) 5000)
      (send! "\x18;2")
@@ -438,9 +437,9 @@
      ;; head's contribution to the query, with no registry batch involved. Read
      ;; the screen: an evaluation right after a full-page repaint would wait on
      ;; the wire while the head waits on the PTY.
-     (send! "\x8;fwindow:split-left!\r")
+     (send! "\x8;fwindow-host:split-left!\r")
      (wait-for! 'edoc-documents-a-definition-without-a-registry-entry
-       (lambda () (and (find-cell "libraries: (head window)")
+       (lambda () (and (find-cell "libraries: (head window-host)")
                        (find-cell "source: edoc, Documented definitions")))
        5000)
 

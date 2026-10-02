@@ -111,13 +111,13 @@
           (when (session-copy s) (service-copy! id s))))))
 
   (edoc "Create an unmounted Markdown view over a borrowed document, with independent selection and scrolling. The base shares interpretation; each head fits its own width."
-        (actor actor "creator") (document buffer "source document")
+        (actor actor "creator") (owner (or model #f) "lifetime owner, false for a session root") (document buffer "source document")
         (origin (list-of integer) "optional initial source row") (returns model) (public))
-  (define (create-view! actor document . origin)
+  (define (create-view! actor owner document . origin)
     (unless (and (<= (length origin) 1) (for-all (lambda (n) (and (integer? n) (exact? n) (>= n 0))) origin))
       (error 'create-view! "expected at most one source row"))
     (let* ([query (markup-source:create! actor document)] [row (if (pair? origin) (car origin) 0)] [a (list row row 0 0)])
-      (view:create! actor query 'markdown 1 '((name . "<markdown>")) (list a a a #f) query)))
+      (view:create! actor query 'markdown 1 '((name . "<markdown>")) (list a a a #f) owner)))
 
   ;; A fitted page owns immutable text, character styles, links and semantic
   ;; anchors. Only this head cache contains terminal widths or rendered rows.

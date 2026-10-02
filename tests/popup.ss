@@ -18,26 +18,26 @@
              (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (head keymap) keymap:)
              (prefix (head paint) paint:)
-             (prefix (head window) window:))
+             (prefix (head window-host) window-host:))
 
      (define check test:check)
      (define path (format "/tmp/e-popup-~a.txt" (get-process-id)))
      (call-with-output-file path (lambda (p) (display "hello\n" p)))
      (define popup (seat:popup))
-     (window:init!)
+     (window-host:init!)
      (check 'c-x-esc-and-c-x-c-g-empty-the-pop-up
-       (list (eq? (keymap:binding "C-x ESC") window:clear-pop-up!) (eq? (keymap:binding "C-x C-g") window:clear-pop-up!)) '(#t #t))
+       (list (eq? (keymap:binding "C-x ESC") window-host:clear-pop-up!) (eq? (keymap:binding "C-x C-g") window-host:clear-pop-up!)) '(#t #t))
      (define (popup-name) (seat:buffer-name (seat:window-buffer popup)))
      (define (popup-entry) (find (lambda (e) (eq? (car e) popup)) (paint:window-layout)))
      (head:before-frame!)
      (check 'the-pop-up-starts-hidden-with-its-placeholder (list (seat:popup-rows) (popup-name)) '(0 "<pop-up>"))
 
-     (window:link-target! popup)
+     (window-host:link-target! popup)
      (seat:with-window popup (visit-file! path))
      (head:before-frame!)
      (define entry (popup-entry))
      (check 'a-buffer-sent-to-the-pop-up-shows-it
-       (list (> (seat:popup-rows) 0) (> (caddr entry) 0) (popup-name) (equal? (window:linked 'target) (list popup)))
+       (list (> (seat:popup-rows) 0) (> (caddr entry) 0) (popup-name) (equal? (window-host:linked 'target) (list popup)))
        (list #t #t (let ([s path]) (substring s (+ 1 (let loop ([i (- (string-length s) 1)]) (if (char=? (string-ref s i) #\/) i (loop (- i 1))))) (string-length s))) #t))
      (define status-row (+ (cadr entry) (caddr entry)))
      (define left (seat:window-xoff popup))
@@ -64,10 +64,10 @@
      (paint:window-layout) ; the dividers come with a tiling
      (check 'the-boundary-above-the-shown-pop-up-is-a-divider
        (and (exists (lambda (d) (and (eq? (car d) 'below) (eq? (cadr d) (seat:root)))) (seat:dividers)) #t) #t)
-     (window:delete-others!)
+     (window-host:delete-others!)
      (check 'keeping-one-window-hides-the-pop-up-too (seat:popup-rows) 0)
      (seat:with-window popup (visit-file! path))
-     (window:clear-pop-up!)
+     (window-host:clear-pop-up!)
      (head:before-frame!)
      (check 'clearing-restores-the-placeholder-and-hides-the-pane
        ;; hidden, the pane has no layout entry to paint or hit

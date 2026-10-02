@@ -17,11 +17,11 @@
          [needle (store:create! who "widget filter" '("") '((internal . #t)))]
          [query (collection:create! who source "" '() 'persistent (list source needle))]
          [answer (store:create! who "widget answer" '(""))]
-         [filter (control:create-filter! who needle "Filter:" "")]
+         [filter (control:create-filter! who #f needle "Filter:" "")]
          [output (view:create! who answer 'entry 1 '() '((0 . 0) (0 . 0)))]
          [target (view:create! who #f 'example-file-choice 1
                    (list (list 'commands (list 'insert output 'insert '()))) '())]
-         [table (table:create! who query '(name))]
+         [table (table:create! who #f query '(name))]
          [undo (view:create! who #f 'action-text 1
                  (list '(text . "Undo insertion") '(enabled . #t) (list 'commands (list 'activate output 'undo '()))) '())]
          [root (view:create! who #f 'column 1 '() '())])
@@ -33,5 +33,5 @@
         (list root 0 (list (list 'table table '(grow 1))
                        (list 'answer output 'fit) (list 'undo undo 'fit) (list 'target target 'fit)) '())) '())
     (connection:bind! who query (list (list query 'filter #f (list needle 'text))))
-    (window:show-widget! (seat:current-window) root)
+    (window-host:show-widget! (seat:current-window) root)
     root))

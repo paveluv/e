@@ -419,13 +419,13 @@ use the ordinary table widget. Sources and row generations fence each action.
 `rewrite:toggle!` and `rewrite:settle!` take its ID and expected revision;
 `rewrite:preview` returns choices, derived text, mapping, conflicts and source
 revision. `rewrite:close!` abandons it without changing the source. For a
-composition, `(delta-log:create! commands 'rewrite (list document))` creates
+composition, `(delta-log:create! owner commands 'rewrite (list document))` creates
 an unmounted table/preview over a fresh draft, usable without an editor window.
 
 ## Line numbers
 
-`C-x l` (`window:toggle-line-numbers!`) toggles line numbers in the current
-window, and `(window:set-line-numbers! setting)` sets them to `#t`, `#f` or
+`C-x l` (`window-host:toggle-line-numbers!`) toggles line numbers in the current
+window, and `(window-host:set-line-numbers! setting)` sets them to `#t`, `#f` or
 `default`. The setting belongs to the window and applies while it shows an
 edit buffer; an app's buffer shows itself as the app decides. Untoggled
 windows follow the configurable default:
@@ -583,7 +583,7 @@ the same `buffer-flag` enumeration as `seat:buffer-flags`: `conflicted` and
 `(buffet:create! commands)` creates an independent, unmounted composition.
 An optional catalogue query shares its filter and ordering with another view.
 Bind `open` and `return` explicitly to host actions; an embedded Buffet never
-chooses a window implicitly. The default `window:tool!` host retains the named
+chooses a window implicitly. The default `window-host:tool!` host retains the named
 app, origin and reopening policy. Split panes fork view state over the query,
 so selection, scroll and geometry remain independent.
 
@@ -660,8 +660,8 @@ wheel ticks move point sideways.
 
 Long lines soft-wrap by default. A continuation row ends in `\`. With wrapping
 off, truncated lines end in `$` and the window scrolls horizontally to follow
-point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`window:toggle-wrap!`)
-toggles wrapping for one window, and `(window:set-wrap! setting)` sets it to
+point. `(paint:wrap-lines #f)` changes the default, `C-x t` (`window-host:toggle-wrap!`)
+toggles wrapping for one window, and `(window-host:set-wrap! setting)` sets it to
 `#t`, `#f` or `default`. Like line numbers, the window's setting applies
 while it shows an edit buffer; a buffer's own wrap fact, set with
 `seat:buffer-wrap-set!`, is what an app's buffer follows and what an edit
@@ -678,9 +678,9 @@ column still count characters.
 
 Each split has independent point, scrolling, wrapping, and status. Splits form
 a tree, so either half may be split again in either direction: `C-x 2`
-(`window:split-below!`) divides only the current window into a stacked pair,
-and `C-x 3` (`window:split-right!`) divides only it into a side-by-side pair;
-`window:split-above!` and `window:split-left!` make the same splits with the
+(`window-host:split-below!`) divides only the current window into a stacked pair,
+and `C-x 3` (`window-host:split-right!`) divides only it into a side-by-side pair;
+`window-host:split-above!` and `window-host:split-left!` make the same splits with the
 new window first, and have no default keys. Deleting a window with `C-x 0`
 promotes its complete sibling subtree; the `×` button at the right edge of
 every status line performs the
@@ -711,12 +711,12 @@ hand. While it shows, the pop-up is a window like the others: `C-x o` and the
 text can be browsed, selected and copied, but not edited, since the pane is
 read-only; it cannot be split or closed. Its status line carries no split or
 close buttons, only a `↓` where the other windows' `×` is, which empties the
-pane, as `(window:clear-pop-up!)` does: the pane shows its own `<pop-up>`
+pane, as `(window-host:clear-pop-up!)` does: the pane shows its own `<pop-up>`
 placeholder again and hides, the buffer stays in the list, and if the pane
 was selected the window selected before it is again; `C-x ESC` and `C-x C-g`
 do the same from the keyboard, and `C-x 1` hides it along with the other
 windows. Dragging the status line
-of the window above the pane resizes it, as `(window:resize! n)` does in it;
+of the window above the pane resizes it, as `(window-host:resize! n)` does in it;
 a size given by hand sticks as the most the pane takes from then on, a
 shorter completion list taking less.
 `M-Up`, `M-Down`,
@@ -732,14 +732,14 @@ split tree's ownership and minimum sizes.
 
 A window can link to others, directed and tagged, many to many: a window
 may have several links out and several in, and a link lives while both
-windows are on screen. `(window:link! (window 2) (window-link-tag 'target))`
-links the current window to window 2 under a tag, `(window:link-target!
+windows are on screen. `(window-host:link! (window 2) (window-link-tag 'target))`
+links the current window to window 2 under a tag, `(window-host:link-target!
 (window 2))` under the `target` tag, the window a chooser in this one opens
 its pick in: with targets, `<finder>` opens a chosen file in every target
-window and keeps its own pane and the focus. `(window:linked 'target)` lists
-the current window's targets, `(window:links)` every link as data by window
-indexes, and `(window:unlink! (window 2))` removes the links to a window,
-one tag or all. `(window:register-link-tag! 'mirror "...")` adds a tag with
+window and keeps its own pane and the focus. `(window-host:linked 'target)` lists
+the current window's targets, `(window-host:links)` every link as data by window
+indexes, and `(window-host:unlink! (window 2))` removes the links to a window,
+one tag or all. `(window-host:register-link-tag! 'mirror "...")` adds a tag with
 its description; the `window-link-tag` type completes the registered tags at
 M-x, so a tag is an ordinary symbol there, `'target`.
 
@@ -766,8 +766,8 @@ indicates unsaved changes. Both facts are maintained by the text owner.
 
 `(edit:new-buffer! name)` creates an empty shared document, shows it, and returns
 its reference. `store:create!` creates content without placing it. Use
-`seat:show-buffer!` to select a document, or `window:display!` and
-`window:pop-up-or-reuse!` to place a shared document or mounted widget reference
+`seat:show-buffer!` to select a document, or `window-host:display!` and
+`window-host:pop-up-or-reuse!` to place a shared document or mounted widget reference
 without leaving the current window. `seat:with-buffer` temporarily selects a
 shared document for current-context editing and search. For example:
 
@@ -911,7 +911,7 @@ Local labels share the head's buffer namespace.  A collision receives
 the local buffer yields the conflicting label.  `seat:add-buffer!`
 adds a buffer to the list without displaying it and claims its label.
 
-`window:tool!` retains a named widget composition in the default head host.
+`window-host:tool!` retains a named widget composition in the default head host.
 Its stable tool key is separate from its displayed label, so renaming or a
 label collision does not replace its identity. `seat:find-tool-buffer` is the
 outer host's lookup; extensions should use widget sources and views rather

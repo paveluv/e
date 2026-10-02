@@ -20,11 +20,11 @@
   (edoc "Create a view using this connection's identity. An optional resource owner supplies its scope and persistence; otherwise it is session-persistent. Source is a model/buffer reference or false for a container."
         (actor actor "connection attribution") (source datum "source reference") (kind symbol "widget kind")
         (schema integer "contract version") (options list "logical options") (state datum "initial interaction")
-        (scope (list-of model) "optional resource owner") (returns model))
+        (scope (list-of (or model #f)) "optional resource owner, false for session lifetime") (returns model))
   (define (create! actor source kind schema options state . scope)
     (apply client:request 'view-create source kind schema options state scope))
 
-  (edoc "Retire an unowned view or this head's mounted view against its revision, atomically detaching it and releasing its child subtrees, then releasing explicitly owned resources. Another head's mount refuses. Borrowed sources and command targets survive. Return status and current target envelope."
+  (edoc "Retire a view against its revision, unlinking its parent and releasing borrowed children. Under a view lifetime, atomically retire its owned/scoped graph and keep resumable output cleanup on that owner; standalone retirement releases resources synchronously. Borrowed sources and command targets survive. Another head's mount refuses. Return status and current target envelope; pending preserves an unfinished cleanup intent."
         (actor actor "connection attribution") (id model "view") (revision integer "expected model revision"))
   (define (retire! actor id revision) (apply values (client:request 'view-retire id revision)))
 
@@ -35,8 +35,9 @@
         (actor actor "connection identity") (changes list "(id revision children options)") (leases list "(root generation)"))
   (define (arrange! actor changes leases) (apply values (client:request 'view-arrange changes leases)))
 
-  (edoc "Fork a view subtree, sharing borrowed sources and copying explicitly owned resources and their internal connections." (actor actor "connection identity") (id model "view") (returns model))
-  (define (fork! actor id) (client:request 'view-fork id))
+  (edoc "Fork a subtree and its owned resources, sharing borrowed sources. Options may supply an owner view and receivers, a list of (old new) external command receivers. Only command targets are rebound; sources and fixed arguments stay borrowed. The retainer atomically owns the unmounted copy. Internal scopes follow the copy; other descendants belong to its root. Restart policies are preserved."
+        (actor actor "connection identity") (id model "view") (options (list-of list) "optional alist: owner model, receivers ((old new) ...)") (returns model))
+  (define (fork! actor id . options) (apply client:request 'view-fork id options))
 
   (edoc "Read a canonical view descriptor from the base. Rendering uses interaction:snapshot instead."
         (id model "view id") (returns (or list #f)) (effects remote))

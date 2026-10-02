@@ -4,7 +4,7 @@
        [source (store:create! owner "widget terminal" '("zero" "one " "two " "last")
                  `((app . ,owner) (mode . "terminal") (read-only . #t) (manages-viewport . #t)
                    (alive . #t) (size 3 4) (wrap . #f) (capture except "MOUSE-CLICK" "MOUSE-DRAG" "MOUSE-RELEASE" "WHEEL-UP" "WHEEL-DOWN")))]
-       [a (terminal:create-view! actor source)] [b (terminal:create-view! actor source)]
+       [a (terminal:create-view! actor #f source)] [b (terminal:create-view! actor #f source)]
        [root (view:create! actor #f 'row 1 '() '())] [host-count 0])
   (define (publish cursor)
     (surface:publish! source (let ([old (surface:snapshot source)]) (and old (car old)))

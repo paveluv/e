@@ -18,7 +18,7 @@
     (list (history:append! who history 0 '(text 1 ignored) #f '())
       (get (value history) 'count) (history-view:projection first) (history-view:projection second))
     '(#f 3 "retained text" "[Text projection unavailable]"))
-  (set! a (history-view:create! history 1))
+  (set! a (history-view:create! #f history 1))
   (set! b (view:fork! who a))
   (widget:mount! a 'history-a) (widget:mount! b 'history-b)
   (test:await 'history-page (lambda () (and (page-ready? a "retained text" 30) (page-ready? b "retained text" 60))))
@@ -29,7 +29,7 @@
   (check 'history-navigation-is-bounded-and-independent
     (list (length (view:children (view:snapshot a))) (page-ready? b "retained text" 60)) '(2 #t))
   (history-view:register! 'missing-example 1
-    (lambda (data) (view:create! who #f 'label 1 '((text . "Registered later")) '())))
+    (lambda (owner data) (view:create! who #f 'label 1 '((text . "Registered later")) '() owner)))
   (test:await 'late-history-definition (lambda () (page-ready? a "Registered later" 50)))
   (widget:unmount! a) (widget:mount! a 'history-again)
   (test:await 'history-remount (lambda () (page-ready? a "Registered later" 50)))

@@ -14,7 +14,7 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service file) file:)
           (prefix (state catalogue) catalogue:)
           (prefix (state collection) collection:)
@@ -33,17 +33,17 @@
         (widget:focus! root entry) (entry:insert! entry (cadr event)) #t)))
 
   (edoc "Create an unmounted Buffet composition. Commands explicitly bind open (document reference) and return; no current-window fallback is used. An optional existing query shares filter and sort; selection and geometry always belong to this view."
-        (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns model "app view"))
-  (define (create! commands . shared)
+        (owner (or model #f) "lifetime owner, false for a session root") (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns model "app view"))
+  (define (create! owner commands . shared)
     (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
     (let* ([query (if (pair? shared) (car shared)
                     (car (catalogue:create-query! head:ui-actor (catalogue:create-source! head:ui-actor (file:expand "~/") 'persistent))))]
            [r (collection:summary query)]
            [filter (and r (find (lambda (ref) (eq? (car ref) 'buffer)) (get (get r 'value '()) 'owned '())))])
       (unless filter (error 'create! "expected a catalogue query with an editable filter" query))
-      (let* ([root (view:create! head:ui-actor #f 'buffet 1 '() '())]
-             [table (table:create! head:ui-actor query '(modified flags name lines mode file) '((identity . name) (presentation buffet 1)))]
-             [filter (control:create-filter! head:ui-actor filter "Filter:" "")]
+      (let* ([root (view:create! head:ui-actor #f 'buffet 1 '() '() owner)]
+             [table (table:create! head:ui-actor root query '(modified flags name lines mode file) '((identity . name) (presentation buffet 1)))]
+             [filter (control:create-filter! head:ui-actor root filter "Filter:" "")]
              [d (view:snapshot table)])
         (view:arrange! head:ui-actor
           (list (list table 1 (cons (list 'filter filter 'fit) (view:children d))
@@ -97,7 +97,7 @@
       (when (eq? (caddr row) 'live) (error 'delete! "choose a Trash or Backups item"))
       (archive! row 'delete)))
 
-  (define (default!) (window:tool! "buffet" create!))
+  (define (default!) (window-host:tool! "buffet" (lambda (commands) (create! #f commands))))
 
   (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
         (returns model "Buffet view"))
@@ -105,7 +105,7 @@
     (let* ([was (seat:current-buffer-mirror)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
                                                 (not (equal? (seat:buffer-fact b 'tool-key #f) "*buffet*")))) (seat:buffers)) was)]
-           [b (window:show-widget! (seat:current-window) host)]
+           [b (window-host:show-widget! (seat:current-window) host)]
            [host (seat:buffer-fact b 'widget-id #f)] [app (child host 'app)]
            [table (child app 'table)] [entry (child (child table 'filter) 'entry)])
       (seat:show-buffer-mirror! b)
@@ -120,7 +120,7 @@
            [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (seat:current-buffer-mirror)) direction)]
            [b (and ref (catalogue-host:resolve! ref))])
       (when ref
-        (cond [(not b) (window:open-document! host ref)]
+        (cond [(not b) (window-host:open-document! host ref)]
           [(equal? (seat:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
           [else (seat:show-buffer-mirror! b)]))))
 

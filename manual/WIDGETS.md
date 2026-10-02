@@ -10,7 +10,12 @@ acquire the beginning and end. Mouse dragging selects text. Return or a link
 click invokes the view's `open-uri` command with the source document ID and
 URI, letting the host choose where to open it. Link hover never fetches data.
 
-`control:create-filter!` composes a label, an `entry` over an existing text
+App and composite-control constructors take an explicit lifetime owner (`#f`
+for a session root, or a model). Their child controls follow the composition;
+data sources, jobs and processes remain borrowed unless explicitly owned.
+
+`control:create-filter!` takes an actor, lifetime owner (`#f` for a session
+root), source, label and status text. It composes a label, an `entry` over an existing text
 buffer, and an italic status label. Its root exposes the `text` output port;
 the entry retains the normal editing, undo and stale-edit protection.
 
@@ -40,8 +45,10 @@ control-supplied arguments after its fixed arguments.
 hover or cached geometry to the base. Shared row/column allocation is exposed
 as `layout:container` for compound controls.
 
-`table:create!` takes an actor, collection and ordered column symbols. Its
-optional fourth argument is an options alist. Use `((kind . list))` for one
+`table:create!` takes an actor, lifetime owner, collection and ordered column
+symbols. Pass `#f` as the owner for a session root, or a model for an owned
+child; all of the table's controls follow its lifetime. Its optional fifth
+argument is an options alist. Use `((kind . list))` for one
 column without a heading; use `((identity . name))` to keep `name` when fitting
 a narrow pane, independently of its position among the columns. The default
 identity is the first column. `set-columns!` retains that identity.
@@ -88,7 +95,9 @@ query removes its scoped views and their resources. Source documents are
 borrowed and remain intact.
 
 A view declares private model resources in its `owned` option. Their model
-scope names that view. `view:fork!` copies them and remaps sources and internal
+scope names that view. This can include retained views outside the active
+child tree. Retention does not mount them or subscribe to their sources.
+`view:fork!` copies both active and hidden owned views once and remaps sources and internal
 connections; `view:retire!` releases them through their base kind's registered
 lifecycle. Borrowed sources remain shared. Base services register
 `(view:register-resource-kind! kind schema prepare ownership)`.
@@ -97,6 +106,22 @@ model transaction. `ownership` is a pure function from the resource envelope
 to its owned model and output-buffer references. Individual and composition
 disposal use this same declaration. Native workers observe their model's
 retirement to cancel work and release process-local caches.
+
+When a widget's private options or saved interaction contain references that
+must follow a fork, its base definition registers
+`(view:register-copy! kind schema copy)`. The pure, retryable `copy` procedure
+takes `(options state mapped)` and returns two values: copied options and
+state. Call `mapped` on semantic resource references: identities inside the
+fork become their copies; external borrowed identities stay unchanged.
+Data that merely resembles a reference is left alone unless the rule maps it.
+Without a rule, private options and state retain their values.
+
+The engine still remaps structural fields, command receivers, owned-resource
+identities and state connections. The rule must preserve the `owned` option;
+an invalid rule refuses the fork and rolls back prepared resource output.
+Fixed command arguments are private data: map any references in them through
+the rule as well. Copy rules use the normal module registration lifecycle and
+require no head-side repair.
 
 For a private collection query, pass its owning view after the owned resource
 list to `collection:create!`. Its base provider registers source copying with
@@ -171,17 +196,19 @@ TUI. Creation rows show italic names and an italic `[create]` suffix;
 pending cells show `[Pending]`. Semantic row roles compose with the normal
 choice/hover styles. Providers supply facts, never terminal widths or ANSI.
 
-`window:tool!` retains a named composition for this head. Its builder receives
+`window-host:tool!` retains a named composition for this head. Its builder receives
 explicit `open` and `return` command bindings and returns an unmounted app
-view. Show the returned host with `window:show-widget!`; simultaneous placements
+view. Show the returned host with `window-host:show-widget!`; simultaneous placements
 fork views over shared sources. The host owns origin, MRU and inactive-panel
 click routing. An optional app `current` binding receives the focused document
 key (or false while the tool has focus), for local emphasis.
 
 Embedded compositions supply their own command bindings. They do not use an
 implicit current window. `widget:host` returns the opaque mounting slot;
-`widget:keep-host-focus!` lets a pointer action retain the outer host's focus
-when it opens a document elsewhere.
+`widget:keep-host-focus!` lets a pointer action retain the outer host and
+logical focus from before the gesture, including actions fired on captured
+release. It does not restore focus across a changed composition or a separate
+focus move. Keyboard calls leave logical focus unchanged.
 
 `C-x TAB` lists the focused widget path's keys, including app capture contexts
 and unshadowed entry, table and global bindings. Its widget calls show the
@@ -240,7 +267,7 @@ Omitted or equal sections produce no notification. Inspect the subject,
 definition basis and section references through `model:snapshot`. A departing
 producer leaves the snapshot unavailable; reattaching cannot silently adopt it.
 
-`bindings:create! commands root` creates an unmounted inspector with explicit
+`bindings:create! owner commands root` creates an unmounted inspector with explicit
 host commands and an inspected mounted root (or false for global keys).
 `bindings:inspect!` changes that subject. The composition lists mouse and
 keyboard bindings, full forwarding chains, widget commands, containment,
@@ -366,7 +393,7 @@ borrowed sources. Released children keep their explicit membership; becoming a
 root never exposes a previously private control.
 `catalogue-host:reference` and `catalogue-host:resolve!` are default window
 placement adapters; a retained view without a placement can be mounted with
-`window:show-widget!`. There is no head contribution stream or local-token
+`window-host:show-widget!`. There is no head contribution stream or local-token
 database. Model notifications update only affected catalogue metadata;
 selection, repaint and generated text never republish rows.
 
@@ -586,8 +613,8 @@ After restarting the base, evaluate in a head:
     'session 'persistent '() "first\nsecond\nthird"))
 (define first (view:create! (actor:current) data 'text 2 '() 0))
 (define second (view:create! (actor:current) data 'text 2 '() 0))
-(window:show-widget! (seat:current-window) first)
-(window:show-widget! (window:split-right!) second)
+(window-host:show-widget! (seat:current-window) first)
+(window-host:show-widget! (window-host:split-right!) second)
 ```
 
 Each view selects a row with Up/Down or a click. To scroll a long value,
@@ -620,6 +647,23 @@ persistence. This is separate from containment and from the head's mount lease.
 Forking preserves resource lifetimes and remaps internal owners along with the
 copied tree. An allocation or fork refuses if its resource owner disappears.
 
+To retain an independent copy in another composition, supply the `owner` option:
+`(view:fork! actor original (list (cons 'owner retainer)))`.
+The copy and the retainer's `owned` reference commit together. The copied root
+is scoped to the retainer; copied internal scopes follow their new identities,
+and other copied descendants belong to the new root. Each model keeps its
+restart policy; connection bindings follow their owner. Persistent copies
+require a persistent retainer and copied root, so recovery cannot leave them
+without their lifetime owner. Borrowed sources remain shared.
+Retention does not mount the copy, change containment
+or move focus. A stale retainer refuses the entire allocation and rolls back
+prepared resource output; a view mounted by another head cannot be a retainer.
+The optional `receivers` option contains `(old new)` pairs for external command
+targets. It rebinds those receivers during the same allocation, without changing
+borrowed sources, fixed arguments or internal command routing. Duplicate,
+unused and internal receiver mappings refuse. Receiver models are transaction
+witnesses too, so a changed target cannot silently slip into the copy.
+
 After unmounting, `view:retire!` takes actor, view and expected model revision.
 It atomically removes the view from its parent, clears affected host focus and
 releases borrowed child subtrees as unowned roots. Views scoped to the retired
@@ -627,10 +671,15 @@ view's lifetime are retired too, including their scoped descendants. Sources and
 borrowed and survive. Use this operation for views; `model:retire!` handles
 ordinary model state. A resource-owning service may retire its scoped views
 when its request or session ends.
+When the lifetime owner is itself a view, removal of its ownership reference
+and retirement of the owned/scoped graph commit atomically. That surviving
+owner retains any output cleanup until it finishes; base restart resumes it.
+Standalone views still release resources synchronously.
 
 `widget:register!` takes a kind, schema version and a definition alist.
 The definition's `render` field is a procedure, `actions` is an alist of
-named procedures, `contexts` lists keymap contexts, `focus` is a boolean,
+named procedures, `contexts` lists keymap contexts, `focus` is a boolean or
+`fallback` (accept focus only without visible focusable descendants),
 and `capture` is `full` or `partial`. Optional `prepare`, `measure`,
 `layout`, `anchor`, `locate`, `decorate`, `caret`, `busy?` and `event` fields accept procedures.
 Unknown or duplicate fields are rejected.
@@ -729,6 +778,199 @@ snapshots acquire an empty cleanup list during recovery.
 
 These are base admission operations. They do not mount, render or dispose of
 head resources, and the ordinary launcher still uses the existing window host.
+
+## Logical window managers
+
+The `window:` service owns persistent logical window state on the base. A
+manager and its windows use ordinary `'(model id)` references; displayed
+numbers are reusable selectors local to that manager. Different heads can
+both have a window numbered 1 without sharing identity.
+The manager's `head` option identifies the head whose commands it accepts;
+its model scope describes its lifetime. Retaining a manager copy inside another
+composition therefore preserves its command context. Recovery migrates the
+earlier manager schema that used scope for both purposes.
+
+```scheme
+(define manager (window:create-manager!))
+(define first (window:current manager))
+(define second (window:split! manager first 'right))
+(window:select! manager second)
+(window:list manager)                  ; model references in layout order
+(window:numbered manager 2)            ; second, or #f when absent
+(window:link! manager first second 'follow)
+```
+
+Construction creates one empty window. Splitting adds another empty window
+on the requested side (`left`, `right`, `above` or `below`) and preserves
+selection. Both allocation and placement commit together. The canonical
+descriptor tree contains `window-manager`, `window-split` and `window` views;
+split options store an `x`/`y` axis and children store positive `grow` weights.
+`window:resize!` takes the manager, split model, its two expected child IDs and
+two new weights. A replaced divider refuses instead of resizing another pair.
+Cell and pixel geometry remain the renderer's responsibility.
+
+Selection follows focus inside the manager, falling back to the explicitly
+selected window while a prompt or another composition child has focus.
+`window:select!` updates selection and root focus atomically. Directed links
+are `(from to tag)` triples in creation order; `window:links` reads them and
+`window:unlink!` removes one. Link changes do not republish unrelated views.
+Forking a manager, including as part of a larger screen, remaps its saved
+selection and link endpoints to its copied windows. Window numbers and
+borrowed documents retain their values; changing the copy leaves the original
+manager untouched.
+
+`window:open-document!` takes a manager, window and catalogue document: either
+a live `'(buffer id)` or a prepared app `'(model id)`. It returns the
+presentation view. For text, each window retains one editor per document,
+keeping logical cursor, selection and scrolling state when another document
+replaces it. Opening the same text in another window creates an independent
+editor over the shared source. New allocation and placement commit together;
+reopening the active document has no effect.
+
+An app's document identity is its root view. Prepare that view under the
+destination window before admission: its root must have the window's lifetime,
+and its persistent descendants must have lifetimes within the app. The subtree
+must be unmounted, and its root unparented, unless it is already active there.
+For an independent copy of an existing app, use:
+
+```scheme
+(define app
+  (view:fork! head:ui-actor template
+    (list (cons 'owner destination)
+          (list 'receivers (list original-window destination)))))
+(window:open-document! manager destination app)
+```
+
+Forking retains the unmounted copy under the destination; admission atomically
+records its identity, attaches its subtree and updates focus. It does not move
+an app out of another window or create an implicit copy. An unavailable,
+out-of-audience or unlisted candidate refuses without changing placement.
+Catalogue membership controls discovery and admission; removing it does not
+retire an already retained app. Retire the app to remove its placements.
+
+Opening a different app also remembers the window's previous document in the
+same placement transaction. Each retained app has one saved origin; reopening
+the active app leaves it unchanged. Return through the explicit host:
+
+```scheme
+(window:return! manager destination app)
+```
+
+This restores the saved document, or the most recent surviving retained
+document other than the invoking app. A missing origin is never resolved by
+name. With no surviving target it returns `#f` and leaves the app displayed.
+The invoking app must still be active in that window; a stale command refuses.
+Returning restores existing app state even after catalogue opt-out and does
+not overwrite that app's own origin, so nested returns can reach the original
+text. Normal openings replace the saved origin; this is not a navigation log.
+Window copies remap app origins to their own views; text origins keep their
+shared identities. Retirement prunes origins whose retained documents are gone.
+
+`window:document` reads the active document identity; `window:documents` lists
+retained identities in most-recently-opened order. The active presentation is
+the window's `document` child. Hidden roots have no parent; their whole subtree
+has no mount owner or source demand. Internal containment and interaction state
+survive. They remain explicitly owned by the window, so composition copying
+and disposal include them without rendering them. Opening in the focused
+window focuses its presentation; opening elsewhere preserves focus, including
+an active prompt. `window:select!` focuses the selected window's presentation.
+Forking a manager remaps app identities to its copies while keeping shared text
+identities unchanged.
+
+Internal, archived, missing and out-of-audience text cannot be opened through
+this catalogue-facing API. Deleting, trashing or hiding a text document retires its
+active and hidden editors in each manager and selects each affected window's
+most recent surviving retained document. With no survivor the window becomes
+empty. Direct retirement of an editor also removes its retained entry and
+repairs placement and focus. An active prompt keeps focus; unrelated panes
+keep their leases. Restoring a document does not reopen its former placements,
+and a new buffer with the same name never substitutes for a retired identity.
+App retirement also prunes its identity and selects the retained fallback,
+remounting a surviving app's whole subtree when necessary. Remaining models
+scoped to a deleted app retire with placement repair; private output cleanup
+uses the manager's durable intent. Borrowed sources survive. These changes use
+base lifecycle notifications, without polling or a head round trip.
+
+`window:close!` removes a window and its redundant split, repairs selection
+and removes its links atomically with its owned and scoped model graph,
+including hidden presentations and app resources. Borrowed contents become
+unowned roots; shared text and other borrowed sources survive. A resource
+allocated during disposal makes the whole close refuse, so retrying includes it.
+Closing the last window returns `#f`. A reused displayed number gets a new
+model identity.
+
+Owned output deletion follows that commit. The surviving manager keeps a
+`cleanup` option containing the pending buffer identities until deletion
+finishes. Startup resumes an interrupted cleanup, including partially deleted
+output. These identities are part of the descriptor's references; retiring the
+whole composition transfers any pending cleanup to its disposal intent.
+Copying a view with pending cleanup refuses, and individual `view:retire!`
+returns `pending`, preserving the durable owner until cleanup finishes.
+
+Load `window-control` to render these managers as ordinary composed widgets.
+It registers manager, split and window containers; loading allocates no editor
+resources. Logical split weights determine the allocated rectangles. An empty
+window accepts focus; a populated window adds no extra Tab stop before its
+controls. Selecting an app enters its first focusable descendant.
+
+Terminal buffers retain a terminal capture parent and its read-only editor
+child, rather than losing process input handling when reopened. Each window
+keeps its own capture, selection and scrollback state over the same process.
+Hiding releases the entire presentation's mount; reopening restores it.
+Retiring a presentation leaves the process document and other windows intact.
+Retiring the document closes every retained presentation and its descendants.
+
+New windows contain a `window-status` child. It displays the document name,
+flags, editor position and any status spans supplied by the active app. Its
+`│↕│↔│×│` buttons split below, split right and close the window through named,
+inspectable commands. Clicking the rest of the bar selects its window. The
+`status` and `status-inactive` faces follow the terminal's foreground/background;
+buttons and clickable app spans use the ordinary dotted hover style. Metadata
+is gathered on the service path, never during painting or hover.
+
+Drag a vertical separator or an upper pane's status bar to resize its panes.
+The head converts pointer geometry
+to two positive proportions, applies them immediately, and coalesces publication
+with other interaction state. No terminal dimensions enter the saved model and
+no synchronous request is made per movement. Closing or replacing a split's
+children cancels an in-progress drag. `window-control:resize!` accepts the split,
+its two expected child references, and proportions for the same immediate
+mounted interaction; `window:resize!` performs a guarded base operation.
+
+An app constructor can receive `(window-control:commands destination)` as its
+explicit `open` and `return` bindings. These target actions on the window itself,
+without a separate host model. Construct the app under that window's lifetime,
+or prepare a scoped copy as above, before admission. Command construction is
+pure and requires no remote lookup.
+
+`window-control:open-app!` takes a window, display name, builder and optional
+stable app key (defaulting to the name). It reuses that window's retained app,
+or forks another window's matching app with shared sources and rebound host
+commands. Otherwise it calls the builder with `(owner commands)`. The builder
+returns a fresh unmounted root scoped to the owner and must clean up if its
+construction raises. Failed admission retires a returned candidate. The helper
+supplies default catalogue name and audience without overriding explicit
+options. `window:find-app` queries these keys from retained presentations,
+preferring the destination; there is no separate app registry.
+
+`window-control:open-document!` takes a window and a catalogue document.
+Keyboard and scripted calls open in that window. A pointer action in an
+inactive panel opens in the previously focused window of the same manager,
+preserving the panel. Prepared apps must belong to the chosen destination;
+the operation does not implicitly copy or move them. `window-control:return!`
+takes the panel's window and returns its active app to its saved origin.
+Target selection reads acquired head state, then calls the registered base
+operation after fencing provisional interaction.
+
+Mounted compositions follow base-owned child and source changes through their
+existing subscriptions. The head coalesces structural changes, acquires the
+new tree and source demand on its pump, and releases removed presentations.
+Ordinary selection, hover and painting do not acquire the tree.
+
+The ordinary editor continues to use the `window-host:` adapter, including its
+existing splits and key bindings. For example, its current-window split command
+is `(window-host:split-right!)`; `window:` never accepts the adapter's temporary
+`(window n)` values. Defining or loading the service creates no windows or work.
 
 ## Installing a head root
 
@@ -961,7 +1203,7 @@ or short to exercise clipping; click either entry to edit their common source.
         (list overlay 0 (list (list 'content column '(grow 1))) '())
         (list scroll 0 (list (list 'content overlay '(grow 1))) '()))
   '())
-(window:show-widget! (seat:current-window) scroll)
+(window-host:show-widget! (seat:current-window) scroll)
 ```
 
 The caller creates the source. Mounting, splitting or closing views never
@@ -973,7 +1215,7 @@ tree and returns a head-local runtime handle. Repeating that attachment is
 idempotent; attaching the same root to another slot is refused. Children have
 no adapter buffers and share batched source subscriptions.
 
-`window:show-widget!` supplies the existing-window adapter. Showing a root
+`window-host:show-widget!` supplies the existing-window adapter. Showing a root
 in a second window, including an ordinary window split, forks its descriptors
 while sharing sources. Reopening a hidden root reuses its adapter and state.
 The window adapter unmounts hidden roots before the next frame, after the
@@ -1094,7 +1336,7 @@ and top anchor when a composition leaves follow mode.
 
 `(edit:create-view! actor document-id options)` creates an unmounted `editor`
 view over an existing store document. Mount it directly, compose it with
-other views, or pass its root to `window:show-widget!`. With `()` or
+other views, or pass its root to `window-host:show-widget!`. With `()` or
 `((wrap . default))`, wrapping follows the document's `wrap` fact, then
 `paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
 `((read-only . #t))` prevents edits and undo through this view without making
@@ -1234,7 +1476,7 @@ returning text spans. Each span is `(text . style-or-action)`; a
 `keymap:call` makes it a clickable, inspectable control. Hosts decide where to
 present these spans. Reading status must use already acquired state.
 
-`(terminal:create-view! actor document-id)` creates an unmounted terminal
+`(terminal:create-view! actor owner document-id)` creates an unmounted terminal
 composition over an existing base-owned process document. Its `text` child
 is the read-only editor. Multiple views share the process, output and grid,
 with independent capture, following and selection. View creation, forks and
@@ -1324,10 +1566,12 @@ provided yet.
 
 `history:create!` and `history:append!` retain ordered references to text, jobs
 and explicit `(kind schema data)` presentation recipes. `history-view:create!`
-hosts a bounded page of independent child views; its second argument is the
+hosts a bounded page of independent child views; its arguments are the lifetime
+owner, history source and the
 number of visible items (1–16). Previous/Next and M-p/M-n change its logical
 item anchor. Text and result presentations are built in; an extension can
-register another recipe with `history-view:register!`. Missing definitions
+register another recipe with `history-view:register!`; its factory receives the
+page owner and recipe data and returns a view owned by that page. Missing definitions
 show inert markers until registered. Recipes are never evaluated as Scheme.
 
 The current page's child interaction survives hiding or recovery. Moving an
@@ -1369,7 +1613,7 @@ the model namespace's completions. The catalogue becomes available after the
 first evaluation initializes the worker; submitting empty source also initializes
 it. Additional prompts share cached pages, and typing performs no catalogue RPC.
 
-`eval:create-result-view! actor job` composes a shared output editor with a
+`eval:create-result-view! actor owner job` composes a shared output editor with a
 bounded result or diagnostic summary. It borrows the job and its output. Load
 [the environment example](../examples/environments.e) and run
 `(environment-example:open!)` for two panels sharing a namespace and a third

@@ -73,7 +73,7 @@ buffer preserves its reference; deleting it makes the reference unavailable.
 | `(request id view-claim view-id)` | Claim a new ownership generation; return `(status descriptor-entries)`. |
 | `(request id view-tree root)` | Read a coherent supported subtree as `(id . descriptor)` entries. |
 | `(request id view-arrange changes leases)` | Atomically arrange `(parent revision children options)` changes under `(root generation)` owner leases; return status and descriptor entries. |
-| `(request id view-fork root)` | Copy view descriptors and logical state, sharing domain sources; return the new root ID. |
+| `(request id view-fork root [options])` | Copy views and owned resources, sharing domain sources; optional alist supplies `owner` and `receivers` (`(old new)` external command target pairs). Return the unmounted root ID. |
 | `(request id view-publish updates)` | Atomically publish `(view-id generation sequence basis state focus)` updates, with matching owners and increasing sequences. Return `(status #f)` without echoing descriptors. |
 | `(request id view-set view-id basis state)` | Set saved interaction while unmounted; return `(status descriptor-entries)`. |
 | `(request id view-release view-id generation)` | Release the matching owner; return `(status descriptor-entries)`. Disconnect releases this connection's admitted head ownership. |

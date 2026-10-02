@@ -18,11 +18,11 @@
              (prefix (core region) region:) (prefix (state store) store:)
              (prefix (head head) head:) (prefix (head seat) seat:)
              (prefix (apps search) search:)
-             (prefix (head window) window:) (prefix (head widget) widget:)
+             (prefix (head window-host) window-host:) (prefix (head widget) widget:)
              (prefix (only (head edit) init!) edit:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window:init!)
+     (widget:init!) (edit:init!) (window-host:init!)
      (window 1)
      (define (fresh name lines)
        (let ([b (seat:new-buffer! name)])
@@ -120,7 +120,7 @@
        '(#f "abc" "abc" #t (#t #t)))
 
      ;; with-window selects a window for the body only
-     (window:split-below!)
+     (window-host:split-below!)
      (define here (seat:current-window))
      (define other (find (lambda (w) (and (not (eq? w here)) (not (seat:popup? w)))) (seat:windows)))
      (check 'with-window-selects-the-window
@@ -142,37 +142,37 @@
              (equal? (buffer-text (store:find-named "scope-b")) (buffer-text bid)) (eq? (buffer-clean? (store:find-named "scope-b")) (buffer-clean? bid)))
        (list b other #t #t))
      (check 'window-commands-take-buffer-references-and-window-indices
-       (list (seat:window-buffer (window:display! (store:find-named "scope-b"))) (window:focus! (seat:window-index other)) (seat:current-window)
-             (begin (window:focus! here) (seat:current-window)))
+       (list (seat:window-buffer (window-host:display! (store:find-named "scope-b"))) (window-host:focus! (seat:window-index other)) (seat:current-window)
+             (begin (window-host:focus! here) (seat:current-window)))
        (list b #t other here))
 
      ;; exact arities: no optional scope or setting
      (check 'undo-takes-no-scope (guard (ex [else 'refused]) (undo! 'all)) 'refused)
-     (window:set-wrap! #f)
+     (window-host:set-wrap! #f)
      (check 'set-wrap-sets-the-window (seat:window-wrap here) #f)
-     (window:toggle-wrap!)
+     (window-host:toggle-wrap!)
      (check 'toggle-wrap-flips-it (seat:window-wrap here) #t)
-     (window:set-wrap! 'default)
+     (window-host:set-wrap! 'default)
      (check 'set-wrap-takes-default (seat:window-wrap here) 'default)
-     (check 'set-wrap-refuses-a-buffer-setting (guard (ex [else 'refused]) (window:set-wrap! 'clean)) 'refused)
+     (check 'set-wrap-refuses-a-buffer-setting (guard (ex [else 'refused]) (window-host:set-wrap! 'clean)) 'refused)
 
      ;; line numbers are the window's too, beside an edit buffer; an app's
      ;; buffer shows itself and refuses the window toggles
-     (window:set-line-numbers! #t)
+     (window-host:set-line-numbers! #t)
      (check 'set-line-numbers-sets-the-window
        (list (seat:window-line-numbers here) (seat:window-line-numbers? here) (seat:window-line-numbers? other))
        '(#t #t #f))
-     (window:toggle-line-numbers!)
+     (window-host:toggle-line-numbers!)
      (check 'toggle-line-numbers-flips-it (seat:window-line-numbers here) #f)
-     (window:set-line-numbers! 'default)
+     (window-host:set-line-numbers! 'default)
      (define app (seat:register-widget-host! (seat:new-local-buffer! "scope-app") void void))
      (seat:show-buffer-mirror! app)
      (check 'local-host-has-no-buffer-identity (seat:current-buffer) #f)
      (check 'local-apps-have-no-document-region
        (guard (ex [(kernel:refusal? ex) 'refused]) (current-region)) 'refused)
      (check 'an-app-buffer-refuses-the-window-toggles
-       (list (guard (ex [(kernel:refusal? ex) 'refused]) (window:toggle-wrap!))
-             (guard (ex [(kernel:refusal? ex) 'refused]) (window:set-line-numbers! #t))
+       (list (guard (ex [(kernel:refusal? ex) 'refused]) (window-host:toggle-wrap!))
+             (guard (ex [(kernel:refusal? ex) 'refused]) (window-host:set-line-numbers! #t))
              (seat:window-line-numbers? here) (seat:window-line-numbers here))
        '(refused refused #f default))
 

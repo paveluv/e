@@ -66,7 +66,7 @@
           (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:)
           (prefix (head tui) tui:)
-          (prefix (head window) window:)
+          (prefix (head window-host) window-host:)
           (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service log) log:)
@@ -1136,9 +1136,9 @@
   (define (view-quit-buffers!)
     (let ([b (seat:find-tool-buffer "*buffet*")])
       (if b
-          (let ([w (window:display! (catalogue-host:reference b))])
+          (let ([w (window-host:display! (catalogue-host:reference b))])
             (when w
-              (window:focus! w)
+              (window-host:focus! w)
               (seat:dispatch-app-event! "FOCUS")
               (set! message "")))
           (set-message! "The <buffet> app is not available"))))
