@@ -45,13 +45,13 @@
      (check 'the-trash-holds-both-kills-under-distinct-names (map car (trash)) (list name (string-append name "<2>")))
 
      ;; restore! takes the newest; the next restore! the older, under a unique name
-     (define newest (seat:buffer-of-store-id (restore! name)))
-     (define older (seat:buffer-of-store-id (restore! (string-append name "<2>"))))
+     (define newest (seat:adopt-store-buffer! (restore! name)))
+     (define older (seat:adopt-store-buffer! (restore! (string-append name "<2>"))))
      (check 'restore-brings-both-back-under-their-distinct-names
        (list (equal? (seat:buffer-store-id newest) (seat:buffer-store-id fresh)) (text newest) (seat:buffer-name newest)
              (equal? (seat:buffer-store-id older) first-id) (text older) (seat:buffer-name older)
              (equal? (seat:buffer-file older) (seat:buffer-file newest)) (trash) (eq? (seat:current-buffer-mirror) older))
-       (list #t '("second on disk") name #t '("unsaved on disk") (string-append name "<2>") #t '() #t))
+       (list #t '("second on disk") name #t '("unsaved on disk") (string-append name "<2>") #t '() #f))
 
      (check 'permanent-deletion-refuses-live-or-missing-names
        (map (lambda (name) (test:raises? (lambda () (delete-trashed! name))))

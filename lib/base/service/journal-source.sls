@@ -3,7 +3,7 @@
 (elibrary (service journal-source)
   (export create!)
   (import (chezscheme) (prefix (core work-queue) work-queue:)
-          (prefix (state collection) collection:) (prefix (state journal) journal:)
+          (prefix (state collection) collection:) (prefix (state construction) construction:) (prefix (state journal) journal:)
           (prefix (state model) model:))
   (define limit 4096)
   (define epoch (gensym->unique-string (gensym "journal")))
@@ -60,5 +60,7 @@
   (edoc "Create a demand-owned journal collection over at most the latest 4096 retained records, optionally narrowed to a component. Keys include the journal lifetime and absolute append index; each view owns its scrolling."
         (actor actor "creator") (component (or symbol #f) "component, or all") (returns row-source))
   (define (create! actor component)
-    (let ([source (model:create! actor 'journal-source 1 'session 'persistent '() (list (cons 'component component)))])
-      (collection:create! actor source "" '() 'persistent (list source)))))
+    (construction:call! actor
+      (lambda (remember!)
+        (let ([source (remember! (model:create! actor 'journal-source 1 'session 'persistent '() (list (cons 'component component))))])
+          (remember! (collection:create! actor source "" '() 'persistent (list source))))))))

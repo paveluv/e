@@ -12,6 +12,7 @@
 (eval
   '(begin
      (import (prefix (head head) head:) (prefix (head seat) seat:)
+             (prefix (head edit) edit:)
              (prefix (head checkpoint) checkpoint:)
        (prefix (core publication) publication:)
              (prefix (state store) store:)
@@ -474,7 +475,7 @@
              (seat:buffer-spot-row-set! b 2)
              (seat:buffer-spot-col-set! b 4)
              (seat:buffer-spot-top-set! b 1)
-             (seat:set-copy-text! (string-copy "saved kill"))
+             (edit:copy-text! (string-copy "saved kill"))
              (seat:checkpoint!)
              (case kind
                [(missing-provider)
@@ -493,11 +494,11 @@
                (seat:set-layout-root! fresh)
                (seat:set-current! fresh))
              ;; the copy buffer is the base's, so the resume leaves its text as it stands
-             (seat:set-copy-text! "as the base has it")
+             (edit:copy-text! "as the base has it")
              (let ([truth (call-with-values (lambda () (store:snapshot-state id)) list)])
                (check (list 'resume-from-saved-revision kind)
                  (list (seat:resume!)
-                       (map cdr (seat:buffer-placements b)) (seat:buffer-marked b) (seat:copy-text)
+                       (map cdr (seat:buffer-placements b)) (seat:buffer-marked b) (edit:copy-text)
                        (equal? truth (call-with-values (lambda () (store:snapshot-state id)) list)))
                  (list #t expected #t "as the base has it" #t)))))
          '(edit reset expired missing-provider)
@@ -506,7 +507,7 @@
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))
            ((2 . 4) (1 . 0) (2 . 2) (1 . 3) (1 . 0))))
        ;; The unchanged-frame comparison owns its data too.
-       (seat:set-copy-text! "Xaved kill")
+       (edit:copy-text! "Xaved kill")
        (seat:checkpoint!)
        (check 'the-copy-text-lives-in-the-base-not-the-checkpoint
          (list (store:line (seat:buffer-store-id (seat:copy-buffer)) 0)

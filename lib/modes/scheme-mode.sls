@@ -20,8 +20,10 @@
           (prefix (head head) head:)
           (prefix (head mode) mode:)
           (prefix (head style) style:)
+          (prefix (head text-control) text-control:)
           (prefix (service doc) doc:)
-          (prefix (service file) file:))
+          (prefix (service file) file:)
+          (prefix (state view) view:))
 
   ;; Configuration: format Scheme buffers just before they are written
   ;; (a pre-save hook), so every save leaves the normal form on disk.
@@ -187,10 +189,11 @@
   (define (scheme-format b from to)
     (scheme-format:lines (mode:source-lines b) from to))
 
-  (define (format-on-save! path)
-    (when (and (scheme-format-on-save)
-               (equal? (mode:name-of) "scheme"))
-      (edit:format-buffer!)))
+  (define (format-on-save! path editor)
+    (when (and editor (scheme-format-on-save))
+      (let-values ([(source d) (text-control:context editor 'editor)])
+        (when (equal? (mode:name-of (view:source d)) "scheme")
+          (edit:format-buffer! editor)))))
 
   (edoc "Register the scheme mode, its indenter and formatter, the format-on-save hook and its describe entries." (public))
   (define (init!)

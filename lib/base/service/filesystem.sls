@@ -8,6 +8,7 @@
           (prefix (service file-query) file-query:)
           (prefix (service log) log:)
           (prefix (state collection) collection:) (prefix (state connection) connection:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (sys sys) sys:))
 
   (define (field r k) (cdr (assq k r)))
@@ -179,16 +180,21 @@
                 (list (cons 'home home) (cons 'hidden hidden?) (cons 'epoch (with-mutex lock epoch))))])
       (with-mutex lock (hashtable-set! tracked id #t)) id))
 
-  (edoc "Create a filesystem query owning its supplied persistent source and an internal editable filter; views borrow these resources."
+  (edoc "Consume an unshared persistent filesystem source to create a query with an internal editable filter. Failed construction releases both resources; views borrow the successful query."
         (actor actor "creator") (source row-source "unshared persistent filesystem source") (text string "initial rooted filter")
         (returns list "(query (buffer id))"))
   (define (create-query! actor source text)
     (let ([r (model:snapshot source)])
       (unless (and r (eq? (field r 'kind) 'filesystem-source) (eq? (field r 'persistence) 'persistent))
         (error 'create-query! "expected persistent filesystem source"))
-      (let* ([filter (store:create! actor "Finder filter" (list text) (list '(internal . #t) (cons 'audience (list actor))))]
-             [query (collection:create! actor source text '() 'persistent (list source filter))])
-        (connection:bind! actor query (list (list query 'filter #f (list filter 'text)))) (list query filter))))
+      (construction:call! actor
+        (lambda (remember!)
+          (remember! source)
+          (let* ([filter (remember! (store:create! actor "Finder filter" (list text) (list '(internal . #t) (cons 'audience (list actor)))))]
+                 [query (remember! (collection:create! actor source text '() 'persistent (list source filter)))])
+            (let-values ([(status edges) (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))])
+              (unless (eq? status 'applied) (error 'create-query! "filter connection refused" status)))
+            (list query filter))))))
 
   (edoc "Change a filesystem source's hidden-entry option against its revision, preserving cached inventory."
         (actor actor "caller") (source row-source "filesystem source") (revision integer "expected model revision")

@@ -21,6 +21,10 @@
      (define check test:check)
      (define alice '(human alice))
      (define bob '(human bob))
+     (define private-origin (list 'screen-6 '(head "private draft") (make-string 64 #\a) 0))
+     (define (private-facts)
+       (let ([id (store:find-named "private draft")])
+         (list (store:property id 'audience) (store:property id 'import-origin) (store:visible? '(head "another") id))))
      (define (exercise!)
        (define (undo id) (car (call-with-values (lambda () (store:undo! alice id)) list)))
        (list
@@ -52,6 +56,8 @@
      (when (pair? (command-line-arguments))
        (let ([data (call-with-input-file (car (command-line-arguments)) read)])
          (store:import! (car data) (cadr data))
+         (check 'recovery-preserves-private-audience-and-import-origin
+           (private-facts) (list '((head "private draft")) private-origin #f))
          (check 'recovery-preserves-the-live-history-behavior (exercise!) (caddr data))
          (exit 0)))
      (define saved
@@ -153,6 +159,8 @@
      (define unchanged (store:create! alice "unchanged reread" '("abc") '((base . "abc\n") (trailing . #t))))
      (store:reload! alice unchanged '("xyz") '((base . "xyz") (trailing . #f)))
      (store:reread! alice unchanged '("xyz") '((base . "xyz") (trailing . #f)))
+     (store:create! '(head "private draft") "private draft" '("keep private")
+       (list '(audience (head "private draft")) (cons 'import-origin private-origin)))
      (define path (format "/tmp/e-journal-~a" (get-process-id)))
      (let*-values ([(next states) (store:export)] [(expected) (exercise!)])
        (check 'live-history-covers-resolutions-and-property-version-boundaries expected

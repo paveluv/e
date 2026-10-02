@@ -36,7 +36,9 @@
           (prefix (foundation fuzzy) fuzzy:)
           (prefix (only (foundation scheme-format) indent-lines delimiter?) scheme-format:)
           (prefix (foundation string) string:)
+          (prefix (foundation text) text:)
           (prefix (head completion) completion:)
+
           (prefix (head echo) echo:)
           (prefix (head edit) edit:)
           (prefix (head expression) expression:)
@@ -50,12 +52,14 @@
           (prefix (head routing) routing:)
           (prefix (head seat) seat:)
           (prefix (head style) style:)
+          (prefix (head text-control) text-control:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service prompt-request) prompt-request:)
           (prefix (only (service reference) signatures) reference:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -102,13 +106,15 @@
   (edoc "Compose a job's shared output editor and bounded result/diagnostic summary. Views borrow the job; splitting, unmounting and resizing never execute code, allocate workers or retain another result handle. Release the job explicitly through environment:release!."
     (actor actor "view creator") (owner (or model #f) "lifetime owner, false for a session root") (job model "base evaluation job") (returns model "unmounted result composition") (public))
   (define (create-result-view! actor owner job)
-    (model:snapshots (list job))
-    (let ([v (model-value job 'evaluation-job)])
-      (unless v (error 'create-result-view! "evaluation job is unavailable" job))
-      (let* ([root (view:create! actor job 'evaluation-result 1 '() '() owner)]
-             [output (edit:create-view! actor (cdr (assq 'output v)) '((read-only . #t)) root)]
-             [summary (view:create! actor job 'evaluation-summary 1 '() '() root)])
-        (view:arrange! actor (list (list root 0 (list (list 'output output '(grow 1)) (list 'result summary 'fit)) '())) '()) root)))
+    (construction:call! actor
+      (lambda (remember!)
+        (let* ([r (caddar (cadr (model:snapshots (list job))))]
+               [v (and r (eq? (cdr (assq 'kind r)) 'evaluation-job) (cdr (assq 'value r)))])
+          (unless v (error 'create-result-view! "evaluation job is unavailable" job))
+          (let* ([root (remember! (view:create! actor job 'evaluation-result 1 '() '() owner))]
+                 [output (edit:create-view! actor (cdr (assq 'output v)) '((read-only . #t)) root)]
+                 [summary (remember! (view:create! actor job 'evaluation-summary 1 '() '() root))])
+            (view:arrange! actor (list (list root 0 (list (list 'output output '(grow 1)) (list 'result summary 'fit)) '())) '()) root)))))
 
   ;;; Symbol completion -------------------------------------------------------
 
@@ -726,51 +732,63 @@
       (and (keep? sym)
         (let ([declared (map edoc:signature-receiver (receiver-signatures sym))])
           (or (null? declared) (exists (lambda (d) (pair? (receiver-matches d receivers))) declared)))))
-    (completion-at-window (completion:make-source
-                            (lambda (s pos)
-                              (define (symbols)
-                                (let ([range (symbol-range s pos)])
-                                  (if (or (not range) (data-position? (call-frames (substring s 0 (car range))))
-                                        (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
-                                    (let* ([part (substring s (car range) (cdr range))]
-                                           ;; Symbols go in as they are: the matcher keeps each one
-                                           ;; prepared across keystrokes.
-                                           [ranked (fuzzy:rank part (filter eligible? (environment-symbols (interaction-environment))))]
-                                           [names (map fuzzy:name ranked)])
-                                      (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
-                                        (map completion-candidate ranked))))))
-                              ;; an argument with a documented type offers its own candidates; a
-                              ;; sole one is what Tab inserts, else Tab extends the token as far as
-                              ;; every candidate allows and lists them
-                              (let* ([targets (and typed? (empty-receiver s pos receivers))]
-                                     [context (and typed? (argument-context s pos))]
-                                     [options (and (not (pair? targets)) context (typed-options context))])
-                                (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
-                                (cond [(pair? targets)
-                                       (set! kind "receiver")
-                                       (let ([literals (map (lambda (r) (edoc:value-expression (car r))) targets)])
-                                         (values pos pos (if (null? (cdr literals)) literals '(""))
-                                           (map (lambda (r text)
-                                                  (completion:make-candidate text (format "~a  ~a" (list-ref r 5) text) #f)) targets literals)))]
-                                  [(not options) (symbols)]
-                                  [else
-                                   (values (cadr context) (caddr context)
-                                     (lambda () (typed-inserts s context options))
-                                     (map (lambda (o) (typed-candidate (car context) o preview)) options))])))
-                            settle-completion
-                            ;; what the list holds, for its status line: the argument's type at a
-                            ;; typed position, else the symbols offered
-                            (lambda (s pos) kind)
-                            (lambda () #f) (lambda () (values))
-                            (lambda (s pos)
-                              (let ([context (and typed? (argument-context s pos))])
-                                (if (not context) '()
-                                  (append (list (cons 'type (car context)) (cons 'token (cadddr context))
-                                            (cons 'literal? (car (cddddr context)))
-                                            ;; Numbers outside strings denote themselves;
-                                            ;; a preview never evaluates an expression.
-                                            (cons 'value (and (not (eq? (car (cddddr context)) #t))
-                                                           (string->number (unquoted (cadddr context)))))) preview))))) window))
+    (completion-at-editor (completion-at-window (completion:make-source
+                                                  (lambda (s pos)
+                                                    (define (symbols)
+                                                      (let ([range (symbol-range s pos)])
+                                                        (if (or (not range) (data-position? (call-frames (substring s 0 (car range))))
+                                                              (and (= (car range) (cdr range)) (not (open-position? s pos)))) (values #f #f '() '())
+                                                          (let* ([part (substring s (car range) (cdr range))]
+                                                                 ;; Symbols go in as they are: the matcher keeps each one
+                                                                 ;; prepared across keystrokes.
+                                                                 [ranked (fuzzy:rank part (filter eligible? (environment-symbols (interaction-environment))))]
+                                                                 [names (map fuzzy:name ranked)])
+                                                            (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
+                                                              (map completion-candidate ranked))))))
+                                                    ;; an argument with a documented type offers its own candidates; a
+                                                    ;; sole one is what Tab inserts, else Tab extends the token as far as
+                                                    ;; every candidate allows and lists them
+                                                    (let* ([targets (and typed? (empty-receiver s pos receivers))]
+                                                           [context (and typed? (argument-context s pos))]
+                                                           [options (and (not (pair? targets)) context (typed-options context))])
+                                                      (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
+                                                      (cond [(pair? targets)
+                                                             (set! kind "receiver")
+                                                             (let ([literals (map (lambda (r) (edoc:value-expression (car r))) targets)])
+                                                               (values pos pos (if (null? (cdr literals)) literals '(""))
+                                                                 (map (lambda (r text)
+                                                                        (completion:make-candidate text (format "~a  ~a" (list-ref r 5) text) #f)) targets literals)))]
+                                                        [(not options) (symbols)]
+                                                        [else
+                                                         (values (cadr context) (caddr context)
+                                                           (lambda () (typed-inserts s context options))
+                                                           (map (lambda (o) (typed-candidate (car context) o preview)) options))])))
+                                                  settle-completion
+                                                  ;; what the list holds, for its status line: the argument's type at a
+                                                  ;; typed position, else the symbols offered
+                                                  (lambda (s pos) kind)
+                                                  (lambda () #f) (lambda () (values))
+                                                  (lambda (s pos)
+                                                    (let ([context (and typed? (argument-context s pos))])
+                                                      (if (not context) '()
+                                                        (append (list (cons 'type (car context)) (cons 'token (cadddr context))
+                                                                  (cons 'literal? (car (cddddr context)))
+                                                                  ;; Numbers outside strings denote themselves;
+                                                                  ;; a preview never evaluates an expression.
+                                                                  (cons 'value (and (not (eq? (car (cddddr context)) #t))
+                                                                                 (string->number (unquoted (cadddr context)))))) preview))))) window)
+      (cond [(assq 'editor preview) => cdr] [else #f])))
+
+  (define (completion-at-editor source editor)
+    ;; Typed providers see the same captured receiver as their preview, even
+    ;; while focus is inside the prompt. This scopes queries, never execution.
+    (define (scope proc)
+      (if (not (procedure? proc)) proc
+        (lambda args (parameterize ([widget:target editor]) (apply proc args)))))
+    (completion:make-source (scope (completion:source-lookup source))
+      (scope (completion:source-settle source)) (completion:source-kind source)
+      (completion:source-basis source) (completion:source-release source)
+      (completion:source-context source)))
 
   (define (origin-preview origin window)
     (let find ([id (cond [(assq 'view origin) => cdr] [else #f])])
@@ -1384,7 +1402,7 @@
                        (or expression (string:join (map (lambda (v) (format "~s" v)) vals) ", ")))]
            ;; Only the old single-message host needs this replacement guard.
            ;; Composed notification views append the result after its output.
-           [spoke? (and void? (not (widget:command-owner (widget:focused) 'notification))
+           [spoke? (and void? (not (widget:command-owner (or (widget:target) (widget:focused)) 'notification))
                      (let ([now (echo:text)])
                        (and (> (string-length now) 0) (not (equal? now (hashtable-ref observations outcome #f))))))])
       (let* ([copied? (and (eval-copy-result) expression (not void?))]
@@ -1396,30 +1414,58 @@
             (list result-record)
             (if copied? " [copied]" ""))))))
 
-  (edoc "Evaluate the Scheme text of the selected region, else of the whole current buffer, in the M-x interaction environment and show the last result in the echo area." (public))
-  (define (eval!)
-    (report! (call-with-evaluation! "(eval!)"
-               (lambda () (evaluate-text (edit:region-text (edit:current-region))))) "(eval!)")
+  (define (evaluate-editor! id selector label)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      ;; Resolve text and positions against the same retained revision before
+      ;; evaluation can edit it, change focus or suspend in another prompt.
+      (let* ([lines (text-control:basis-text source d)] [state (view:state d)])
+        (let-values ([(start end) (selector lines state)])
+          (unless start (error 'eval "no expression at the editor's point" id))
+          (parameterize ([widget:target id])
+            (evaluate-text! (expression:text lines start end) label))))))
+
+  (define (evaluate-text! text label)
+    (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
     (void))
+
+  (edoc "Evaluate the selected region, or the whole explicit editor when no mark is active, in the head's M-x interaction environment. Read the text at the selection's revision and report through its composition."
+        (id model "source editor") (receiver id (view editor)) (public))
+  (define eval!
+    (case-lambda
+      [() (evaluate-text! (edit:region-text (edit:current-region)) "(eval:run!)")]
+      [(id) (evaluate-editor! id
+              (lambda (lines state)
+                (if (list-ref state 3)
+                    (if (text:position<=? (car state) (cadr state))
+                        (values (car state) (cadr state))
+                        (values (cadr state) (car state)))
+                    (let ([row (- (vector-length lines) 1)])
+                      (values '(0 . 0) (cons row (string-length (vector-ref lines row)))))))
+              "(eval:run!)")]))
 
   (define (evaluate-span! start end label)
     ;; the buffer text between two positions, evaluated and reported as
     ;; the exchange it is: the expression, then its result
     (let ([text (expression:text (seat:buffer-lines (seat:current-buffer-mirror)) start end)])
-      (report! (call-with-evaluation! label (lambda () (evaluate-text text))) text)
-      (void)))
+      (evaluate-text! text label)))
 
-  (edoc "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result; the C-x C-e of Emacs.")
-  (define (eval-last-expression!)
-    (let-values ([(start end) (expression:backward (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
-      (unless start (error 'eval:last-expression! "no expression before point"))
-      (evaluate-span! start end "(eval:last-expression!)")))
+  (edoc "Evaluate the expression before an explicit editor's point, the one C-M-b would cross, in the head's M-x interaction environment and report its result; the C-x C-e of Emacs."
+        (id model "source editor") (receiver id (view editor)))
+  (define eval-last-expression!
+    (case-lambda
+      [() (let-values ([(start end) (expression:backward (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+            (unless start (error 'eval:last-expression! "no expression before point"))
+            (evaluate-span! start end "(eval:last-expression!)"))]
+      [(id) (evaluate-editor! id (lambda (lines state) (expression:backward lines (car state))) "(eval:last-expression!)")]))
 
-  (edoc "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result; the C-M-x of Emacs.")
-  (define (eval-top-level-form!)
-    (let-values ([(start end) (expression:top-level (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
-      (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
-      (evaluate-span! start end "(eval:top-level-form!)")))
+  (edoc "Evaluate the top-level form around an explicit editor's point, or the next one after it, in the head's M-x interaction environment and report its result; the C-M-x of Emacs."
+        (id model "source editor") (receiver id (view editor)))
+  (define eval-top-level-form!
+    (case-lambda
+      [() (let-values ([(start end) (expression:top-level (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point))])
+            (unless start (error 'eval:top-level-form! "no top-level form in the buffer"))
+            (evaluate-span! start end "(eval:top-level-form!)"))]
+      [(id) (evaluate-editor! id (lambda (lines state) (expression:top-level lines (car state))) "(eval:top-level-form!)")]))
 
   (edoc "Open the M-x prompt with a call begun, the command's name and any arguments already given typed, so completion asks for the next: (eval:prompt-with! 'edit:answer!) reads (edit:answer! and a choice."
         (name symbol "the command's name at the top level")
@@ -1451,11 +1497,10 @@
         (validate-receivers! s receivers)
         ((routing:feedback) (string-append "λ " s))
         (head:redraw!)
-        (let ([outcome (parameterize ([widget:target focus])
-                         (call-with-evaluation! s (lambda () (evaluate-text s))))])
+        (parameterize ([widget:target focus])
           ;; One structured record per exchange: history reads the query,
           ;; while the view and echo show the formatted pair.
-          (report! outcome s)))))
+          (report! (call-with-evaluation! s (lambda () (evaluate-text s))) s)))))
 
   (edoc "Read an expression at the M-x prompt, with completion and hints, evaluate it in the editor top level and log the exchange; the result shows in the echo area."
         (prompts))
@@ -1508,13 +1553,13 @@
           (cons 'transform reindent-scheme-input) (cons 'edge mx-edge-motion) (cons 'inspect describe:input!)
           (cons 'alternate (symbol-completer kernel:editor-symbol? #f origin)))))
     (doc:register!
-      '(((eval:run!) (("procedure" . "(eval:run!)")) "void"
+      '(((eval:run!) (("procedure" . "(eval:run! editor)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
-         "Evaluate every Scheme datum in `where` in the same interaction environment as M-x and show the last datum's result in the echo area. Non-void results are stored in the copy buffer when `eval-copy-result` is true. Output is logged per line under `eval:call-with-evaluation!`, with stdout/stderr channels, including child-process output. By default, evaluate the whole current buffer; `where` accepts the same buffer, name, region, predicate, and list forms as the editing commands.")
-        ((eval:last-expression!) (("procedure" . "(eval:last-expression!)")) "void"
+         "Evaluate the selected region of the explicit editor, or its whole document when no mark is active, in the head's M-x interaction environment. Non-void results are stored in the copy buffer when `eval:copy-result` is true. Output is logged per line under `eval:call-with-evaluation!`, including child-process output. Text is captured at the selection's revision before execution.")
+        ((eval:last-expression!) (("procedure" . "(eval:last-expression! editor)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
          "Evaluate the expression before point, the one C-M-b would cross, in the M-x interaction environment and show its result in the echo area; C-x C-e.")
-        ((eval:top-level-form!) (("procedure" . "(eval:top-level-form!)")) "void"
+        ((eval:top-level-form!) (("procedure" . "(eval:top-level-form! editor)")) "void"
          ("(apps eval)") eval "Evaluation commands" #f
          "Evaluate the top-level form around point, else the next one after it, in the M-x interaction environment and show its result in the echo area; C-M-x.")
         ((eval:prompt!) (("procedure" . "(eval:prompt!)")) "void"
@@ -1525,6 +1570,8 @@
       (lambda (d) (format "[~a] ~a" (car d) (cdr d))))
     (keymap:bind-default! "C-x C-e" eval-last-expression!)
     (keymap:bind-default! "C-M-x" eval-top-level-form!)
+    (keymap:bind-default! 'widget-editor "C-x C-e" (keymap:call eval-last-expression! widget:target))
+    (keymap:bind-default! 'widget-editor "C-M-x" (keymap:call eval-top-level-form! widget:target))
     (keymap:bind-default! "M-x" eval-prompt!)
     ;; keys bound with keymap:prefill open this prompt with their text
     (routing:set-prompt-opener! eval-prompt-with!)))

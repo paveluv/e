@@ -47,14 +47,14 @@ in [Base, heads and agents](MULTIHEAD.md). The daemon reads `base-config.e`
 only; a head reads `config.e` only.
 
 Quitting normally detaches the screen and keeps the base running.
-Set `(main:shutdown-on-exit #t)` in `config.e` to review shutting down the
+Set `(lifecycle:shutdown-on-exit #t)` in `config.e` to review shutting down the
 base when this is the last attached head. Cancelling the review keeps that
 head open. The default is `#f`; the setting accepts only booleans.
-`M-x (main:shutdown!)` requests the same review explicitly, regardless of
+`M-x (lifecycle:shutdown!)` requests the same review explicitly, regardless of
 the setting. Shutdown requires an all-buffer head connection. Every graceful
 stop saves shared text and named views through the same path as SIGTERM;
 the next base restores them. Shared unsaved text needs no confirmation;
-the review covers local drafts, other heads and live work that will end.
+the review covers other heads and live work that will end.
 
 ## Configuration file
 
@@ -136,10 +136,10 @@ so evaluating it repeatedly is safe.
 Saving `config.e` inside e reloads it immediately. It can also be applied with:
 
 ```scheme
-(main:load-config!)
+(configuration:load!)
 ```
 
-`main:config-reload-on-save` controls automatic reload. A configuration error is
+`configuration:reload-on-save` controls automatic reload. A configuration error is
 reported in the echo area and structured log without terminating the editor.
 
 Configuration-owned registrations publish together after the file finishes.

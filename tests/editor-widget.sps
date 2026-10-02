@@ -1,3 +1,39 @@
+;; File commands capture an explicit editor, including when another is focused.
+(let ()
+  (import (prefix (service file) file:))
+  (let* ([path (format "/tmp/e-widget-save-~a.txt" (get-process-id))]
+         [source (store:create! head:ui-actor "explicit save" '("mine") '((trailing . #f)))]
+         [other (store:create! head:ui-actor "save bystander" '("untouched"))]
+         [root (view:create! head:ui-actor #f 'row 1 '() '())]
+         [a (create-view! head:ui-actor source '() root)]
+         [b (create-view! head:ui-actor other '() root)] [seen #f])
+    (define (show!) (widget:pump!) (widget:present! (list (list (widget:prepare! root 30 4) 0 0))))
+    (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+    (widget:mount! root 'save-fixture) (show!) (widget:focus! root b)
+    (dynamic-wind
+      (lambda ()
+        (parameterize ([kernel:registering-module 'explicit-save-hook])
+          (file:add-pre-save-hook! (lambda (path editor) (set! seen editor) (insert! editor "!")))))
+      (lambda ()
+        (save-file! a path)
+        (check 'save-hooks-and-effects-use-the-explicit-editor
+          (list seen (file:read path) (store:line other 0) (widget:focused root) (seat:buffer-of-store-id source))
+          (list a "!mine" "untouched" b #f))
+        (kernel:retract-module! 'explicit-save-hook)
+        (file:write! path '#("disk") #f) (reload! a) (show!)
+        (undo! a) (show!)
+        (check 'explicit-reload-rebases-its-mirror-and-retains-earlier-undo
+          (list (store:line source 0) (begin (undo! a) (store:line source 0)) (widget:focused root))
+          (list "!mine" "mine" b))
+        (parameterize ([kernel:registering-module 'explicit-save-hook])
+          (file:add-pre-save-hook! (lambda (path editor) (widget:unmount! root))))
+        (check 'a-save-hook-cannot-write-through-an-unmounted-editor
+          (list (refused? (lambda () (save-file! a path))) (file:read path)) '(#t "disk")))
+      (lambda ()
+        (kernel:retract-module! 'explicit-save-hook) (widget:unmount! root)
+        (view:retire! head:ui-actor root (model:revision root))
+        (when (file-exists? path) (delete-file path))))))
+
 ;; A service rendition and its text arrive independently. The viewport keeps
 ;; a coherent source packet, including the basis used by pointer commands.
 (let* ([actor head:ui-actor]
@@ -37,6 +73,27 @@
         (begin (set! bad? #t) (refused? (lambda () (widget:context view))))) '(#f #t))
     (widget:unmount! view)))
 
+;; Edge markers reserve a cell only when needed, with clean/capped wrapping
+;; and tiny allocations sharing the same caret and pointer geometry.
+(let* ([source (store:create! head:ui-actor "edge marks" '("abcdefg"))]
+       [id (create-view! head:ui-actor source '())])
+  (widget:mount! id 'edge-marks)
+  (check 'editor-edges-share-wrap-policy-and-leave-one-column-usable
+    (map (lambda (choice)
+           (store:set-property! head:ui-actor source 'wrap (car choice)) (widget:pump!)
+           (select! id '(0 . 0) '(0 . 0))
+           (let ([f (widget:prepare! id (cadr choice) 3)]) (widget:frame-lines f)))
+      '((#f 4) (#t 4) (clean 4) ((clean . 2) 4) (#t 1)))
+    '(("abc$" "    " "    ") ("abc\\" "def\\" "g   ") ("abcd" "efg " "    ")
+      ("ab  " "cd  " "ef  ") ("a" "b" "c")))
+  (store:reset! '(base test) source '("https://x/a")) (text-source:open! head:ui-actor source)
+  (store:set-property! head:ui-actor source 'wrap #f) (widget:pump!) (select! id '(0 . 0) '(0 . 0))
+  (let ([f (widget:prepare! id 6 1)])
+    (check 'overflow-markers-are-neutral-and-not-part-of-a-link
+      (list (widget:frame-lines f) (vector-ref (widget:frame-cell-styles f 0) 5) (widget:frame-row-links f 0))
+      '(("https$") chrome ((0 5 "https://x/a")))))
+  (widget:unmount! id) (view:retire! head:ui-actor id (model:revision id)) (store:delete! head:ui-actor source))
+
 ;; Two widths share text and the existing renderer, but never interaction.
 (let* ([actor head:ui-actor] [ambient (seat:current-buffer-mirror)]
        [source (store:create! actor "nested editor" '("abcdefghijklmno" "a界éz" "" "last") '((mode . "editor-test")))]
@@ -58,7 +115,7 @@
       (list (map glyph:cells (map car (map widget:frame-lines (list narrow wide))))
         (substring (cadr (widget:frame-lines narrow)) 0 6)
         (eq? ambient (seat:current-buffer-mirror)) (not (seat:buffer-of-store-id source)))
-      '((10 17) "klmno " #t #t))
+      '((10 17) "jklmno" #t #t))
     (show! 27)
     (check 'editor-warm-frame-does-not-repeat-mode-analysis calls before))
   (check 'editor-wrap-precedence-is-view-source-head
@@ -70,13 +127,13 @@
              (move! a 'down) (move! b 'down)
              (list (car (state a)) (car (state b)))))
       '((#f default) (#f #t) (#t #f) (#t default)))
-    '(((1 . 0) (1 . 0)) ((0 . 10) (1 . 0)) ((1 . 0) (1 . 0)) ((0 . 10) (1 . 0))))
+    '(((1 . 0) (1 . 0)) ((0 . 9) (1 . 0)) ((1 . 0) (1 . 0)) ((0 . 9) (1 . 0))))
   (check 'editor-reveal-uses-the-shared-scroll-margin
     (map (lambda (margin)
            (parameterize ([paint:scroll-margin margin])
              (widget:pump!) (select! a '(0 . 0) '(0 . 0)) (select! a '(2 . 0) '(2 . 0))
              (caddr (state a)))) '(0 1))
-    '((0 . 0) (0 . 10)))
+    '((0 . 0) (0 . 9)))
   (widget:pump!) (select! b '(0 . 0) '(0 . 0))
   (select! a '(0 . 13) '(0 . 13))
   (move! a 'up) (move! a 'down)
@@ -154,7 +211,7 @@
   (show! 27)
   (widget:pointer! '(pointer press primary ()) 1 1)
   (widget:pointer! '(pointer release primary ()) 1 1)
-  (check 'editor-mouse-selects-source-through-shown-wrap (car (state a)) '(0 . 11))
+  (check 'editor-mouse-selects-source-through-shown-wrap (car (state a)) '(0 . 10))
   (show! 27)
   (let ([before (list-head (state a) 2)])
     (widget:set-active! root #f)
@@ -179,7 +236,7 @@
   (key "C-v")
   (check 'editor-page-at-bottom-selects-edge (car (state a)) '(6 . 3))
   (key "M-v")
-  (check 'editor-page-back-lands-inside-wrapped-row (car (state a)) '(0 . 13))
+  (check 'editor-page-back-lands-inside-wrapped-row (car (state a)) '(0 . 12))
   (widget:focus! root b) (key "PAGEDOWN")
   (check 'editor-page-unwrapped-keeps-its-column (car (state b)) '(4 . 3))
   (widget:focus! root a)
@@ -294,11 +351,11 @@
     (insert! a "!")
     (let ([f (show! 27)])
       (check 'editor-annotations-rebase-without-a-producer-update
-        (list (face (body f 0) 8 0) (face (body f 0) 9 0) (face (body f 0) 3 1)) '(#f match match)))
+        (list (face (body f 0) 8 0) (face (body f 0) 0 1) (face (body f 0) 3 1)) '(#f match match)))
     (replace-region-text! a '(0 . 10) '(0 . 11) "X")
     (let ([f (show! 27)])
       (check 'editor-overlapping-edit-hides-only-invalidated-annotation
-        (list (face (body f 0) 9 0) (face (body f 0) 1 2)) '(#f conflict-disk)))
+        (list (face (body f 0) 0 1) (face (body f 0) 1 2)) '(#f conflict-disk)))
     (text-source:forget! source) (text-source:open! actor source) (insert! a "Y")
     (check 'editor-annotations-without-history-are-withheld
       (face (body (show! 27) 0) 1 2) #f)

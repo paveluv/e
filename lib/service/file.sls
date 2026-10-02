@@ -376,7 +376,7 @@
   ;; Modules may hook a save: pre-save hooks run before anything is
   ;; checked or written (formatting, say), post-save hooks after a
   ;; successful write (the module reload lives there).  Each receives
-  ;; the path being written; a raising hook reports to the log and the
+  ;; the path and explicit source editor; a raising hook reports to the log and the
   ;; save goes on.
   (define create-hooks (kernel:make-registry))
 
@@ -386,31 +386,31 @@
   (define pre-save-hooks (kernel:make-registry))
   (define post-save-hooks (kernel:make-registry))
 
-  (edoc "Register a hook run with the path before a file is saved."
-        (proc procedure "(hook path)"))
+  (edoc "Register a hook run before a file is saved; the explicit editor is the source, independent of focus."
+        (proc procedure "(hook path editor)"))
   (define (add-pre-save-hook! proc)
     (kernel:registry-add! pre-save-hooks proc))
 
-  (edoc "Register a hook run with the path after a file was saved."
-        (proc procedure "(hook path)"))
+  (edoc "Register a hook run after a file was saved; the explicit editor is the source, independent of focus."
+        (proc procedure "(hook path editor)"))
   (define (add-post-save-hook! proc)
     (kernel:registry-add! post-save-hooks proc))
 
-  (define (run-hooks! hooks path)
+  (define (run-hooks! hooks path . arguments)
     (for-each (lambda (p)
                 (guard (ex [else (log:add! 'file:run-hooks!
                                    (format "File hook failed: ~a"
                                            (kernel:condition-text ex)))])
-                  (p path)))
+                  (apply p path arguments)))
               (kernel:registry-items hooks)))
 
   (edoc "Run the pre-save hooks for a path."
-        (path file "the file"))
-  (define (run-pre-save-hooks! path)
-    (run-hooks! pre-save-hooks path))
+        (path file "the file") (editor datum "source editor reference, or false for a path-only notification"))
+  (define (run-pre-save-hooks! path editor)
+    (run-hooks! pre-save-hooks path editor))
 
   (edoc "Run the post-save hooks for a path."
-        (path file "the file"))
-  (define (run-post-save-hooks! path)
-    (run-hooks! post-save-hooks path))
+        (path file "the file") (editor datum "source editor reference, or false for a path-only notification"))
+  (define (run-post-save-hooks! path editor)
+    (run-hooks! post-save-hooks path editor))
 ) ;; library (file)

@@ -742,6 +742,23 @@
            (list (view:state (interaction:snapshot scroll)) (view:state (interaction:snapshot text))
              (widget:frame-lines (widget:prepare! scroll 6 2)))
            '((0 2) 0 ("  c   " "  d   ")))
+         (check 'scrollbars-fit-the-content-without-changing-logical-anchors
+           (reverse (fold-left (lambda (results choice)
+                                 (interaction:flush!)
+                                 (let ([d (interaction:snapshot scroll)])
+                                   (widget:arrange! (list (list scroll (model:revision scroll) (view:children d) (list (cons 'scrollbar (car choice)))))))
+                                 (let* ([f (widget:prepare! scroll (cadr choice) (caddr choice))]
+                                        [child (car (widget:frame-children f))])
+                                   (cons (list (caddr (widget:frame-rect child)) (- (cadr (widget:frame-rect child))) (view:state (interaction:snapshot scroll))) results)))
+                      '() '((#f 6 2) (auto 6 2) (left 6 2) (#t 6 8) (auto 1 2) (auto 6 8) (auto 6 2))))
+           '((6 2 (0 2)) (5 2 (0 2)) (5 2 (0 2)) (5 0 (0 2)) (1 2 (0 2)) (6 0 (0 2)) (5 2 (0 2))))
+         (widget:reveal! text '(0 4))
+         (check 'scrollbar-thumb-and-reveal-reach-the-same-last-page
+           (list (widget:frame-lines (widget:prepare! scroll 6 2)) (view:state (interaction:snapshot text)))
+           '(("  d  │" "  e  ┃") 0))
+         (interaction:flush!)
+         (let ([d (interaction:snapshot scroll)])
+           (widget:arrange! (list (list scroll (model:revision scroll) (view:children d) '()))))
          (check 'zero-allocation-produces-no-output (widget:frame-lines (widget:prepare! scroll 0 0)) '())
          (painted paint:redraw!)
          (let* ([layout (seat:root)] [other (seat:make-window was 0 0 0 0 0 4 40 10 'default)])

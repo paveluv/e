@@ -77,8 +77,8 @@
      (check 'region-extraction-uses-exact-character-endpoints
        (map region-text (list (region:make aid '(0 . 2) '(1 . 3)) (region:make aid '(1 . 5) '(1 . 5))))
        '("one x\ntwo" ""))
-     (check 'count-matches-counts-the-current-buffer (search:count "x") 3)
-     (check 'with-buffer-retargets-a-current-context-query (seat:with-buffer bid (search:count "x")) 3)
+     (check 'count-matches-counts-the-current-buffer (search:count (seat:window-editor (seat:current-window)) "x") 3)
+     (check 'with-buffer-retargets-a-current-context-query (seat:with-buffer bid (search:count (seat:window-editor (seat:current-window)) "x")) 3)
 
      ;; with-region selects the region, the commands stay inside it, and the
      ;; previous selection and point return
@@ -86,10 +86,10 @@
      (check 'with-region-selects-the-region
        (with-region r (list (seat:current-buffer-mirror) (seat:mark) (seat:point)))
        (list b '(1 . 0) '(1 . 3)))
-     (check 'replace-stays-inside-the-region (with-region r (search:replace! "x" "y")) 2)
+     (check 'replace-stays-inside-the-region (with-region r (search:replace! (seat:window-editor (seat:current-window)) "x" "y")) 2)
      (check 'the-rest-of-the-buffer-is-untouched (text-of b) '("x three" "y y"))
      (check 'the-selection-and-point-return (list (seat:current-buffer-mirror) (seat:mark) (seat:point)) (list a #f '(0 . 0)))
-     (check 'count-matches-under-with-region (with-region (region:make aid '(0 . 0) '(0 . 3)) (search:count "x")) 1)
+     (check 'count-matches-under-with-region (with-region (region:make aid '(0 . 0) '(0 . 3)) (search:count (seat:window-editor (seat:current-window)) "x")) 1)
      (check 'region-refusals-and-escapes-preserve-selection-and-text
        (list
          (map (lambda (bad)
@@ -185,7 +185,7 @@
          (let ([same (equal? (seat:current-buffer) id)])
            (kill-buffer! id)
            (list same (equal? (restore! "scope-renamed-again") id)
-             (equal? (seat:current-buffer) id)))) '(#t #t #t))
+             (equal? (seat:current-buffer) id)))) '(#t #t #f))
 
      (check 'unseen-buffer-can-be-trashed-without-adoption
        (let ([id (store:create! head:ui-actor "scope-unseen-trash" '("kept"))])

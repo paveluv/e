@@ -330,7 +330,7 @@
 
   (edoc "A key action that opens M-x with a call typed up to its next argument, so completion does the asking."
         (procedure procedure "the command the call names")
-        (arguments (list-of datum) "the arguments already given, spelled into the text"))
+        (arguments (list-of any) "constants, producers or nested calls resolved at the key press"))
   (define-record-type (prefill-action make-prefill-action prefill-action?)
     (fields (immutable procedure prefill-action-procedure) (immutable arguments prefill-action-arguments)))
 
@@ -355,9 +355,9 @@
       (map (lambda (p) (cond [(call-action? p) (run! p)] [(procedure? p) (p)] [else p]))
         (call-action-arguments action))))
 
-  (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument, (keymap:prefill edit:answer!) say, the given arguments spelled first."
+  (edoc "Bind a key to a pre-filled M-x: the command's call typed up to its next argument. As with keymap:call, resolve producer procedures and nested calls at the key press, then spell their values. Inspection never runs producers."
         (procedure procedure "the command the call names")
-        (arguments (list-of datum) "the arguments already given")
+        (arguments (list-of any) "constants, producer procedures or nested calls")
         (returns (record prefill-action)))
   (define (prefill procedure . arguments)
     (unless (procedure? procedure) (error 'prefill "expected a procedure" procedure))
@@ -380,14 +380,14 @@
     (let ([name (top-level-name (prefill-action-procedure action))])
       (and name (string->symbol name))))
 
-  (edoc "The text a pre-filled M-x starts with: the call up to its next argument, (edit:answer!  with the trailing space."
+  (edoc "Describe a pre-filled M-x up to its next argument, with a trailing space. Producer expressions remain unevaluated unless supplied by the optional inspection substitutions."
         (action (record prefill-action) "the pre-fill")
+        (bindings (list-of list) "optional producer-to-value substitutions")
         (returns string))
-  (define (prefill-text action)
-    (string-append "(" (action-text (prefill-action-procedure action))
-                   (apply string-append (map (lambda (v i) (string-append " " (spell (prefill-action-procedure action) i v)))
-                                          (prefill-action-arguments action) (iota (length (prefill-action-arguments action)))))
-                   " "))
+  (define (prefill-text action . bindings)
+    (let ([text (apply action-text
+                  (make-call-action (prefill-action-procedure action) (prefill-action-arguments action)) bindings)])
+      (string-append (substring text 0 (- (string-length text) 1)) " ")))
 
   (edoc "How a key action reads: a procedure by its top-level name, a call as the expression it runs, a pre-filled M-x as M-x and its text, a keymap action by name; unbound and anonymous say so."
         (action any "the action")
@@ -410,7 +410,7 @@
                                (call-action-arguments action) (iota (length (call-action-arguments action)))))
                         ")")]
         ;; the M-x prompt's label, as eval draws it, then the text it opens with
-        [(prefill-action? action) (string-append "λ " (prefill-text action))]
+        [(prefill-action? action) (string-append "λ " (prefill-text action substitutions))]
         [(procedure? action) (or (top-level-name action) "anonymous command")]
         [else (format "~s" action)]))
     (unless (<= (length bindings) 1) (error 'action-text "expected optional producer values"))

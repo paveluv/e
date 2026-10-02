@@ -51,13 +51,13 @@
            [installed (cadr first)] [owned (view:tree a)] [kept (owner a)])
       (check 'composition-admission-atomically-claims-complete-tree
         (list (car first) (get installed 'references)
-          (list-sort (lambda (x y) (< (cadar x) (cadar y))) (caddr first))
+          (caddr first)
           (map root-state (list a child)))
-        (list 'applied (list a) (list-sort (lambda (x y) (< (cadar x) (cadar y))) owned)
+        (list 'applied (list a) owned
           (list (list who 1) (list who 1))))
       (check 'composition-same-attachment-reacquire-is-idempotent
         (let ([again (acquire session "tree")])
-          (list (car again) (view:tree a) (car (admit session installed a (reverse owned) #f))))
+          (list (car again) (cadr again) (car (admit session installed a (reverse owned) #f))))
         (list installed owned 'applied))
       (let ([basis (view:tree b)])
         (view:set-state! who b #f '(changed))
@@ -83,8 +83,8 @@
       (let* ([switched (admit session installed b (view:tree b) kept)] [current (cadr switched)])
         (check 'composition-retention-releases-old-lease-without-deleting-it
           (list (car switched) (get current 'references) (map root-state (list a child b))
-            (get (model:snapshot kept) 'references))
-          (list 'applied (list b) (list '(#f 2) '(#f 2) (list who 1)) (list a)))
+            (get (model:snapshot kept) 'references) (caddr switched))
+          (list 'applied (list b) (list '(#f 2) '(#f 2) (list who 1)) (list a) (view:tree b)))
         (let ([other (policy:mint! '(head "other-composition") (policy:make 'all 1000 'any 8000))])
           (check 'composition-other-head-cannot-write-or-steal-root
             (list (test:raises? (lambda () (admit other current #f '() (owner b))))
@@ -107,7 +107,7 @@
                 (filter (lambda (r) (or (eq? (get r 'kind) 'composition-binding)
                                         (member (get r 'id) (list a child b kept)))) records)) #t)
             (policy:revoke! next)
-            (view:reset-owners!)
+            (view:recover!)
             (let* ([restored (policy:mint! who (policy:make 'all 1000 'any 8000))]
                    [acquired (acquire restored "tree")])
               (check 'composition-recovery-preserves-root-and-explicit-empty

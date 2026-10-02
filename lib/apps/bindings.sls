@@ -8,6 +8,7 @@
           (prefix (foundation text) text:)
           (prefix (head binding-list) listing:)
           (prefix (head catalogue-host) catalogue-host:)
+
           (prefix (head dispatch) dispatch:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
@@ -23,6 +24,7 @@
           (prefix (service inspection) inspection:)
           (prefix (service log) log:)
           (prefix (service window) window:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -209,15 +211,18 @@
   (edoc "Create an unmounted inspector for an explicit mounted subject, or false for global keys. The composition has a standard scroll viewport and per-width layout; only demanded views capture live facts."
         (owner (or model #f) "lifetime owner, false for a session root") (commands list "explicit host commands") (root (or model #f) "mounted subject") (returns model) (public))
   (define (create! owner commands root)
-    (let* ([created (inspection:create! head:ui-actor (subject root) '(mouse listing))] [source (car created)]
-           [app (view:create! head:ui-actor source 'bindings 1 (list (cons 'commands commands)) '() owner)]
-           [scroll (view:create! head:ui-actor #f 'scroll 1 '() #f app)]
-           [content (view:create! head:ui-actor #f 'column 1 '() '() app)]
-           [status (view:create! head:ui-actor source 'binding-list 1 '() '() app)]
-           [parts (map (lambda (p) (list (car p) (view:create! head:ui-actor (cdr p) 'binding-list 1 '() '() app) 'fit)) (cadr created))])
-      (view:arrange! head:ui-actor
-        (list (list app 0 (list (list 'status status 'fit) (list 'viewport scroll '(grow 1))) (list (cons 'commands commands)))
-          (list scroll 0 (list (list 'content content '(grow 1))) '()) (list content 0 parts '())) '()) app))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (let* ([created (inspection:create! head:ui-actor (subject root) '(mouse listing))]
+               [source (remember! (car created) (lambda () (inspection:close! head:ui-actor (car created))))]
+               [app (remember! (view:create! head:ui-actor source 'bindings 1 (list (cons 'commands commands)) '() owner))]
+               [scroll (remember! (view:create! head:ui-actor #f 'scroll 1 '((scrollbar . auto)) #f app))]
+               [content (remember! (view:create! head:ui-actor #f 'column 1 '() '() app))]
+               [status (remember! (view:create! head:ui-actor source 'binding-list 1 '() '() app))]
+               [parts (map (lambda (p) (list (car p) (remember! (view:create! head:ui-actor (cdr p) 'binding-list 1 '() '() app)) 'fit)) (cadr created))])
+          (view:arrange! head:ui-actor
+            (list (list app 0 (list (list 'status status 'fit) (list 'viewport scroll '(grow 1))) (list (cons 'commands commands)))
+              (list scroll 0 (list (list 'content content '(grow 1))) '((scrollbar . auto))) (list content 0 parts '())) '()) app))))
 
   (edoc "Page this inspector by its shown viewport. Passing an endpoint wraps to the other end."
         (receiver id (view bindings)) (id model "inspector view") (direction (one-of up down) "page direction"))
@@ -249,6 +254,7 @@
           (let climb ([root parent])
             (let ([above (view:parent (interaction:snapshot root))])
               (if above (climb above) (interaction:focus! root parent))))
+          (interaction:flush!)
           ;; Arrangement flushes provisional input and releases its mirror.
           ;; Read the resulting revision once for this explicit retirement.
           (let ([r (caddar (cadr (model:snapshots (list id))))])
@@ -341,9 +347,10 @@
       (let ([app (window-control:open-app! window "bindings"
                    (lambda (owner commands)
                      (let ([app (create! owner commands (and target (car target)))])
-                       (let ([d (view:snapshot app)])
+                       (let* ([record (caddar (cadr (model:snapshots (list app))))]
+                              [d (get record 'value '())])
                          (view:arrange! head:ui-actor
-                           (list (list app 1 (view:children d)
+                           (list (list app (get record 'revision 0) (view:children d)
                                    (cons (cons 'follow root) (view:options d)))) '())) app)))])
         (widget:pump!)
         (when target (request! app target)) app)))
@@ -385,7 +392,7 @@
   (define (init!)
     (let ([b (seat:find-tool-buffer "*bindings*")]) (when b (set! default-root (seat:buffer-fact b 'widget-id #f))))
     (widget:register! 'bindings 1
-      (append (layout:container 'y) (list '(contexts . (widget-bindings)) (cons 'service service!) (cons 'release release!)
+      (append (layout:container 'y) (list '(focus . fallback) '(contexts . (widget-bindings)) (cons 'service service!) (cons 'release release!)
                                       (cons 'actions (list (cons 'inspect inspect!) (cons 'page page!))))))
     (widget:register! 'binding-reader 1
       (list '(focus . #t) '(capture . full)

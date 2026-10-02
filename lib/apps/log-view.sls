@@ -3,11 +3,13 @@
 (elibrary (apps log-view)
   (export copy! create! init! move! scroll! select! set-mark! show!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (foundation string) string:) (prefix (foundation text) text:)
+
           (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:) (prefix (head range) range:) (prefix (head render) render:)
           (prefix (head text-layout) text-layout:) (prefix (head widget) widget:)
           (prefix (head window-control) window-control:) (prefix (head window-host) window-host:)
-          (prefix (service journal-source) journal-source:) (prefix (service log) log:) (prefix (state view) view:))
+          (prefix (service journal-source) journal-source:) (prefix (service log) log:) (prefix (state construction) construction:)
+          (prefix (state view) view:))
   (define (get r k fallback) (cond [(assq k r) => cdr] [else fallback]))
   (define (refuse message) (raise (condition (kernel:make-refusal) (make-message-condition message))))
   ;; State: caret, mark and top are (record-key line character), then mark?
@@ -227,8 +229,10 @@
   (edoc "Create an unmounted journal view with independent logical selection, scrolling and tail following. False shows all components."
         (owner (or model #f) "lifetime owner, false for a session root") (component (or symbol #f) "component filter") (returns model) (public))
   (define (create! owner component)
-    (let ([query (journal-source:create! head:ui-actor component)])
-      (view:create! head:ui-actor query 'log 1 '() '(#f #f #f #f #t) owner)))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (let ([query (remember! (journal-source:create! head:ui-actor component))])
+          (remember! (view:create! head:ui-actor query 'log 1 '() '(#f #f #f #f #t) owner))))))
 
   (edoc "Select journal anchors (record-key line character), independent of wrapping."
         (receiver id (view log)) (id model "journal view") (caret list "active anchor") (fixed list "fixed anchor"))

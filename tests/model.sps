@@ -202,9 +202,26 @@
                                                        (list another 0 1 0 '(selected . 99) #f)))))
             (view:state (view:snapshot view)) (view:state (view:snapshot another)))
       '(applied stale applied (selected . 1) (selected . 10)))
-    (view:reset-owners!)
+    (view:recover!)
     (test:check 'view-restart-clears-owner-and-keeps-acknowledged-state
       (list (view:owner (view:snapshot view)) (view:state (view:snapshot view))) '(#f (selected . 1))))
+  (let* ([root (view:create! author #f 'column 1 '() '())]
+         [temporary (view:create! author #f 'modal 1 '() '())]
+         [kept (view:create! author '(buffer 99) 'future-editor 1 '() 'authored-position)])
+    (view:arrange! author
+      (list (list root 0 (list (list 'dialog temporary 'fit)) '())
+        (list temporary 0 (list (list 'borrowed kept 'fit)) '())) '())
+    (view:claim! author root)
+    (view:publish! author (list (list root (view:generation (view:snapshot root)) 1 #f '() kept)))
+    ;; Model import omits transient records, without replaying live teardown.
+    (retire temporary (model:revision temporary))
+    (view:recover!)
+    (test:check 'recovery-prunes-missing-containment-without-deleting-borrowed-state
+      (list (view:children (view:snapshot root)) (view:focus (view:snapshot root))
+        (view:parent (view:snapshot kept)) (view:source (view:snapshot kept))
+        (view:state (view:snapshot kept))
+        (car (call-with-values (lambda () (view:claim! author root)) list)))
+      '(() #f #f (buffer 99) authored-position applied)))
   (let* ([root (view:create! author #f 'column 1 '() '())]
          [child (view:create! author #f 'entry 1 '() '())])
     (view:arrange! author (list (list root 0 (list (list 'input child 'fit)) '())) '())

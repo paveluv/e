@@ -72,19 +72,19 @@
      (write-disk! "omega\nbeta\nGAMMA\n")
      (visit-file! path)
      (check 'reopening-reloads-with-the-disks-side-where-they-collide (lines) '("omega" "beta" "GAMMA tail"))
-     (define conflicts (delta-log:conflicts))
+     (define conflicts (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror))))
      (check 'the-conflict-lists-its-region-and-both-sides
        (list (length conflicts) (cadddr (car conflicts)) (list-ref (car conflicts) 4) (list-ref (car conflicts) 5))
        (list 1 '(0 0 0 5) '("ALPHA") '("omega")))
      (define rev (car (car conflicts)))
      (check 'a-conflict-completes-with-both-sides-in-its-hint
-       (let ([offered (edoc:type-completions 'conflict "")])
+       (let ([offered (parameterize ([widget:target (seat:window-editor (seat:current-window))]) (edoc:type-completions 'conflict ""))])
          (list (map car offered) (contains? (caddr (car offered)) "mine \"ALPHA\"")))
        (list (list rev) #t))
 
      (check 'settlement-writes-mine-with-an-undoable-conflict-label
-       (list (delta-log:resolve! rev 'mine) (lines) (delta-log:conflicts)
-         (assq 'conflict (caddr (car (delta-log:log)))))
+       (list (delta-log:resolve! (seat:buffer-store-id (seat:current-buffer-mirror)) rev 'mine) (lines) (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror)))
+         (assq 'conflict (caddr (car (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))))))
        (list 'applied '("ALPHA" "beta" "GAMMA tail") '() (cons 'conflict rev)))
      (save!)
      (check 'saving-writes-the-resolved-text (file:read path) "ALPHA\nbeta\nGAMMA tail\n")
@@ -106,11 +106,11 @@
      (write-disk! "alpha!\nBETA\ngamma tail\n")
      (check 'a-save-over-a-changed-disk-reloads-and-refuses-while-conflicts-pend
        (list (guard (ex [(kernel:refusal? ex) (condition-message ex)]) (save!))
-             (lines) (length (delta-log:conflicts)) (seat:buffer-conflicted b) (file:read path))
+             (lines) (length (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror)))) (seat:buffer-conflicted b) (file:read path))
        (list "Resolve the conflicts first" '("alpha!" "BETA" "gamma tail") 2 #t "alpha!\nBETA\ngamma tail\n"))
 
      (check 'bulk-disk-resolution-keeps-text-and-history
-       (list (resolve-all!) (delta-log:conflicts) (lines) (pair? (delta-log:log)))
+       (list (resolve-all!) (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror))) (lines) (pair? (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))))
        '(2 () ("alpha!" "BETA" "gamma tail") #t))
 
      ;; a replacement typed as a backspace and a character is one batch, and
@@ -125,12 +125,12 @@
      (dispatch:key! #\8)
      (file:write! path2 (file:lines "abcDefgh\n") #t)
      (visit-file! path2)
-     (define typed (delta-log:conflicts))
+     (define typed (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror))))
      (check 'a-typed-replacement-conflicts-whole-with-the-disks-side-standing
        (list (vector->list (seat:buffer-lines t)) (map (lambda (c) (list (cadddr c) (list-ref c 4) (list-ref c 5))) typed))
        '(("abcDefgh") (((0 0 0 8) ("abc8efgh") ("abcDefgh")))))
      (check 'keeping-mine-writes-the-typed-replacement
-       (list (delta-log:resolve! (car (car typed)) 'mine) (vector->list (seat:buffer-lines t))) '(applied ("abc8efgh")))
+       (list (delta-log:resolve! (seat:buffer-store-id (seat:current-buffer-mirror)) (car (car typed)) 'mine) (vector->list (seat:buffer-lines t))) '(applied ("abc8efgh")))
      (delete-file path2)
      (seat:show-buffer-mirror! b)
 
@@ -179,13 +179,13 @@
      (check 'a-version-the-backups-hold-is-not-kept-twice
        (list (file:read path3) (map car (backups-of path3)))
        '("fourth\n" ("other.txt.bak<3>" "other.txt.bak<2>" "other.txt.bak")))
+     (define restored (seat:adopt-store-buffer! (restore! "other.txt.bak")))
      (check 'restore-brings-a-backup-back-as-a-buffer
-       (let* ([restored (seat:buffer-of-store-id (restore! "other.txt.bak"))])
-         (list (eq? restored (seat:current-buffer-mirror)) (vector->list (seat:buffer-lines restored)) (seat:buffer-file restored)
-               (mode:name-of (seat:buffer-store-id restored))
-               (map car (backups-of path3))))
-       '(#t ("keep me") #f "saved-text" ("other.txt.bak<3>" "other.txt.bak<2>")))
-     (for-each kill-buffer! (map seat:buffer-store-id (list (seat:current-buffer-mirror) fourth third scratch)))
+       (list (eq? restored (seat:current-buffer-mirror)) (vector->list (seat:buffer-lines restored)) (seat:buffer-file restored)
+             (mode:name-of (seat:buffer-store-id restored))
+             (map car (backups-of path3)))
+       '(#f ("keep me") #f "saved-text" ("other.txt.bak<3>" "other.txt.bak<2>")))
+     (for-each kill-buffer! (map seat:buffer-store-id (list restored fourth third scratch)))
      (seat:show-buffer-mirror! b)
      (delete-file path3)
 
@@ -264,12 +264,12 @@
      (head:before-frame!)
      (check 'an-insertion-where-the-disk-inserted-conflicts-instead-of-landing-elsewhere
        (list (vector->list (seat:buffer-lines ab)) (seat:buffer-conflicted ab)
-             (map (lambda (c) (list (cadddr c) (list-ref c 4) (list-ref c 5))) (delta-log:conflicts)))
+             (map (lambda (c) (list (cadddr c) (list-ref c 4) (list-ref c 5))) (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror)))))
        '(("A2BCD") #t (((0 0 0 5) ("A3BCD") ("A2BCD")))))
      (check 'picking-mine-writes-the-typed-side
        (begin (resolve-all! 'mine) (vector->list (seat:buffer-lines ab))) '("A3BCD"))
      (parameterize ([kernel:registering-module 'reload-save-hook])
-       (file:add-pre-save-hook! (lambda (target) (undo!) (end-of-buffer!) (insert-text! "!"))))
+       (file:add-pre-save-hook! (lambda (target editor) (undo!) (end-of-buffer!) (insert-text! "!"))))
      (dynamic-wind void
        (lambda ()
          (check 'save-rechecks-conflicts-created-by-a-hook
@@ -285,7 +285,7 @@
      (write-disk! "old old\ntail!\n")
      (seat:buffer-facts-set! b '((stamp . #f)))
      (check 'replacement-finishes-before-automatic-reload
-       (list (search:replace! "old" "new") (lines)) '(2 ("new new" "tail!")))
+       (list (search:replace! (seat:window-editor (seat:current-window)) "old" "new") (lines)) '(2 ("new new" "tail!")))
 
      ;; The authority can move a conflict before this head consumes its
      ;; notice. Preview from one authoritative text/region snapshot.
@@ -316,12 +316,12 @@
      (write-disk! "newdisk tail\n")
      (visit-file! path)
      (check 'reopening-preserves-manual-edits-and-older-conflict-alternatives
-       (list (lines) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts)))
+       (list (lines) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror)))))
        '(("custom tail") (("mine"))))
      (replace-region-text! '(0 . 0) '(0 . 6) "continued")
      (head:before-frame!)
      (check 'automatic-reload-preserves-continued-typing-in-a-conflict
-       (list (lines) (file:read path) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts)))
+       (list (lines) (file:read path) (map (lambda (c) (list-ref c 4)) (delta-log:conflicts (seat:buffer-store-id (seat:current-buffer-mirror)))))
        '(("continued tail") "newdisk tail\n" (("mine"))))
 
      (delete-file path)

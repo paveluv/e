@@ -219,7 +219,7 @@
      (define replaced (fresh "position-replace" '("aba" "tail")))
      (seat:goto! '(0 . 1))
      (foreign! replaced (text:make-span 0 0 0 0) '("Q"))
-     (search:replace! "a" "ZZ")
+     (search:replace! (seat:window-editor (seat:current-window)) "a" "ZZ")
      (check 'replace-preserves-unseen-prefix (text-of replaced) '("QZZbZZ" "tZZil"))
      (check 'replace-projects-preserved-point (seat:point) '(0 . 3))
 

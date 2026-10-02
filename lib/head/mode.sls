@@ -31,11 +31,13 @@
   (import (rnrs)
           (only (chezscheme) record-writer)
           (only (chezscheme) make-weak-eq-hashtable eq-hashtable-ref
-            eq-hashtable-set! list-head vector-copy void)
+            eq-hashtable-set! list-head vector-copy void equal-hash)
           (prefix (core kernel) kernel:)
+          (prefix (core property) property:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (foundation text) text:)
+          (prefix (head head) head:)
           (prefix (head render) render:)
           (prefix (head seat) seat:)
           (prefix (state store) store:))
@@ -260,6 +262,33 @@
           (seat:buffer-line b 0))
         (scratch-mode b)))
 
+  (define documents (make-hashtable equal-hash equal?))
+  (define (document-mode id first facts)
+    (define (fact key) (cond [(assq key facts) => cdr] [else #f]))
+    (or (detect-mode (or (fact 'file) (fact 'source-file)) first)
+      (and (not (fact 'file)) (string:prefix? "*scratch*" (store:buffer-name id)) (find-mode "scheme"))))
+  (define (assign-document! id)
+    (let-values ([(text revision facts) (store:snapshot-state id)])
+      (let ([m (document-mode id (vector-ref text 0) facts)])
+        (hashtable-set! documents id #t)
+        (store:set-properties! head:ui-actor id
+          (list (cons 'mode (and m (mode-name m))) '(mode-auto . #t))
+          (property:select facts '(mode mode-auto file source-file))))))
+
+  (define (refresh-document! id)
+    (hashtable-set! documents id #t)
+    (when (and (not (store:property id 'mode #f)) (store:property id 'mode-auto #t))
+      (let-values ([(text revision facts) (store:snapshot-state id)])
+        ;; Recheck the coherent capture: an explicit choice can arrive while
+        ;; acquiring it. Automatic detection never takes that choice away.
+        (when (and (not (cond [(assq 'mode facts) => cdr] [else #f]))
+                (cond [(assq 'mode-auto facts) => cdr] [else #t]))
+          (let ([m (document-mode id (vector-ref text 0) facts)])
+            (when (or m (not (assq 'mode facts)))
+              (store:set-properties! head:ui-actor id
+                (list (cons 'mode (and m (mode-name m))) '(mode-auto . #t))
+                (property:select facts '(mode mode-auto file source-file)))))))))
+
   (edoc "Give a buffer the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b (record buffer) "the buffer"))
   (define (assign-mode! b)
@@ -272,25 +301,25 @@
     (and (string? name)
          (kernel:registry-find modes (lambda (m) (string=? (mode-name m) name)))))
 
-  (define (the-buffer b)
-    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
-    (if (null? b) (seat:current-buffer-mirror)
-      (or (seat:adopt-store-buffer! (edoc:type-value 'buffer (car b)))
-        (error 'mode "buffer is not visible" (car b)))))
-
   (edoc "Give a buffer, the current one without a second argument, the registered mode called name, or none with #f, regardless of its file name; it then follows only that name."
         (name (or mode #f) "the mode's name, or #f for none")
         (b (list-of buffer) "the shared document, at most one"))
   (define (set-buffer-mode! name . b)
     ;; how transcript buffers get their highlighting, and how a user picks
     ;; a mode by hand
-    (let ([name (and name (edoc:type-value 'mode name))])
-      (set-mode-of! (the-buffer b) (and name (find-mode name)) #f)))
+    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
+    (let* ([name (and name (edoc:type-value 'mode name))] [m (and name (find-mode name))])
+      (when (and name (not m)) (error 'mode "mode is not registered" name))
+      (if (null? b) (set-mode-of! (seat:current-buffer-mirror) m #f)
+        (let ([id (edoc:type-value 'buffer (car b))])
+          (hashtable-set! documents id #t)
+          (store:set-properties! head:ui-actor id (list (cons 'mode name) '(mode-auto . #f)))))))
 
   (edoc "Give a buffer, the current one without an argument, the mode its file and first line detect, Scheme for a *scratch* buffer, following detection from then on."
         (b (list-of buffer) "the shared document, at most one") (public))
   (define (assign-current-mode! . b)
-    (assign-mode! (the-buffer b)))
+    (unless (<= (length b) 1) (error 'mode "expected at most one buffer"))
+    (if (null? b) (assign-mode! (seat:current-buffer-mirror)) (assign-document! (edoc:type-value 'buffer (car b)))))
 
   (edoc "The keymap context of a buffer's mode, named after it, or false."
         (b (record buffer) "the buffer") (returns (or symbol #f)))
@@ -487,17 +516,23 @@
           (unless hit (eq-hashtable-set! cache lines product))
           (and (<= 0 row) (< row (vector-length product)) (vector-ref product row))))))
 
-  (edoc "Re-resolve every buffer's mode: a buffer with a mode keeps it by name, picking up a reloaded record; a buffer without one that follows detection takes the mode detection now finds.")
-  (define (refresh-buffer-modes!)
+  (edoc "Observe explicit documents once, preserving chosen modes and successful detection. With no arguments, revisit documents already observed by this head after registry changes. A failed detection remains eligible for modes registered later; repeated observation does no acquisition or publication."
+    (ids (list-of buffer) "documents to observe"))
+  (define (refresh-buffer-modes! . ids)
     ;; A detected or chosen mode stays: registration is additive, never a
     ;; theft. A mode gone from the registry leaves its name on the buffer,
     ;; plain text until it returns. Readers resolve that name on every use;
     ;; only newly successful detection needs to change shared facts.
-    (for-each (lambda (b)
-                (when (and (not (seat:buffer-fact b 'mode #f)) (seat:buffer-mode-auto b))
-                  (let ([m (detected-mode b)])
-                    (when m (set-mode-of! b m #t)))))
-              (seat:buffers)))
+    (for-each refresh-document!
+      (if (pair? ids) (filter (lambda (id) (not (hashtable-contains? documents id))) (map (lambda (id) (edoc:type-value 'buffer id)) ids))
+        (filter (lambda (id) (if (store:exists? id) #t (begin (hashtable-delete! documents id) #f)))
+          (vector->list (hashtable-keys documents)))))
+    (when (null? ids)
+      (for-each (lambda (b)
+                  (when (and (not (seat:buffer-fact b 'mode #f)) (seat:buffer-mode-auto b))
+                    (let ([m (detected-mode b)])
+                      (when m (set-mode-of! b m #t)))))
+                (seat:buffers))))
 
   ;;; The head's adopt hook -------------------------------------------------------
 

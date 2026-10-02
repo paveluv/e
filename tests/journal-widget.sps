@@ -34,7 +34,7 @@
          [end (string-length (string:trim-spaces text #f))])
     (log-view:select! b (list (car p) 0 end) (list (car p) 0 (- end 4)))
     (log-view:copy! b)
-    (test:await 'journal-copy (lambda () (pump!) (string=? (seat:copy-text) "last"))))
+    (test:await 'journal-copy (lambda () (pump!) (string=? (copy-text) "last"))))
   (let ()
     (kernel:retract-module! 'journal-ui)
     (parameterize ([kernel:registering-module 'journal-ui]) (log-view:init!))
@@ -66,9 +66,9 @@
   (ready a "record-179")
   (log-view:copy! a)
   (test:await 'journal-copy-across-pages
-    (lambda () (pump!) (string:suffix? "record-179" (seat:copy-text))))
+    (lambda () (pump!) (string:suffix? "record-179" (copy-text))))
   (check 'journal-copy-keeps-record-order-with-no-page-duplication
-    (length (string:lines (seat:copy-text))) 81)
+    (length (string:lines (copy-text))) 81)
   (widget:unmount! root)
   (log:retention 4096))
 
@@ -107,6 +107,11 @@
             (list (map (lambda (line) (string:trim-spaces line #f)) (widget:frame-lines f))
               (vector-ref (widget:frame-cell-styles f 1) 23))
             '(("message-fixture stream" "message-fixture result [copied]" "" "" "" "" "" "") ghost)))
+        (let ([ticket (actor:ask! '(agent "message fixture") head:ui-actor "Pending question" '() void)])
+          (head:before-frame!) (head:run-deferred!) (message:show! id "" "")
+          (check 'clearing-feedback-reveals-the-pending-question
+            (and (string:search (car (widget:frame-lines (show 80))) "Pending question" 0 80) #t) #t)
+          (actor:cancel! ticket) (head:before-frame!) (head:run-deferred!))
         (widget:unmount! id)
         (log:add! 'message-fixture "not replayed")
         (widget:mount! id 'message-fixture)

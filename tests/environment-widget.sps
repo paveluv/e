@@ -13,7 +13,7 @@
   (dynamic-wind void
     (lambda ()
       (test:await 'widget-evaluation (lambda () (finished? job)))
-      (control:init!) (entry:init!) (prompt:init!)
+      (kernel:load-module! "control") (kernel:load-module! "entry") (kernel:load-module! "prompt")
       (load "examples/environments.e")
       (let* ([panel (environment-example:panel! env "An embedded worksheet")])
         (widget:mount! panel 'example-panel)
@@ -56,6 +56,28 @@
           (completion-state:finish! s))
         ((completion:source-release b)))
       (include "tests/history.sps")
+      (load "examples/repl.e")
+      (let* ([a (repl:create! env)] [b (repl:create! env)]
+             [draft-a (get (view:options (view:snapshot a)) 'draft)]
+             [draft-b (get (view:options (view:snapshot b)) 'draft)]
+             [history (get (view:options (view:snapshot a)) 'history)])
+        (widget:mount! a 'repl-a) (widget:mount! b 'repl-b) (pump!)
+        (check 'windowless-repls-share-an-environment-with-private-independent-drafts
+          (list (map (lambda (id) (view:source (view:snapshot id))) (list a b))
+            (equal? draft-a draft-b) (store:property draft-a 'audience))
+          (list (list env env) #f (list who)))
+        (store:reset! who draft-a '("(+ private-name 2)"))
+        (pump!) (prompt:accept! (widget:descendant a 'prompt)) (pump!) (prompt:drain!) (pump!)
+        (let* ([item (get (value history) 'tail)] [job (caddr (get (value item) 'recipe))])
+          (test:await 'windowless-repl-result (lambda () (finished? job)))
+          (widget:unmount! a) (prompt:drain!)
+          (widget:mount! a 'repl-resumed) (pump!)
+          (check 'repl-remount-rebuilds-request-without-replaying-or-clobbering-drafts
+            (list (get (value history) 'count) (get (value job) 'result)
+              (store:line draft-a 0) (store:line draft-b 0)
+              (and (widget:descendant a 'prompt 'input 'entry) #t))
+            '(1 (value (44) "(44)") "(+ private-name 2)" "(+ 20 22)" #t)))
+        (widget:unmount! a) (widget:unmount! b) (prompt:drain!))
       (let* ([view (eval:create-result-view! who #f job)] [fork (view:fork! who view)]
              [children (test:child-pids)]
              [draft (store:create! who "model prompt" '("(+ private-name 1)") '((internal . #t)))]

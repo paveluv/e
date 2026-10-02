@@ -47,21 +47,21 @@
      (insert-text! "c")
 
      ;; the log as data, for the current buffer, narrowed by a selector
-     (check 'the-log-lists-the-buffers-entries-newest-first (map car (delta-log:log)) '(3 2 1))
-     (check 'a-selector-narrows-the-log (map car (delta-log:log '((count . 1)))) '(3))
+     (check 'the-log-lists-the-buffers-entries-newest-first (map car (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))) '(3 2 1))
+     (check 'a-selector-narrows-the-log (map car (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)) '((count . 1)))) '(3))
      (check 'a-local-buffer-has-no-log
-       (guard (ex [else 'refused]) (seat:with-buffer-mirror (seat:new-local-buffer! "loose") (delta-log:log)))
+       (guard (ex [else 'refused]) (seat:with-buffer-mirror (seat:new-local-buffer! "loose") (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))))
        'refused)
 
      ;; the revision type completes from the log, each entry hinted with its
      ;; actor, place and text; the batch type from the labels
      (check 'a-revision-completes-from-the-log-with-a-hint
-       (let ([offered (edoc:type-completions 'revision "")])
+       (let ([offered (parameterize ([widget:target (seat:window-editor (seat:current-window))]) (edoc:type-completions 'revision ""))])
          (list (map car offered)
                (and (string:search (caddr (car offered)) "+\"c\"" 0 (string-length (caddr (car offered)))) #t)))
        '((3 2 1) #t))
      (check 'a-batch-completes-once-per-batch-with-its-count
-       (let ([offered (edoc:type-completions 'batch "")])
+       (let ([offered (parameterize ([widget:target (seat:window-editor (seat:current-window))]) (edoc:type-completions 'batch ""))])
          (list (length offered) (and (string:search (caddr (car offered)) "Edits by" 0 (string-length (caddr (car offered)))) #t)))
        '(3 #t))
 
@@ -71,17 +71,17 @@
      (seat:goto! '(0 . 0))
      (insert-text! "one old two old\nthree\nold four old five")
      (seat:goto! '(0 . 9))
-     (define before (length (delta-log:log)))
+     (define before (length (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))))
      (check 'a-replacement-replaces-every-occurrence-and-keeps-point
-       (list (search:replace! "old" "new") (vector->list (seat:buffer-lines d)) (seat:point))
+       (list (search:replace! (seat:window-editor (seat:current-window)) "old" "new") (vector->list (seat:buffer-lines d)) (seat:point))
        (list 4 '("one new two new" "three" "new four new five") '(0 . 9)))
-     (define added (list-head (delta-log:log) 4))
+     (define added (list-head (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror))) 4))
      (define batch-id (cdr (assq 'batch (caddr (car added)))))
      (check 'reverse-order-rewrite-logs-each-range-under-one-batch
-       (list (- (length (delta-log:log)) before) (map (lambda (r) (cadddr r)) added)
+       (list (- (length (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))) before) (map (lambda (r) (cadddr r)) added)
              (for-all (lambda (r) (equal? (cdr (assq 'batch (caddr r))) batch-id)) added))
        (list 4 '(((0 4 0 7) ("old") ("new")) ((0 12 0 15) ("old") ("new")) ((2 0 2 3) ("old") ("new")) ((2 9 2 12) ("old") ("new"))) #t))
-     (check 'the-log-takes-the-batch-alone-as-its-selector (length (delta-log:log batch-id)) 4)
+     (check 'the-log-takes-the-batch-alone-as-its-selector (length (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)) batch-id)) 4)
      (check 'undo-takes-the-replacement-back-as-one-step
        (begin (undo!) (vector->list (seat:buffer-lines d))) '("one old two old" "three" "old four old five"))
      ;; another actor's edit landing after the first occurrence's edit moves
@@ -97,7 +97,7 @@
            (set! fired #t)
            (store:edit! bot (seat:buffer-store-id e) (store:revision (seat:buffer-store-id e)) (text:make-span 0 0 0 0) '("Q ")))))
      (check 'a-foreign-edit-between-occurrences-moves-the-rest
-       (list (search:replace! "old" "new") (vector->list (seat:buffer-lines e)))
+       (list (search:replace! (seat:window-editor (seat:current-window)) "old" "new") (vector->list (seat:buffer-lines e)))
        (list 3 '("Q new and new and new")))
 
      (include "tests/review-widget.sps")

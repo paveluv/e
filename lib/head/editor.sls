@@ -121,6 +121,7 @@
     (let* ([d (interaction:snapshot id)] [ref (and d (view:source d))])
       (when (and ref (eq? (car ref) 'buffer) (text-source:lookup ref)
               (store:visible? head:ui-actor ref))
+        (mode:refresh! ref)
         (acquire-surface! id (text-source:lookup ref) d frame)
         (when (or (not (mount-backend? (mounted id))) (mount-surface (mounted id)))
           (let-values ([(source d inputs) (widget:context id 'current)])
@@ -148,11 +149,17 @@
         (if (mount-mode m) (list-ref (mount-mode m) 4) (text-layout:wrap-lines))
         (if (mount-mode m) (list-ref (mount-mode m) 5) (text-layout:scroll-margin)) (following? inputs)
         (if (mount-effects m) (cdr (mount-effects m)) '()))))
-  (define (layout-width data d width)
+  (define (wrap-setting data d)
     (let* ([own (option d 'wrap 'default)]
            [source (mode:source-fact (list-ref data 3) 'wrap 'default)]
            [setting (if (eq? own 'default) source own)])
-      (and (not (render:header (caddr data))) (if (eq? setting 'default) (list-ref data 6) setting) (max 1 width))))
+      (and (not (render:header (caddr data))) (if (eq? setting 'default) (list-ref data 6) setting))))
+  (define (clean-wrap? setting)
+    (or (eq? setting 'clean) (and (pair? setting) (eq? (car setting) 'clean))))
+  (define (layout-width data d width)
+    (let ([setting (wrap-setting data d)])
+      (and setting (max 1 (cond [(and (pair? setting) (eq? (car setting) 'clean)) (min width (cdr setting))]
+                            [(eq? setting 'clean) width] [else (- width 1)])))))
 
   (define (contexts id d)
     (let ([signature (mount-mode (mounted id))])
@@ -203,7 +210,10 @@
                                                    (cons (append (list y row start end)
                                                            (or (hashtable-ref cache row #f)
                                                              (let ([value (call-with-values (lambda () (row-presentation data row)) list)])
-                                                               (hashtable-set! cache row value) value))) out))))))))))))
+                                                               (hashtable-set! cache row value) value))
+                                                           (list (and (> width 1) (not (render:header frame))
+                                                                   (if wrap (and next? (not (clean-wrap? (wrap-setting data d))) #\\)
+                                                                     (and (> end (+ start width)) #\$))))) out))))))))))))
   (define (row-presentation data row)
     (let ([surface (render:row (caddr data) row)])
       (if surface (values (car surface) (cadr surface))
@@ -216,13 +226,15 @@
     (if (not (cadr projection)) (if (zero? (car range)) (list "[Selection history unavailable]") '())
       (map (lambda (row)
              (let* ([shown (list-ref row 4)] [text (if (vector? shown) (apply string-append (vector->list shown)) shown)]
-                    [visible (glyph:slice text (caddr row) (max 0 (min width (- (cadddr row) (caddr row)))))])
-               (let scan ([i 0] [out #f])
-                 (if (= i (string-length visible)) (or out visible)
-                   (let ([n (char->integer (string-ref visible i))])
-                     (if (or (< n 32) (<= 127 n 159))
-                       (let ([out (or out (string-copy visible))]) (string-set! out i #\space) (scan (+ i 1) out))
-                       (scan (+ i 1) out)))))))
+                    [edge (list-ref row 6)] [limit (- width (if edge 1 0))]
+                    [visible (glyph:slice text (caddr row) (max 0 (min limit (- (cadddr row) (caddr row)))))]
+                    [visible (let scan ([i 0] [out #f])
+                               (if (= i (string-length visible)) (or out visible)
+                                 (let ([n (char->integer (string-ref visible i))])
+                                   (if (or (< n 32) (<= 127 n 159))
+                                     (let ([out (or out (string-copy visible))]) (string-set! out i #\space) (scan (+ i 1) out))
+                                     (scan (+ i 1) out)))))])
+               (if edge (string-append (glyph:fit visible limit) (string edge)) visible)))
         (list-ref projection 6))))
   (define (decorate projection d width height range)
     (if (not (cadr projection)) (list (list (list 0 0 width 1) 'ghost))
@@ -252,7 +264,8 @@
                                             (apply append (map (lambda (p) (paint-range (car p) (cadr p) r y left)) (row-annotations index r))))
                                        (append (list-ref data 9) (list (list-ref data 5)))))
                        (apply append (map (lambda (p) (paint-range (text:datum->span (car p)) (cadr p) r y left)) highlights))
-                       (if selected (paint-range selected 'selection r y left) '())))))
+                       (if selected (paint-range selected 'selection r y left) '())
+                       (if (list-ref row 6) (list (list (list (- width 1) y 1 1) 'chrome)) '())))))
             (list-ref projection 6))))))
   (define (caret projection d width height)
     (and (cadr projection)
@@ -267,7 +280,7 @@
       (let* ([data (car projection)] [frame (caddr data)] [lines (text-control:lines (cadr data))])
         (apply append
           (map (lambda (row)
-                 (let* ([y (car row)] [r (cadr row)] [left (caddr row)] [end (min (cadddr row) (+ left width))]
+                 (let* ([y (car row)] [r (cadr row)] [left (caddr row)] [end (min (cadddr row) (+ left width (if (list-ref row 6) -1 0)))]
                         [surface (render:row frame r)]
                         [ranges (append
                                   (map (lambda (link)

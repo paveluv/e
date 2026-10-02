@@ -3,7 +3,7 @@
 (elibrary (head widget)
   (export act! actions adopt! arrange! cancel! capture! caret command-bindings command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-row-links frame-source frame-styles generation
-          host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown stage! status target unmount!)
+          host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! mounted? pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers refresh! register! repaint! reveal! set-active! shown stage! status target unmount!)
   (import (except (chezscheme) inspect)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (core port) port:)
@@ -92,6 +92,13 @@
                 (interaction:set-state! head:ui-actor parent #f anchor))))))
       (hashtable-keys pending-scroll))
     (vector-for-each (lambda (id) (reveal! id (hashtable-ref pending-reveal id #f))) (hashtable-keys pending-reveal)))
+
+  (edoc "Synchronize a mounted subtree and its ancestors after a base operation changes containment, then acquire newly exposed descendants through the ordinary pump. Use at a command boundary before addressing the new children; painting and hover must never call this barrier."
+    (id model "surviving mounted view affected by the operation"))
+  (define (refresh! id)
+    (mounted id)
+    (model:snapshots (append (path id) (map car (cdr (rows id)))))
+    (pump!))
   (define (drain-notifications! pending)
     (for-each (lambda (refresh) (refresh))
       (with-mutex notification-lock
@@ -144,6 +151,12 @@
   (define (mounted id)
     (or (hashtable-ref nodes id #f) (error 'widget "view is not mounted" id)))
 
+  (edoc "Whether this view belongs to an adopted local mount, excluding temporary admission preparation. Services may acquire read demand while staging, but must wait for an adopted mount before creating or replacing interactive children. This query uses only head state."
+        (id model "view") (returns boolean) (effects internal) (public))
+  (define (mounted? id)
+    (let ([n (hashtable-ref nodes id #f)])
+      (and n (not (mount-staged? (node-root n))) #t)))
+
   (edoc "Find a descendant of a mounted view by its named child path. Read the head's current logical tree; no geometry or window discovery is involved. A missing child refuses."
         (id model "starting view") (path (list-of symbol) "child names in order") (returns model "descendant view") (effects internal) (inspect))
   (define (descendant id . path)
@@ -183,7 +196,7 @@
                            (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
                                                   (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status key-delegates) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -697,14 +710,28 @@
     (map (lambda (child) (list (cadr child) (list 0 0 width height))) (view:children d)))
   (define (scroll-layout d width height measure locate)
     (unless (= (length (view:children d)) 1) (error 'scroll "expected one child"))
-    (let* ([id (cadar (view:children d))] [extent (max height (cadr (measure id 'y width)))]
-           [position (locate id (view:state d) width)]
+    (let* ([id (cadar (view:children d))] [bar (option d 'scrollbar #f)]
+           [side (and (> width 1) bar
+                   (case bar [(auto) (and (> (cadr (measure id 'y width)) height) 'right)]
+                     [(left) 'left] [(#t right) 'right] [else (error 'scroll "invalid scrollbar preference" bar)]))]
+           [columns (- width (if side 1 0))] [extent (max height (cadr (measure id 'y columns)))]
+           [position (locate id (view:state d) columns)]
            [intent (hashtable-ref pending-scroll id #f)]
            [at (min (max 0 (- extent height)) (max 0 (if intent (cdr intent) (or position (hashtable-ref scroll-positions id 0)))))])
       ;; A logical anchor can move as content grows before it. Retain its
       ;; latest resolved position while the next result is being acquired.
       (hashtable-set! scroll-positions id at)
-      (list (list id (list 0 (- at) width extent)))))
+      (list (list id (list (if (eq? side 'left) 1 0) (- at) columns extent)))))
+  (define (scroll-render data d width height range children)
+    (if (or (null? children) (= width (caddr (frame-rect (car children))))) '()
+      (let* ([child (car children)] [side (option d 'scrollbar #f)]
+             [thumb (layout:scroll-thumb (cadddr (frame-rect child)) height (hashtable-ref scroll-positions (frame-id child) 0))])
+        (map (lambda (n)
+               (let ([line (make-string width #\space)] [y (+ (car range) n)])
+                 (string-set! line (if (eq? side 'left) 0 (- width 1))
+                   (if (<= (car thumb) y (- (+ (car thumb) (cdr thumb)) 1)) #\┃ #\│)) line)) (iota (cdr range))))))
+  (define (scroll-content-width frame)
+    (caddr (frame-rect (if (pair? (frame-children frame)) (car (frame-children frame)) frame))))
   (define (overlay-measure data d axis cross measure)
     (map (lambda (i) (apply max 0 (map (lambda (child) (list-ref (measure (cadr child) axis cross) i)) (view:children d)))) '(0 1)))
   (define (content-placements! id width)
@@ -743,7 +770,7 @@
         (unless (and frame child (integer? delta) (exact? delta))
           (error 'scroll
             "expected an allocated viewport and integer delta"))
-        (let* ([width (caddr (frame-rect frame))]
+        (let* ([width (scroll-content-width frame)]
                [height (cadddr (frame-rect frame))]
                [limit (max 0 (- (cadr (measure! child 'y width)) height))]
                [intent (hashtable-ref pending-scroll child #f)]
@@ -920,8 +947,8 @@
                    (make-frame id d entry source (inputs! id) (node-visible n) rect clip children lines cells links
                      (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p)))))))))])))))
 
-  (edoc "Prepare a recursive frame for a root allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live."
-        (id model "root view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
+  (edoc "Prepare a recursive frame at this allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live. Only preparation of the mounted root reconciles focus; projecting a subtree preserves the containing composition's focus."
+        (id model "root or descendant view") (width integer "nonnegative backend width") (height integer "nonnegative backend height") (returns any))
   (define (prepare! id width height)
     (let ([rect (list 0 0 width height)])
       (define (geometry f) (and f (list (frame-id f) (frame-rect f) (frame-clip f) (map geometry (frame-children f)))))
@@ -932,7 +959,7 @@
       (unless (rectangle? rect) (error 'prepare! "invalid allocation" rect))
       (let* ([old (prepared id)] [frame (build)] [d (read-view id)] [before (and d (view:focus d))])
         (hashtable-set! preparations id frame)
-        (unless (staging?) (ensure-focus! id))
+        (when (and (not (staging?)) (equal? id (mount-id (node-root (mounted id))))) (ensure-focus! id))
         (let ([d (read-view id)])
           (unless (equal? before (and d (view:focus d)))
             (set! frame (build)) (hashtable-set! preparations id frame)))
@@ -1065,6 +1092,12 @@
            [tail (and previous (member previous past))]
            [next (or (and (member old choices) old)
                    (and within (let ([choices (focusable within)]) (and (pair? choices) (car choices))))
+                   ;; Reflow can replace the visible children of a container.
+                   ;; Stay in the nearest surviving subtree before consulting
+                   ;; the previous frame's neighbors outside that subtree.
+                   (exists (lambda (id)
+                             (let* ([f (and frame (not (equal? id root)) (find-frame frame id))] [choices (if f (focusable f) '())])
+                               (and (pair? choices) (car choices)))) (reverse (path old)))
                    (and tail (find (lambda (id) (member id choices)) (cdr tail)))
                    (and tail (find (lambda (id) (member id choices)) (reverse (list-head past (- (length past) (length tail))))))
                    (and (pair? choices) (car choices)))])
@@ -1121,19 +1154,35 @@
                               [yield? (member key (routing-policy id d 'yield '()))]
                               [provider (field entry 'contexts '())]
                               [contexts (if yield? '() (if (procedure? provider) (provider id d) provider))]
-                              [item (list id (if (or (equal? id root) (equal? id barrier)) (append contexts '(widget-host)) contexts)
-                                      (or (and full? (not yield?)) (equal? id barrier)))])
+                              [delegates (let ([provider (field entry 'key-delegates #f)])
+                                           (if (or yield? (not provider)) '() (provider id d)))]
+                              [stop? (or (and full? (not yield?)) (equal? id barrier))])
                          (unless (and (list? contexts) (for-all symbol? contexts))
                            (error 'key-scopes "expected context symbols" id contexts))
-                         (if (equal? id barrier) (reverse (cons item out)) (loop (cdr rest) (cons item out))))))]
+                         (unless (and (list? delegates)
+                                   (for-all (lambda (r) (and (list? r) (pair? r) (member (car r) (cdr rest))
+                                                          (for-all symbol? (cdr r)))) delegates))
+                           (error 'key-scopes "delegated keymaps require an acquired ancestor receiver" id delegates))
+                         (let* ([rows (cons (cons id (if (or (equal? id root) (equal? id barrier))
+                                                       (append contexts '(widget-host)) contexts)) delegates)]
+                                [items (map (lambda (r i) (list (car r) (cdr r) (and stop? (= i (- (length rows) 1)))))
+                                         rows (iota (length rows)))]
+                                [next (append (reverse items) out)])
+                           (if (equal? id barrier) (reverse next) (loop (cdr rest) next))))))]
            [captures (filter (lambda (scope) (pair? (cadr scope)))
                        (map (lambda (id)
                               (let* ([d (read-view id)] [full? (eq? (routing-policy id d 'capture 'partial) 'full)]
                                      [yield? (member key (routing-policy id d 'yield '()))])
                                 (list id (if yield? '() (routing-policy id d 'capture-contexts '())) (and full? (not yield?)))))
                          (scope-path path barrier)))]
-           [basis (map (lambda (id) (let ([d (read-view id)]) (list id (and d (view:generation d)) (definition d)))) path)])
-      (list (list root focus barrier (let ([d (read-view root)]) (and d (view:sequence d))) basis normal captures) (append captures normal) focus)))
+           ;; Containment publications renew a whole tree, including unrelated
+           ;; siblings. Fence the command route and this local mount instead:
+           ;; background history/results must not cancel a focused key chord.
+           [basis (map (lambda (id)
+                         (let ([d (read-view id)])
+                           (list id (and d (list (view:owner d) (view:source d) (view:kind d) (view:schema d)
+                                             (descriptor:commands d))) (definition d)))) path)])
+      (list (list (node-root (mounted root)) focus barrier basis normal captures) (append captures normal) focus)))
 
   (edoc "Offer committed text or an unbound normalized key to the focused path; a full capture or modal boundary stops bubbling."
         (root model "active root") (event list "(text string typed-or-paste), (key token), or cancellation") (returns boolean))
@@ -1345,7 +1394,7 @@
       (unless (null? rest)
         (let* ([parent (car rest)] [d (read-view parent)] [f (allocation parent)])
           (if (and f (eq? (view:kind d) 'scroll))
-            (let* ([width (caddr (frame-rect f))] [height (cadddr (frame-rect f))]
+            (let* ([width (scroll-content-width f)] [height (cadddr (frame-rect f))]
                    [point (locate! child place width)] [top (locate! child (view:state d) width)]
                    [delta (cond [(not (and point top)) 0] [(< point top) (- point top)] [(>= point (+ top height)) (+ 1 (- point top height))] [else 0])])
               (if (not (and point top)) (hashtable-set! pending-reveal id anchor)
@@ -1369,7 +1418,10 @@
     (register! 'row 1 (layout:container 'x))
     (register! 'column 1 (layout:container 'y))
     (register! 'overlay 1 (list (cons 'layout overlay-layout) (cons 'measure overlay-measure)))
-    (register! 'scroll 1 (list (cons 'layout scroll-layout) (cons 'measure overlay-measure) (cons 'actions (list (cons 'scroll scroll-action!)))))
+    (register! 'scroll 1 (list (cons 'layout scroll-layout) (cons 'measure overlay-measure)
+                           (cons 'render-children scroll-render)
+                           (cons 'decorate (lambda (data d width height range) (list (list (list 0 0 width height) 'chrome))))
+                           (cons 'actions (list (cons 'scroll scroll-action!)))))
     (head:add-pre-redraw-hook! drain-cancels!)
     (head:add-pre-redraw-hook! pump!)
     (kernel:registry-observe! definitions

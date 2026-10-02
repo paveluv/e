@@ -1015,6 +1015,22 @@ supplies default catalogue name and audience without overriding explicit
 options. `window:find-app` queries these keys from retained presentations,
 preferring the destination; there is no separate app registry.
 
+Use `construction:call! actor build` from `(state construction)` when a builder
+allocates multiple resources, on either the base or the head.
+`build` receives `remember!`: wrap each newly owned model or buffer with
+`(remember! resource)` to retire it if construction raises. An optional second
+argument supplies its cleanup thunk for a service with its own close operation.
+Nested successful builders transfer their cleanup to the outer builder, so a
+later failure also releases their allocations. Borrowed documents and shared
+queries are never registered. Successful construction releases this temporary
+cleanup list without reading or publishing models; normal lifetimes still come
+from explicit scopes and ownership. This helper does not undo edits or admission.
+`window-control:open-app!` keeps the boundary through admission, including
+resources registered by nested builders, then ends it before display acquisition.
+A failure to acquire an admitted app's display preserves its durable state.
+Catalogue and filesystem query factories consume their supplied unshared
+source; a failed factory releases it together with its new query and filter.
+
 `window-control:open-document!` takes a window and a catalogue document.
 Keyboard and scripted calls open in that window. A pointer action in an
 inactive panel opens in the previously focused window of the same manager,
@@ -1037,6 +1053,14 @@ The composed app openers accept an explicit window: `buffet:open!`,
 `log-view:show!`, `delta-log:open!` and `delta-log:conflicts!`. Their contextual
 bindings supply that window automatically. `C-x C-l` opens rewrite review;
 `C-x l` toggles line numbers.
+
+`describe:show! name [composition [page]]` displays a reference page in the
+composition's auxiliary host while keeping the source focused. Omitting the
+composition uses the focused view's explicit `auxiliary` binding. A supplied
+page updates that reference document; otherwise it creates an independent page.
+The screen's `open-document` command routes page links to its main manager.
+`describe:at-point! editor` reads the symbol from that editor's acquired source
+and caret. M-. in an editor and in M-x uses the same reference browser.
 
 Mounted compositions follow base-owned child and source changes through their
 existing subscriptions. The head coalesces structural changes, acquires the
@@ -1303,6 +1327,15 @@ change. Fence interaction before reading expected parent revisions; a stale
 revision refuses the batch. Reordering preserves child identities; unlinking releases their
 mounts without deleting their descriptors or data.
 
+After a base operation changes a mounted subtree, `widget:refresh!` provides
+an explicit command-boundary barrier before addressing its new children. It
+reads that subtree and its ancestors, then acquires newly exposed descendants
+through the ordinary pump. The window commands use it after opening, returning,
+splitting or closing. Rendering, hover and routine input discovery use the
+already acquired state and never invoke this barrier. For an unmounted model,
+read an authoritative `model:snapshots` packet; `model:snapshot` only reads an
+existing subscription.
+
 `widget:unmount!`, or killing the adapter buffer, fences publication, releases
 subscriptions and relinquishes the owner generation. It keeps the underlying
 model and descriptor. Detach checkpoints retain widget IDs, not generated
@@ -1331,7 +1364,11 @@ The `row` and `column` kinds allocate children using their descriptor sizing,
 `wide`. Tiny allocations collapse gaps before compressing minima. The
 `overlay` kind paints children in their descriptor order, back to front.
 `scroll` hosts one child and stores its logical anchor; its `scroll` action
-returns any movement left over at the edge.
+returns any movement left over at the edge. Its `scrollbar` option is `#f`
+(default), `left`, `right`, `#t` (right), or `auto` (right when content
+overflows). The bar reserves one column; a one-column viewport keeps that
+column for its content. Resizing preserves the logical anchor, and scrolling
+and reveal use the child's actual width.
 
 `widget:prepare!` returns a head-local frame for a root and its allocation.
 The existing-window adapter supplies that allocation automatically.
@@ -1417,6 +1454,11 @@ view over an existing store document. Mount it directly, compose it with
 other views, or pass its root to `window-host:show-widget!`. With `()` or
 `((wrap . default))`, wrapping follows the document's `wrap` fact, then
 `paint:wrap-lines`. Use `((wrap . #t))` or `((wrap . #f))` to override it.
+The editor reserves the last column for `\` on continued wrapped rows, and
+shows `$` when unwrapped text extends past the right edge. A document's
+`clean` wrap setting suppresses these markers and uses the full width;
+`(clean . columns)` also limits its wrap width. Terminal surfaces and
+one-column editors never replace content with an edge marker.
 `((read-only . #t))` prevents edits and undo through this view without making
 the shared document read-only. Selection and copying remain available.
 Caret movement uses the same `paint:scroll-margin` as ordinary windows.
@@ -1715,11 +1757,15 @@ catalogue demand; painting reads only prepared completion data.
 ## Modal prompt hosts
 
 Linear prompt callers can use a composed modal host. Load `modal`, create it
-with `(modal:create! owner contexts)`, and attach it as an ordinary child.
+with `(modal:create! owner delegates)`, and attach it as an ordinary child.
 Bind an ancestor's `prompt` command to `(prompt host prepare ())`, where `host`
 is that model reference. `prompt:read!` discovers the nearest such binding
-without querying window state. `contexts` explicitly lists the keymaps allowed
-inside the modal boundary; no editor bindings are implicit.
+without querying window state. Each delegate is `(ancestor-model context ...)`,
+for example `(list screen 'screen)`. The named keymaps run with that ancestor
+as their receiver, rather than the prompt. No editor bindings are implicit.
+Widget definitions can provide `key-delegates` as a read-only `(id descriptor)`
+procedure returning these rows. Delegates follow the widget's own contexts,
+stay within acquired ancestors, and share the normal modal barrier and trace.
 
 An empty host takes no space. Only its top prompt is visible. Nested requests
 capture their parent and receiver context before attachment, and completion
@@ -1768,14 +1814,30 @@ binding snapshot, even when its root is empty. Return that saved root to
 resume it. A different root is refused; intentional replacement uses
 `root:install!`. Saved state never selects executable code.
 
-Entry runs before input and must not prompt. Its constructors are responsible
-for cleaning up partial construction if they raise. Successful admission is
-adopted at the next command boundary, using the same root installation path
-as live replacement. Deliver launch requests only after adoption and input
-startup, through the composition's explicit commands.
+Entry runs before input and must not prompt. Build new resources inside
+`construction:call!`, registering only newly owned resources with `remember!`.
+`root:start!` keeps that cleanup active until admission succeeds, including
+preparation errors or refused admission after the entry returns. Borrowed
+documents and an existing saved root must not be registered for cleanup.
+Successful admission ends the construction boundary before deferred adoption,
+so a later output failure preserves the admitted graph for recovery.
 
-This API is available for composition startup; the ordinary launcher is still
-being migrated from its existing editor host.
+The ordinary launcher uses `start.e`; `--start path` selects another recipe.
+Deliver launch requests only after adoption and input startup, through the
+composition's explicit commands.
+
+`./e --start examples/repl.e` starts a windowless Scheme REPL using the same
+head runtime. Its prompt evaluates in an explicit base environment; `M-x`
+opens a separate head-command prompt. The example composes ordinary history,
+prompt, message and action widgets. It creates no window manager until you
+choose **Edit draft in windows**, which replaces the root with one.
+
+`repl:create! environment` creates another view over an existing environment,
+with an independent private draft and history. Pass the same environment
+reference in another head to share definitions. Detaching preserves authored
+drafts and accepted jobs. Reattaching rebuilds transient input requests without
+resubmitting them; base restart preserves portable history but does not replay
+definitions or recover a worker's native Scheme objects.
 
 ## Prompt completion presentations
 

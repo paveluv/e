@@ -52,9 +52,9 @@
      (evaluate! "(edit:forward-copy-buffer-to-system-clipboard #t)")
      (evaluate! "(edit:copy-text! \"abc\")")
      (wait-for! 'a-copy-publishes-its-text-at-once (lambda () (written? "\x1b;]52;c;YWJj\x1b;\\")) 5000)
-     (evaluate! "(begin (seat:show-buffer-mirror! (seat:copy-buffer)) (void))")
-     (wait-for! 'the-copy-buffer-shows (lambda () (on-screen? "[copy]")) 5000)
-     (send! "d")
+     (evaluate! "(begin (widget:invoke! (widget:command-owner (widget:target) 'open-document) 'open-document (clipboard:open! #t)) (void))")
+     (wait-for! 'the-copy-buffer-shows (lambda () (on-screen? "*copy*")) 5000)
+     (send! "\x5;d")
      (wait-for! 'a-hand-edit-in-the-copy-buffer-publishes-at-the-next-frame
                 (lambda () (written? "\x1b;]52;c;YWJjZA==\x1b;\\")) 5000)
      (send! "\x18;\x3;")                ; C-x C-c

@@ -383,7 +383,7 @@
                (lambda ()
                  (if (eq? kind 'hook)
                      (parameterize ([kernel:registering-module 'state-app-save-hook])
-                       (file:add-pre-save-hook! (lambda (target) (own!))))
+                       (file:add-pre-save-hook! (lambda (target editor) (own!))))
                      (own!)))
                (lambda ()
                  (let* ([result (guard (ex [(kernel:refusal? ex) 'refused]) (save-file! path))]
@@ -466,7 +466,7 @@
          ;; Pre-save edits need not have reached the head's cached text.
          (parameterize ([kernel:registering-module 'state-save-hook])
            (file:add-pre-save-hook!
-             (lambda (target) (when (string=? target path) (insert! saved-id 0 "pre-")))))
+             (lambda (target editor) (when (string=? target path) (insert! saved-id 0 "pre-")))))
          (check 'unadopted-pre-save-edit-is-written (save-file! path) #t)
          (check 'save-captures-current-store-text (file:read path) "pre-written-later\n")
          (head:before-frame!)
@@ -487,8 +487,8 @@
                   (dynamic-wind
                     (lambda ()
                       (parameterize ([kernel:registering-module 'in-flight-save])
-                        (file:add-pre-save-hook! (lambda (target) (set-timer 10000)))
-                        (file:add-post-save-hook! (lambda (target) (set! post-saves (+ post-saves 1))))))
+                        (file:add-pre-save-hook! (lambda (target editor) (set-timer 10000)))
+                        (file:add-post-save-hook! (lambda (target editor) (set! post-saves (+ post-saves 1))))))
                     (lambda ()
                       (let ([result
                              (interrupt-during!

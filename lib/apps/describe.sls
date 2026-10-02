@@ -14,16 +14,20 @@
           (prefix (head catalogue-host) catalogue-host:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
           (prefix (head mode) mode:)
           (prefix (head seat) seat:)
           (prefix (head style) style:)
+          (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service doc) doc:)
           (prefix (service log) log:)
           (prefix (service reference) reference:)
+          (prefix (state store) store:)
           (prefix (state view) view:))
 
   ;;; Fetching --------------------------------------------------------------------
@@ -67,7 +71,7 @@
   (edoc "Show documentation in an independent Markdown page and return its source document. An optional explicit page changes that receiver only."
         (name (or symbol string procedure) "the documented name")
         (receiver (list-of buffer) "optional reference source document") (returns (or buffer #f)))
-  (define (describe! name . receiver)
+  (define (describe-legacy! name . receiver)
     (unless (<= (length receiver) 1) (error 'describe! "expected at most one page"))
     (let* ([name (cond [(string? name) (string->symbol name)]
                        [(symbol? name) name]
@@ -86,6 +90,34 @@
             (if (window-host:pop-up-or-reuse! root) (edit:set-message! "")
               (edit:set-message! (format "~a: see ~a" name (seat:buffer-name b)))))))
       id))
+
+  (define (describe-composed! name host page)
+    (let* ([host (or (widget:command-owner host 'auxiliary) (error 'describe "no auxiliary host"))]
+           [name (cond [(string? name) (string->symbol name)] [(symbol? name) name] [else (or (top-level-name name) name)])]
+           [id (if (null? page) (reference:create! head:ui-actor name (keymap:command-keys name))
+                 (let ([old (reference:page head:ui-actor (car page))])
+                   (and old (reference:select! head:ui-actor (car old) (cadr old) name (keymap:command-keys name)))))])
+      (if (not id) (head:report! (format "No documentation for ~a" name))
+        (let* ([root (let climb ([id host]) (let ([parent (view:parent (interaction:snapshot id))]) (if parent (climb parent) id)))]
+               [focus (widget:focused host)] [window (widget:invoke! host 'auxiliary)]
+               [open (assq 'open-document (widget:commands host))])
+          (window-control:open-app! window "describe"
+            (lambda (owner commands)
+              (create-page! owner id
+                (if open (cons (cons 'open (cdr open)) (remp (lambda (c) (eq? (car c) 'open)) commands)) commands)))
+            (format "describe:~s" id))
+          (when focus (interaction:focus! root focus)))) id))
+
+  (edoc "Show documentation through an explicit composition's auxiliary command, preserving focus, and return its source document. Omitted host uses the focused view's declared host. An optional page updates that existing reference source only."
+    (name (or symbol string procedure) "documented name")
+    (destination (list-of (or model buffer)) "optional composition, then existing page document") (returns (or buffer #f)))
+  (define (describe! name . destination)
+    (unless (<= (length destination) 2) (error 'describe! "expected host and optional page"))
+    (let ([host (if (pair? destination) (car destination)
+                  (let ([focus (widget:focused)]) (and focus (widget:command-owner focus 'auxiliary))))])
+      (if (and host (pair? host) (eq? (car host) 'model))
+        (describe-composed! name host (if (pair? destination) (cdr destination) '()))
+        (apply describe-legacy! name destination))))
 
   (edoc "Show the describe page of a name written literally: (describe edit:visit-file!)."
         (name symbol "the name, unquoted"))
@@ -126,7 +158,7 @@
                  (string:prefix? "pretty-scheme" m)))))
 
   (edoc "Show the describe page of the symbol under the cursor in a Scheme buffer.")
-  (define (describe-at-point!)
+  (define (describe-at-point-legacy!)
     ;; Describe the symbol the cursor is on -- M-., in Scheme buffers.
     (cond [(not (scheme-buffer?))
            (edit:set-message! "Not a Scheme buffer")]
@@ -134,9 +166,23 @@
           [else (edit:set-message! "No symbol at point")])
     (void))
 
+  (edoc "Describe the symbol at an explicit Scheme editor's caret through its containing composition. The text and point come from acquired editor state."
+    (receiver id (view editor)) (id model "editor view"))
+  (define describe-at-point!
+    (case-lambda
+      [() (describe-at-point-legacy!)]
+      [(id)
+       (let-values ([(source d inputs) (widget:context id 'current)])
+         (let* ([document (view:source d)]
+                [name (cond [(assq 'mode (view:options d)) => cdr] [else (store:property document 'mode #f)])]
+                [text (text-source:lookup document)] [point (car (view:state d))])
+           (if (and name (or (equal? name "scheme") (string:prefix? "pretty-scheme" name)))
+             (describe-input! (vector-ref (text-source:lines text) (car point)) (cdr point) id)
+             (head:report! "Not a Scheme buffer"))))]))
+
   (edoc "Describe the Scheme name at an explicit input caret, without reading a buffer's point."
-        (text string "Scheme input") (pos integer "character offset"))
-  (define (describe-input! text pos)
+        (text string "Scheme input") (pos integer "character offset") (host (list-of model) "optional containing composition"))
+  (define (describe-input! text pos . host)
     ;; M-. at a prompt: describe the symbol at the cursor, or the one
     ;; just before it, trailing spaces skipped -- "vector-sort " M-.
     ;; pops the page for vector-sort while the prompt stays open.
@@ -162,7 +208,7 @@
                         (back (- j 1))
                         j))])
       (when (> end start)
-        (describe! (string->symbol (substring text start end))))))
+        (apply describe! (string->symbol (substring text start end)) host))))
 
   (edoc "Register Describe's visible-page service, documentation and C-h f command." (public))
   (define (init!)
@@ -175,20 +221,20 @@
       (append (layout:container 'y)
         (list (cons 'service refresh-page!) (cons 'release (lambda (id) (hashtable-delete! refreshed id))))))
     (doc:register!
-      '(((describe:show!) (("procedure" . "(describe:show! name [page])")) "document id or #f"
+      '(((describe:show!) (("procedure" . "(describe:show! name [composition [page]])")) "buffer reference or #f"
          ("(apps describe)") describe "Documentation commands" #f
-         "Open an independent Markdown page for `name` and return its source document. Supply an existing page document to change only that receiver.")
+         "Open an independent Markdown page for `name` through the composition's auxiliary host, preserving focus, and return its source document. Omit the composition to use the focused view's declared host. Supply an existing page document to update that receiver.")
         ((describe:at-point!)
-         (("procedure" . "(describe:at-point!)")) "void"
+         (("procedure" . "(describe:at-point! editor)")) "void"
          ("(apps describe)") describe "Documentation commands" #f
-         "Display documentation for the symbol at point in the current Scheme buffer.")
+         "Display documentation for the symbol at an explicit Scheme editor's caret.")
         ((style:compile) (("procedure" . "(style:compile expression)")) "string"
          ("(head style)") style "Style customization" #f
          "Compile a style expression to terminal SGR parameters. The expression is a list containing attributes (`reset`, `bold`, `dim`, `italic`, `underline`, `blink`, `reverse`, `hidden`, or `strike`) and color clauses `(foreground color)` or `(background color)`; `fg` and `bg` are aliases. A color is a basic name from `black` through `white`, a `bright-` variant, an integer from 0 through 255, or `(rgb red green blue)`.")
         ((style:set!) (("procedure" . "(style:set! face style)")) "void"
          ("(head style)") style "Style customization" #f
          "Override an editor face using a style expression accepted by `style:compile`, a 256-color foreground number, or a raw SGR parameter string. Configuration-owned overrides disappear when their line is removed and config.e is reloaded.")
-        ((markdown:view!) (("procedure" . "(markdown:view! [buffer])")) "void"
+        ((markdown:view!) (("procedure" . "(markdown:view! window [buffer])")) "model"
          ("(apps markdown)") markdown "Markdown viewing" #f
          "Show an independently fitted widget over a Markdown source document. Markup strips into faces, paragraphs join, tables align, and fenced code frames. Source text and history stay intact; `C-c v` switches this window between source and view.")
         ((markdown:edit!) (("procedure" . "(markdown:edit! view)")) "void"
@@ -226,13 +272,13 @@
          (("procedure" . "(head:add-shutdown-hook! procedure)")) "unspecified"
          ("(head head)") head "Editor lifecycle" #f
          "Register a module-owned cleanup procedure invoked while e unwinds, before it restores the host terminal. Cleanup errors do not prevent other hooks from running.")
-        ((main:shutdown!)
-         (("procedure" . "(main:shutdown!)")) "does not return after acceptance"
-         ("(run main)") main "Editor lifecycle" #f
-         "Save shared text and named views through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Ask about local drafts, other heads, terminals, agent sessions and pending interactions; shared unsaved text is saved without a question. No, View, Esc and C-g cancel; View opens the buffet. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores the snapshot; processes, undo history and local drafts do not survive the stop.")
-        ((main:shutdown-on-exit)
-         (("thread parameter" . "main:shutdown-on-exit")) "boolean"
-         ("(run main)") main "Editor lifecycle" #f
+        ((lifecycle:shutdown!)
+         (("procedure" . "(lifecycle:shutdown!)")) "does not return after acceptance"
+         ("(head lifecycle)") lifecycle "Editor lifecycle" #f
+         "Save documents and named compositions through the same path as SIGTERM, then stop the base and every head. Requires an all-buffer head. Review other heads, terminals, agents and pending interactions; unsaved text needs no confirmation. No, View, Esc and C-g cancel; the default screen's View opens Buffet. New transient work receives a fresh review. A failed pause or save resumes service. The next base restores text, retained undo history and persistent views; processes end.")
+        ((lifecycle:shutdown-on-exit)
+         (("thread parameter" . "lifecycle:shutdown-on-exit")) "boolean"
+         ("(head lifecycle)") lifecycle "Editor lifecycle" #f
          "Default #f: quitting detaches this screen. Set #t to review shutting down the base when this is the last participating head. The base decides atomically; cancelling keeps the last head open. Restricted heads always detach normally.")
         ((paint:add-buffer-status-hint!)
          (("procedure" . "(paint:add-buffer-status-hint! procedure)")) "unspecified"
@@ -243,4 +289,6 @@
          ("(apps describe)") describe "Documentation commands" #f
          "Download the TSPL4 and Chez Scheme User's Guide reference pages, rebuild the reference database, and load it. Fetch progress is recorded in the log.")))
     (keymap:bind-default! "C-h f" (keymap:prefill describe!))
+    (keymap:bind-default! 'screen "C-h f" (keymap:prefill describe!))
+    (keymap:bind-default! 'widget-editor "M-." (keymap:call describe-at-point! widget:target))
     (keymap:bind-default! "M-." describe-at-point!)))

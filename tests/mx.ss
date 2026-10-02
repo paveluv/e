@@ -27,10 +27,11 @@
              (prefix (head range) range:) (prefix (sys glyph) glyph:)
              (prefix (apps delta-log) delta-log:)
              (prefix (core region) region:) (prefix (core kernel) kernel:)
-             (prefix (head control) control:) (prefix (head entry) entry:) (prefix (head layout) layout:))
+             (prefix (head control) control:) (prefix (head entry) entry:) (prefix (head layout) layout:)
+             (prefix (head routing) routing:))
 
      (define check test:check)
-     (widget:init!) (edit:init!) (window-host:init!)
+     (kernel:load-module! "widget") (kernel:load-module! "edit") (kernel:load-module! "window-host")
      (kernel:load-module! "region")
      (kernel:load-module! "literal")
      (check 'loading-modules-does-not-publish-value-constructors
@@ -123,7 +124,7 @@
        (list #f model-ref '(#t #t #t #t #t #t)))
      ;; A mode argument completes to its string name;
      ;; completes to the registered names, and no producer sneaks in
-     (scheme-mode:init!)
+     (kernel:load-module! "scheme-mode")
      (check 'a-mode-argument-completes-to-its-name
        (list (and (member "\"scheme\"" (labels "(mode:choose! ")) #t)
              (filter (lambda (label) (and (>= (string-length label) 5) (string=? (substring label 0 5) "(echo"))) (labels "(mode:choose! "))
@@ -284,11 +285,11 @@
      ;; cursor steps to a due argument past a separator already typed, and a
      ;; closed string is never completed further, existing or not
      (check 'a-final-datum-settles-the-forms-around-it
-       (list (settled "(save-file! \"~/ddd\"") (settled "(save-file! \"~/ddd")
+       (list (settled "(file:stamp \"~/ddd\"") (settled "(file:stamp \"~/ddd")
              (settled "(seat:show-buffer! '(buffer 1)") (settled "(window-host:split-right! ")
              (settled "(seat:set-window-buffer! (window 1)") (settled "(seat:set-window-buffer! (window 1) ")
              (labels "(extension:load! \"x\" \"y\"") (labels "(visit-file! \"manual/\""))
-       '(("(save-file! \"~/ddd\")" . 20) ("(save-file! \"~/ddd\")" . 20)
+       '(("(file:stamp \"~/ddd\")" . 20) ("(file:stamp \"~/ddd\")" . 20)
          ("(seat:show-buffer! '(buffer 1))" . 31) ("(window-host:split-right!)" . 26)
          ("(seat:set-window-buffer! (window 1) " . 36) ("(seat:set-window-buffer! (window 1) " . 36) #f #f))
 
@@ -393,7 +394,17 @@
        (list (keymap:action-text (keymap:call kill-buffer! seat:current-buffer-mirror))
              (keymap:action-text (keymap:prefill answer!))
              (keymap:prefill-text (keymap:prefill search:replace! "old")))
-       '("(kill-buffer! (seat:current-buffer-mirror))" "λ (answer! " "(search:replace! \"old\" "))
+       '("(kill-buffer! (seat:current-buffer-mirror))" "λ (edit:answer! " "(search:replace! \"old\" "))
+     (let* ([calls 0] [opened #f]
+            [producer (lambda () (set! calls (+ calls 1)) '(model 7))]
+            [action (keymap:prefill search:replace! producer (keymap:call list producer) "old")])
+       (define-top-level-value 'prefill-target producer)
+       (routing:set-prompt-opener! (lambda args (set! opened args)))
+       (check 'prefill-inspection-is-pure-and-execution-captures-producers
+         (list (keymap:action-text action (list (cons producer '(model 9)))) calls
+           (begin (routing:run! action) (list calls opened)))
+         '("λ (search:replace! '(model 9) (list '(model 9)) \"old\" " 0
+           (2 (search:replace! (model 7) ((model 7)) "old")))))
 
      ;; a procedure without an edoc shows its described parameters, the
      ;; corpus's or a module's, in its completion hint, before its arity
@@ -409,7 +420,7 @@
 
      ;; Context is finite declared structure. A sibling only participates
      ;; when its parent exposes it; ambiguity never chooses by numeric ID.
-     (eval:init!)
+     (kernel:load-module! "eval")
      (eval '(edoc:elibrary (receiver-probe)
               (export change! optional!) (import (chezscheme))
               (edoc "A receiver command." (id model) (receiver id (view receiver-leaf)))
@@ -438,8 +449,8 @@
          (check 'numeric-preview-context-never-evaluates-strings-or-expressions
            (map (lambda (input)
                   (cond [(assq 'value ((completion:source-context none) input (string-length input))) => cdr] [else #f]))
-             '("(delta-log:show! 2" "(delta-log:show! '2" "(delta-log:show! \"2"
-               "(delta-log:show! saved-revision" "(delta-log:show! (+ 1"))
+             '("(delta-log:show! '(model 1) 2" "(delta-log:show! '(model 1) '2" "(delta-log:show! '(model 1) \"2"
+               "(delta-log:show! '(model 1) saved-revision" "(delta-log:show! '(model 1) (+ 1"))
            '(2 2 #f #f #f))
          (check 'receiver-capture-is-bounded-and-distinct
            (list (map car captured) (map edoc:signature-receiver (edoc:edoc-of (eval 'receiver-probe:optional!))))
@@ -472,7 +483,7 @@
        (widget:mount! editor 'completion-origin)
        (widget:present! (list (list (widget:prepare! editor 20 3) 0 0)))
        (let* ([source (factory '() (list (cons 'view editor) (cons 'receivers (widget:receivers editor))))]
-              [input "(delta-log:show! 2"]
+              [input "(delta-log:show! '(model 1) 2"]
               [context ((completion:source-context source) input (string-length input))])
          (check 'composed-completion-keeps-canonical-editor-and-document-origin
            (list (widget:focused) (cdr (assq 'editor context)) (cdr (assq 'document context)))

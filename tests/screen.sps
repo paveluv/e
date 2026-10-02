@@ -3,6 +3,7 @@
 (let ()
   (import (prefix (apps screen) screen:) (prefix (apps buffet) buffet:)
           (prefix (apps bindings) bindings:)
+          (prefix (apps describe) describe:)
           (prefix (apps markdown) markdown:) (prefix (apps delta-log) delta-log:)
           (prefix (service vt) vt:) (prefix (head modal) modal:)
           (prefix (head message) message:) (prefix (service window) window:)
@@ -13,10 +14,12 @@
       (call-with-input-file "start.e"
         (lambda (p) (let loop ([last #f]) (let ([next (read p)]) (if (eof-object? next) last (loop next))))))
       (environment '(chezscheme) '(prefix (state view) view:) '(prefix (state store) store:)
-        '(prefix (state model) model:) '(prefix (head modal) modal:) '(prefix (head message) message:)
+        '(prefix (state model) model:) '(prefix (state construction) construction:)
+        '(prefix (head modal) modal:) '(prefix (head message) message:)
         '(prefix (service window) window:))))
   (screen:init!)
-  (for-each kernel:load-module! '("finder" "buffet" "markdown" "delta-log" "bindings"))
+  (actor:checkpoint! head:ui-actor #f)
+  (for-each kernel:load-module! '("finder" "buffet" "markdown" "delta-log" "bindings" "describe"))
   (actor:call-as head:ui-actor
     (lambda ()
       (let* ([before (list (seat:windows) (seat:buffers))]
@@ -72,7 +75,30 @@
                 (and (equal? (list-tail (get value 'subject) 5) '(("C-x" "3")))
                   (string:search text "window-control:split!" 0 (string-length text))))))
           (check 'captured-key-does-not-run-its-original-window-command (length (window:list manager)) count)
-          (bindings:hide! screen) (show!))
+          (bindings:hide! screen) (show!)
+          (check 'key-inspection-dismissal-restores-the-captured-editor
+            (list (widget:focused screen) (get (view:state (view:snapshot screen)) 'return-focus))
+            (list focus focus)))
+        (let* ([focus (widget:focused screen)] [document (window:document manager window)]
+               [source (describe:show! 'markdown:view! screen)]
+               [aux (screen:auxiliary! screen)]
+               [app (window:document (window-control:manager aux) aux)])
+          (show!)
+          (check 'composed-describe-keeps-the-origin-and-updates-an-explicit-page
+            (list (widget:focused screen) (window:document manager window)
+              (view:kind (view:snapshot app)) (describe:show! 'car screen source))
+            (list focus document 'describe source))
+          (show!)
+          (keymap:run! (keymap:call widget:invoke! (widget:descendant app 'body) 'open document '((point 0 . 2)))) (show!)
+          (check 'auxiliary-document-links-target-the-main-manager
+            (list (window:document manager window)
+              (car (view:state (interaction:snapshot (widget:descendant window 'document))))
+              (window:current manager))
+            (list document '(0 . 2) window))
+          (window-control:select! aux) (show!)
+          (routing:input! screen '(key "ESC" #f)) (show!)
+          (check 'auxiliary-return-hides-instead-of-switching-to-another-retained-tool
+            (length (view:children (view:snapshot area))) 1))
         (let ([document (window:document manager window)])
           (check 'screen-file-request-places-canonical-document-without-a-buffer-mirror
             (list (store:line document 0) (seat:buffer-of-store-id document)

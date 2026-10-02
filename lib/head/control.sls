@@ -2,8 +2,10 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head control)
   (export activate! create-filter! init!)
-  (import (chezscheme) (prefix (foundation string) string:) (prefix (head keymap) keymap:) (prefix (head layout) layout:)
-          (prefix (head widget) widget:) (prefix (state view) view:)
+  (import (chezscheme) (prefix (foundation string) string:)
+          (prefix (head keymap) keymap:) (prefix (head layout) layout:)
+          (prefix (head widget) widget:) (prefix (state construction) construction:)
+          (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
   (define hover (make-hashtable equal-hash equal?))
   (define held (make-hashtable equal-hash equal?))
@@ -71,12 +73,14 @@
   (edoc "Compose a label, an existing single-line text entry and status text; the root exposes the entry's text output."
         (actor datum "creator") (owner (or model #f) "lifetime owner, false for a session root") (source list "text buffer reference") (label string "label") (status string "status text") (returns model "root view"))
   (define (create-filter! actor owner source label status)
-    (let* ([root (view:create! actor source 'filter 1 '((spacing . normal)) '() owner)]
-           [label (view:create! actor #f 'label 1 (list (cons 'text label)) '() root)]
-           [entry (view:create! actor source 'entry 1 '() '((0 . 0) (0 . 0)) root)]
-           [status (view:create! actor #f 'label 1 (list (cons 'text status) '(role . ghost)) '() root)])
-      (view:arrange! actor (list (list root 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1)) (list 'status status 'fit)) '((spacing . normal)))) '())
-      root))
+    (construction:call! actor
+      (lambda (remember!)
+        (let* ([root (remember! (view:create! actor source 'filter 1 '((spacing . normal)) '() owner))]
+               [label (remember! (view:create! actor #f 'label 1 (list (cons 'text label)) '() root))]
+               [entry (remember! (view:create! actor source 'entry 1 '() '((0 . 0) (0 . 0)) root))]
+               [status (remember! (view:create! actor #f 'label 1 (list (cons 'text status) '(role . ghost)) '() root))])
+          (view:arrange! actor (list (list root 0 (list (list 'label label 'fit) (list 'entry entry '(grow 1)) (list 'status status 'fit)) '((spacing . normal)))) '())
+          root))))
 
   (edoc "Install filter, label and action-text presentations and their public keyboard actions." (public))
   (define (init!)

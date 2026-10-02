@@ -293,7 +293,27 @@
      ;; pretty-scheme's displays are submodes of Scheme: they indent, format
      ;; and take Tab as Scheme does, with a presentation of their own
      (scheme-mode:init!)
+     (let* ([before (seat:buffers)]
+            [id (store:create! head:ui-actor "canonical.sls" '("(list 1)") '((file . "/missing/canonical.sls")))]
+            [events 0] [token (store:subscribe! id (lambda (_) (set! events (+ events 1))))])
+       (mode:refresh! id) (mode:refresh! id)
+       (check 'canonical-mode-initialization-needs-no-buffer-mirror-and-publishes-once
+         (list (mode:name-of id) (store:property id 'mode-auto) events (equal? before (seat:buffers)))
+         '("scheme" #t 2 #t))
+       (mode:choose! #f id) (mode:refresh!)
+       (check 'canonical-explicit-none-survives-automatic-refresh
+         (list (mode:name-of id) (store:property id 'mode-auto)
+           (test:raises? (lambda () (mode:choose! "unknown-mode" id)))) '(#f #f #t))
+       (mode:assign! id)
+       (check 'canonical-mode-commands-do-not-adopt-a-legacy-mirror
+         (list (mode:name-of id) (store:property id 'mode-auto) (equal? before (seat:buffers))) '("scheme" #t #t))
+       (store:unsubscribe! token))
      (pretty-scheme:init!)
+     (let ([id (store:find-named "canonical.sls")])
+       (check 'pretty-mode-toggles-use-explicit-documents
+         (map (lambda (toggle) (toggle id) (let ([name (mode:name-of id)]) (toggle id) (list name (mode:name-of id))))
+           (list pretty-scheme:clusters! pretty-scheme:depth! pretty-scheme:rainbow!))
+         '(("pretty-scheme-clusters" "scheme") ("pretty-scheme-depth" "scheme") ("pretty-scheme-rainbow" "scheme"))))
      (let* ([lines '#("(define (f x)" "  (+ x 1))")]
             [source (mode:source lines '())]
             [rainbow (mode:row-styles (mode:find "pretty-scheme-rainbow"))]

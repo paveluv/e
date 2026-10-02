@@ -6,7 +6,7 @@
     (prefix (foundation text) text:)
     (prefix (head edit) edit:) (prefix (head head) head:) (prefix (head interaction) interaction:)
     (prefix (head keymap) keymap:) (prefix (head layout) layout:) (prefix (head range) range:)
-    (prefix (head widget) widget:) (prefix (state collection) collection:)
+    (prefix (head widget) widget:) (prefix (state collection) collection:) (prefix (state construction) construction:)
     (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:))
   (define factories (kernel:make-registry car))
   (define sessions (make-hashtable equal-hash equal?))
@@ -47,7 +47,7 @@
                    [ready? (for-all (lambda (r) (eq? (cadr (assq 'item (caddr r))) 'ready)) rows)]
                    [signature (and ready? (map (lambda (r)
                                                  (list (cadr r) (factory (get (caddr (assq 'item (caddr r))) 'recipe #f)))) rows))])
-              (when (and ready? (not (equal? signature (cadr token))))
+              (when (and ready? (widget:mounted? id) (not (equal? signature (cadr token))))
                 ;; A restored page keeps its saved child interaction until its
                 ;; item set or definition changes. Off-page views are disposable;
                 ;; their source documents/jobs are always borrowed.
@@ -93,15 +93,19 @@
     (owner (or model #f) "lifetime owner, false for a session root") (source model "history") (page-size integer "1 through 16 visible items") (returns model) (public))
   (define (create! owner source page-size)
     (unless (and (integer? page-size) (<= 1 page-size 16)) (error 'create! "expected page size 1 through 16"))
-    (let* ([who head:ui-actor] [query (collection:create! who source "" '() 'persistent '())]
-           [root (view:create! who query 'history 1 (list (cons 'page-size page-size) '(items)) '(0) owner)]
-           [navigation (view:create! who #f 'row 1 '((spacing . normal)) '() root)]
-           [buttons (map (lambda (text delta)
-                           (view:create! who #f 'action-text 1
-                             (list (cons 'text text) '(enabled . #t) (list 'commands (list 'activate root 'move (list delta)))) '() root))
-                      '("Previous" "Next") (list (- page-size) page-size))])
-      (view:arrange! who (list (list navigation 0 (map (lambda (name child) (list name child 'fit)) '(previous next) buttons) '((spacing . normal)))
-                           (list root 0 (list (list 'navigation navigation 'fit)) (list (cons 'page-size page-size) '(items)))) '()) root))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (let* ([who head:ui-actor] [query (remember! (if owner
+                                                       (collection:create! who source "" '() 'persistent '() owner)
+                                                       (collection:create! who source "" '() 'persistent '())))]
+               [root (remember! (view:create! who query 'history 1 (list (cons 'page-size page-size) '(items)) '(0) owner))]
+               [navigation (view:create! who #f 'row 1 '((spacing . normal)) '() root)]
+               [buttons (map (lambda (text delta)
+                               (view:create! who #f 'action-text 1
+                                 (list (cons 'text text) '(enabled . #t) (list 'commands (list 'activate root 'move (list delta)))) '() root))
+                          '("Previous" "Next") (list (- page-size) page-size))])
+          (view:arrange! who (list (list navigation 0 (map (lambda (name child) (list name child 'fit)) '(previous next) buttons) '((spacing . normal)))
+                               (list root 0 (list (list 'navigation navigation 'fit)) (list (cons 'page-size page-size) '(items)))) '()) root))))
 
   (edoc "Register history composition, standard text/result recipes and named page commands." (public))
   (define (init!)

@@ -84,7 +84,7 @@ and prints a restart command for that installation, head name and base
 directory. It does not register another actor or stop the base. This checks
 source consistency; permissions still come from the OS user and base policy.
 
-Help offers two ways to stop the base: `M-x (main:shutdown!)` or
+Help offers two ways to stop the base: `M-x (lifecycle:shutdown!)` or
 `kill -TERM PID` with the displayed pid. Both pause and save the shared
 session before stopping the base and its terminal processes. SIGINT uses
 the same path; SIGHUP leaves
@@ -102,8 +102,8 @@ points, viewports, selection, window preferences and kill text. Use distinct
 names for independent screens. An explicit file argument opens in the restored
 selected window. Without a saved screen, normal startup configuration applies.
 
-`M-x (main:shutdown!)` saves the session and stops the base and every attached
-screen. It asks for consent when there are local unsaved drafts, running
+`M-x (lifecycle:shutdown!)` saves the session and stops the base and every attached
+screen. It asks for consent when there are running
 terminals, agent sessions, pending interactions or other heads. Shared
 unsaved text is saved automatically and needs no confirmation. With no
 transient work to review, shutdown proceeds immediately. `n`, `v`, Esc or C-g
@@ -119,32 +119,29 @@ routine as restart and SIGTERM, before ending any process. A failed pause or
 save resumes service. If replacement succeeded but directory sync failed,
 the error reports that the new session is installed with uncertain durability.
 The next start restores shared text and its retained undo/redo history, named
-views and checkpointed local text. Processes are not restarted, as described below.
+compositions and private documents. Processes are not restarted, as described below.
 
 To use this review when the last head quits, put
-`(main:shutdown-on-exit #t)` in `config.e`. The base decides which head is
+`(lifecycle:shutdown-on-exit #t)` in `config.e`. The base decides which head is
 last atomically, even when two quit together. Cancelling keeps the last
 head open. The default is `#f`. Restricted heads can always detach, but
 only an all-buffer head may prepare or accept shutdown.
 
-The daemon retains the latest completed screen checkpoint, including after an
-abrupt SSH disconnect. Routine checkpoints are delivered in the background;
-if delivery falls behind, a newer pending snapshot replaces the older one.
-Normal detach waits for the final checkpoint. `M-x (main:shutdown!)` also
-waits for the requesting head's checkpoint before stopping the base.
+The base owns each named composition's layout and logical view state. A head
+publishes coalesced interaction updates and flushes them before normal detach
+or requested shutdown. An abrupt SSH disconnect retains the latest accepted
+state; there is no periodic copy of the whole screen.
 Shared edits made while absent move the saved positions;
 after a reset or expired history, positions clamp to the current text. Markdown
 and Describe widgets rebuild from their shared sources at the new width;
 unavailable Markdown anchors are reported until explicit navigation.
 The finder rebuilds its directory/filter/sort state and selected paths
 from a small descriptor, then rescans at the new window widths.
-Existing registered tools reopen by identity. Plain local buffers retain their
-text and facts, without their undo history. A missing or hidden source, or an
-app view without a restore provider or registered tool identity, uses the
-startup buffer in that window. Query settings of tools without a restore
-provider are not saved. Very small terminals use the editor's usual layout
-fitting. Named checkpoints also
-survive saved-session recovery. Questions first asked while a known named head is
+Existing tools reopen by identity. Private documents retain their audience,
+text and undo history. Missing definitions display inert placeholders that
+preserve the saved payload. A supported old screen-6 checkpoint is imported
+once when the default editor profile is first created; its authored local text
+becomes private documents. Questions first asked while a known named head is
 offline wait for its next attachment; press `C-c a` to answer. An agent's
 disconnect withdraws its own unanswered questions.
 
@@ -171,15 +168,13 @@ edits continue and the save captures their latest accepted state. With no
 live work the omission notice remains, but no question is needed.
 
 The snapshot keeps shared text, names, buffer IDs and revisions, file
-baselines and modification times, named screen checkpoints, and each
+baselines and modification times, named compositions and persistent views, and each
 buffer's delta log with its undo groups, so undo, redo, blame, history and
 `store:log` reach back across a restart as far as `store:log-retention`
 entries. Generated tool buffers are omitted. Live and ended terminal
 buffers become ordinary read-only text containing their last published
 output, without a log; shells and other processes are not restarted. The
-structured log, local undo history and pending interactions are not saved.
-Plain local buffer text is saved in each named head's checkpoint.
-Older checkpoints without an edit chain clamp their positions to restored text.
+structured log and pending interactions are not saved.
 
 Saving replaces `.base/session` only after the new file is written, flushed
 and synced, then syncs the directory. A failure resumes the existing base.

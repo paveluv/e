@@ -4,9 +4,11 @@
 (elibrary (head table)
   (export choose! create! emphasize! init! invoke! layout make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
   (import (chezscheme) (prefix (core kernel) kernel:) (prefix (core row) row:) (prefix (foundation string) string:)
+
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head range) range:) (prefix (head widget) widget:)
-          (prefix (state collection) collection:) (prefix (state model) model:) (prefix (state view) view:)
+          (prefix (state collection) collection:) (prefix (state construction) construction:)
+          (prefix (state model) model:) (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
   (edoc "A table's columns: their headings, minimum widths, which column identifies a row, which may be dropped when narrow, and how cells align."
@@ -310,30 +312,32 @@
         (actor datum "creator") (owner (or model #f) "lifetime owner, false for a session root") (query row-source "collection") (columns list "stable column names")
         (configuration (list-of list) "optional alist: kind table|list, identity column, presentation (name schema), selection-policy retain|suggest after filter changes, cell-commands column-to-command alist") (returns model "root view"))
   (define (create! actor owner query columns . configuration)
-    (unless (and (list? columns) (pair? columns) (for-all symbol? columns) (distinct? columns)
-              (<= (length configuration) 1)) (error 'create! "invalid table columns/options"))
-    (let* ([config (if (null? configuration) '() (car configuration))]
-           [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation selection-policy cell-commands)))) config)
-                    (distinct? (map car config)))]
-           [kind (and valid (get config 'kind 'table))] [identity (and valid (get config 'identity (car columns)))]
-           [profile (and valid (get config 'presentation #f))]
-           [cells (and valid (get config 'cell-commands '()))])
-      (unless (and (memq kind '(table list)) (memq identity columns)
-                (list? cells) (for-all (lambda (p) (and (pair? p) (memq (car p) columns) (symbol? (cdr p)))) cells)
-                (distinct? (map car cells))
-                (memq (get config 'selection-policy 'retain) '(retain suggest))
-                (or (eq? kind 'table) (= (length columns) 1))
-                (or (not profile) (and (list? profile) (= (length profile) 2) (symbol? (car profile)) (natural? (cadr profile)) (> (cadr profile) 0))))
-        (error 'create! "invalid table presentation" config))
-      (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain)))
-                        (if profile (list (cons 'presentation profile)) '()) (if (null? cells) '() (list (cons 'cell-commands cells))))]
-             [root (view:create! actor query kind 1 options '((selection . #f) (basis)) owner)]
-             [heading (and (eq? kind 'table) (view:create! actor #f 'table-heading 1 '() '() root))]
-             [scroll (view:create! actor #f 'scroll 1 '() #f root)]
-             [body (view:create! actor #f 'table-body 1 '() '() root)])
-        (view:arrange! actor
-          (list (list root 0 (append (if heading (list (list 'heading heading 'fit)) '()) (list (list 'body scroll '(grow 1)))) options)
-            (list scroll 0 (list (list 'rows body '(grow 1))) '())) '()) root)))
+    (construction:call! actor
+      (lambda (remember!)
+        (unless (and (list? columns) (pair? columns) (for-all symbol? columns) (distinct? columns)
+                  (<= (length configuration) 1)) (error 'create! "invalid table columns/options"))
+        (let* ([config (if (null? configuration) '() (car configuration))]
+               [valid (and (list? config) (for-all (lambda (p) (and (pair? p) (memq (car p) '(kind identity presentation selection-policy cell-commands)))) config)
+                        (distinct? (map car config)))]
+               [kind (and valid (get config 'kind 'table))] [identity (and valid (get config 'identity (car columns)))]
+               [profile (and valid (get config 'presentation #f))]
+               [cells (and valid (get config 'cell-commands '()))])
+          (unless (and (memq kind '(table list)) (memq identity columns)
+                    (list? cells) (for-all (lambda (p) (and (pair? p) (memq (car p) columns) (symbol? (cdr p)))) cells)
+                    (distinct? (map car cells))
+                    (memq (get config 'selection-policy 'retain) '(retain suggest))
+                    (or (eq? kind 'table) (= (length columns) 1))
+                    (or (not profile) (and (list? profile) (= (length profile) 2) (symbol? (car profile)) (natural? (cadr profile)) (> (cadr profile) 0))))
+            (error 'create! "invalid table presentation" config))
+          (let* ([options (append (list (cons 'columns columns) (cons 'identity identity) (cons 'selection-policy (get config 'selection-policy 'retain)))
+                            (if profile (list (cons 'presentation profile)) '()) (if (null? cells) '() (list (cons 'cell-commands cells))))]
+                 [root (remember! (view:create! actor query kind 1 options '((selection . #f) (basis)) owner))]
+                 [heading (and (eq? kind 'table) (remember! (view:create! actor #f 'table-heading 1 '() '() root)))]
+                 [scroll (remember! (view:create! actor #f 'scroll 1 '() #f root))]
+                 [body (remember! (view:create! actor #f 'table-body 1 '() '() root))])
+            (view:arrange! actor
+              (list (list root 0 (append (if heading (list (list 'heading heading 'fit)) '()) (list (list 'body scroll '(grow 1)))) options)
+                (list scroll 0 (list (list 'rows body '(grow 1))) '())) '()) root)))))
 
   (edoc "Select a stable row key, resolving its current rank asynchronously if needed." (receiver id (view table list)) (id model "table or descendant") (key datum "row identity"))
   (define (select! id key)

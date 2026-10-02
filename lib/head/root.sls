@@ -9,7 +9,7 @@
           (prefix (head head) head:) (prefix (head interaction) interaction:)
           (prefix (head routing) routing:) (prefix (head tui) tui:)
           (prefix (head widget) widget:)
-          (prefix (service composition) composition:) (prefix (state view) view:)
+          (prefix (service composition) composition:) (prefix (state construction) construction:) (prefix (state view) view:)
           (prefix (sys tty) tty:))
 
   (define binding #f)
@@ -54,7 +54,7 @@
         (error 'start! "startup script must return exactly profile and entry" file))
       result))
 
-  (edoc "Evaluate a trusted startup script before interactive input begins. Its final expression must return ((profile . nonempty-string) (entry . procedure)). Entry receives head, profile, saved, requests and capabilities. Saved is false only for an uninitialized profile. An initialized root, including explicit emptiness, must be reused; intentional replacement uses install!. Return admission status and the binding; adoption happens at the next command boundary. Scripts own cleanup of partial construction and must not prompt."
+  (edoc "Evaluate a trusted startup script before interactive input begins. Its final expression must return ((profile . nonempty-string) (entry . procedure)). Entry receives head, profile, saved, requests and capabilities. Saved is false only for an uninitialized profile. An initialized root, including explicit emptiness, must be reused; intentional replacement uses install!. Entry builders use construction:call! to retain cleanup of newly owned resources through admission. Failure raises without deleting borrowed resources. Return applied and the binding; adoption happens at the next command boundary. Scripts must not prompt."
         (file string "selected script path; saved state never selects executable code")
         (requests (list-of string) "admitted absolute file paths; delivery follows adoption")
         (capabilities list "portable backend capability alist") (returns (values symbol datum)))
@@ -67,14 +67,18 @@
       (error 'start! "expected a script, absolute file paths and backend capabilities"))
     (let* ([requests (datum:copy requests)] [capabilities (datum:copy capabilities)]
            [plan (recipe file)] [profile (string-copy (field plan 'profile))]
-           [saved (acquire! profile)] [initialized? (field (field saved 'value) 'initialized?)]
-           [candidate ((field plan 'entry)
-                       (list (cons 'head head:ui-actor) (cons 'profile profile)
-                         (cons 'saved (and initialized? (datum:copy saved)))
-                         (cons 'requests requests) (cons 'capabilities capabilities)))])
-      (when (and initialized? (not (equal? candidate (root-of saved))))
-        (error 'start! "entry must reuse the saved root; choose another profile or explicitly replace it"))
-      (install! saved candidate #f)))
+           [saved (acquire! profile)] [initialized? (field (field saved 'value) 'initialized?)])
+      (construction:call! head:ui-actor
+        (lambda (remember!)
+          (let ([candidate ((field plan 'entry)
+                            (list (cons 'head head:ui-actor) (cons 'profile profile)
+                              (cons 'saved (and initialized? (datum:copy saved)))
+                              (cons 'requests requests) (cons 'capabilities capabilities)))])
+            (when (and initialized? (not (equal? candidate (root-of saved))))
+              (error 'start! "entry must reuse the saved root; choose another profile or explicitly replace it"))
+            (let-values ([(status next) (install! saved candidate #f)])
+              (unless (eq? status 'applied) (error 'start! "startup admission refused" status))
+              (values status next)))))))
 
   (define (finish!)
     (when (and binding (pair? (field (field binding 'value) 'cleanup)))
@@ -97,6 +101,7 @@
            (not (exists (lambda (p) (equal? mounted (widget:frame-id (car p)))) (widget:shown)))) (routing:cancel!)]
       [(equal? event "MOUSE-HANDLED") (routing:cancel!)]
       [else
+       (set! click #f)
        (let ([key (if (char? event) (tty:character-event event) event)])
          (parameterize ([routing:feedback feedback!])
            (routing:input! mounted

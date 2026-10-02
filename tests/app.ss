@@ -146,6 +146,10 @@
            (list (eq? m (widget:mount! parent 'slot)) (= count (length (seat:buffers)))
              (refused? (lambda () (widget:mount! parent 'another)))
              (refused? (lambda () (widget:mount! a 'nested)))) '(#t #t #t #t))
+         (widget:prepare! parent 20 5) (widget:focus! parent b)
+         (widget:prepare! a 10 2)
+         (check 'subtree-projection-preserves-root-focus (widget:focused parent) b)
+         (interaction:flush!)
          (widget:act! a 'move 1)
          (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent)))
                                                               (list (list 'b b '(grow 1)) (list 'a a 'fit)) '())))])
@@ -239,6 +243,11 @@
          (list (list a a row) '()))
        (key! "C-x")
        (check 'chord-start-returns-without-reading-input (routing:pending?) #t)
+       ;; A sibling's background publication renews the tree's lease, but
+       ;; leaves the focused receiver path and its pending chord unchanged.
+       (interaction:flush!)
+       (widget:arrange! (list (list b (model:revision b) '() '((text . "updated sibling")))))
+       (show!)
        (key! "a") (key! "C-x") (key! "b") (key! "F1") (key! "F2") (key! "z")
        (routing:input! root '(text "z z" paste))
        (check 'explicit-receivers-capture-phase-and-text-not-as-keys (take)
@@ -288,6 +297,27 @@
          (list (take) (widget:pointer-bindings 1 0)) '(() ()))
        (widget:unmount! root) (kernel:retract-module! owner)
        (widget:invalidate!))
+
+     ;; Reflow keeps focus in its app when a new section replaces the old
+     ;; visible section, even if that successor was absent from the old order.
+     (let* ([swap? #f] [root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [outside (view:create! head:ui-actor #f 'focus-leaf 1 '() '() root)]
+            [panel (view:create! head:ui-actor #f 'focus-panel 1 '() '() root)]
+            [a (view:create! head:ui-actor #f 'focus-leaf 1 '() '() panel)]
+            [b (view:create! head:ui-actor #f 'focus-leaf 1 '() '() panel)])
+       (define (show!) (widget:present! (list (list (widget:prepare! root 20 2) 0 0))))
+       (widget:register! 'focus-leaf 1 '((focus . #t)))
+       (widget:register! 'focus-panel 1
+         (list '(focus . fallback)
+           (cons 'layout (lambda (d w h measure locate)
+                           (list (list a (list 0 0 w (if swap? 0 h))) (list b (list 0 0 w (if swap? h 0))))))))
+       (view:arrange! head:ui-actor
+         (list (list root 0 (list (list 'outside outside '(grow 1)) (list 'panel panel '(grow 1))) '())
+           (list panel 0 (list (list 'a a 'fit) (list 'b b 'fit)) '())) '())
+       (widget:mount! root 'focus-reflow) (show!) (widget:focus! root a) (show!)
+       (set! swap? #t) (show!)
+       (check 'focus-reflow-stays-in-the-nearest-surviving-container (widget:focused root) b)
+       (widget:unmount! root) (view:retire! head:ui-actor root (model:revision root)))
 
      ;; Entries share authored text and its journal, but never cursor state.
      (let* ([source (store:create! head:ui-actor "widget entry" '("a界éz"))]

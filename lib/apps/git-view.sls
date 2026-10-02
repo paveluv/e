@@ -5,6 +5,7 @@
   (import (chezscheme)
           (prefix (core handle) handle:)
           (prefix (foundation string) string:)
+
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
@@ -18,6 +19,7 @@
           (prefix (service file) file:)
           (prefix (service git-source) git-source:)
           (prefix (service window) window:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:))
@@ -28,23 +30,25 @@
   (edoc "Create an unmounted Git browser with a history table and an independent read-only patch editor. Enter or click a commit to expand its files, then select a file to inspect its patch. No window is created."
         (owner (or model #f) "lifetime owner, false for a session root") (path file "path inside the repository") (returns model) (public))
   (define (create! owner path)
-    (let* ([query (git-source:create! head:ui-actor path)]
-           [root (view:create! head:ui-actor query 'git-history 1 '() '() owner)]
-           [patch (git-source:create-patch! head:ui-actor root)]
-           [table (table:create! head:ui-actor root query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
-           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root)]
-           [label (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '() root)]
-           [refresh (view:create! head:ui-actor #f 'action-text 1
-                      (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '() root)]
-           [preview (view:create! head:ui-actor (car patch) 'git-patch 1 '() '() (car patch))]
-           [editor (view:create! head:ui-actor (cadr patch) 'editor 1
-                     '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch))]
-           [d (view:snapshot table)])
-      (view:arrange! head:ui-actor
-        (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'patch preview '(grow 1))) (list (cons 'owned (list (car patch)))))
-          (list heading 0 (list (list 'label label '(grow 1)) (list 'refresh refresh 'fit)) '((spacing . normal)))
-          (list table 1 (view:children d) (cons (list 'commands (list 'activate root 'choose '())) (view:options d)))
-          (list preview 0 (list (list 'text editor '(grow 1))) '())) '()) root))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (let* ([query (remember! (git-source:create! head:ui-actor path))]
+               [root (remember! (view:create! head:ui-actor query 'git-history 1 '() '() owner))]
+               [patch (git-source:create-patch! head:ui-actor root)]
+               [table (table:create! head:ui-actor root query '(status commit date author subject) '((identity . subject) (presentation git 1)))]
+               [heading (remember! (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root))]
+               [label (remember! (view:create! head:ui-actor #f 'label 1 (list (cons 'text (string-append "Git: " (file:abbreviate path)))) '() root))]
+               [refresh (remember! (view:create! head:ui-actor #f 'action-text 1
+                                     (list '(text . "[refresh]") '(enabled . #t) (list 'commands (list 'activate root 'refresh '()))) '() root))]
+               [preview (remember! (view:create! head:ui-actor (car patch) 'git-patch 1 '() '() (car patch)))]
+               [editor (remember! (view:create! head:ui-actor (cadr patch) 'editor 1
+                                    '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) (car patch)))]
+               [d (view:snapshot table)])
+          (view:arrange! head:ui-actor
+            (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'patch preview '(grow 1))) (list (cons 'owned (list (car patch)))))
+              (list heading 0 (list (list 'label label '(grow 1)) (list 'refresh refresh 'fit)) '((spacing . normal)))
+              (list table 1 (view:children d) (cons (list 'commands (list 'activate root 'choose '())) (view:options d)))
+              (list preview 0 (list (list 'text editor '(grow 1))) '())) '()) root))))
 
   (edoc "Expand a displayed commit or select a displayed file into this browser's patch request. The base validates the shown result before changing domain state."
         (receiver id (view git-history)) (id model "Git browser") (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))

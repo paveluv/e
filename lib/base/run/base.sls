@@ -53,7 +53,7 @@
           (prefix (sys sys) sys:))
 
   (define modules
-    '("activity" "actor" "catalogue" "collection" "composition" "connection" "daemon" "datum" "diff" "doc" "document" "endpoint" "environment" "extension" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "operation" "path" "policy" "port" "row"
+    '("activity" "actor" "catalogue" "clipboard" "collection" "composition" "connection" "daemon" "datum" "diff" "doc" "document" "endpoint" "environment" "extension" "file" "filesystem" "git" "https" "identity" "journal" "log" "model" "operation" "path" "policy" "port" "row"
       "change-preview" "conflict-review" "conflict-source" "git" "git-source" "history" "inspection" "journal-source" "markup" "markup-source" "prompt-request" "property" "reference" "review-preview" "rewrite" "rewrite-source" "sandbox" "search-request" "session" "startup" "store" "string" "surface" "sys" "text" "view" "vt" "window" "wire" "work-queue"))
 
   ;; Base configuration selects permissions from the admitted local identity.
@@ -93,7 +93,7 @@
           (set! source-fingerprint (kernel:fingerprint))
           (session:restore!)
           (environment:restore!)
-          (view:reset-owners!)
+          (view:recover!)
           ;; One producer for every head and for work while all heads are
           ;; absent. Log small operation facts, never retained text/deltas.
           (set! audit (store:subscribe! #f audit-store-event!))

@@ -157,7 +157,7 @@
             (string-append " --base-working-dir " (shell-quote directory))))))
 
   (define (guidance status port)
-    (format port "Stop the base: M-x (main:shutdown!) or kill -TERM ~a\n"
+    (format port "Stop the base: M-x (lifecycle:shutdown!) or kill -TERM ~a\n"
       (car (cdr (assq 'instance status)))))
 
   (edoc "A base status as one line: buffers, modified, heads, terminals and agents."
@@ -296,7 +296,7 @@
                                   (error 'restart "invalid maintenance status" status))
                                 (cdr entry))) '(heads terminals agents pending))])
           (format (current-error-port)
-            "e: restart keeps shared text with undo/redo history, named views and checkpointed local text. Local undo history, the structured log and pending interactions are not kept; terminal processes and agent sessions end.\n")
+            "e: restart keeps shared text with undo/redo history, private documents and named compositions. The structured log and pending interactions are not kept; terminal processes and agent sessions end.\n")
           (let ([agreed?
                  (or (for-all zero? counts)
                      (begin

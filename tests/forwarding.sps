@@ -79,7 +79,7 @@
           (compile-form
             '(begin
                (import (rename (forward-fixture) (send! relay!)))
-               (expression (define (compiled-forward id) (relay! id 'renamed)))))
+               (expression (expression (define (compiled-forward id) (relay! id 'renamed))))))
           'compiled)
         (load object)
         (check 'import-renames-preserve-the-dispatch-identity

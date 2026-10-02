@@ -1,10 +1,12 @@
 ;; Exercise actual composed windows and app commands in the existing head fixture.
 (let ()
   (import (prefix (service window) window:) (prefix (head window-control) window-control:)
+          (prefix (state construction) construction:)
           (prefix (head split-control) split-control:)
           (prefix (apps buffet) buffet:) (prefix (apps finder) finder:)
           (prefix (apps bindings) bindings:) (prefix (apps delta-log) delta-log:)
           (prefix (apps markdown) markdown:)
+          (prefix (service filesystem) filesystem:)
           (prefix (foundation edoc) edoc:))
   (let ([before (list (model:ids) (seat:buffers) (seat:windows))])
     (kernel:load-module! "window-control")
@@ -12,6 +14,58 @@
       (list (model:ids) (seat:buffers) (seat:windows)) before))
   (actor:call-as head:ui-actor
     (lambda ()
+      (let* ([document (store:create! head:ui-actor "construction source" '("keep"))]
+             [query (car (catalogue:create-query! head:ui-actor (catalogue:create-source! head:ui-actor "/" 'persistent)))]
+             [invalid '(model 999999999)] [bad-commands '((open invalid))])
+        (define (inventory) (list (model:ids) (map car (store:buffer-list))))
+        (for-each
+          (lambda (row)
+            (let ([before (inventory)])
+              (check (list 'failed-construction-preserves-only-borrowed-resources (car row))
+                (list (refused? (cadr row)) (inventory)) (list #t before))))
+          (list
+            (list 'buffet (lambda () (buffet:create! #f bad-commands)))
+            (list 'shared-query (lambda () (buffet:create! #f bad-commands query)))
+            (list 'finder (lambda () (finder:create! invalid '() "/")))
+            (list 'bindings (lambda () (bindings:create! #f bad-commands #f)))
+            (list 'markdown (lambda () (markdown:create! head:ui-actor #f document '() -1)))
+            (list 'journal (lambda () (log-view:create! invalid #f)))
+            (list 'git (lambda () (git-view:create! invalid ".")))
+            (list 'review (lambda () (delta-log:create! #f bad-commands 'conflicts (list document))))
+            (list 'nested (lambda ()
+                            (construction:call! head:ui-actor
+                              (lambda (remember!)
+                                (control:create-filter! head:ui-actor #f document "Filter:" "")
+                                (error 'builder "injected failure after nested success")))))))
+        ;; A concurrent retirement between query allocation and connection
+        ;; must refuse the factory and release everything it just consumed.
+        (for-each
+          (lambda (factory)
+            (let ([before (inventory)] [source #f] [fired? #f] [watch #f])
+              (dynamic-wind
+                (lambda ()
+                  (set! watch (model:subscribe! #f
+                                (lambda (notice)
+                                  (unless fired?
+                                    (for-each (lambda (id)
+                                                (let ([r (model:snapshot id)])
+                                                  (when (and r (eq? (cdr (assq 'kind r)) 'collection)
+                                                          (equal? source (cdr (assq 'source (cdr (assq 'value r))))))
+                                                    (set! fired? #t)
+                                                    (for-each (lambda (ref) (when (eq? (car ref) 'buffer) (store:delete! head:ui-actor ref)))
+                                                      (cdr (assq 'owned (cdr (assq 'value r))))))))
+                                      (or (cadr notice) '())))))))
+                (lambda ()
+                  (set! source ((car factory)))
+                  (check 'query-construction-refuses-a-lost-filter-without-leaking-resources
+                    (list (refused? (lambda () ((cadr factory) source))) fired? (inventory))
+                    (list #t #t before)))
+                (lambda () (model:unsubscribe! watch)))))
+          (list
+            (list (lambda () (catalogue:create-source! head:ui-actor "/" 'persistent))
+              (lambda (source) (catalogue:create-query! head:ui-actor source)))
+            (list (lambda () (filesystem:create-source! head:ui-actor "/" #f 'persistent))
+              (lambda (source) (filesystem:create-query! head:ui-actor source "/"))))))
       (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
              [second (window:split! manager first 'right)] [third (window:split! manager second 'below)]
              [a (store:create! head:ui-actor "composed a" '("First"))]
@@ -30,6 +84,10 @@
         (view:arrange! head:ui-actor
           (list (list app (model:revision app) (list (list 'button button 'fit)) (view:options (view:snapshot app)))) '())
         (widget:mount! manager 'composed-windows)
+        (window-control:navigate! first 'next)
+        (check 'topology-navigation-does-not-require-a-painted-window
+          (window:current manager) second)
+        (window:select! manager first)
         (let ([f (show!)] [ids (model:ids)])
           (check 'window-container-geometry-and-empty-focus-use-the-canonical-tree
             (list (map (lambda (id) (widget:frame-rect (frame id f))) (list first second third))
@@ -184,6 +242,23 @@
                 (model:snapshot failed) (window:documents manager second)
                 (window:find-app manager second "Unlisted"))
               (list #t #f before #f))))
+        (let ([query (car (catalogue:create-query! head:ui-actor (catalogue:create-source! head:ui-actor "/" 'persistent)))])
+          (for-each
+            (lambda (shared)
+              (let ([before (list (model:ids) (map car (store:buffer-list)))])
+                (check 'failed-admission-releases-new-queries-and-preserves-borrowed-queries
+                  (list
+                    (refused? (lambda ()
+                                (window-control:open-app! second "Refused Buffet"
+                                  (lambda (owner commands)
+                                    (let* ([id (apply buffet:create! owner commands shared)] [d (view:snapshot id)])
+                                      (view:arrange! head:ui-actor
+                                        (list (list id (model:revision id) (view:children d)
+                                                (cons '(catalogue . #f) (view:options d)))) '()) id)))))
+                    (list (model:ids) (map car (store:buffer-list))))
+                  (list #t before))))
+            (list '() (list query)))
+          (model:retire! head:ui-actor query (model:revision query)))
         (window-control:keep! second) (show!)
         (check 'keep-window-uses-ordinary-disposal-and-preserves-selection
           (list (window:list manager) (window:current manager) (store:exists? a)) (list (list second) second #t))
@@ -223,5 +298,21 @@
             (list (widget:frame-rect (widget:prepared editor))
               (for-all (lambda (line) (<= (glyph:cells line) 4)) (widget:frame-lines f)))
             '((3 0 1 1) #t)))
+        (let ([doomed (store:create! head:ui-actor "discarded" '("work"))])
+          (window-control:open-document! window doomed)
+          (window-control:split! window 'right) (show 40 8)
+          (routing:input! manager '(key "C-x" #f)) (routing:input! manager '(key "k" "k"))
+          (show 40 8)
+          (check 'discard-key-trashes-the-explicit-document-and-updates-every-pane
+            (list (store:exists? doomed) (store:visible? head:ui-actor doomed)
+              (exists (lambda (w) (equal? doomed (window:document manager w))) (window:list manager)))
+            '(#t #f #f)))
+        (window-control:keep! window) (window-control:open-document! window document) (show 40 8)
+        (let ([app (window-control:open-app! window "discard app"
+                     (lambda (owner commands) (view:create! head:ui-actor document 'entry 1 '() '((0 . 0) (0 . 0)) owner)))])
+          (show 40 8) (window-control:discard! window) (show 40 8)
+          (check 'discarding-an-app-preserves-borrowed-text-and-returns-to-its-origin
+            (list (model:snapshot app) (store:exists? document) (window:document manager window))
+            (list #f #t document)))
         (widget:unmount! manager)
         (view:retire! head:ui-actor manager (model:revision manager))))))

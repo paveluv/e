@@ -9,6 +9,7 @@
   (import (chezscheme)
           (prefix (foundation markup) markup:)
           (prefix (foundation string) string:)
+
           (prefix (head edit) edit:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
@@ -25,6 +26,7 @@
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (service window) window:)
+          (prefix (state construction) construction:)
           (prefix (state store) store:)
           (prefix (state view) view:))
 
@@ -46,11 +48,13 @@
         (actor actor "creator") (owner (or model #f) "lifetime owner, false for a session root") (document buffer "borrowed source") (commands list "explicit host commands")
         (origin (list-of integer) "optional source row") (returns model) (public))
   (define (create! actor owner document commands . origin)
-    (let* ([root (view:create! actor #f 'markdown-page 1 (list (cons 'commands commands)) '() owner)]
-           [text (apply control:create-view! actor root document origin)])
-      (view:arrange! actor
-        (list (list root 0 (list (list 'text text '(grow 1))) (list (cons 'commands commands)))
-          (list text 0 '() (list (list 'commands (list 'open-uri root 'open-link '()) (list 'open-source root 'open-source '()))))) '()) root))
+    (construction:call! actor
+      (lambda (remember!)
+        (let* ([root (remember! (view:create! actor #f 'markdown-page 1 (list (cons 'commands commands)) '() owner))]
+               [text (apply control:create-view! actor root document origin)])
+          (view:arrange! actor
+            (list (list root 0 (list (list 'text text '(grow 1))) (list (cons 'commands commands)))
+              (list text 0 '() (list (list 'commands (list 'open-uri root 'open-link '()) (list 'open-source root 'open-source '()))))) '()) root))))
   (define (check-source! id document)
     (let-values ([(source d inputs) (widget:context (widget:descendant id 'text) 'current)])
       (unless (equal? document (get (get (get source 'value '()) 'details '()) 'document #f))

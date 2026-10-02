@@ -19,16 +19,18 @@
         (equal? (view:owner d) head:ui-actor))))
   (define (arrange! id children)
     (interaction:flush!)
-    (let ([r (model:snapshot id)])
+    (let ([r (caddar (cadr (model:snapshots (list id))))])
       (let-values ([(status rows)
                     (widget:arrange! (list (list id (get r 'revision) children (view:options (get r 'value)))))])
         (unless (eq? status 'applied) (error 'prepare! "prompt placement changed" status)))))
 
-  (edoc "Create an empty prompt host under an explicit lifetime. Bind a containing view's prompt command to this host's prepare action. Contexts are the explicit keymaps available at the modal boundary; the host has no input loop or implicit editor bindings."
-        (owner (or model #f) "lifetime owner") (contexts (list-of symbol) "keymaps allowed while prompting") (returns model))
-  (define (create! owner contexts)
-    (unless (and (list? contexts) (for-all symbol? contexts)) (error 'create! "expected context names"))
-    (view:create! head:ui-actor #f 'modal 1 (list (cons 'contexts contexts)) '() owner))
+  (edoc "Create an empty prompt host under an explicit lifetime. Bind a containing view's prompt command to this host's prepare action. Delegates name ancestor receivers and their allowed keymaps; the host has no input loop or implicit editor bindings."
+        (owner (or model #f) "lifetime owner") (delegates list "(ancestor-model context ...) rows allowed while prompting") (returns model))
+  (define (create! owner delegates)
+    (unless (and (list? delegates) (for-all (lambda (r) (and (list? r) (pair? r) (model:reference? (car r))
+                                                             (for-all symbol? (cdr r)))) delegates))
+      (error 'create! "expected ancestor receivers and context names"))
+    (view:create! head:ui-actor #f 'modal 1 (list (cons 'key-delegates delegates)) '() owner))
 
   (edoc "Capture a prompt origin in this mounted host. Return the parent request, portable origin and an attachment procedure. Attachment places a continuation as the top modal child and returns cleanup that restores surviving focus. Removing the host cancels its waiting callers through ordinary widget release."
         (receiver id (view modal)) (id model "prompt host") (returns (values any list procedure)))
@@ -47,12 +49,12 @@
             (unless (and (mounted? id) (equal? root (root-of id))
                       (equal? children (view:children (interaction:snapshot id))))
               (error 'prepare! "prompt host changed before attachment"))
-            (let* ([r (model:snapshot receiver)] [options (view:options (get r 'value))]
-                   [contexts (get (view:options d) 'contexts)])
+            (let* ([r (caddar (cadr (model:snapshots (list receiver))))] [options (view:options (get r 'value))]
+                   [delegates (get (view:options d) 'key-delegates)])
               (let-values ([(status rows)
                             (view:arrange! head:ui-actor
                               (list (list receiver (get r 'revision) (view:children (get r 'value))
-                                      (cons (cons 'contexts contexts) (remp (lambda (p) (eq? (car p) 'contexts)) options)))) '())])
+                                      (cons (cons 'key-delegates delegates) (remp (lambda (p) (eq? (car p) 'key-delegates)) options)))) '())])
                 (unless (eq? status 'applied) (error 'prepare! "prompt receiver changed" status))))
             (arrange! id (append children (list (list (string->symbol (format "request-~a" (cadr request))) receiver 'fit))))
             (interaction:focus! root receiver)

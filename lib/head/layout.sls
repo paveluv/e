@@ -1,7 +1,7 @@
 ;; Backend geometry. No device, window, store or interaction dependencies.
 (import (only (foundation edoc) elibrary))
 (elibrary (head layout)
-  (export container contains? intersect linear translate)
+  (export container contains? intersect linear scroll-thumb translate)
   (import (chezscheme) (prefix (core descriptor) descriptor:))
 
   (edoc "Intersect half-open rectangles; disjoint rectangles have zero extent."
@@ -20,6 +20,13 @@
   (define (contains? rect x y)
     (and (<= (car rect) x) (< x (+ (car rect) (caddr rect)))
       (<= (cadr rect) y) (< y (+ (cadr rect) (cadddr rect)))))
+
+  (edoc "Fit a position thumb to a viewport: return its starting row and length. Empty or fully visible content fills the track; positions clamp to its ends."
+        (total integer "content extent") (height integer "track and viewport extent") (top integer "first visible position") (returns pair))
+  (define (scroll-thumb total height top)
+    (let* ([size (if (<= total height) height (max 1 (div (* height height) total)))]
+           [travel (max 0 (- height size))] [limit (max 1 (- total height))])
+      (cons (div (* (min limit (max 0 top)) travel) limit) (min height size))))
 
   (define (ordered-map proc xs)
     (reverse (fold-left (lambda (out x) (cons (proc x) out)) '() xs)))

@@ -178,7 +178,7 @@ the configuration restores the built-in style instead of leaving a stale
 override behind.
 
 To experiment for the current session, evaluate a `style:set!` call with M-x.
-Run `(main:load-config!)` afterward to restore the choices in `config.e`.
+Run `(configuration:load!)` afterward to restore the choices in `config.e`.
 
 `style:set!` changes future rendering immediately; the next redraw applies it
 to buffers, prompts, log views, selections, and search highlights.

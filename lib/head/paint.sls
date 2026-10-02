@@ -1302,7 +1302,7 @@
                     (let* ([w (car entry)] [id (and (seat:buffer-store-id (seat:window-buffer w)) (seat:window-widget w))])
                       (if (and id (guard (ex [else #f]) (widget:host id)))
                         (begin (widget:set-active! id (eq? w (seat:current-window)))
-                          (widget:prepare! id (if (window-wrapped? w) (wrap-width w) (seat:window-content-width w)) (caddr entry)))
+                          (widget:prepare! id (seat:window-content-width w) (caddr entry)))
                         (scroll-window! w (caddr entry)))))
                   layout)
         (tui:begin-frame! view rows)

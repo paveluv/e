@@ -1,5 +1,5 @@
 ;; A prompt composition runs through real head input and the ordinary pump.
-(let ([saved (head-read a '(seat:buffer-name (seat:current-buffer-mirror)))])
+(let ([saved (head-read a '(test-document))])
   (head-read a '(begin (kernel:load-module! "prompt-request") (kernel:load-module! "prompt") #t))
   (head-read a
     '(begin
@@ -14,13 +14,15 @@
                (values 0 (string-length text) '("value") '("value" "value-next"))))))
        (widget:register! 'wire-prompt-host 1
          (append (layout:container 'y) (list (cons 'actions (list (cons 'accepted wire-prompt-accepted!))))))
-       (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '()))
        (define wire-prompt-request (prompt-request:create! head:ui-actor #f #f "" '(captured-wire-origin) '(wire-prompt 1 ())))
+       (define wire-prompt-host (view:create! head:ui-actor #f 'wire-prompt-host 1 '() '() wire-prompt-request))
        (define wire-prompt-view
          (prompt:create! wire-prompt-request '((label . "Wire prompt:"))
            (list (list 'accepted wire-prompt-host 'accepted '()))))
        (view:arrange! head:ui-actor (list (list wire-prompt-host 0 (list (list 'prompt wire-prompt-view '(grow 1))) '())) '())
-       (window-host:show-widget! (seat:current-window) wire-prompt-host)
+       (define wire-prompt-detach
+         (let-values ([(parent origin attach) (modal:prepare! (widget:descendant (test-root) 'prompts))])
+           (attach wire-prompt-request wire-prompt-host)))
        #t))
   (head-wait 'prompt-control-is-shown a (lambda () (head-sees? a "Wire prompt:")))
   (head-send! a "val\t\t")
@@ -39,14 +41,13 @@
   (head-wait 'prompt-outcome-delivered-by-pump a (lambda () (head-read a '(and wire-prompt-answer #t))))
   (test:check 'prompt-real-head-input-and-base-outcome
     (head-read a '(cdr wire-prompt-answer)) '(#("value") (captured-wire-origin)))
-  (head-read a `(begin (seat:forget-buffer! (seat:current-buffer-mirror))
-                       (seat:show-buffer-mirror! (seat:buffer-named ,saved)) #t))
+  (head-read a '(begin (wire-prompt-detach) (prompt-request:close! head:ui-actor wire-prompt-request) #t))
   (head-wait 'prompt-request-released-on-host-removal a
     (lambda () (head-read a '(not (caddr (caadr (model:snapshots (list wire-prompt-request)))))))))
 
 ;; Editor views use the same journal across real clients. Warm navigation
 ;; and preparation read only mirrored text, even through mode callbacks.
-(let* ([source (head-read a '(store:create! head:ui-actor "editor wire" '("first" "second" "third") '((internal . #t))))]
+(let* ([source (head-read a '(store:create! head:ui-actor "editor wire" '("first" "second" "third")))]
        [left (head-read a `(let ([id (edit:create-view! head:ui-actor ',source '())])
                              (widget:mount! id 'editor-wire) (widget:prepare! id 12 3) id))]
        [right (head-read b `(let ([id (edit:create-view! head:ui-actor ',source '())])
@@ -69,40 +70,45 @@
   (test:check 'editor-actor-undo-retains-the-other-head-edit
     (head-read a `(begin (edit:undo! ',left)
                     (let-values ([(lines revision) (store:snapshot ',source)]) lines))) '#("first" "second?" "third"))
-  (test:check 'editor-client-has-no-shadow-head-buffer
-    (head-read b `(list (not (seat:buffer-of-store-id ',source)) (car (view:state (interaction:snapshot ',right)))
-                    (keymap:action-text edit:move!))) '(#t (1 . 7) "edit:move!"))
+  (test:check 'editor-client-keeps-logical-selection-and-named-api
+    (head-read b `(list (car (view:state (interaction:snapshot ',right)))
+                    (keymap:action-text edit:move!))) '((1 . 7) "edit:move!"))
   (test:check 'ordinary-editor-host-has-no-navigation-wire-cost
     (head-read a
-      `(let* ([w (seat:current-window)] [was (seat:current-buffer-mirror)]
-              [b (seat:adopt-store-buffer! ',source)]
+      `(let* ([w (test-window)] [was (test-document)]
+              [b (quote (unquote source))]
               [io (lambda () (call-with-input-file "/proc/self/io"
                                (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
                                                           (if (eq? k 'wchar:) v (loop)))))))])
-         (seat:show-buffer-mirror! b)
-         (let* ([root (seat:window-widget w)] [before (io)])
+         (test-show! b)
+         (let* ([root (widget:descendant w (quote document))]
+                [prepared (widget:prepare! root 12 3)] [before (io)])
            (do ([i 0 (+ i 1)]) ((= i 40))
              (routing:input! root (list 'key (if (even? i) "DOWN" "UP")))
              (widget:prepare! root (+ 12 (modulo i 3)) 3))
-           (let ([written (- (io) before)]) (seat:show-buffer-mirror! was) written)))) 0)
+           (let ([written (- (io) before)]) (test-show! was) written)))) 0)
   (head-read a `(begin (widget:unmount! ',left) #t))
   (head-read b `(begin (widget:unmount! ',right) #t)))
 
 ;; Included in the existing two-real-head scenario. Run the shipped example.
 (let* ([example (string-append (current-directory) "/examples/widgets.e")]
        [opened (begin
-                 (head-send! a (string-append "\x1b;xbegin (load " (format "~s" example) ") (widget-example:open! '(\"alpha.sls\" \"beta.ss\" \"gamma.e\")))\r"))
+                 (head-send! a (string-append "\x1b;xbegin (load " (format "~s" example) ") (widget-example:open! (test-window) '(\"alpha.sls\" \"beta.ss\" \"gamma.e\")))\r"))
                  (head-wait 'example-opened-through-mx a (lambda () (head-sees? a "Undo insertion"))))]
-       [root-a (head-read a '(seat:buffer-fact (seat:current-buffer-mirror) 'widget-id #f))]
+       [root-a (head-read a '(test-document))]
        [table-a (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',root-a)))))]
        [filter-a (head-read a `(cadr (assq 'filter (view:children (interaction:snapshot ',table-a)))))]
        [entry-a (head-read a `(cadr (assq 'entry (view:children (interaction:snapshot ',filter-a)))))]
        [answer-a (head-read a `(cadr (assq 'answer (view:children (interaction:snapshot ',root-a)))))]
        [query (head-read a `(view:source (interaction:snapshot ',table-a)))]
        [root-b (head-read b `(begin (load ,example)
-                               (let* ([retainer (view:create! head:ui-actor #f 'vertical 1 '() '())]
-                                      [root (view:fork! head:ui-actor ',root-a (list (cons 'owner retainer)))])
-                                 (window-host:show-widget! (seat:current-window) root) root)))]
+                               (let ([root (view:fork! head:ui-actor ',root-a (list (cons 'owner (test-window))))])
+                                 (let* ([r (caddar (cadr (model:snapshots (list root))))] [d (cdr (assq 'value r))])
+                                   (view:arrange! head:ui-actor
+                                     (list (list root (cdr (assq 'revision r)) (view:children d)
+                                             (cons (list 'audience head:ui-actor)
+                                               (remp (lambda (p) (eq? (car p) 'audience)) (view:options d))))) '()))
+                                 (window-control:open-document! (test-window) root) root)))]
        [table-b (head-read b `(cadr (assq 'table (view:children (interaction:snapshot ',root-b)))))])
   (define (key ui table)
     (head-read ui `(let ([s (cdr (assq 'selection (view:state (interaction:snapshot ',table))))]) (and s (caddr s)))))
@@ -131,9 +137,9 @@
                               (lambda (p) (let loop () (let* ([k (read p)] [v (read p)])
                                                          (if (eq? k 'wchar:) v (loop)))))))])
          (let ([before (io)]
-               [p (find (lambda (p) (equal? (widget:frame-id (car p)) ',root-a)) (widget:shown))])
+               [rect (widget:frame-rect (test-frame ',root-a))])
            (do ([i 0 (+ i 1)]) ((= i 100))
-             (widget:pointer! '(pointer move none ()) (+ (cadr p) 2) (+ (caddr p) 2 (modulo i 2)))
+             (widget:pointer! '(pointer move none ()) (+ (car rect) 2) (+ (cadr rect) 2 (modulo i 2)))
              (widget:prepare! ',root-a (+ 20 (modulo i 20)) 10))
            (widget:pointer! '(pointer move none ()) -1 -1)
            (- (io) before)))) 0)
@@ -161,35 +167,34 @@
          (list (cadar (caddr bundle)) (equal? (cadddr bundle) (list source))))) '(#t #t))
   ;; Release and remount the same descriptor, preserving the canonical recipe
   ;; and selection while disposing all head-only range/cache resources.
-  (head-read b `(begin (widget:unmount! ',root-b) (widget:mount! ',root-b 'remounted-collection) #t))
+  (head-read b `(begin (test-show! ',id) (test-show! ',root-b) #t))
   (head-wait 'collection-remount b (lambda () (equal? (key b table-b) "beta.ss")))
   (test:check 'collection-disconnect-restores-filter-default
     (rpc head 'connection-bind query (list (list query 'filter (list (head-read a `(view:source (interaction:snapshot ',entry-a))) 'text) #f)))
     (list 'applied '()))
   (head-wait 'collection-default-restored a
     (lambda () (= (head-read a `(cdr (assq 'count (cdr (assq 'value (range:summary ',query)))))) 3)))
-  (head-read a `(begin (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) (head:before-frame!) #t))
+  (head-read a `(begin (test-show! (quote (unquote id))) (head:before-frame!) #t))
   (test:check 'hidden-collection-releases-one-mount-without-stopping-the-other
     (list (head-read a `(interaction:snapshot ',root-a))
       (cdr (assq 'status (cdr (assq 'value (rpc head 'collection-summary query)))))) '(#f ready))
-  (head-read b `(begin (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) (head:before-frame!) #t))
+  (head-read b `(begin (test-show! (quote (unquote id))) (head:before-frame!) #t))
   (test:await 'last-hidden-collection-releases-base-work
     (lambda () (eq? (cdr (assq 'status (cdr (assq 'value (rpc head 'collection-summary query))))) 'pending)))
-  (head-read a `(begin (window-host:show-widget! (seat:current-window) ',root-a) #t))
+  (head-read a `(begin (window-control:open-document! (test-window) ',root-a) #t))
   (head-wait 'hidden-collection-resumes-retained-recipe a (lambda () (equal? (key a table-a) "beta.ss")))
   (for-each
     (lambda (ui root)
       (head-read ui `(begin
-                       (for-each seat:forget-buffer! (filter (lambda (b) (equal? ',root (seat:buffer-fact b 'widget-id #f))) (seat:buffers)))
-                       (seat:show-buffer-mirror! (seat:adopt-store-buffer! ',id)) #t))) (list a b) (list root-a root-b)))
+                       (test-show! ',id) (test-retire! ',root) #t))) (list a b) (list root-a root-b)))
 
 ;; Buffet uses the same controls through the actual client/base split. Reopen
 ;; from an empty result and immediately accept the previous document.
-(let* ([previous (head-read a '(seat:buffer-store-id (seat:current-buffer-mirror)))]
-       [origin (head-read a '(let ([b (seat:new-buffer! "buffet wire origin")]) (seat:show-buffer-mirror! b) (seat:buffer-store-id b)))])
+(let* ([previous (head-read a '(test-document))]
+       [origin (head-read a '(let ([b (store:create! head:ui-actor "buffet wire origin" '(""))]) (test-show! b) b))])
   (head-send! a "\x18;b")
   (head-wait 'buffet-wire-open a (lambda () (head-sees? a "Filter:")))
-  (let* ([app (head-read a '(cadr (assq 'app (view:children (interaction:snapshot (seat:buffer-fact (seat:current-buffer-mirror) 'widget-id #f))))))]
+  (let* ([app (head-read a '(test-document))]
          [table (head-read a `(cadr (assq 'table (view:children (interaction:snapshot ',app)))))]
          [query (head-read a `(view:source (interaction:snapshot ',table)))])
     (head-wait 'buffet-command-bindings-ready a
@@ -209,7 +214,7 @@
          (parameterize ([kernel:registering-module 'completion-wire])
            (head:add-pre-redraw-hook!
              (lambda ()
-               (when (and (not completion-status-bytes) (prompt:active?) (seat:popup))
+               (when (and (not completion-status-bytes) (prompt:active?))
                  ;; Exclude unrelated mirror workers: inspection itself runs
                  ;; on this UI thread and must not write to the base.
                  (let ([io (lambda () (call-with-input-file "/proc/thread-self/io"
@@ -218,8 +223,7 @@
                    (let ([before (io)] [binding (cdr (keymap:resolved-binding 'buffet '("C-k")))])
                      (do ([i 0 (+ i 1)]) ((= i 100))
                        (keymap:action-trace (keymap:binding-action binding) (list (cons widget:target ',app)))
-                       (widget:command-bindings ',app)
-                       (seat:buffer-status (seat:window-buffer (seat:popup)) (seat:popup)))
+                       (widget:command-bindings ',app))
                      (set! completion-status-bytes (- (io) before)))))))) #t))
     (head-send! a "\x1b;xmodel:snapshot \t\t")
     (head-wait 'model-completion-popup a (lambda () (head-sees? a "matches of model")))
@@ -229,15 +233,15 @@
       (head-read a '(begin (kernel:retract-module! 'completion-wire) completion-status-bytes)) 0)
     (head-send! a "\x07;\x18;b\r")
     (head-wait 'buffet-wire-immediate-previous a
-      (lambda () (equal? (head-read a '(seat:buffer-store-id (seat:current-buffer-mirror))) previous)))
+      (lambda () (equal? (head-read a '(test-document)) previous)))
     (test:check 'buffet-client-reopen-clears-filter-and-keeps-previous
       (head-read a `(let-values ([(lines revision) (store:snapshot
                                                      (find (lambda (r) (eq? (car r) 'buffer)) (cdr (assq 'owned (cdr (assq 'value (collection:summary ',query)))))))])
                       lines)) '#("")))
-  (head-read a `(begin (store:delete! head:ui-actor ',origin) (seat:sync-foreign-edits!) #t)))
+  (head-read a `(begin (store:delete! head:ui-actor ',origin) #t)))
 
 ;; Names are fetched once per shared environment, not while typing or painting.
-(head-read a '(let ([failures (kernel:load-modules! '("environment" "namespace" "catalogue-host"))])
+(head-read a '(let ([failures (kernel:load-modules! '("environment" "namespace"))])
                 (unless (null? failures) (raise (cdar failures))) #t))
 (let* ([env (head-read a
               `(environment:create! head:ui-actor
@@ -291,17 +295,15 @@
     (let* ([v (value)] [p (rpc head 'collection-range query (cdr (assq 'generation v)) 0 2 '(name))]
            [r (find (lambda (r) (eq? (caadr r) 'path)) (list-ref p 4))])
       (list (cdr (assq 'count v)) (caddr (assq 'name (caddr r))))) '(2 "file-query.sls"))
-  (let* ([before (head-read a '(catalogue-host:reference (seat:current-buffer-mirror)))]
+  (let* ([before (head-read a '(test-document))]
          [host (head-read a `(begin
                                (kernel:load-modules! '("finder"))
-                               (let* ([host (window-host:tool! "finder-wire"
-                                              (lambda (commands) (finder:create! #f commands ,root ',query)))]
-                                      [b (window-host:show-widget! (seat:current-window) host)])
-                                 (seat:show-buffer-mirror! b) host)))])
+                               (window-control:open-app! (test-window) "finder-wire"
+                                 (lambda (owner commands) (finder:create! owner commands ,root ',query)))))])
     (head-wait 'finder-widget-wire-ready a (lambda () (head-sees? a "file-query.sls")))
     (test:check 'contextual-finder-and-table-completion-need-no-wire-reads
       (head-read a
-        `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
+        `(let* ([app ',host] [table (widget:descendant app 'table)]
                 [receivers (widget:receivers (widget:descendant table 'filter 'entry))]
                 [provider ((completion:provider '(scheme 1 ())) '() (list (cons 'receivers receivers)))]
                 [io (lambda () (call-with-input-file "/proc/self/io"
@@ -314,22 +316,21 @@
                             (if (procedure? insertions) (insertions) insertions)))
                      '("(finder:toggle-hidden! " "(table:sort-by! "))
                (- (io) before)))))
-      (list (list (list (format "'~s" (head-read a `(widget:descendant ',host 'app))))
-              (list (format "'~s" (head-read a `(widget:descendant ',host 'app 'table))))) 0))
+      (list (list (list (format "'~s" host))
+              (list (format "'~s" (head-read a `(widget:descendant ',host 'table))))) 0))
     (head-send! a "\t")
     ;; Completion writes the entry before its new query rows are admitted.
     (head-wait 'finder-widget-wire-completed a
       (lambda () (head-read a
                    `(let-values ([(text revision) (store:snapshot ',(cadr pair))])
                       (and (equal? text (vector ,(string-append (current-directory) "/lib/service/file-query.sls")))
-                        (cdr (assq 'selection (view:state (interaction:snapshot (widget:descendant ',host 'app 'table))))) #t)))))
+                        (cdr (assq 'selection (view:state (interaction:snapshot (widget:descendant ',host 'table))))) #t)))))
     (test:check 'finder-client-entry-table-and-base-completion-compose
-      (head-read a `(let* ([app (widget:descendant ',host 'app)] [table (widget:descendant app 'table)]
+      (head-read a `(let* ([app ',host] [table (widget:descendant app 'table)]
                            [selection (cdr (assq 'selection (view:state (interaction:snapshot table))))])
                       (list (equal? (widget:focused ',host) (widget:descendant table 'filter 'entry))
                         (and selection (car (caddr selection)))))) '(#t path))
-    (head-read a `(let ([b (widget:host ',host)])
-                    (seat:show-buffer-mirror! (catalogue-host:resolve! ',before)) (seat:forget-buffer! b) #t)))
+    (head-read a `(begin (test-show! ',before) (test-retire! ',host) #t)))
   (let* ([packet (rpc head 'model-read (list query))] [r (caddar (cadr packet))])
     (rpc head 'model-unwatch (list query))
     (rpc head 'model-retire query (cdr (assq 'revision r)))))

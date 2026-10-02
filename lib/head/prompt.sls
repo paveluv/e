@@ -9,6 +9,7 @@
           (prefix (head completion) completion:)
           (prefix (head completion-layout) completion-layout:)
           (prefix (head completion-state) completion-state:)
+
           (prefix (head editor) editor:)
           (prefix (head entry) entry:)
           (prefix (head head) head:)
@@ -22,6 +23,7 @@
           (prefix (head widget) widget:)
           (prefix (service log) log:)
           (prefix (service prompt-request) prompt-request:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -225,17 +227,10 @@
            [value (and r (get r 'value))])
       (unless (and r (eq? (get r 'kind) 'prompt-request) (eq? (get value 'status) 'editing) (not (get value 'controller))
                 (equal? (get value 'owner) head:ui-actor)) (error 'create! "request is unavailable" request))
-      (let ([created '()])
-        (define (create-view! who source kind schema options state scope)
-          (let ([id (view:create! who source kind schema options state scope)])
-            (set! created (cons id created)) id))
-        (guard (ex [else
-                    (for-each
-                      (lambda (id)
-                        (guard (ignored [else (void)])
-                          (let ([r (caddr (caadr (model:snapshots (list id))))])
-                            (when r (view:retire! head:ui-actor id (get r 'revision)))))) created)
-                    (raise ex)])
+      (construction:call! head:ui-actor
+        (lambda (remember!)
+          (define (create-view! who source kind schema options state scope)
+            (remember! (view:create! who source kind schema options state scope)))
           (let* ([who head:ui-actor] [source (get value 'draft)]
                  [multiline? (cond [(assq 'multiline? options) => cdr] [else #f])]
                  [root-options (append (list (cons 'commands commands))
@@ -625,7 +620,7 @@
           (cons 'release (lambda (id) (hashtable-delete! presentation-factories id))))))
     (widget:register! 'prompt-continuation 1
       (append (layout:container 'y)
-        (list (cons 'contexts (lambda (id d) (option (view:options d) 'contexts '())))
+        (list (cons 'key-delegates (lambda (id d) (option (view:options d) 'key-delegates '())))
           (cons 'release abandon!) (cons 'actions (list (cons 'accepted accepted!) (cons 'cancelled cancelled!))))))
     (widget:register! 'prompt-choices 1
       (list (cons 'prepare completion-data) (cons 'viewport choice-page) (cons 'render choice-render)

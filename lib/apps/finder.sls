@@ -7,6 +7,7 @@
           (prefix (core kernel) kernel:)
           (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
+
           (prefix (head edit) edit:)
           (prefix (head entry) entry:)
           (prefix (head head) head:)
@@ -25,6 +26,7 @@
           (prefix (service window) window:)
           (prefix (state collection) collection:)
           (prefix (state connection) connection:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:)
@@ -51,32 +53,34 @@
         (owner (or model #f) "lifetime owner, false for a session root") (commands list "host command bindings") (directory directory "initial directory")
         (shared (list-of row-source) "optional existing filesystem query") (returns model))
   (define (create! owner commands directory . shared)
-    (unless (<= (length shared) 1) (error 'create! "expected at most one query"))
-    (let* ([q (if (pair? shared) (car shared)
-                (car (filesystem:create-query! head:ui-actor
-                       (filesystem:create-source! head:ui-actor (file:expand "~") (show-hidden) 'persistent)
-                       (file-query:directory-filter (file:canonical (file:expand directory))))))]
-           [r (collection:summary q)] [v (get r 'value '())]
-           [filter (find (lambda (ref) (eq? (car ref) 'buffer)) (get v 'owned '()))]
-           [source (read-model (get v 'source #f))])
-      (unless (and filter (eq? (get source 'kind #f) 'filesystem-source))
-        (error 'create! "expected a filesystem query with an editable filter" q))
-      (let* ([root (view:create! head:ui-actor q 'finder 1 (list (cons 'commands commands)) '((history)) owner)]
-             [table (table:create! head:ui-actor root q '(name size modified created permissions count) '((identity . name) (presentation finder 1) (selection-policy . suggest)))]
-             [row (view:create! head:ui-actor filter 'filter 1 '((spacing . normal)) '() root)]
-             [label (view:create! head:ui-actor #f 'label 1 '((text . "Filter:")) '() root)]
-             [entry (view:create! head:ui-actor filter 'entry 1 '((presentation finder 1) (policy rooted-path 1) (context))
-                      (make-list 2 (cons 0 (string-length (get v 'input-filter (get v 'filter ""))))) root)]
-             [status (view:create! head:ui-actor q 'finder-status 1 '() '() root)]
-             [d (view:snapshot table)])
-        (view:arrange! head:ui-actor
-          (list (list row 0 (list (list 'label label 'fit) (list 'entry entry 'fit) (list 'status status 'fit)) '((spacing . normal)))
-            (list table 1 (cons (list 'filter row 'fit) (view:children d))
-              (cons* '(empty-text . "No matching paths")
-                (list 'commands (list 'activate root 'choose '(#f)) (list 'enter root 'choose '(#t))) (view:options d)))
-            (list root 0 (list (list 'table table '(grow 1))) (list (cons 'commands commands)))) '())
-        (connection:bind! head:ui-actor root (list (list entry 'context #f (list q 'summary))))
-        root)))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (unless (<= (length shared) 1) (error 'create! "expected at most one query"))
+        (let* ([q (if (pair? shared) (car shared)
+                    (remember! (car (filesystem:create-query! head:ui-actor
+                                      (remember! (filesystem:create-source! head:ui-actor (file:expand "~") (show-hidden) 'persistent))
+                                      (file-query:directory-filter (file:canonical (file:expand directory)))))))]
+               [r (collection:summary q)] [v (get r 'value '())]
+               [filter (find (lambda (ref) (eq? (car ref) 'buffer)) (get v 'owned '()))]
+               [source (read-model (get v 'source #f))])
+          (unless (and filter (eq? (get source 'kind #f) 'filesystem-source))
+            (error 'create! "expected a filesystem query with an editable filter" q))
+          (let* ([root (remember! (view:create! head:ui-actor q 'finder 1 (list (cons 'commands commands)) '((history)) owner))]
+                 [table (table:create! head:ui-actor root q '(name size modified created permissions count) '((identity . name) (presentation finder 1) (selection-policy . suggest)))]
+                 [row (remember! (view:create! head:ui-actor filter 'filter 1 '((spacing . normal)) '() root))]
+                 [label (remember! (view:create! head:ui-actor #f 'label 1 '((text . "Filter:")) '() root))]
+                 [entry (remember! (view:create! head:ui-actor filter 'entry 1 '((presentation finder 1) (policy rooted-path 1) (context))
+                                     (make-list 2 (cons 0 (string-length (get v 'input-filter (get v 'filter ""))))) root))]
+                 [status (remember! (view:create! head:ui-actor q 'finder-status 1 '() '() root))]
+                 [d (view:snapshot table)])
+            (view:arrange! head:ui-actor
+              (list (list row 0 (list (list 'label label 'fit) (list 'entry entry 'fit) (list 'status status 'fit)) '((spacing . normal)))
+                (list table 1 (cons (list 'filter row 'fit) (view:children d))
+                  (cons* '(empty-text . "No matching paths")
+                    (list 'commands (list 'activate root 'choose '(#f)) (list 'enter root 'choose '(#t))) (view:options d)))
+                (list root 0 (list (list 'table table '(grow 1))) (list (cons 'commands commands)))) '())
+            (connection:bind! head:ui-actor root (list (list entry 'context #f (list q 'summary))))
+            root)))))
 
   (define (summary id)
     (let-values ([(source d inputs) (widget:context id 'current)]) (get source 'value '())))

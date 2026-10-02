@@ -6,7 +6,8 @@
           (prefix (core property) property:) (prefix (core row) row:)
           (prefix (foundation string) string:)
           (prefix (state actor) actor:)
-          (prefix (state collection) collection:) (prefix (state connection) connection:) (prefix (state model) model:)
+          (prefix (state collection) collection:) (prefix (state connection) connection:)
+          (prefix (state construction) construction:) (prefix (state model) model:)
           (prefix (state store) store:))
 
   (define (get row key default) (cond [(assq key row) => cdr] [else default]))
@@ -66,7 +67,7 @@
     (let ([id (model:create! actor 'buffer-catalogue 1 'session persistence '()
                 (list (cons 'owner actor) (cons 'home home) '(epoch . 0)))]) (wake!) id))
 
-  (edoc "Create a catalogue query with its own internal editable filter. The query owns the supplied source and filter; views borrow them. Returns the query and filter reference."
+  (edoc "Consume an unshared catalogue source to create a query with an internal editable filter. The query owns both resources; failed construction releases them. Views borrow the query."
         (actor actor "owner/head") (source row-source "unshared persistent catalogue source")
         (returns list "(query (buffer id))"))
   (define (create-query! actor source)
@@ -74,10 +75,14 @@
       (unless (and r (eq? (get r 'kind #f) 'buffer-catalogue) (eq? (get r 'persistence #f) 'persistent)
                 (equal? actor (get (get r 'value '()) 'owner #f)))
         (error 'create-query! "expected this head's persistent catalogue source" source))
-      (let* ([filter (store:create! actor "Buffet filter" '("") (list '(internal . #t) (cons 'audience (list actor))))]
-             [query (collection:create! actor source "" '() (get r 'persistence 'persistent) (list source filter))])
-        (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))
-        (list query filter))))
+      (construction:call! actor
+        (lambda (remember!)
+          (remember! source)
+          (let* ([filter (remember! (store:create! actor "Buffet filter" '("") (list '(internal . #t) (cons 'audience (list actor)))))]
+                 [query (remember! (collection:create! actor source "" '() (get r 'persistence 'persistent) (list source filter)))])
+            (let-values ([(status edges) (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))])
+              (unless (eq? status 'applied) (error 'create-query! "filter connection refused" status)))
+            (list query filter))))))
 
   (edoc "The next or previous live catalogue key in a query's unfiltered sort order, wrapping at the ends. False uses the default name order without allocating a query. Uses the provider's cached index; archives never participate."
         (actor actor "owner/head") (query (or row-source #f) "catalogue query or default order") (key datum "current row key")

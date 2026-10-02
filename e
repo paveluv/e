@@ -110,5 +110,5 @@
                                  (client:call-with-runtime
                                    (lambda ()
                                      (eval '(begin
-                                              (import (prefix (head edit) edit:) (prefix (run main) main:))
+                                              (import (prefix (run main) main:))
                                               (main:run!)))))))))])))))))

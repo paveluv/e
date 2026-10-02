@@ -70,7 +70,7 @@
         (unless (assoc id mounted)
           (widget:mount! id w)
           (set! mounted (cons (cons id w) mounted))
-          (widget:prepare! id (if (paint:window-wrapped? w) (paint:wrap-width w) (seat:window-content-width w)) (seat:window-size w)))
+          (widget:prepare! id (seat:window-content-width w) (seat:window-size w)))
         (widget:set-active! id (eq? w (seat:current-window))))))
 
   (define (widget-buffer! id)

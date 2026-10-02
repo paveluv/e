@@ -24,6 +24,11 @@ continues handling input; annotation batches are bounded.
 Extensions can embed the same interaction using `search-control:create!`
 with an explicit mounted editor view and a `finished` host command. Its entry,
 request and annotations are scoped to that search and released on closure.
+`(search:incremental! editor)` uses the editor's composed window: the search
+entry is an ordinary child below its document. Changing to another text pane
+moves that entry and retargets it; closing its pane releases the request.
+The host uses normal recursive key routing, so its navigation bindings remain
+inspectable and custom editor bindings still apply after accepting a search.
 
 ## Case sensitivity
 
@@ -42,13 +47,14 @@ including replacement, remain exact.
 
 ## Replacement
 
-`M-%` opens M-x with `(search:replace! ` typed; give the text to find and
-its replacement as strings. The command replaces every occurrence in the
-selected region, else in the whole current buffer, and leaves point where it
-was. Every occurrence is an entry of the buffer's delta log, all under one
+`M-%` opens M-x with `search:replace!` and the invoking editor prefilled;
+give the text to find and its replacement as strings. The command replaces
+every occurrence in that editor's selected region, else its whole document,
+and preserves its selection and keyboard focus. Every occurrence is an entry
+of the buffer's delta log, all under one
 batch, and the whole replacement is one undo step. Reviewing the occurrences
 happens in the delta log rather than one question at a time: the buffer shows
-the result at once, and `C-x l` opens the delta log browser in the pop-up,
+the result at once, and `C-x C-l` opens its rewrite review,
 where `(delta-log:filter! review '(...))` supplies a batch value to narrow an explicit review
 to the replacement's entries. An unwanted occurrence can be omitted from the
 rewrite preview and the draft settled, or the whole replacement undone.
@@ -60,23 +66,22 @@ nothing. The original editor's point and selection stay unchanged. Leaving
 the argument or closing the prompt releases the preview. Matches refresh
 when the document changes; counting runs in cancellable base work after the
 first hit is available.
-`search:count` takes a needle too. Matching and highlighting are exact.
+`search:count` takes an editor and a needle too. Matching and highlighting are exact.
 
-`search:replace!` is scoped by the selection or the scope forms:
+The editor receiver is explicit in scripts; it need not have keyboard focus:
 
 ```scheme
-(search:replace! "old" "new")
-(seat:with-buffer (store:find-named "notes.md") (search:replace! "old" "new"))
-(edit:with-region (region:make (store:find-named "notes.md") '(0 . 0) '(4 . 0))
-  (search:replace! "old" "new"))
-(for-each (lambda (b) (when (seat:buffer-file b) (seat:with-buffer b (search:replace! "old" "new"))))
-          (seat:buffers))
+(search:count editor "old")
+(search:replace! editor "old" "new")
+(edit:select! editor '(0 . 0) '(4 . 0))
+(search:replace! editor "old" "new")
+(edit:set-mark! editor #f) ; subsequent commands use the whole document
 ```
 
 Regions are ordinary data: `'(region (buffer 17) (0 . 0) (4 . 0))`.
 `region:make` validates the reference and positions and orders the endpoints;
-`edit:with-region` checks the document and bounds before selecting it. A saved
-region keeps its document identity through renames, but its coordinates do
+`edit:select!` changes a view's logical selection. A saved region keeps its
+document identity through renames, but its coordinates do
 not follow later edits. Use `edit:region-text` to read it without displaying it.
 
 Each call is one undo step in its buffer and retains its point, through

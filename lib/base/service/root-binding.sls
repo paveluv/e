@@ -5,7 +5,7 @@
   (import (chezscheme)
           (prefix (core descriptor) descriptor:) (prefix (core handle) handle:) (prefix (core kernel) kernel:) (prefix (core operation) operation:)
           (prefix (service log) log:) (prefix (service policy) policy:) (prefix (state actor) actor:)
-          (prefix (state model) model:) (prefix (state view) view:))
+          (prefix (state model) model:) (prefix (state screen-import) screen-import:) (prefix (state view) view:))
 
   (define (field r key) (cdr (assq key r)))
   (define (nonempty? x) (and (string? x) (> (string-length x) 0)))
@@ -56,9 +56,18 @@
       (list (cons 'profile (field (field r 'value) 'profile))
         (cons 'attachment attachment) (cons 'initialized? initialized?) (cons 'root root) (cons 'cleanup cleanup))))
   (define (reply id records)
-    (values (find (lambda (r) (and r (equal? (field r 'id) id))) records)
-      (map (lambda (r) (cons (field r 'id) (field r 'value)))
-        (filter (lambda (r) (and r (eq? (field r 'kind) 'widget-view))) records))))
+    ;; Transaction records are an unordered read set, potentially including
+    ;; other retained resources. A staged mount needs exactly the admitted
+    ;; containment tree, root first. Use the same coherent records, no reread.
+    (let ([binding (find (lambda (r) (and r (equal? (field r 'id) id))) records)]
+          [index (make-hashtable equal-hash equal?)])
+      (for-each (lambda (r) (when r (hashtable-set! index (field r 'id) r))) records)
+      (values binding
+        (let walk ([id (field (field binding 'value) 'root)])
+          (if (not id) '()
+            (let* ([r (hashtable-ref index id #f)] [d (and r (field r 'value))])
+              (unless (and r (eq? (field r 'kind) 'widget-view)) (error 'reply "admitted view is absent" id))
+              (cons (cons id d) (apply append (map (lambda (child) (walk (cadr child))) (view:children d))))))))))
 
   (edoc "Acquire a persistent profile and its canonical root lease for the invoking attachment. Empty and uninitialized are distinct. Reacquiring from the same attachment is idempotent; another attachment fences every old view generation."
         (profile string "nonempty profile") (returns (values list list)))
@@ -77,7 +86,13 @@
                               (list (change r token (field v 'initialized?) root (field v 'cleanup))) #f)])
                 (case status
                   [(stale) (retry)]
-                  [(applied) (reply id records)]
+                  [(applied)
+                   ;; A crash may have saved the admitted root before its old
+                   ;; input was consumed. Retry that final acknowledgement.
+                   (let-values ([(binding rows) (reply id records)])
+                     (guard (ex [else (log:add! 'root-binding:acquire! (kernel:condition-text ex))])
+                       (finish-import! actor (screen-import:checkpoint actor rows)))
+                     (values binding rows))]
                   [else (error 'composition "saved root cannot be acquired" status)]))))))))
 
   (edoc "Admit a prepared root against its binding. Retire atomically deletes the old owned model graph and records its output cleanup; otherwise require an existing retaining owner. Pending cleanup blocks another replacement. Borrowed sources survive."
@@ -96,6 +111,7 @@
           [(pair? (field (field r 'value) 'cleanup)) (values 'pending r '())]
           [else
            (let* ([old (field (field r 'value) 'root)]
+                  [imported (screen-import:checkpoint actor basis)]
                   [retiring? (and old (not (equal? old candidate)) (eq? disposition 'retire))]
                   [plan (and retiring? (view:disposal old))]
                   [owner (and old (not (equal? old candidate)) (model:reference? disposition) (model:snapshot disposition))])
@@ -111,8 +127,19 @@
                              (cons (change r token #t candidate (if plan (cadr plan) '()))
                                (if owner (list (list disposition (field owner 'revision)
                                                  (field owner 'references) (field owner 'value))) '())) plan)])
-               (let-values ([(binding rows) (reply id records)])
-                 (values status binding rows))))]))))
+               (when (eq? status 'applied) (finish-import! actor imported))
+               (if (eq? status 'applied)
+                 (let-values ([(binding rows) (reply id records)]) (values status binding rows))
+                 (values status (or (find (lambda (r) (and r (equal? (field r 'id) id))) records) r) '()))))]))))
+
+  (define (finish-import! actor expected)
+    ;; Admission is committed. A failure here leaves recoverable input and
+    ;; must not turn an accepted root into an apparent rejection.
+    (when expected
+      (guard (ex [else (guard (unavailable [else (void)])
+                         (log:add! 'root-binding:finish-import! (kernel:condition-text ex)))])
+        (unless (actor:consume-checkpoint! actor expected)
+          (log:add! 'root-binding:finish-import! "A newer screen checkpoint was retained after root admission.")))))
 
   (define (clean! r)
     (let ([v (field r 'value)])

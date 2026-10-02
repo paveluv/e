@@ -5,6 +5,7 @@
   (import (chezscheme)
           (prefix (foundation string) string:)
           (prefix (head catalogue-host) catalogue-host:)
+
           (prefix (head control) control:)
           (prefix (head entry) entry:)
           (prefix (head head) head:)
@@ -20,6 +21,7 @@
           (prefix (service window) window:)
           (prefix (state catalogue) catalogue:)
           (prefix (state collection) collection:)
+          (prefix (state construction) construction:)
           (prefix (state store) store:)
           (prefix (state view) view:))
 
@@ -37,23 +39,25 @@
   (edoc "Create an unmounted Buffet composition. Commands explicitly bind open (document reference) and return; no current-window fallback is used. An optional existing query shares filter and sort; selection and geometry always belong to this view."
         (owner (or model #f) "lifetime owner, false for a session root") (commands list "host command bindings") (shared (list-of row-source) "optional shared catalogue query") (returns model "app view"))
   (define (create! owner commands . shared)
-    (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
-    (let* ([query (if (pair? shared) (car shared)
-                    (car (catalogue:create-query! head:ui-actor (catalogue:create-source! head:ui-actor (file:expand "~/") 'persistent))))]
-           [r (collection:summary query)]
-           [filter (and r (find (lambda (ref) (eq? (car ref) 'buffer)) (get (get r 'value '()) 'owned '())))])
-      (unless filter (error 'create! "expected a catalogue query with an editable filter" query))
-      (let* ([root (view:create! head:ui-actor #f 'buffet 1 '() '() owner)]
-             [table (table:create! head:ui-actor root query '(modified flags name lines mode file) '((identity . name) (presentation buffet 1)))]
-             [filter (control:create-filter! head:ui-actor root filter "Filter:" "")]
-             [d (view:snapshot table)])
-        (view:arrange! head:ui-actor
-          (list (list table 1 (cons (list 'filter filter 'fit) (view:children d))
-                  (cons* '(empty-text . "No matching buffers")
-                    (list 'commands (list 'activate root 'choose '()) (list 'trash root 'kill '()) (list 'delete root 'delete '())) (view:options d)))
-            (list root 0 (list (list 'table table '(grow 1)))
-              (list (cons 'commands (cons (list 'current table 'emphasize '()) commands))))) '())
-        root)))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (unless (<= (length shared) 1) (error 'create! "expected an optional shared query"))
+        (let* ([query (if (pair? shared) (car shared)
+                        (remember! (car (catalogue:create-query! head:ui-actor (remember! (catalogue:create-source! head:ui-actor (file:expand "~/") 'persistent))))))]
+               [r (collection:summary query)]
+               [filter (and r (find (lambda (ref) (eq? (car ref) 'buffer)) (get (get r 'value '()) 'owned '())))])
+          (unless filter (error 'create! "expected a catalogue query with an editable filter" query))
+          (let* ([root (remember! (view:create! head:ui-actor #f 'buffet 1 '() '() owner))]
+                 [table (table:create! head:ui-actor root query '(modified flags name lines mode file) '((identity . name) (presentation buffet 1)))]
+                 [filter (control:create-filter! head:ui-actor root filter "Filter:" "")]
+                 [d (view:snapshot table)])
+            (view:arrange! head:ui-actor
+              (list (list table 1 (cons (list 'filter filter 'fit) (view:children d))
+                      (cons* '(empty-text . "No matching buffers")
+                        (list 'commands (list 'activate root 'choose '()) (list 'trash root 'kill '()) (list 'delete root 'delete '())) (view:options d)))
+                (list root 0 (list (list 'table table '(grow 1)))
+                  (list (cons 'commands (cons (list 'current table 'emphasize '()) commands))))) '())
+            root)))))
 
   (define (selected-row id selection basis)
     (let* ([table (child id 'table)] [d (interaction:snapshot table)])

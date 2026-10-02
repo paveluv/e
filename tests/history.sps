@@ -13,7 +13,7 @@
     (step! id width)
     (and (exists (lambda (line) (string:search line text 0 (string-length line)))
            (widget:frame-lines (widget:prepare! id width 12))) #t))
-  (history-view:init!) (table:init!)
+  (kernel:load-module! "history-view") (kernel:load-module! "table")
   (check 'history-stale-append-is-atomic-and-projections-are-explicit
     (list (history:append! who history 0 '(text 1 ignored) #f '())
       (get (value history) 'count) (history-view:projection first) (history-view:projection second))

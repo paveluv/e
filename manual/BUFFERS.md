@@ -146,17 +146,15 @@ With no explicit sort, traversal is alphabetical: merely visiting a buffer does
 not move it in that order. `M`-mousewheel performs the same previous/next operation on the
 window under the pointer without moving keyboard focus.
 
-`C-x C-c` quits this head at once: shared text stays in the base, the
-screen is checkpointed for the next attach, and after the terminal is
-restored a notice in bold red names every buffer with unsaved work, the
-shared ones kept in the base and the local ones that went with the head.
-`M-x (main:shutdown!)` saves shared text and named views, reviewing only
-local drafts, other heads and live work that will end. Shared unsaved text
-needs no confirmation. With `(main:shutdown-on-exit #t)`, quitting the last
+`C-x C-c` detaches this head: documents and its named composition stay in
+the base. The console prints a single status line after restoring the terminal.
+`M-x (lifecycle:shutdown!)` saves documents and persistent views, reviewing
+other heads and live work that will end. Unsaved text
+needs no confirmation. With `(lifecycle:shutdown-on-exit #t)`, quitting the last
 head uses this shutdown; cancelling keeps the head open.
 `e --restart` uses the same save path and also starts a replacement base. IDs,
 revisions, modification times, retained undo history and reload conflicts
-survive. Local draft text does not; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
+survive, including private documents; see [restart and recovery](MULTIHEAD.md#restart-and-recovery).
 
 ## File buffers
 
@@ -172,13 +170,18 @@ logged. Existing files and shared buffers are reused without overwriting
 their contents; a concurrent creation is opened as an existing file.
 
 An unnamed buffer needs an explicit destination, supplied with `C-x C-w` or
-`(edit:save-file! path)`. Saving as makes the buffer
+`(edit:save-file! editor path)`. Saving as makes the buffer
 visit the chosen file and updates its mode from the new name. File facts,
 the buffer label and its detected mode publish together. A callback's later
 rename, mode choice or file retarget survives the save returning. An ordinary
 re-save preserves a manually chosen mode.
 Active app buffers, such as Finder, refuse saving: their text and mode belong
 to the app. Copy any text you want to save into an ordinary buffer first.
+
+`(edit:save! editor)`, `(edit:save-file! editor path)`,
+`(edit:reload! editor)` and `(edit:reread! editor)` address an explicit editor
+view. They work while another pane is focused. Save hooks receive that same
+view; changing or closing it before the write refuses the operation.
 
 Visited paths are canonicalized. Relative paths, `.` and `..`, and symbolic-link
 aliases of one existing file resolve to the same buffer. Visiting an already
@@ -208,7 +211,7 @@ Each file buffer remembers the last disk contents it accepted, its baseline.
 Nothing asks about a file changed on disk; e **reloads** it as one undoable
 action, preserving your earlier undo history. A reload happens when
 you reopen the file, when you first edit a buffer whose file changed
-meanwhile, when you save one, and on `(reload!)`. A mere `touch` is ignored
+meanwhile, when you save one, and on `(edit:reload! editor)`. A mere `touch` is ignored
 because the contents are compared.
 
 Undo restores the text, final newline and pending conflicts from before the
@@ -261,8 +264,8 @@ conflict alternatives as well as the text. If another disk change would
 overwrite further edits to an unresolved region, reload leaves the buffer
 and its history intact and asks you to resolve the pending conflicts first.
 
-`C-x !` opens the **conflict review**, `<conflicts>`, in the pop-up;
-`(delta-log:conflicts! (window n))` opens it in another window. Clicking
+`C-x !` opens the **conflict review**, `<conflicts>`, in the invoking window;
+`(delta-log:conflicts! window)` takes an explicit window model. Clicking
 the red `!!` opens it too. Its initial scope captures the visible shared
 documents, with the invoking document first. Each row names the document,
 revision, actor, position and both alternatives. Navigating other windows
@@ -285,8 +288,8 @@ alternatives. Changes elsewhere refresh the demanded review asynchronously.
 `ESC` returns to the host's previous document; the retained review keeps its
 choices for reopening. New reviews have independent drafts.
 
-At M-x, `(delta-log:conflicts)` lists the current document's alternatives and
-`(delta-log:resolve! n 'mine)` settles one explicitly; replacement
+At M-x, `(delta-log:conflicts document)` lists a document's alternatives and
+`(delta-log:resolve! document n 'mine)` settles one explicitly; replacement
 lines may be supplied instead. For scripted or embedded reviews, use
 `delta-log:create!` with an explicit document scope and host commands.
 `conflict-review:create!`, `choose!`, `preview` and `settle!` expose the base
@@ -354,13 +357,18 @@ one entry of its delta log, and `C-_` brings the previous one back, as far as
 the log's retention reaches. It is disposable: killing it asks nothing, it
 does not outlive the base, and the next copy recreates it. A second head on
 the same base gets its own, shown as `[copy]` there as well.
-`edit:copy-text` returns its text, `seat:copy-buffer` the buffer.
+`edit:copy-text` returns its text. `(clipboard:open! #f)` returns this actor's
+document reference, or `#f` before the first copy; pass `#t` to create it.
+Copies use the ordinary text journal without a head-local buffer mirror.
 
 Copy buffer updates may also be sent to the host terminal with OSC 52. Thus,
 `M-w`, `C-w`, repeated `C-k`, Scheme calls to `edit:copy-text!`, and any other
 change to `[copy]`, such as editing it by hand, can place the exact UTF-8 text
 in the desktop clipboard without selecting padded terminal cells. The host
 terminal retains final control over whether clipboard writes are permitted.
+Forwarding processes coalesced document changes between commands; it does not
+poll the copy buffer while painting. Restoring a head does not export its
+saved copy until that text changes.
 Enable forwarding in `config.e` when desired:
 
 ```scheme
@@ -393,16 +401,17 @@ returns the same text for an extension's own label or pop-up.
 ## The delta log
 
 The retained delta log records edits, actors, grouping labels and inverse
-relationships. `(delta-log:log)` returns the current document's entries,
+relationships. `(delta-log:log document)` returns a document's entries,
 newest first, as `(revision actor labels delta origin state)` records.
 An optional selector narrows them by `count`, `actor`, `batch`, `since`,
-`until` or `state`, for example `(delta-log:log '((count . 10)))`.
-A quoted batch value selects that batch. `(delta-log:show! n)`
-describes one retained entry in the echo area. Revision and batch arguments
-complete from the current document's log.
+`until` or `state`, for example `(delta-log:log document '((count . 10)))`.
+A quoted batch value selects that batch. `(delta-log:show! editor n)`
+describes one retained entry in the journal. Revision and batch arguments
+complete from the editor captured when the prompt opened; prompt focus does
+not change that source. M-x offers the captured editor as the receiver.
 
-`C-x C-l` opens `<delta-log>` in the pop-up; `(delta-log:open! (window n))`
-chooses another window. The browser shows one document's retained history,
+`C-x C-l` opens `<delta-log>` in the invoking window; `(delta-log:open! window)`
+chooses an explicit window model. The browser shows one document's retained history,
 newest first, above an independent read-only rewrite preview. `RET` or `SPC`
 toggles whether the selected revision is kept in the preview. The Preview
 column marks `keep` or `omit`. Later edits are rebased over omitted entries;
@@ -776,10 +785,11 @@ shared document for current-context editing and search. For example:
   (search:replace! "old" "new"))
 ```
 
-`edit:kill-buffer!` takes a buffer reference; without one it closes the current
-buffer, including a local tool. Shared documents go to Trash; disposable
-output is deleted. `edit:restore!` selects a named archived document and
-returns its original reference. `edit:call-as-one-edit!` groups edits into
+`window-control:discard!` takes a window reference and closes its shown
+document. Shared documents go to Trash; disposable output is deleted;
+apps release their owned resources. `edit:restore!` restores a named archived
+document and returns its reference for `window-control:open-document!`.
+`edit:call-as-one-edit!` groups edits into
 coherent undo entries.
 
 The default window host still uses opaque head records internally. Its

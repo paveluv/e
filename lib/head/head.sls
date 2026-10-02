@@ -2,7 +2,7 @@
 ;; Importing it allocates no document, window, popup or composition.
 (import (only (foundation edoc) elibrary))
 (elibrary (head head)
-  (export add-color-scheme-hook! add-pre-redraw-hook!
+  (export add-color-scheme-hook! add-mail-hook! add-pre-redraw-hook!
     add-publication-hook! add-shutdown-hook! after-key!
     before-frame! call-uninterrupted call-with-interrupt
     current-keys defer-frame! finish-frame! frame-presented!
@@ -107,6 +107,17 @@
     (with-mutex wake-lock (set! wake-queued #f)))
 
   (define deliver-endpoint! (endpoint:start! wake-main!))
+
+  (define mail-hooks (kernel:make-registry))
+
+  (edoc "Observe actor mail at a head command boundary. Registrations belong to the loading module; callbacks must not block for user input. The runtime interprets no application messages."
+    (procedure procedure "message observer"))
+  (define (add-mail-hook! procedure) (kernel:registry-add! mail-hooks procedure))
+  (define (deliver-mail! message)
+    (deliver-evaluation-mail! message)
+    (run-on-main!
+      (lambda ()
+        (for-each (lambda (procedure) (procedure message)) (kernel:registry-items mail-hooks)))))
 
   ;; #t while the main loop itself pumps the mailbox: posted thunks
   ;; may run right away.  Nested pumps (prompts, i-search, key
@@ -556,7 +567,7 @@
               (kernel:call-with-registration-update
                 (lambda ()
                   (let ([identity (actor:register! (list 'head name)
-                                    (lambda (message) (deliver-evaluation-mail! message) (wake-main!))
+                                    deliver-mail!
                                     'all)])
                     ;; Surface events are wakeups. The head prepares current
                     ;; demanded rows on its pump, never on a publisher thread.

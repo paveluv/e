@@ -37,7 +37,8 @@
              (lambda ()
                (let ([name (keymap:prefill-name action)])
                  (unless name (error 'run! "the pre-filled command has no top-level name" action))
-                 (apply prompt-opener name (keymap:prefill-action-arguments action))))
+                 (apply prompt-opener name
+                   (keymap:run! (keymap:call (apply list (keymap:prefill-action-arguments action)))))))
              (lambda () (head:set-last-command! action)))]
           [(not action)
            (head:set-last-command! #f)

@@ -153,9 +153,12 @@
          '(text-source text-layout interaction editor-state)) #t)
 
      (test:check 'root-engine-has-no-default-editor-policy
-       (for-all (lambda (name)
-                  (not (memq (source-name (cdr (assoc name base))) '(seat window-host paint echo dispatch prompt-host))))
-         (closure base '(head root))) #t)
+       (for-all (lambda (entrypoint)
+                  (for-all (lambda (name)
+                             (not (memq (source-name (cdr (assoc name base)))
+                                    '(seat window-host paint echo dispatch prompt-host screen configuration lifecycle))))
+                    (closure base entrypoint)))
+         '((head root) (run main))) #t)
 
      (test:check 'client-exports-are-subsets
        (for-all

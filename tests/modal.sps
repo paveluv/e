@@ -10,7 +10,7 @@
   (modal:init!) (eval:init!)
   (let* ([root (view:create! who #f 'column 1 '() '())]
          [source (store:create! who "modal origin" '("Original document"))]
-         [body (editor:create-view! who source '() root)] [host (modal:create! root '(modal-fixture))]
+         [body (editor:create-view! who source '() root)] [host (modal:create! root (list (list root 'modal-fixture)))]
          [messages (message:create! root)])
     (define (show!)
       (widget:pump!)
@@ -33,7 +33,7 @@
       (list (list root 0 (list (list 'body body '(grow 1)) (list 'prompts host 'fit) (list 'messages messages 'fit))
               (list (list 'commands (list 'prompt host 'prepare '())
                       (list 'notification messages 'present '()) (list 'message messages 'show '()))))) '())
-    (keymap:bind-default! 'modal-fixture "F8" (lambda () (set! keys (+ keys 1))))
+    (keymap:bind-default! 'modal-fixture "F8" (lambda () (when (equal? (widget:target) root) (set! keys (+ keys 1)))))
     (widget:mount! root 'composed-prompt) (show!)
     (let* ([outer (start! "outer")] [inner (start! "inner")])
       (routing:input! root '(key "F8" #f))

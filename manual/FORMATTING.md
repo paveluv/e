@@ -54,7 +54,11 @@ Scheme buffers format before saving by default:
 ```
 
 Modules may register additional work with `file:add-pre-save-hook!` and
-`file:add-post-save-hook!`.
+`file:add-post-save-hook!`. Both callbacks receive `(path editor)`: the
+canonical destination and the explicit source editor, independent of focus.
+Formatting should use that editor. Closing or replacing it during a pre-save
+hook refuses the write. Post-save notifications may supply `#f` when only a
+path is available; hooks that need a source should check for it.
 
 ## Intrusive formatting
 

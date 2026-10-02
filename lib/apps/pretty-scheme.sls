@@ -301,43 +301,46 @@
         (edit:insert! id (closing (text-control:basis-text source d) (car (view:state d)))))
       (edit:insert-text! (closing (seat:buffer-lines (seat:current-buffer-mirror)) (seat:point)))))
 
-  (define (toggle-mode! name)
-    (mode:choose! (if (equal? (mode:name-of) name) "scheme" name))
+  (define (toggle-mode! name document)
+    (apply mode:choose! (if (equal? (apply mode:name-of document) name) "scheme" name) document)
     (void))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose parens are glyph pairs chosen by construct." (public))
-  (define (pretty-scheme-clusters!)
+  (edoc "Toggle a Scheme document between its normal mode and glyph pairs chosen by construct."
+    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
+  (define (pretty-scheme-clusters! . document)
     ;; Toggle the current buffer between scheme and pretty-scheme-clusters:
     ;; construct-cluster parens.
-    (toggle-mode! "pretty-scheme-clusters"))
+    (toggle-mode! "pretty-scheme-clusters" document))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view whose paren glyph pairs rotate with nesting depth." (public))
-  (define (pretty-scheme-depth!)
+  (edoc "Toggle a Scheme document between its normal mode and glyph pairs rotating with nesting depth."
+    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
+  (define (pretty-scheme-depth! . document)
     ;; Toggle pretty-scheme-depth: parens by nesting level, the pair rotation
     ;; cycling as the tree deepens.
-    (toggle-mode! "pretty-scheme-depth"))
+    (toggle-mode! "pretty-scheme-depth" document))
 
-  (edoc "Toggle the current Scheme buffer between its normal mode and a view that colors parens by nesting depth." (public))
-  (define (pretty-scheme-rainbow!)
+  (edoc "Toggle a Scheme document between its normal mode and parentheses colored by nesting depth."
+    (document (list-of buffer) "document reference; omission uses the legacy current buffer") (public))
+  (define (pretty-scheme-rainbow! . document)
     ;; Toggle pretty-scheme-rainbow: plain characters, colored by nesting
     ;; level through the rainbow.
-    (toggle-mode! "pretty-scheme-rainbow"))
+    (toggle-mode! "pretty-scheme-rainbow" document))
 
   (edoc "Register the three pretty-scheme modes, their describe entries and the closing-bracket binding." (public))
   (define (init!)
     (doc:register!
       '(((pretty-scheme:clusters!)
-         (("procedure" . "(pretty-scheme:clusters!)")) "void"
+         (("procedure" . "(pretty-scheme:clusters! document)")) "void"
          ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
-         "Toggle the current Scheme buffer between its normal mode and a view that renders parentheses with glyph pairs chosen by syntactic construct.")
+         "Toggle the supplied Scheme document between its normal mode and glyph pairs chosen by syntactic construct.")
         ((pretty-scheme:depth!)
-         (("procedure" . "(pretty-scheme:depth!)")) "void"
+         (("procedure" . "(pretty-scheme:depth! document)")) "void"
          ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
-         "Toggle the current Scheme buffer between its normal mode and a view whose parenthesis glyph pairs rotate with nesting depth.")
+         "Toggle the supplied Scheme document between its normal mode and glyph pairs rotating with nesting depth.")
         ((pretty-scheme:rainbow!)
-         (("procedure" . "(pretty-scheme:rainbow!)")) "void"
+         (("procedure" . "(pretty-scheme:rainbow! document)")) "void"
          ("(apps pretty-scheme)") pretty-scheme "Display commands" #f
-         "Toggle the current Scheme buffer between its normal mode and a view that colors parentheses by nesting depth.")))
+         "Toggle the supplied Scheme document between its normal mode and parentheses colored by nesting depth.")))
     ;; submodes of Scheme: its indentation, formatting, Tab policy and keys,
     ;; with a presentation of their own
     (mode:derive! "pretty-scheme-clusters" "scheme" '() #f rendered)

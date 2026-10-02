@@ -33,7 +33,7 @@
      (define (text) (vector->list (seat:buffer-lines b)))
      (define (type! s) (for-each dispatch:key! (string->list s)))
      (define (press! key . times) (do ([n (if (pair? times) (car times) 1) (- n 1)]) ((= n 0)) (dispatch:key! key)))
-     (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (delta-log:log) i)))))
+     (define (batch-at i) (cdr (assq 'batch (caddr (list-ref (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror))) i)))))
      (define (same-batch? . is) (for-all (lambda (i) (equal? (batch-at i) (batch-at (car is)))) (cdr is)))
      (define (label) (cadr (car (store:undo-labels (seat:buffer-store-id b)))))
 
@@ -41,7 +41,7 @@
      ;; point starts a new run
      (type! "abc")
      (check 'typed-characters-are-entries-of-one-batch
-       (list (text) (length (delta-log:log)) (same-batch? 0 1 2) (label)) '(("abc") 3 #t "insert \"abc\""))
+       (list (text) (length (delta-log:log (seat:buffer-store-id (seat:current-buffer-mirror)))) (same-batch? 0 1 2) (label)) '(("abc") 3 #t "insert \"abc\""))
      (press! "LEFT")
      (type! "xz")
      (check 'moving-point-starts-a-new-run (list (text) (same-batch? 0 1) (same-batch? 1 2)) '(("abxzc") #t #f))

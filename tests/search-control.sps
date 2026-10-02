@@ -1,4 +1,5 @@
 (let ()
+  (import (prefix (apps search) search:))
   (define actor head:ui-actor)
   (define source (store:create! actor "Nested search" '("alpha ALPHA" "tail")))
   (define other-source (store:create! actor "Other search" '("omega")))
@@ -11,7 +12,7 @@
   (define (show!) (widget:present! (list (list (widget:prepare! root 60 8) 0 0))))
   (define (pump!) (widget:pump!) (show!))
   (define (at id p) (test:await 'search-caret (lambda () (pump!) (equal? (point id) p))))
-  (search-control:init!)
+  (kernel:load-module! "search")
   (widget:register! 'search-fixture 1
     (append (layout:container 'y) (list (cons 'actions (list (cons 'finished (lambda (id . args) (set! outcome args))))))))
   (view:arrange! actor (list (list root 0 (list (list 'editor target '(grow 1)) (list 'other other '(grow 1))) '())) '())
@@ -55,4 +56,71 @@
       (test:await 'search-closed (lambda () (head:run-deferred!) (not (model:snapshot request))))
       (check 'search-close-retires-request-views-and-draft
         (list (model:snapshot search) (model:snapshot input) (store:exists? source)) '(#f #f #t))))
+  (widget:focus! root other)
+  (select! target '(0 . 1) '(0 . 6))
+  (check 'replacement-captures-the-explicit-reversed-selection
+    (list (search:count target "alpha") (search:count target "ALPHA")
+      (search:replace! target "alpha" "β") (store:line source 0) (widget:focused root)
+      (seat:buffer-of-store-id source))
+    (list 1 0 1 "xβ ALPHA" other #f))
+  (undo! target)
+  (set-mark! target #f)
+  (check 'unmarked-replacement-spans-the-document-as-one-undo-step
+    (list (search:count target "a") (search:replace! target "a" "Ω")
+      (store:line source 0) (store:line source 1)
+      (begin (undo! target) (list (store:line source 0) (store:line source 1)))
+      (store:line other-source 0))
+    '(3 3 "xΩlphΩ ALPHA" "tΩil" ("xalpha ALPHA" "tail") "omega"))
   (widget:unmount! root) (store:delete! actor source) (store:delete! actor other-source))
+
+(let ()
+  (import (prefix (apps search) search:) (prefix (service window) window:)
+          (prefix (head window-control) window-control:))
+  (actor:call-as head:ui-actor
+    (lambda ()
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
+             [second (window:split! manager first 'right)]
+             [a (store:create! head:ui-actor "Search pane A" '("alpha tail"))]
+             [b (store:create! head:ui-actor "Search pane B" '("beta alpha"))]
+             [editor (window:open-document! manager first a)]
+             [other (window:open-document! manager second b)])
+        (define (show!)
+          (widget:pump!) (head:run-deferred!)
+          (widget:present! (list (list (widget:prepare! manager 60 8) 0 0))))
+        (define (point id) (car (view:state (interaction:snapshot id))))
+        (define (key! key) (routing:input! manager (list 'key key #f)) (show!))
+        (define (at id p) (test:await 'composed-search-caret (lambda () (show!) (equal? (point id) p))))
+        (widget:mount! manager 'composed-search) (show!)
+        (widget:focus! manager editor) (show!)
+        (key! "C-s")
+        (let* ([panel (widget:descendant first 'search)] [search (widget:descendant panel 'search)]
+               [input (widget:descendant search 'entry)] [query (view:source (interaction:snapshot search))])
+          (routing:input! manager '(text "alpha" keyboard)) (at editor '(0 . 5))
+          (check 'composed-search-is-an-ordinary-child-with-explicit-focus
+            (list (view:parent (interaction:snapshot panel)) (widget:focused manager) (point other))
+            (list first input '(0 . 0)))
+          (window-control:select! second) (show!) (at other '(0 . 10))
+          (check 'composed-search-retargets-and-moves-with-window-focus
+            (list (view:parent (interaction:snapshot panel)) (widget:focused manager)
+              (car (view:state (interaction:snapshot search))) (point editor))
+            (list second input other '(0 . 5)))
+          (key! "C-g")
+          (test:await 'composed-search-closed (lambda () (show!) (not (model:snapshot query))))
+          (check 'composed-search-cancel-restores-origin-and-releases-only-the-search
+            (list (widget:focused manager) (point editor) (point other)
+              (model:snapshot panel) (store:exists? a) (store:exists? b))
+            (list editor '(0 . 0) '(0 . 10) #f #t #t)))
+        (key! "C-s") (key! "C-s") (at editor '(0 . 5))
+        (key! "RIGHT")
+        (check 'composed-search-arrow-accepts-and-uses-normal-editor-navigation
+          (list (widget:focused manager) (point editor) (assq 'search (view:children (interaction:snapshot first))))
+          (list editor '(0 . 6) #f))
+        (key! "C-s")
+        (let ([query (view:source (interaction:snapshot (widget:descendant first 'search 'search)))])
+          (window-control:close! first) (show!)
+          (test:await 'closed-search-pane-releases-query (lambda () (show!) (not (model:snapshot query))))
+          (check 'closing-search-pane-preserves-both-documents
+            (list (window:list manager) (store:exists? a) (store:exists? b)) (list (list second) #t #t)))
+        (widget:unmount! manager)
+        (view:retire! head:ui-actor manager (model:revision manager))
+        (store:delete! head:ui-actor a) (store:delete! head:ui-actor b)))))

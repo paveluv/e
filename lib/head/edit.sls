@@ -56,6 +56,7 @@
           (prefix (head editor) editor:)
           (prefix (head expression) expression:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
@@ -68,11 +69,13 @@
           (prefix (head tui) tui:)
           (prefix (head widget) widget:)
           (prefix (head window-host) window-host:)
+          (prefix (service clipboard) clipboard:)
           (prefix (service document) document:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
           (prefix (state store) store:)
+          (prefix (state view) view:)
           (prefix (sys sys) sys:)
           (prefix (sys tty) tty:))
 
@@ -546,40 +549,51 @@
         (tui:ansi! "\x1b;]52;c;" (base64-encode (string->utf8 text)) "\x1b;\\")
         (flush-output-port (sys:terminal-output-port)))))
 
-  ;; Whatever changes *copy* -- a hand edit there, undo, the prompt's C-k --
-  ;; reaches the clipboard at the next frame, once per revision; the copy
-  ;; commands publish at once and note their revision. A copy buffer seen
-  ;; for the first time is only noted, so a fresh or resumed head never
-  ;; writes the clipboard by itself.
-  (define published-copy (cons #f #f)) ; (buffer . the revision published)
+  (define copy-document #f)
+  (define published-copy (cons #f #f)) ; (document . revision)
 
-  (define (copy-revision b)
-    (let-values ([(lines revision facts) (seat:buffer-state b)]) revision))
-
-  (define (note-copy-published! b)
-    (set! published-copy (cons b (copy-revision b))))
+  (define (copy-source create?)
+    (unless (and copy-document (store:exists? copy-document))
+      (set! copy-document (actor:call-as head:ui-actor (lambda () (clipboard:open! create?)))))
+    (and copy-document (text-source:open! head:ui-actor copy-document)))
 
   (define (publish-copy-changes!)
-    (let ([b (seat:copy-buffer #f)])
-      (when b
-        (let ([revision (copy-revision b)])
-          (cond [(not (eq? b (car published-copy))) (set! published-copy (cons b revision))]
-                [(eqv? revision (cdr published-copy)) (void)]
-                [else
-                 (set! published-copy (cons b revision))
-                 (when (forward-copy-buffer-to-system-clipboard)
-                   (publish-system-clipboard! (seat:copy-text)))])))))
+    ;; Called once per invalidation burst at a command boundary, never from
+    ;; painting. A resumed document is observed without exporting its contents.
+    (when copy-document
+      (if (not (store:exists? copy-document)) (set! copy-document #f)
+        (let-values ([(lines revision facts) (store:snapshot-state copy-document)])
+          (unless (and (equal? copy-document (car published-copy)) (eqv? revision (cdr published-copy)))
+            (let ([known? (equal? copy-document (car published-copy))])
+              (set! published-copy (cons copy-document revision))
+              (when known? (publish-system-clipboard! (text:to-string lines (cdr (assq 'trailing facts)))))))))))
 
   (define (replace-copy-text! text label)
-    (let* ([b (seat:copy-buffer)] [basis (seat:edit-basis b)]
+    (let* ([source (copy-source #t)] [id (text-source:id source)]
+           [revision (text-source:revision source)] [old (text-source:lines source)]
            [key (list head:ui-actor (gensym->unique-string (gensym "copy")))])
       (let-values ([(lines trailing?) (text:from-string text)])
-        (let-values ([(span replacement) (text:difference (car basis) lines)])
-          (seat:store-edit! b span replacement
-            (list key (format "~a ~s" label (string:elide text 40))
-              (list 'undo (cons 'trailing trailing?)) (list 'labels (cons 'batch key)))
-            (map (lambda (w) (cons w 'end)) (filter (lambda (w) (eq? (seat:window-buffer w) b)) (seat:windows))) basis)))
-      (note-copy-published! b) (publish-system-clipboard! text)))
+        (let-values ([(span replacement) (text:difference old lines)])
+          (let-values ([(lines now changes points committed)
+                        (text-source:edit! head:ui-actor (list old id revision) span replacement
+                          (list key (format "~a ~s" label (string:elide text 40))
+                            (list 'undo (cons 'trailing trailing?)) (list 'labels (cons 'batch key))) '())])
+            (text-source:adopt! source revision lines now changes)
+            (follow-copy! id lines now)
+            (set! published-copy (cons id now)))))
+      (publish-system-clipboard! text)))
+
+  (define (follow-copy! document lines revision)
+    (let* ([row (- (vector-length lines) 1)] [end (cons row (string-length (vector-ref lines row)))])
+      (define (walk frame)
+        (let ([d (widget:frame-descriptor frame)])
+          (when (and (eq? (view:kind d) 'editor) (equal? document (view:source d)))
+            (let-values ([(source current) (text-control:context (widget:frame-id frame) 'editor 'current)])
+              (when (and (equal? document (view:source current)) (= (view:generation d) (view:generation current)))
+                (interaction:set-state! head:ui-actor (widget:frame-id frame) revision
+                  (list end end (caddr (view:state current)) #f)))))
+          (for-each walk (widget:frame-children frame))))
+      (for-each (lambda (p) (walk (car p))) (widget:shown))))
 
   (define (killing?)
     ;; was the previous command a kill?  Consecutive kills accumulate
@@ -608,9 +622,11 @@
       [(id) (editor:transfer! id 'line publish-view-kill!)]))
 
   (edoc "The copy buffer's text."
-        (returns string))
+        (returns string) (effects internal))
   (define (copy-text)
-    (seat:copy-text))
+    (if (copy-source #f)
+        (let-values ([(lines revision facts) (store:snapshot-state copy-document)])
+          (text:to-string lines (cdr (assq 'trailing facts)))) ""))
 
   (edoc "Insert the copy buffer's text at point."
         (id model "editor view; omission addresses the current window")
@@ -715,36 +731,43 @@
     (raise (condition (kernel:make-refusal) (make-message-condition message))))
   (define (refuse-file! message) (refuse! message))
 
-  (edoc "Save the current shared document through the base's document service. External changes merge undoably before saving; conflicts refuse, and an unavailable merge rereads undoably instead. Overwritten bytes become a shared backup. App presentations cannot be saved as files. Pre/post hooks run in this head, with mode, file and name adopted atomically."
+  (edoc "Save an explicit editor's document through the base. External changes merge undoably; conflicts refuse, and overwritten bytes become a shared backup. Hooks receive the destination path and this editor; changing its source during a pre-save hook refuses before writing. Mode, file and name are adopted atomically."
+        (receiver editor (view editor)) (editor model "source editor")
         (target file "destination to write and visit") (returns boolean "whether saving completed"))
-  (define (save-file! target)
-    (let* ([path (file:visit-path target)] [b (seat:window-buffer current-window)]
-           [id (seat:buffer-store-id b)])
-      (define (check-source!)
-        (when (seat:app-buffer? b)
-          (refuse-file! (format "Cannot save ~a: this buffer belongs to an app" (seat:buffer-name b))))
-        (unless id (refuse-file! "Only shared documents can be saved; copy the text into a document first")))
-      (check-source!)
-      (when (seat:buffer-conflicted b) (refuse-file! "Resolve the conflicts first"))
-      (file:run-pre-save-hooks! path)
-      (check-source!)
-      (let-values ([(text revision facts) (seat:buffer-state b)])
-        (let* ([detected (mode:detect path (vector-ref text 0))]
-               [adoption (list (vector-ref text 0) (and detected (mode:name detected)))]
-               [result (document:save! head:ui-actor id path adoption)])
-          ;; Merge/reread can change shared text even when saving refuses.
-          (seat:sync-foreign-edits! id) (seat:flush-ui-audit! id)
-          (case (car result)
-            [(refused) (refuse-file! (cadr result))]
-            [(unchanged) (set! message (cadr result)) #f]
-            [(failed) #f]
-            [(saved)
-             (guard (ex [else
-                         (log:add! 'edit:save-file!
-                           (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex)))
-                         #f])
-               (file:run-post-save-hooks! path)
-               #t)])))))
+  (define save-file!
+    (case-lambda
+      [(target)
+       (let* ([b (seat:current-buffer-mirror)] [id (seat:buffer-store-id b)])
+         (when (or (not id) (seat:app-buffer? b)) (refuse-file! "Only document text can be saved"))
+         (let ([result (save-file! (or (current-editor) (refuse-file! "No editor for this document")) target)])
+           (seat:sync-foreign-edits! id) (seat:flush-ui-audit! id) result))]
+      [(editor target)
+       (let-values ([(source d) (text-control:context editor 'editor)])
+         (let* ([id (view:source d)] [path (file:visit-path target)])
+           (define (check-source!)
+             (unless (text-control:current? editor source d) (refuse-file! "The source editor changed while preparing the save"))
+             (when (and (store:property id 'app #f) (store:property id 'alive #f))
+               (refuse-file! "This document belongs to a running app")))
+           (check-source!)
+           (when (> (store:property id 'conflicts 0) 0) (refuse-file! "Resolve the conflicts first"))
+           (file:run-pre-save-hooks! path editor)
+           (check-source!)
+           (let-values ([(text revision facts) (store:snapshot-state id)])
+             (let* ([detected (mode:detect path (vector-ref text 0))]
+                    [adoption (list (vector-ref text 0) (and detected (mode:name detected)))]
+                    [result (document:save! head:ui-actor id path adoption)])
+               ;; Refusal may still have merged disk changes. Presentations
+               ;; share this mirror and rebase their anchors independently.
+               (text-source:open! head:ui-actor id)
+               (case (car result)
+                 [(refused) (refuse-file! (cadr result))]
+                 [(unchanged) (head:report! (cadr result)) #f]
+                 [(failed) #f]
+                 [(saved)
+                  (guard (ex [else
+                              (log:add! 'edit:save-file!
+                                (format "Wrote ~a, but could not finish saving: ~a" path (kernel:condition-text ex))) #f])
+                    (file:run-post-save-hooks! path editor) #t)])))))]))
 
   (define (merge-failure detail)
     ;; why the store could not merge the disk's changes, for the echo
@@ -754,26 +777,35 @@
       [(pending-edits) "resolve the pending conflicts first; further edits have been preserved"]
       [else (format "not merged (~a)" detail)]))
 
-  (define (reload-document! replace?)
-    (let* ([b (seat:current-buffer-mirror)] [id (seat:buffer-store-id b)])
+  (define (reload-document! replace? editor)
+    (let* ([b (and (not editor) (seat:current-buffer-mirror))]
+           [id (if editor (let-values ([(source d) (text-control:context editor 'editor)])
+                            (when (and replace?
+                                    (or (cond [(assq 'read-only (view:options d)) => cdr] [else #f])
+                                      (store:property (view:source d) 'read-only #f)))
+                              (refuse-file! "This editor is read-only"))
+                            (view:source d)) (seat:buffer-store-id b))])
       (unless id (refuse-file! "This buffer is not a shared document"))
       (let-values ([(status detail)
                     (guard (ex [(kernel:refusal? ex) (raise ex)]
                                [else (refuse-file! (kernel:condition-text ex))])
                       ((if replace? document:reread! document:reload!) head:ui-actor id))])
         ;; An adoption failure after commit is not a refused document action.
-        (seat:sync-foreign-edits! id)
-        (seat:flush-ui-audit! id)
+        (if editor (text-source:open! head:ui-actor id)
+          (begin (seat:sync-foreign-edits! id) (seat:flush-ui-audit! id)))
         (unless (eq? status 'applied)
-          (refuse-file! (format "~a could not be ~a: ~a" (seat:buffer-name b)
+          (refuse-file! (format "~a could not be ~a: ~a" (store:buffer-name id)
                           (if replace? "reread" "reloaded") (merge-failure detail)))))))
 
-  (edoc "Reread the current document's file in the base as one undoable replacement, settling pending conflicts. Concurrent edits or retargeting during the read refuse; earlier undo history remains."
-        (edits))
-  (define (reread!) (check-editable!) (reload-document! #t))
+  (edoc "Reread an editor's file as an undoable replacement, settling pending conflicts. Concurrent edits or retargeting during the read refuse; earlier undo history remains."
+        (receiver editor (view editor)) (editor model "source editor") (edits))
+  (define reread!
+    (case-lambda [() (check-editable!) (reload-document! #t #f)]
+      [(editor) (reload-document! #t editor)]))
 
-  (edoc "Reload the current document's file in the base as one undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it." (public))
-  (define (reload!) (reload-document! #f))
+  (edoc "Reload an editor's file as an undoable merge, preserving earlier undo history. Concurrent edits or retargeting during the read refuse. Undo restores the pre-reload text while remembering the observed disk version, so saving can overwrite it."
+    (receiver editor (view editor)) (editor model "source editor") (public))
+  (define reload! (case-lambda [() (reload-document! #f #f)] [(editor) (reload-document! #f editor)]))
 
   (edoc "A buffer's text as its file would hold it: the lines joined with newlines, ending in one when the buffer keeps a trailing newline."
         (b buffer "the shared document to read")
@@ -877,7 +909,7 @@
       [(entries) (present-log-entries-with! entries "")]
       [(entries tail) (present-log-entries-with! entries tail)]))
   (define (present-log-entries-with! entries tail)
-    (let ([host (widget:command-owner (widget:focused) 'notification)])
+    (let ([host (widget:command-owner (or (widget:target) (widget:focused)) 'notification)])
       (if host (widget:invoke! host 'notification entries tail)
         (present-legacy-log! entries tail))))
   (define (present-legacy-log! entries tail)
@@ -982,7 +1014,7 @@
     (write (lambda (v) (format "~s" v)))
     (within string))
 
-  (edoc "Bring a buffer back from the trash, a backup included, the newest of that name, with its text and history, and show it in the current window; it takes a unique name when another buffer holds its own."
+  (edoc "Restore the newest archived document with this name, including backups, preserving its text and history. Return its buffer reference for explicit placement; another document with the same name causes a unique suffix."
         (name trashed "the buffer's name in the trash")
         (returns buffer) (public))
   (define (restore! name)
@@ -990,11 +1022,8 @@
       (unless entry (error 'restore! "no such buffer in the trash" name))
       (let ([id (car entry)])
         (archive-entry! entry 'restore)
-        (let ([b (seat:adopt-store-buffer! id)])
-          (unless b (error 'restore! "the buffer did not come back" name))
-          (seat:show-buffer-mirror! b)
-          (log:add! 'edit:restore! (format "Restored ~a" (seat:buffer-name b)))
-          id))))
+        (log:add! 'edit:restore! (format "Restored ~a" (store:buffer-name id)))
+        id)))
 
   (edoc "Permanently delete one trashed buffer or backup by name, including its history; live buffers and changed entries are refused. The original file on disk is untouched."
         (name trashed "the buffer's name in Trash or Backups") (public))
@@ -1120,21 +1149,26 @@
         (choice answer "the answer"))
   (define (answer! choice)
     (let ([asks (actor:pending head:ui-actor)])
-      (cond [(null? asks) (set! message "Nothing to answer")]
-            [(actor:answer! (car (car asks)) choice) (set! message "Answered")]
-            [else (set! message "That question was withdrawn")])))
+      (head:report!
+        (cond [(null? asks) "Nothing to answer"]
+          [(actor:answer! (car (car asks)) choice) "Answered"]
+          [else "That question was withdrawn"]))))
 
   ;;; File commands -----------------------------------------------------------
 
   ;; The prompt -- the modal loop, completions, single-key questions --
   ;; lives in (prompt); the commands that ask are here.
 
-  (edoc "Save the current buffer to its file; a buffer without one refuses and names save-file!, which takes a path."
-        (returns boolean "whether the file was written"))
-  (define (save!)
-    (if file-name
-        (save-file! file-name)
-        (refuse-file! "This buffer has no file: (edit:save-file! path) saves it under one")))
+  (edoc "Save an editor's document to its visited file; without one, use save-file! with a path."
+        (receiver editor (view editor)) (editor model "source editor") (returns boolean "whether the file was written"))
+  (define save!
+    (case-lambda
+      [() (if file-name (save-file! file-name) (refuse-file! "This buffer has no file"))]
+      [(editor)
+       (let-values ([(source d) (text-control:context editor 'editor)])
+         (let ([path (store:property (view:source d) 'file #f)])
+           (unless path (refuse-file! "This document has no file: use edit:save-file! with this editor and a path"))
+           (save-file! editor path)))]))
 
   (define (view-quit-buffers!)
     (let ([b (seat:find-tool-buffer "*buffet*")])
@@ -1260,6 +1294,23 @@
   ;; commands is installed here too.
   (edoc "Install the command layer: log presentation, the file formatters, status hints, the default key bindings, the loop's hooks and the buffet." (public))
   (define (init!)
+    (kernel:load-module! "clipboard")
+    (copy-source #f) (publish-copy-changes!)
+    (let ([take #f])
+      ;; Store invalidations are already bounded and coalesced. Drain them
+      ;; outside a frame, and acquire text only when this document changed.
+      (let-values ([(token drain)
+                    (store:watch! (lambda ()
+                                    (head:run-on-main! (lambda ()
+                                                         (let ([changes (take)])
+                                                           (when (and copy-document
+                                                                   (or (not changes) (assoc copy-document changes)))
+                                                             (publish-copy-changes!)))))))])
+        (set! take drain)
+        (head:add-shutdown-hook! (lambda () (store:unsubscribe! token)))))
+    (keymap:bind-default! 'widget-editor "C-x C-s" (keymap:call save! widget:target))
+    (keymap:bind-default! 'widget-editor "C-x C-w" (keymap:prefill save-file! widget:target))
+    (keymap:bind-default! 'widget-editor "C-x C-r" (keymap:call reread! widget:target))
     (editor:register! (list (cons 'undo undo!) (cons 'redo redo!) (cons 'page page!) (cons 'paste paste-into-buffer!)
                         (cons 'kill-line kill-line!) (cons 'kill-region kill-region!) (cons 'copy-region copy-region!) (cons 'yank yank!)
                         (cons 'forward-expression forward-expression!) (cons 'backward-expression backward-expression!)
@@ -1334,7 +1385,6 @@
       (seat:set-file-opener! visit-file!)
       (seat:set-quit-command! quit!)
       (seat:set-review-viewer! view-quit-buffers!)
-      (head:add-pre-redraw-hook! publish-copy-changes!)
       (head:set-after-key! clamp-point!))
 
   )

@@ -15,7 +15,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (state actor)
-  (export answer! ask! attached audience? call-as cancel! cancel-owned! checkpoint checkpoint!
+  (export answer! ask! attached audience? call-as cancel! cancel-owned! checkpoint checkpoint! consume-checkpoint!
           current describe detach! export head-names identity? import! in-audience? pending
           pending-tickets register! registered? send! subscribe! unsubscribe! valid-import?)
   (import (rnrs)
@@ -193,6 +193,18 @@
     ;; Status needs identities, not copies of opaque screen/kill contents.
     (map (lambda (entry) (string-copy (cadr (head-state-identity entry))))
       (kernel:registry-items known-heads)))
+
+  (edoc "Consume an unchanged saved checkpoint after its replacement is admitted. Changed input remains intact; absence is already complete."
+    (actor actor "named head") (expected datum "reviewed input") (returns boolean))
+  (define (consume-checkpoint! actor expected)
+    (activity:call-with
+      (lambda ()
+        (let ([entry (known-head actor)])
+          (and entry
+            (with-mutex protocol-lock
+              (cond [(not (head-state-checkpoint entry)) #t]
+                [(equal? expected (head-state-checkpoint entry)) (head-state-checkpoint-set! entry #f) #t]
+                [else #f])))))))
 
   (edoc "The known heads' checkpoints for the session file, (name checkpoint) each."
         (returns list))

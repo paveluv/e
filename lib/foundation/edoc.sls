@@ -222,8 +222,12 @@
             [_ (unknown e)]))
         (define collected '())
         (define (walk e env)
-          (syntax-case e (quote syntax quasiquote quasisyntax lambda case-lambda let let* letrec letrec* let-values let*-values let-syntax letrec-syntax do define define-syntax set!)
+          (syntax-case e (quote syntax quasiquote quasisyntax expression lambda case-lambda let let* letrec letrec* let-values let*-values let-syntax letrec-syntax do define define-syntax set!)
             [(quote . _) e] [(syntax . _) e]
+            ;; Explicit metadata boundaries perform their own traversal. Walking
+            ;; their generated procedures again can expand indefinitely when a
+            ;; startup form is already wrapped by kernel:evaluate!.
+            [(expression . _) e]
             ;; Quoted templates have their own evaluation rules. A hidden
             ;; forwarding site in an unquote must use edoc:expression.
             [(quasiquote . _) e] [(quasisyntax . _) e]

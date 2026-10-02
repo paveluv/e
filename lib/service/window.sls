@@ -1,7 +1,7 @@
 ;; Logical window operations run on the base. Rendering belongs to head adapters.
 (import (only (foundation edoc) elibrary))
 (elibrary (service window)
-  (export close! create-manager! current document documents find-app init! link! links (rename (windows list)) numbered open-document! resize! return! select! set-display! split! unlink!)
+  (export close! create-manager! current document documents find-app init! link! links (rename (windows list)) numbered open-document! resize! restore-manager! return! select! set-display! split! unlink!)
   (import (chezscheme) (prefix (core operation) operation:) (prefix (state model) model:))
 
   (edoc "Create a persistent window-manager view for this head with one empty window numbered 1. Construction starts no renderer; mount the manager through a composition."
@@ -9,6 +9,12 @@
   (define-operation (create-manager! owner)
     (import (prefix (state manager) manager:) (prefix (state actor) actor:))
     (manager:create! (actor:current) owner))
+
+  (edoc "Build a candidate manager from this head's saved screen checkpoint; false means no checkpoint. Authored local text becomes private durable documents and retries reuse its origin identity. The input remains until admission succeeds."
+    (owner (or model #f) "candidate lifetime") (returns (or model #f)))
+  (define-operation (restore-manager! owner)
+    (import (prefix (state screen-import) screen-import:) (prefix (state actor) actor:))
+    (screen-import:create! (actor:current) owner (actor:checkpoint (actor:current))))
 
   (edoc "List a manager's window models in topology order. Displayed numbers are local selectors, not identities."
         (manager model "manager view") (returns list))
@@ -111,6 +117,7 @@
   (edoc "Register logical window operations through the module lifecycle.")
   (define (init!)
     (operation:register! 'window:create-manager! create-manager! 'control)
+    (operation:register! 'window:restore-manager! restore-manager! 'control)
     (operation:register! 'window:list windows 'read)
     (operation:register! 'window:numbered numbered 'read)
     (operation:register! 'window:current current 'read)

@@ -2,13 +2,30 @@
 (import (only (foundation edoc) elibrary))
 (elibrary (head message)
   (export create! init! present! show!)
-  (import (chezscheme) (prefix (head head) head:) (prefix (head keymap) keymap:)
+  (import (chezscheme) (prefix (foundation string) string:)
+          (prefix (head head) head:) (prefix (head keymap) keymap:)
           (prefix (head widget) widget:) (prefix (service log) log:)
-          (prefix (state view) view:) (prefix (sys glyph) glyph:))
+          (prefix (state actor) actor:) (prefix (state view) view:) (prefix (sys glyph) glyph:))
 
   (define-record-type projection (fields segments (mutable width) (mutable rows)))
   (define-record-type mount (fields (mutable subscription) lock (mutable pending) (mutable turn) (mutable entries) (mutable projection)))
   (define mounts (make-hashtable equal-hash equal?))
+  (define question "")
+  (define refresh-queued? #f)
+  (define (refresh-questions!)
+    (unless refresh-queued?
+      (set! refresh-queued? #t)
+      (head:run-on-main!
+        (lambda ()
+          (set! refresh-queued? #f)
+          (let* ([asks (actor:pending head:ui-actor)]
+                 [next (if (null? asks) ""
+                         (format "~a asks: ~a -- C-c a answers~a" (cadar asks) (caddar asks)
+                           (if (> (length asks) 1) (format " (~a waiting)" (length asks)) "")))])
+            (unless (string=? question next)
+              (set! question next)
+              (let-values ([(ids ms) (hashtable-entries mounts)])
+                (for-each publish! (vector->list ids) (vector->list ms)))))))))
   (define (turn) (car (keymap:command-state)))
   (define (bounded xs limit) (if (> (length xs) limit) (list-head xs limit) xs))
   (define (clipped text) (if (> (string-length text) 8192) (string-append (substring text 0 8192) "…") text))
@@ -16,6 +33,7 @@
     (or (hashtable-ref mounts id #f)
       (let ([m (make-mount #f (make-mutex) '() (turn) '() (make-projection '() #f #f))])
         (hashtable-set! mounts id m)
+        (refresh-questions!)
         (mount-subscription-set! m
           (log:subscribe!
             (lambda (entry presentation)
@@ -59,7 +77,8 @@
       (service! id #f)
       (let ([m (mounted id)])
         (mount-turn-set! m (turn))
-        (mount-entries-set! m (list (list "" (clipped text) #f (clipped ghost))))
+        (mount-entries-set! m (if (and (string=? text "") (string=? ghost "")) '()
+                                (list (list "" (clipped text) #f (clipped ghost)))))
         (publish! id m))))
 
   (define (append-entry! m entry presentation ghost)
@@ -110,10 +129,16 @@
     (projection-rows projection))
   (define (viewport projection d width height range)
     (let ([all (rows projection width)])
-      (list-head (list-tail all (min (car range) (length all))) (min (cdr range) (max 0 (- (length all) (car range)))))))
+      (if (and (null? all) (not (string=? question "")) (zero? (car range)) (> (cdr range) 0))
+        (list (list (list (string:elide question width) 0 width #f)))
+        (list-head (list-tail all (min (car range) (length all))) (min (cdr range) (max 0 (- (length all) (car range))))))))
 
   (edoc "Register notification rendering and journal subscriptions. Loading allocates no view and subscribes to nothing until a view is mounted." (public))
   (define (init!)
+    (head:add-mail-hook!
+      (lambda (message)
+        (when (and (> (hashtable-size mounts) 0) (pair? message) (memq (car message) '(ask pending)))
+          (refresh-questions!))))
     (widget:register! 'message 1
       (list (cons 'service service!) (cons 'release release!)
         (cons 'prepare (lambda (id source inputs) (mount-projection (mounted id))))

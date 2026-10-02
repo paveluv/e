@@ -1,7 +1,7 @@
 ;; property.sls -- one validation contract for shared and head-local facts.
 (import (only (foundation edoc) elibrary))
 (elibrary (core property)
-  (export backup-value? context-commit context-expected context-labels context-revision context-undo (rename (validate-edit-context edit-context)) edit-keys flags flags<? matches? select
+  (export backup-value? context-commit context-expected context-labels context-revision context-undo (rename (validate-edit-context edit-context)) edit-keys flags flags<? import-origin? matches? select
           (rename (validate-properties validate)) validate-expected
           (rename (writable-properties writable)))
   (import (rnrs) (prefix (core identity) identity:))
@@ -22,6 +22,13 @@
   (define (flags<? a b)
     (define (rank flags) (if (memq 'conflicted flags) (if (memq 'read-only flags) 2 1) (if (memq 'read-only flags) 3 0)))
     (< (rank a) (rank b)))
+
+  (edoc "Whether a value is a durable screen-import origin: format, head, checkpoint digest and slot." (value any "proposed origin") (returns boolean))
+  (define (import-origin? value)
+    (and (list? value) (= (length value) 4) (eq? (car value) 'screen-6)
+      (identity:valid? (cadr value)) (eq? (caadr value) 'head) (string? (caddr value)) (= (string-length (caddr value)) 64)
+      (for-all (lambda (c) (or (char<=? #\0 c #\9) (char<=? #\a c #\f))) (string->list (caddr value)))
+      (integer? (cadddr value)) (exact? (cadddr value)) (>= (cadddr value) 0)))
 
   ;; Maintained by the text owner and carried with incremental edit replies.
   (edoc "The facts the text owner maintains and carries with edit replies: modified and modified-at."
@@ -57,6 +64,7 @@
                           [(cursor-style) (memq (cdr entry) '(#f default text block underline bar
                                                               blinking-block blinking-underline blinking-bar))]
                           [(audience) (identity:audience? (cdr entry))]
+                          [(import-origin) (import-origin? (cdr entry))]
                           [(trashed) (let ([v (cdr entry)])
                                        (or (not v)
                                            (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))

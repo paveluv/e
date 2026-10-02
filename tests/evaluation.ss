@@ -10,6 +10,8 @@
              (prefix (head head) head:) (prefix (head seat) seat:) (prefix (head window-host) window-host:) (prefix (head widget) widget:) (prefix (head echo) echo:)
              (prefix (service log) log:) (prefix (test) test:)
              (prefix (head suspension) suspension:) (prefix (head text-source) text-source:)
+             (prefix (state store) store:) (prefix (state view) view:) (prefix (state model) model:)
+             (prefix (foundation text) text:)
              (prefix (foundation string) string:) (prefix (core kernel) kernel:))
 
      (widget:init!) (edit:init!) (window-host:init!)
@@ -87,7 +89,7 @@
 
      (eval:report! nested 'probe)
      (test:check 'extension-label-is-data-without-mx-history
-       (list (log:history 'eval:report! car) (seat:copy-text) (map log:datum (log:entries 'eval:report!)))
+       (list (log:history 'eval:report! car) (edit:copy-text) (map log:datum (log:entries 'eval:report!)))
        '(() "42" ((probe . "42"))))
      (test:check 'a-report-needs-a-destination (test:raises? (lambda () (eval:report! nested))) #t)
      (eval:report! (run (lambda () #f)) "#f")
@@ -101,10 +103,37 @@
      (let ([values-to-copy '((app describe) ((model 17) (model 18)) #((agent helper) "a\"b"))])
        (eval:report! (run (lambda () (apply values values-to-copy))) 'probe)
        (test:check 'copied-multiple-values-are-an-executable-expression
-         (call-with-values (lambda () (eval (read (open-input-string (seat:copy-text))))) list) values-to-copy)
-       (let ([copied (seat:copy-text)])
+         (call-with-values (lambda () (eval (read (open-input-string (edit:copy-text))))) list) values-to-copy)
+       (let ([copied (edit:copy-text)])
          (eval:report! (run (lambda () (list (current-output-port)))) 'probe)
-         (test:check 'opaque-result-does-not-overwrite-a-usable-copy (seat:copy-text) copied)))
+         (test:check 'opaque-result-does-not-overwrite-a-usable-copy (edit:copy-text) copied)))
+     ;; Explicit editor commands use one coherent source and selection without
+     ;; adopting a legacy mirror or borrowing the focused editor's point.
+     (let* ([source (store:create! head:ui-actor "evaluation receiver" '("(+ 1 2)" "(* 3 4)"))]
+            [other (store:create! head:ui-actor "evaluation bystander" '("999"))]
+            [root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [a (edit:create-view! head:ui-actor source '() root)]
+            [b (edit:create-view! head:ui-actor other '() root)])
+       (define (show!) (widget:pump!) (widget:present! (list (list (widget:prepare! root 40 3) 0 0))))
+       (define (result command)
+         (parameterize ([eval:copy-result #f]) (command a))
+         (cdr (log:datum (car (log:entries 'eval:report!)))))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'a a '(grow 1)) (list 'b b '(grow 1))) '())) '())
+       (widget:mount! root 'evaluation-fixture) (show!) (widget:focus! root b)
+       (edit:select! a '(0 . 7) '(0 . 0))
+       (test:check 'explicit-evaluation-uses-selected-text-in-either-direction
+         (list (result eval:run!) (begin (edit:select! a '(0 . 0) '(0 . 7)) (result eval:run!))) '("3" "3"))
+       (edit:select! a '(0 . 7) '(0 . 7))
+       (test:check 'explicit-expression-and-buffer-evaluation-share-captured-receiver
+         (list (result eval:last-expression!) (result eval:top-level-form!) (result eval:run!)
+           (widget:focused root) (seat:buffer-of-store-id source)) (list "3" "3" "12" b #f))
+       (store:edit! head:ui-actor source (store:revision source) (text:make-span 0 0 0 0) '("000 "))
+       (text-source:open! head:ui-actor source)
+       (test:check 'evaluation-reads-text-at-the-captured-selection-revision (result eval:last-expression!) "3")
+       (widget:unmount! root)
+       (test:check 'unmounted-evaluation-refuses (test:raises? (lambda () (eval:run! a))) #t)
+       (view:retire! head:ui-actor root (model:revision root)))
+
      ;; A library compiled on import announces itself as a compile record for
      ;; the log alone; a broken one fails the evaluation, which the echo shows.
      (define root (format "/tmp/e-eval-compile-~a-~a" (get-process-id) (random 1000000)))

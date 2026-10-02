@@ -47,6 +47,7 @@
      (include "tests/model.sps")
      (include "tests/composition.sps")
      (include "tests/manager.sps")
+     (include "tests/screen-import.sps")
      (include "tests/connection.sps")
      (include "tests/collection.sps")
      (include "tests/catalogue.sps")

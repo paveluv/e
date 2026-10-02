@@ -956,18 +956,31 @@
         (effects internal))
   (define (listen-local path)
     (unless c-socket (error 'listen-local "local sockets are unavailable"))
-    (call-with-local-address path
-      (lambda (address size)
-        (let ([fd (socket-check 'listen-local (c-socket 1 1 0))] [bound? #f])
-          (guard (ex [else (c-close fd) (when bound? (delete-file path)) (raise ex)])
-            (close-on-exec! fd)
-            ;; Never unlink before binding: an existing endpoint or ordinary
-            ;; file belongs to its current owner, including after a crash.
-            (socket-check 'listen-local (c-bind fd address size))
-            (set! bound? #t)
-            (socket-check 'listen-local (c-chmod path #o600))
-            (socket-check 'listen-local (c-listen fd 32))
-            (make-local-listener fd (string-copy path) (make-mutex) #f))))))
+    ;; Publish the inode only after its permissions and listener are ready.
+    ;; Changing the process umask here would race unrelated file writers.
+    ;; A same-directory hard link is atomic, refuses an existing destination,
+    ;; and preserves the socket inode on Unix. Keep the staging name no longer
+    ;; than the destination so this does not reduce the Unix path limit.
+    (let ([directory (path-parent path)]
+          [width (min 12 (string-length (path-last path)))])
+      (let choose ([remaining 64])
+        (when (zero? remaining) (error 'listen-local "cannot reserve a socket staging path" path))
+        (let* ([name (list->string (map (lambda (_) (integer->char (+ 97 (random 26)))) (iota width)))]
+               [temporary (if (string=? directory "") name (string-append directory "/" name))])
+          (if (or (string=? temporary path) (ownership-info temporary)) (choose (- remaining 1))
+            (call-with-local-address temporary
+              (lambda (address size)
+                (let ([fd (socket-check 'listen-local (c-socket 1 1 0))] [bound? #f])
+                  (guard (ex [else (c-close fd) (when bound? (delete-file temporary)) (raise ex)])
+                    (close-on-exec! fd)
+                    (socket-check 'listen-local (c-bind fd address size))
+                    (set! bound? #t)
+                    (socket-check 'listen-local (c-chmod temporary #o600))
+                    (socket-check 'listen-local (c-listen fd 32))
+                    (socket-check 'listen-local ((foreign-procedure "link" (string string) int) temporary path))
+                    (delete-file temporary)
+                    (set! bound? #f)
+                    (make-local-listener fd (string-copy path) (make-mutex) #f))))))))))
 
   (edoc "Accept the next connection on a local listener, or #f once it is closed."
         (listener (record local-listener) "the listener")

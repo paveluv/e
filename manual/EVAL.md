@@ -248,24 +248,25 @@ one. Each stops with a message where Emacs would signal an error.
 
 ### `eval:run!` — evaluate buffer or region text
 
-`eval:run!` evaluates the selected region while the mark is active, else the
-whole current buffer:
+These commands take an explicit editor view. M-x completion offers the
+current editor as its receiver. `eval:run!` evaluates the selected region while
+the mark is active, else the editor's whole document:
 
 ```scheme
-(eval:run!)
+(eval:run! editor)
 ```
 
-Another buffer or region is evaluated under a scope form:
+The editor need not be focused. To evaluate a particular region, select it in
+that view first:
 
 ```scheme
-(seat:with-buffer (store:find-named "scratch.scm") (eval:run!))
-(edit:with-region (region:make (store:find-named "scratch.scm") '(10 . 0) '(18 . 0))
-  (eval:run!))
+(edit:select! editor '(10 . 0) '(18 . 0))
+(eval:run! editor)
 ```
 
 Every datum in the text is evaluated. The values of the last datum become
 the command result; definitions and effects from earlier datums remain in
-place.
+place. Text is captured at the selection's revision before evaluation starts.
 
 ## Results and the copy buffer
 

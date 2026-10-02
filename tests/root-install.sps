@@ -57,11 +57,30 @@
         (write-script '(list (cons 'profile "bad") (cons 'entry #f)))
         (test:check 'malformed-startup-recipe-refuses-before-acquiring-a-profile
           (list (test:raises? (lambda () (root:start! script '() '()))) (root:current)) '(#t #f))
+        (root:acquire! "root-test")
+        (let* ([source (store:create! head:ui-actor "borrowed startup text" '("keep"))]
+               [before (model:ids)])
+          (write-script
+            `(begin
+               (import (prefix (state construction) construction:) (prefix (state view) view:))
+               (list (cons 'profile "root-test")
+                 (cons 'entry (lambda (context)
+                                (construction:call! (cdr (assq 'head context))
+                                  (lambda (remember!)
+                                    (remember! (view:create! (cdr (assq 'head context)) ',source 'root-test 1 '() 0)))))))))
+          (for-each (lambda (failure)
+                      (set! mode failure)
+                      (test:check (list 'startup-failure-releases-only-new-construction failure)
+                        (list (test:raises? (lambda () (root:start! script '() '())))
+                          (model:ids) (store:line source 0) (get (get (root:current) 'value) 'initialized?))
+                        (list #t before "keep" #f))) '(fail race))
+          (store:delete! head:ui-actor source)
+          (set! released '()))
         (let* ([old (make-view "old")] [candidate (make-view "next")])
           (set! mode 'normalize)
           (let ([reply (startup old)])
             (test:check 'root-preparation-does-not-publish-private-normalization
-              (list (car reply) (view:state (view:snapshot old)) (widget:shown)) '(applied 0 ())))
+              (list (car reply) (view:state (view:snapshot old)) (widget:shown) (widget:mounted? old)) '(applied 0 () #f)))
           (test:check 'startup-entry-receives-explicit-context-with-uninitialized-saved-state
             (unbox startup-context)
             (list (cons 'head head:ui-actor) '(profile . "root-test") '(saved . #f)
@@ -69,8 +88,8 @@
           (set! mode #f)
           (head:run-deferred!)
           (test:check 'root-installs-without-editor-buffers
-            (list (map (lambda (p) (widget:frame-id (car p))) (widget:shown)) (store:buffer-list))
-            (list (list old) '()))
+            (list (map (lambda (p) (widget:frame-id (car p))) (widget:shown)) (store:buffer-list) (widget:mounted? old))
+            (list (list old) '() #t))
           (head:key! "a")
           (let ([shown (widget:shown)] [binding (root:current)])
             (set! mode 'fail)
@@ -115,7 +134,8 @@
               (list (widget:shown) (view:owner (view:snapshot candidate)) (get (get (root:current) 'value) 'root)) '( () #f #f))
             (let ([saved (root:current)])
               (test:check 'startup-cannot-replace-an-initialized-empty-profile
-                (list (test:raises? (lambda () (startup candidate))) (root:current)) (list #t saved))
+                (list (test:raises? (lambda () (startup candidate))) (root:current)
+                  (and (view:snapshot candidate) #t)) (list #t saved #t))
               (startup #f) (head:run-deferred!)
               (test:check 'startup-reuses-initialized-emptiness-without-treating-it-as-uninitialized
                 (list (get (unbox startup-context) 'saved) (widget:shown)) (list saved '())))

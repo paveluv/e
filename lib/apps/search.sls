@@ -64,8 +64,12 @@
         (begin (preview-service! id #f)
           (search-control:repeat! (widget:descendant id 'search) (if backwards? 'previous 'next)) #t))))
 
-  (edoc "Start incremental search in the current editor through the ordinary event pump. C-s repeats, M-c toggles case, Return accepts and C-g returns to the safely rebased origin.")
-  (define (search!) (search-host:open! (if (search-fold-case) 'smart 'exact)))
+  (edoc "Start incremental search in an explicit editor's composed window. C-s repeats, M-c toggles case, Return accepts and C-g returns to the safely rebased origin. Omission uses the temporary legacy host."
+        (receiver id (view editor)) (id model "editor"))
+  (define search!
+    (case-lambda
+      [() (search-host:open! #f (if (search-fold-case) 'smart 'exact))]
+      [(id) (search-host:open! id (if (search-fold-case) 'smart 'exact))]))
 
   ;;; Matching -----------------------------------------------------------------------
 
@@ -93,25 +97,40 @@
               (let ([hit (string:search s needle at limit)])
                 (if hit (hits (+ hit m) (step row hit out)) (rows (+ row 1) out)))))))))
 
-  (edoc "How many times needle occurs in the selected region, else in the whole current buffer."
+  (define (scope id)
+    (let-values ([(source d) (text-control:context id 'editor)])
+      (let* ([lines (text-control:lines source)] [document (text-source:id (text-control:mirror source))]
+             [revision (text-control:revision source)]
+             [points (editor-state:points (text-control:mirror source) revision d)]
+             [last (- (vector-length lines) 1)])
+        (unless points (error 'search "selection history is unavailable" id))
+        (values (list lines document revision)
+          (if (cadddr (editor-state:state d)) (region:make document (car points) (cadr points))
+              (region:make document '(0 . 0) (cons last (string-length (vector-ref lines last)))))))))
+
+  (edoc "Count exact nonoverlapping occurrences in this editor's selection, or its whole document when no mark is active. Text and selection are captured together without moving focus."
+        (receiver id (view editor)) (id model "editor")
         (needle needle "the text to count, within one line")
         (returns integer) (public))
-  (define (count needle)
-    (fold-matches (edit:basis) (edit:current-region) needle (lambda (row col total) (+ total 1)) 0))
+  (define (count id needle)
+    (let-values ([(basis r) (scope id)])
+      (fold-matches basis r needle (lambda (row col total) (+ total 1)) 0)))
 
-  (edoc "Replace every occurrence of from with to in the selected region, else in the whole current buffer: one entry of the delta log per occurrence under one batch, one undo step, point left where it was."
+  (edoc "Replace exact nonoverlapping occurrences in this editor's selection, or its whole document when no mark is active. Preserve selection and focus; group replacements into one undo step. Concurrently changed ranges are skipped and unavailable history refuses."
+        (receiver id (view editor)) (id model "editor")
         (from needle "the text to find, within one line")
         (to string "its replacement")
         (returns integer "how many occurrences were replaced")
         (public) (edits))
-  (define (replace! from to)
-    (let* ([r (edit:current-region)] [basis (edit:basis)]
-           [occurrences
-            (reverse (fold-matches basis r from
-                       (lambda (row col out) (cons (list (cons row col) (cons row (+ col (string-length from))) to) out)) '()))])
-      (edit:call-as-one-edit!
-        (format "(search:replace! ~s ~s)" from to)
-        (lambda () (edit:rewrite-regions! basis occurrences)))))
+  (define (replace! id from to)
+    (let-values ([(basis r) (scope id)])
+      (let ([occurrences
+             (reverse (fold-matches basis r from
+                        (lambda (row col out) (cons (list (cons row col) (cons row (+ col (string-length from))) to) out)) '()))])
+        (edit:call-as-one-edit!
+          (format "(search:replace! ~s ~s)" from to)
+          (lambda ()
+            (edit:rewrite-regions! id basis occurrences))))))
 
   (edoc "Install search, its scoped needle-completion presentation and default C-s/M-% bindings." (public))
   (define (init!)
@@ -123,4 +142,5 @@
           (cons 'measure (lambda (data d axis cross child)
                            (if (eq? axis 'y) '(0 6) '(0 1)))))))
     (keymap:bind-default! "C-s" search!)
-    (keymap:bind-default! "M-%" (keymap:prefill replace!))))
+    (keymap:bind-default! 'widget-editor "C-s" (keymap:call search! widget:target))
+    (keymap:bind-default! 'widget-editor "M-%" (keymap:prefill replace! widget:target))))

@@ -29,7 +29,7 @@
     buffer-window-size buffer-wrap-set! buffer? buffers
     bump-buffer-revision! buttons-width call-with-display-update
     checkpoint! clamp-buffer-positions! content-revision
-    copy-buffer copy-text current-buffer current-buffer-mirror
+    copy-buffer current-buffer current-buffer-mirror
     (rename (current current-window)) default-directory depart!
     dispatch-app-event! divider-at dividers double-click? drag
     edit-basis find-tool-buffer fit-layout! flush-ui-audit!
@@ -53,7 +53,7 @@
     set-app-cursor-visible! set-app-manages-viewport!
     set-app-presentation! set-app-selectable!
     set-app-status-position! set-buffer-status! set-buffers!
-    set-copy-text! set-current! set-departure!
+    set-current! set-departure!
     set-directory-opener! set-drag! set-editor-state-reader!
     set-file-opener! set-layout-root! set-point-mover!
     set-quit-command! set-repaint-hook! set-review-viewer!
@@ -96,6 +96,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head render) render:)
           (prefix (head text-source) text-source:)
+          (prefix (service clipboard) clipboard:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
@@ -586,7 +587,6 @@
   ;; show, edit and undo it like any buffer: each copy is one entry of its
   ;; log. It is created when first needed and disposable, so killing it asks
   ;; nothing and it does not outlive the base; the next copy recreates it.
-  (define copy-name "*copy*")
 
   (define (local-buffer-named name)
     ;; this head's local buffer with a name, or #f; shared names never wear brackets
@@ -601,29 +601,13 @@
         (returns (or (record buffer) #f))
         (effects internal))
   (define (copy-buffer . create?)
-    (or (existing-copy-buffer)
-        (and (or (null? create?) (car create?))
-             (let ([id (store:create! head:ui-actor copy-name '("")
-                         (list (cons 'copy #t) (cons 'audience (list head:ui-actor)) (cons 'disposable #t) (cons 'trailing #f)))])
-               (or (adopt-store-buffer! id) (error 'copy-buffer "the copy buffer was created but not adopted"))))))
-
-  (edoc "The copy buffer's text, the empty string while there is no copy buffer."
-        (returns string))
-  (define (copy-text)
-    (let ([b (existing-copy-buffer)])
-      (if b (text:to-string (buffer-lines b) (buffer-trailing b)) "")))
-
-  (edoc "Replace the copy buffer's text as one entry of its log, so undo there brings the previous copy back."
-        (s string "the text"))
-  (define (set-copy-text! s)
-    (unless (string? s) (error 'set-copy-text! "expected a string" s))
-    (unless (and (string=? s "") (not (existing-copy-buffer)))
-      (let ([b (copy-buffer)])
-        (let-values ([(lines trailing?) (text:from-string s)])
-          (unless (and (equal? lines (buffer-lines b)) (eq? trailing? (buffer-trailing b)))
-            (let-values ([(span replacement) (text:difference (buffer-lines b) lines)])
-              (store-edit! b span replacement
-                (list (list 'set-copy (buffer-store-rev b)) "set copy" (cons 'undo (list (cons 'trailing trailing?)))))))))))
+    (let ([b (or (existing-copy-buffer)
+               (let ([id (actor:call-as head:ui-actor (lambda () (clipboard:open! (or (null? create?) (car create?)))))])
+                 (and id (adopt-store-buffer! id))))])
+      (when b
+        (buffer-spot-row-set! b (- (buffer-line-count b) 1))
+        (buffer-spot-col-set! b (string-length (buffer-line b (buffer-spot-row b)))))
+      b))
 
   (edoc "The selected window."
         (returns window))

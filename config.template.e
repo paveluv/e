@@ -12,7 +12,7 @@
 ;; every module reload so the settings reapply on top of fresh
 ;; registrations: write it to tolerate being loaded any number of
 ;; times.  Saving it inside the editor applies it on the spot; so
-;; does M-x (main:load-config!).  An error reports in the echo area and
+;; does M-x (configuration:load!).  An error reports in the echo area and
 ;; leaves the editor running.
 ;;
 ;; These commented examples cover common settings, not the entire API.
@@ -21,9 +21,9 @@
 ;; settings you want to apply. See manual/CONFIGURATION.md for startup
 ;; options and the separate base-config.e used by shared services.
 
-;; (main:modules-reload-on-save #t)    ; saving a module source reloads it in place
-;; (main:config-reload-on-save #t)     ; saving config.e applies it on the spot
-;; (main:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
+;; (configuration:modules-reload-on-save #t)    ; saving a module source reloads it in place
+;; (configuration:reload-on-save #t)     ; saving config.e applies it on the spot
+;; (lifecycle:shutdown-on-exit #f)          ; #t: last screen's quit reviews stopping the base
 ;; (scheme-mode:format-on-save #t)     ; Scheme buffers format as they are saved
 ;; (paint:scroll-margin 8)              ; rows kept between the cursor and the edges
 ;; (tui:input-delay 8)              ; presentation budget in ms; 0 disables pacing

@@ -593,7 +593,7 @@
   ;; the facts a session keeps: a buffer's file and baseline, its mode and
   ;; its wrap setting, which every head shares and a restart must not reset,
   ;; a terminal's transcript least of all, whose rows are its columns wide
-  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed backup wrap))
+  (define persistent-keys '(file base stamp trailing mode read-only modified-at trashed backup wrap audience import-origin))
   (define (integer-at-least? n minimum) (and (integer? n) (exact? n) (>= n minimum)))
 
   (define (persistent-facts? facts)
@@ -614,6 +614,8 @@
                                      (or (not v) (and (list? v) (= (length v) 2) (integer? (car v)) (exact? (car v))
                                                       (actor:identity? (cadr v)))))]
                         [(backup) (property:backup-value? (cdr entry))]
+                        [(audience) (actor:audience? (cdr entry))]
+                        [(import-origin) (property:import-origin? (cdr entry))]
                         [(stamp)
                          (let ([stamp (cdr entry)])
                            (or (not stamp)

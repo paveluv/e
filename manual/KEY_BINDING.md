@@ -78,7 +78,9 @@ anonymous command. `keymap:call` applies a command to what producer procedures
 or nested `keymap:call` expressions return when the key is pressed, and to
 any other argument as given. `keymap:run!` executes that same structured call;
 `keymap:prefill` opens M-x with the command's call typed up to its next
-argument, so completion asks for it:
+argument, so completion asks for it. Its arguments follow the same rule:
+producers and nested calls run at the key press, and their resulting values
+are inserted into the prompt. Inspecting either action never runs them:
 
 ```scheme
 (keymap:bind! "C-x k" (keymap:call edit:kill-buffer! seat:current-buffer))

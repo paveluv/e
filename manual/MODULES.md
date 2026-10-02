@@ -338,7 +338,7 @@ outside e can be picked up explicitly:
 (kernel:reload-module! '(my-extension helper))
 ```
 
-`main:modules-reload-on-save` controls automatic source reload. The kernel,
+`configuration:modules-reload-on-save` controls automatic source reload. The kernel,
 `main` (the loop), the base services (including policy, terminal runtime and
 reference corpus), and their transitive imports require a restart. Use
 `e --restart` to preserve shared text and named views;
@@ -538,7 +538,7 @@ A buffer takes the mode detection finds when it opens, and follows detection
 until a mode is chosen for it by hand:
 
 ```scheme
-(mode:choose! "scheme")
+(mode:choose! "scheme" (store:find-named "*scratch*"))
 (mode:choose! "markdown" (store:find-named "notes.md"))
 ```
 
@@ -546,8 +546,12 @@ Registering a mode, deriving one or adding an ending gives the mode to the
 open buffers that have none yet, so a file opened before its extension loads
 takes the mode when the extension registers it. A buffer that already has a
 mode, detected or chosen, keeps it and picks up only a reloaded record of the
-same name; `(mode:assign!)` re-detects the current buffer on request, and either
-command takes another buffer as a last argument or under `seat:with-buffer`.
+same name. `(mode:assign! document)` re-detects an explicit buffer reference.
+Choosing `#f` disables detection; choosing an unregistered name refuses.
+These operations update shared facts directly without creating a head buffer
+mirror. Editor views observe their documents with `(mode:refresh! document)`;
+repeating that observation does no acquisition or publication. The no-argument
+refresh revisits observed documents after registry changes.
 
 Completing types describe values and offer choices; they never create
 top-level constructors. Paths, mode names and key spellings remain strings,

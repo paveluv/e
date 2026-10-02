@@ -6,19 +6,16 @@
           (prefix (core handle) handle:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
-          (prefix (head edit) edit:)
+
           (prefix (head editor) editor:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
-          (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
           (prefix (head window-control) window-control:)
-          (prefix (head window-host) window-host:)
           (prefix (service change-preview) change-preview:)
           (prefix (service conflict-review) conflict-review:)
           (prefix (service conflict-source) conflict-source:)
@@ -29,6 +26,7 @@
           (prefix (service window) window:)
           (prefix (state collection) collection:)
           (prefix (state connection) connection:)
+          (prefix (state construction) construction:)
           (prefix (state model) model:)
           (prefix (state store) store:)
           (prefix (state view) view:)
@@ -38,8 +36,9 @@
   (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
   (define (query id) (view:source (interaction:snapshot id)))
   (define (kind id) (get (view:options (interaction:snapshot id)) 'review #f))
-  (define (current-document)
-    (or (seat:buffer-store-id (seat:current-buffer-mirror)) (error 'delta-log "current buffer has no shared document")))
+  (define (completion-document)
+    (let ([d (and (widget:target) (interaction:snapshot (widget:target)))])
+      (and d (eq? (view:kind d) 'editor) (view:source d))))
   (define (selector v)
     (if (or (null? v) (and (pair? v) (pair? (car v)) (memq (caar v) '(count actor batch since until state))))
       v (list (cons 'batch (edoc:type-value 'batch v)))))
@@ -78,9 +77,9 @@
               (when span (editor:move! editor (cons (caar span) (cadar span)))))
             (interaction:set-state! head:ui-actor id #f (list selection basis)))))))
 
-  (edoc-type revision "a retained revision of the current document"
+  (edoc-type revision "a retained revision of the captured editor's document"
     (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
-    (complete (lambda (partial) (guard (ex [else '()]) (map (lambda (e) (list (car e) #f (hint e))) (store:log (current-document)))))))
+    (complete (lambda (partial) (guard (ex [else '()]) (map (lambda (e) (list (car e) #f (hint e))) (store:log (completion-document)))))))
   (edoc-type batch "the batch label of edits made together in the current document"
     (predicate pair?)
     (complete (lambda (partial)
@@ -88,76 +87,78 @@
                   (reverse (fold-left (lambda (out e)
                                         (let ([b (get (caddr e) 'batch #f)])
                                           (if (or (not b) (assoc b out)) out (cons (list b #f (format "Edits by ~s" (cadr e))) out))))
-                             '() (store:log (current-document))))))))
+                             '() (store:log (completion-document))))))))
   (edoc-type conflict "a pending reload conflict in the current document"
     (predicate (lambda (v) (and (integer? v) (exact? v) (> v 0))))
     (complete (lambda (partial)
                 (guard (ex [else '()])
                   (map (lambda (c) (list (car c) #f (format "mine ~s; disk ~s" (string:join (list-ref c 4) "\n")
-                                                      (string:join (list-ref c 5) "\n")))) (store:conflicts (current-document)))))))
+                                                      (string:join (list-ref c 5) "\n")))) (store:conflicts (completion-document)))))))
 
-  (edoc "Read the current document's retained history, newest first. Select by count, actor, batch, since, until or state; a batch literal selects its entries."
-        (options (list-of (or list batch)) "optional selector") (returns list) (public))
-  (define (log . options) (apply store:log (current-document) (map selector options)))
+  (edoc "Read a document's retained history, newest first. Select by count, actor, batch, since, until or state; a batch literal selects its entries."
+        (document buffer "source document") (options (list-of (or list batch)) "optional selector") (returns list) (public))
+  (define (log document . options) (apply store:log document (map selector options)))
 
-  (edoc "Describe a retained entry of the current document in the echo area."
-        (revision revision "entry") (public))
-  (define (show! revision)
-    (let* ([n (edoc:type-value 'revision revision)] [e (assv n (store:log (current-document)))])
-      (unless e (error 'show! "entry is no longer retained")) (edit:set-message! (format "~a  ~a" n (hint e)))))
+  (edoc "Describe a retained entry of an editor's document in the journal."
+        (receiver editor (view editor)) (editor model "source editor") (revision revision "entry") (public))
+  (define (show! editor revision)
+    (let* ([n (edoc:type-value 'revision revision)] [e (assv n (store:log (cadr (editor:basis editor))))])
+      (unless e (error 'show! "entry is no longer retained")) (log:add! 'delta-log:show! (format "~a  ~a" n (hint e)))))
 
-  (edoc "Read the current document's pending reload conflicts as (revision actor labels region mine disk) records."
-        (returns list) (public))
-  (define (conflicts) (store:conflicts (current-document)))
+  (edoc "Read a document's pending reload conflicts as (revision actor labels region mine disk) records."
+        (document buffer "source document") (returns list) (public))
+  (define (conflicts document) (store:conflicts document))
 
-  (edoc "Settle one current-document conflict with Mine, Disk or replacement lines through the store's undoable resolution."
-        (conflict conflict "pending entry") (choice (or (one-of disk mine) (list-of string)) "side or replacement")
+  (edoc "Settle one document conflict with Mine, Disk or replacement lines through the store's undoable resolution."
+        (document buffer "source document") (conflict conflict "pending entry") (choice (or (one-of disk mine) (list-of string)) "side or replacement")
         (returns symbol) (public))
-  (define (resolve! conflict choice)
-    (let-values ([(status detail) (store:resolve! head:ui-actor (current-document) (edoc:type-value 'conflict conflict) choice 'any)])
+  (define (resolve! document conflict choice)
+    (let-values ([(status detail) (store:resolve! head:ui-actor document (edoc:type-value 'conflict conflict) choice 'any)])
       (head:before-frame!) (log:add! 'delta-log:resolve! (format "~a ~s" status detail)) status))
 
   (edoc "Create an unmounted conflict or rewrite review with an independent draft, bounded table and read-only preview. The ordered document scope is explicit; rewrite accepts exactly one document. Commands contain the host's return target. Retiring the app removes its private preview and output, preserving the borrowed query and draft; retiring the query removes its owned draft."
         (owner (or model #f) "lifetime owner, false for a session root") (commands list "host commands") (kind (one-of conflicts rewrite) "review kind")
         (documents (list-of buffer) "borrowed source documents") (returns model) (public))
   (define (create! owner commands kind documents)
-    (unless (and (memq kind '(conflicts rewrite)) (list? documents)
-              (or (eq? kind 'conflicts) (= (length documents) 1))) (error 'create! "invalid review scope"))
-    (let* ([draft (if (eq? kind 'conflicts) (conflict-review:create! head:ui-actor documents) (rewrite:create! head:ui-actor (car documents)))]
-           [q (collection:create! head:ui-actor draft "" '() 'persistent (list draft))]
-           [root (view:create! head:ui-actor q 'delta-review 1 (list (cons 'commands commands) (cons 'review kind)) '() owner)]
-           [p (review-preview:create! head:ui-actor draft root)]
-           [table (table:create! head:ui-actor root q
-                    (if (eq? kind 'conflicts) '(buffer revision actor position mine disk) '(revision actor position removed inserted state choice))
-                    (append '((presentation review 1))
-                      (if (eq? kind 'conflicts) '((identity . buffer) (cell-commands (mine . mine) (disk . disk))) '((identity . inserted)))))]
-           [heading (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root)]
-           [preview (view:create! head:ui-actor (car p) 'review-preview-panel 1 '() '() root)]
-           [status (view:create! head:ui-actor (car p) 'review-status 1 '() '() root)]
-           [editor (view:create! head:ui-actor (cadr p) 'editor 1
-                     '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) root)]
-           [d (view:snapshot table)]
-           [button (lambda (label action args)
-                     (view:create! head:ui-actor #f 'action-text 1
-                       (list (cons 'text label) '(enabled . #t) (list 'commands (list 'activate root action args))) '() root))]
-           [buttons (append (if (eq? kind 'conflicts)
-                              (list (list 'mine (button "Mine (all)" 'choose-all '(mine)) 'fit)
-                                (list 'disk (button "Disk (all)" 'choose-all '(disk)) 'fit)) '())
-                      (list (list 'settle (button "Settle" 'settle '()) 'fit)))]
-           [table-commands (map (lambda (command) (list command root 'choose (list command)))
-                             (if (eq? kind 'conflicts) '(activate mine disk) '(activate)))])
-      (view:arrange! head:ui-actor
-        (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'preview preview '(grow 1)))
-                (list (cons 'commands commands) (cons 'review kind) (list 'owned (car p))))
-          (list heading 0 buttons '((spacing . normal)))
-          (list table 1 (view:children d) (cons (cons 'commands table-commands) (view:options d)))
-          (list preview 0 (list (list 'status status 'fit) (list 'text editor '(grow 1))) '())) '())
-      (for-each
-        (lambda (binding)
-          (let-values ([(status detail) (connection:bind! head:ui-actor (car binding) (cdr binding))])
-            (unless (eq? status 'applied) (error 'create! "review connection refused" status detail))))
-        (list (list (car p) (list (car p) 'selection #f (list table 'selection)))
-          (list root (list editor 'annotations #f (list (car p) 'annotations))))) root))
+    (construction:call! head:ui-actor
+      (lambda (remember!)
+        (unless (and (memq kind '(conflicts rewrite)) (list? documents)
+                  (or (eq? kind 'conflicts) (= (length documents) 1))) (error 'create! "invalid review scope"))
+        (let* ([draft (if (eq? kind 'conflicts) (remember! (conflict-review:create! head:ui-actor documents)) (remember! (rewrite:create! head:ui-actor (car documents))))]
+               [q (remember! (collection:create! head:ui-actor draft "" '() 'persistent (list draft)))]
+               [root (remember! (view:create! head:ui-actor q 'delta-review 1 (list (cons 'commands commands) (cons 'review kind)) '() owner))]
+               [p (review-preview:create! head:ui-actor draft root)]
+               [table (table:create! head:ui-actor root q
+                        (if (eq? kind 'conflicts) '(buffer revision actor position mine disk) '(revision actor position removed inserted state choice))
+                        (append '((presentation review 1))
+                          (if (eq? kind 'conflicts) '((identity . buffer) (cell-commands (mine . mine) (disk . disk))) '((identity . inserted)))))]
+               [heading (remember! (view:create! head:ui-actor #f 'row 1 '((spacing . normal)) '() root))]
+               [preview (remember! (view:create! head:ui-actor (car p) 'review-preview-panel 1 '() '() root))]
+               [status (remember! (view:create! head:ui-actor (car p) 'review-status 1 '() '() root))]
+               [editor (remember! (view:create! head:ui-actor (cadr p) 'editor 1
+                                    '((read-only . #t) (wrap . #f) (annotations)) '((0 . 0) (0 . 0) (0 . 0) #f) root))]
+               [d (view:snapshot table)]
+               [button (lambda (label action args)
+                         (remember! (view:create! head:ui-actor #f 'action-text 1
+                                      (list (cons 'text label) '(enabled . #t) (list 'commands (list 'activate root action args))) '() root)))]
+               [buttons (append (if (eq? kind 'conflicts)
+                                  (list (list 'mine (button "Mine (all)" 'choose-all '(mine)) 'fit)
+                                    (list 'disk (button "Disk (all)" 'choose-all '(disk)) 'fit)) '())
+                          (list (list 'settle (button "Settle" 'settle '()) 'fit)))]
+               [table-commands (map (lambda (command) (list command root 'choose (list command)))
+                                 (if (eq? kind 'conflicts) '(activate mine disk) '(activate)))])
+          (view:arrange! head:ui-actor
+            (list (list root 0 (list (list 'heading heading 'fit) (list 'table table '(grow 1)) (list 'preview preview '(grow 1)))
+                    (list (cons 'commands commands) (cons 'review kind) (list 'owned (car p))))
+              (list heading 0 buttons '((spacing . normal)))
+              (list table 1 (view:children d) (cons (cons 'commands table-commands) (view:options d)))
+              (list preview 0 (list (list 'status status 'fit) (list 'text editor '(grow 1))) '())) '())
+          (for-each
+            (lambda (binding)
+              (let-values ([(status detail) (connection:bind! head:ui-actor (car binding) (cdr binding))])
+                (unless (eq? status 'applied) (error 'create! "review connection refused" status detail))))
+            (list (list (car p) (list (car p) 'selection #f (list table 'selection)))
+              (list root (list editor 'annotations #f (list (car p) 'annotations))))) root))))
 
   (define (validate-selection! id selection)
     (unless (and (list? selection) (= (length selection) 3) (equal? (car selection) (query id)))
@@ -222,45 +223,25 @@
           (list text (list 0 (string-length text) (if (eq? name 'mine) 'conflict-mine 'conflict-disk))) (list text)))))
   (define target-table (keymap:call widget:descendant widget:target 'table))
   (define (show-review! name kind documents window)
-    (if (handle:model? window)
-      (let ([app (window-control:open-app! window name (lambda (owner commands) (create! owner commands kind documents)) (format "~a:~s" kind documents))])
-        (widget:pump!) (widget:focus! app (widget:descendant app 'table 'body 'rows)) app)
-      (let* ([host (window-host:tool! name (lambda (commands) (create! #f commands kind documents)) (format "~a:~s" kind documents))])
-        (window-host:show-widget! window host)
-        (let ([app (child host 'app)]) (widget:focus! host (child (child (child app 'table) 'body) 'rows)) app))))
+    (let ([app (window-control:open-app! window name (lambda (owner commands) (create! owner commands kind documents)) (format "~a:~s" kind documents))])
+      (widget:pump!) (widget:focus! app (widget:descendant app 'table 'body 'rows)) app))
 
   (edoc "Open a retained rewrite review of this window's document. Nested compositions can pass their explicit document scope to create!."
-        (receiver window (view window)) (window model "window; omission uses the legacy host") (returns model))
-  (define open!
-    (case-lambda
-      [() (open! (seat:current-window))]
-      [(window)
-       (if (handle:model? window)
-         (let ([document (window:document (window-control:manager window) window)])
-           (unless (handle:buffer? document) (error 'open! "this window does not show an editable document"))
-           (show-review! "delta-log" 'rewrite (list document) window))
-         (show-review! "delta-log" 'rewrite (list (current-document))
-           (edoc:type-value 'window window)))]))
+        (receiver window (view window)) (window model "window") (returns model))
+  (define (open! window)
+    (let ([document (window:document (window-control:manager window) window)])
+      (unless (handle:buffer? document) (error 'open! "this window does not show an editable document"))
+      (show-review! "delta-log" 'rewrite (list document) window)))
 
   (edoc "Open a retained conflict review. Capture visible shared documents once, with the invoking document first; nested hosts pass their scope to create! directly."
-        (receiver window (view window)) (window model "window; omission uses the legacy host") (returns model))
-  (define conflicts!
-    (case-lambda
-      [() (conflicts! (seat:current-window))]
-      [(window)
-       (if (handle:model? window)
-         (let* ([manager (window-control:manager window)]
-                [documents (fold-left (lambda (out w)
-                                        (let ([id (window:document manager w)])
-                                          (if (and (handle:buffer? id) (not (member id out))) (append out (list id)) out)))
-                             '() (cons window (remove window (window:list manager))))])
-           (show-review! "conflicts" 'conflicts documents window))
-         (let ([documents (fold-left (lambda (out w)
-                                       (let ([id (seat:buffer-store-id (seat:window-buffer w))])
-                                         (if (or (not id) (member id out)) out (append out (list id)))))
-                            (let ([id (seat:buffer-store-id (seat:current-buffer-mirror))]) (if id (list id) '())) (seat:windows))])
-           (show-review! "conflicts" 'conflicts documents
-             (edoc:type-value 'window window))))]))
+        (receiver window (view window)) (window model "window") (returns model))
+  (define (conflicts! window)
+    (let* ([manager (window-control:manager window)]
+           [documents (fold-left (lambda (out w)
+                                   (let ([id (window:document manager w)])
+                                     (if (and (handle:buffer? id) (not (member id out))) (append out (list id)) out)))
+                        '() (cons window (remove window (window:list manager))))])
+      (show-review! "conflicts" 'conflicts documents window)))
 
   (edoc "Register the review composition and inspectable table commands. No draft is created until requested." (public))
   (define (init!)
@@ -285,8 +266,6 @@
     (keymap:bind-default! 'delta-review "S-RIGHT" (keymap:call choose-all! widget:target 'disk))
     (keymap:bind-default! 'delta-review "M-RET" (keymap:call settle! widget:target))
     (keymap:bind-default! 'delta-review "ESC" (keymap:call widget:invoke! widget:target 'return))
-    (keymap:bind-default! "C-x C-l" (keymap:call open! 0))
-    (keymap:bind-default! "C-x !" (keymap:call conflicts! 0))
     (keymap:bind-default! 'composed-window "C-x C-l" (keymap:call open! widget:target))
     (keymap:bind-default! 'composed-window "C-x !" (keymap:call conflicts! widget:target))
     (for-each (lambda (type) (prompt:register-presentation! type make-change-preview)) '(revision conflict))
@@ -294,4 +273,4 @@
       (append (remp (lambda (p) (eq? (car p) 'measure)) (layout:container 'y))
         (list (cons 'service change-service!)
           (cons 'measure (lambda (data d axis cross child) (if (eq? axis 'y) '(0 7) '(0 1)))))))
-    (paint:set-conflicts-action! (lambda () (conflicts! 0)))))
+  ))

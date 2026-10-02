@@ -1,19 +1,20 @@
 ;; Presentation and input adaptation for the base-owned window tree.
 (import (only (foundation edoc) elibrary))
 (elibrary (head window-control)
-  (export close! commands init! keep! line-numbers manager navigate! open-app! open-document! register-presentation! return! scroll! scrollbar select! split! toggle-display!)
+  (export close! commands discard! init! keep! line-numbers manager navigate! open-app! open-document! register-presentation! return! scroll! scrollbar select! split! toggle-display!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
           (prefix (head editor) editor:) (prefix (head head) head:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (head layout) layout:) (prefix (head split-control) split-control:)
           (prefix (head text-layout) text-layout:) (prefix (head text-source) text-source:)
-          (prefix (head widget) widget:) (prefix (service window) window:)
-          (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:)
+          (prefix (head widget) widget:) (prefix (service log) log:) (prefix (service window) window:)
+          (prefix (state construction) construction:) (prefix (state model) model:) (prefix (state store) store:) (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
   (define vertical (layout:container 'y))
   (define presentations (kernel:make-registry car))
+  (define (read-model id) (caddar (cadr (model:snapshots (list id)))))
 
   (edoc "Register an optional named document presentation. The builder receives lifetime owner, source document and explicit host commands, returning a fresh unmounted view. Locate applies a source position after placement, including reuse. Registration belongs to the defining module; the builder must clean partial construction."
         (name symbol "presentation name") (build procedure "(owner document commands) -> view")
@@ -74,52 +75,55 @@
         (direction (one-of next previous up down left right) "selection direction"))
   (define (navigate! id direction)
     (unless (memq direction '(next previous up down left right)) (error 'navigate! "invalid direction"))
-    (let* ([owner (manager id)] [f (shown-frame owner)] [origin (shown-frame id)])
-      (when (and f origin)
-        (let* ([frames (filter (lambda (f) (let ([r (widget:frame-clip f)]) (and (> (caddr r) 0) (> (cadddr r) 0)))) (window-frames f))]
-               [ids (map widget:frame-id frames)]
-               [rect (widget:frame-clip origin)]
-               [caret (exists (lambda (p) (widget:caret (car p))) (widget:shown))]
-               [point (if (and caret (layout:contains? rect (car caret) (cdr caret))) caret
-                        (cons (+ (car rect) (div (caddr rect) 2)) (+ (cadr rect) (div (cadddr rect) 2))))])
-          (define (distance f)
-            (let* ([r (widget:frame-clip f)] [x (car r)] [y (cadr r)]
-                   [right (+ x (caddr r))] [bottom (+ y (cadddr r))] [cx (car point)] [cy (cdr point)])
-              (and (not (equal? id (widget:frame-id f)))
-                (case direction
-                  [(left) (and (<= right cx) (<= y cy) (< cy bottom) (- cx right -1))]
-                  [(right) (and (> x cx) (<= y cy) (< cy bottom) (- x cx))]
-                  [(up) (and (<= bottom cy) (<= x cx) (< cx right) (- cy bottom -1))]
-                  [(down) (and (> y cy) (<= x cx) (< cx right) (- y cy))]))))
-          (let ([next
-                 (if (memq direction '(next previous))
-                   (let* ([ids (if (eq? direction 'previous) (reverse ids) ids)] [tail (member id ids)])
-                     (and tail (car (if (pair? (cdr tail)) (cdr tail) ids))))
+    (if (memq direction '(next previous))
+      (let* ([ids (window:list (manager id))] [ids (if (eq? direction 'previous) (reverse ids) ids)]
+             [tail (member id ids)])
+        (when tail (select! (car (if (pair? (cdr tail)) (cdr tail) ids)))))
+      (let* ([owner (manager id)] [f (shown-frame owner)] [origin (shown-frame id)])
+        (when (and f origin)
+          (let* ([frames (filter (lambda (f) (let ([r (widget:frame-clip f)]) (and (> (caddr r) 0) (> (cadddr r) 0)))) (window-frames f))]
+                 [rect (widget:frame-clip origin)]
+                 [caret (exists (lambda (p) (widget:caret (car p))) (widget:shown))]
+                 [point (if (and caret (layout:contains? rect (car caret) (cdr caret))) caret
+                          (cons (+ (car rect) (div (caddr rect) 2)) (+ (cadr rect) (div (cadddr rect) 2))))])
+            (define (distance f)
+              (let* ([r (widget:frame-clip f)] [x (car r)] [y (cadr r)]
+                     [right (+ x (caddr r))] [bottom (+ y (cadddr r))] [cx (car point)] [cy (cdr point)])
+                (and (not (equal? id (widget:frame-id f)))
+                  (case direction
+                    [(left) (and (<= right cx) (<= y cy) (< cy bottom) (- cx right -1))]
+                    [(right) (and (> x cx) (<= y cy) (< cy bottom) (- x cx))]
+                    [(up) (and (<= bottom cy) (<= x cx) (< cx right) (- cy bottom -1))]
+                    [(down) (and (> y cy) (<= x cx) (< cx right) (- y cy))]))))
+            (let ([next
                    (let ([best (fold-left (lambda (best f)
                                             (let ([d (distance f)])
                                               (if (and d (or (not best) (< d (car best)))) (cons d (widget:frame-id f)) best))) #f frames)])
-                     (and best (cdr best))))])
-            (when (and next (not (equal? next id))) (select! next)))))))
+                     (and best (cdr best)))])
+              (when (and next (not (equal? next id))) (select! next))))))))
 
   (edoc "Keep this window and close the manager's other windows through their ordinary disposal policy. Shared documents survive."
         (receiver id (view window)) (id model "window to keep"))
   (define (keep! id)
     (let ([owner (manager id)])
       (interaction:flush!) (window:select! owner id)
-      (for-each (lambda (other) (unless (equal? id other) (window:close! owner other))) (window:list owner))))
+      (for-each (lambda (other) (unless (equal? id other) (window:close! owner other))) (window:list owner))
+      (widget:refresh! owner)))
 
   (edoc "Split beside this composed window with an independent copy of its current presentation and app-return chain. Keep selection, shared documents and shared terminal processes."
         (receiver id (view window)) (id model "window")
         (direction (one-of above below left right) "new window side") (returns model))
   (define (split! id direction)
-    (let ([owner (manager id)]) (interaction:flush!) (window:split! owner id direction)))
+    (let ([owner (manager id)])
+      (interaction:flush!)
+      (let ([result (window:split! owner id direction)]) (widget:refresh! id) result)))
 
   (edoc "Close this composed window and its owned presentations. The last window remains."
         (receiver id (view window)) (id model "window") (returns boolean))
   (define (close! id)
     (let ([owner (manager id)])
       (interaction:flush!)
-      (or (window:close! owner id)
+      (or (and (window:close! owner id) (begin (widget:refresh! owner) #t))
         (let ([target (widget:command-owner id 'dismiss)])
           (and target (begin (widget:invoke! target 'dismiss) #t))))))
 
@@ -138,14 +142,12 @@
            [editor (find (lambda (f) (eq? (view:kind (widget:frame-descriptor f)) 'editor)) children)]
            [state (and editor (widget:frame-data editor) (editor:frame-state editor))]
            [top (if state (car (caddr state)) 0)]
-           [thumb (if (<= count body-height) body-height (max 1 (div (* body-height body-height) count)))]
-           [at (min (max 0 (- body-height thumb))
-                 (div (* top (max 0 (- body-height thumb))) (max 1 (- count body-height))))])
+           [thumb (layout:scroll-thumb count body-height top)])
       (map (lambda (y)
              (let ([line (make-string width #\space)])
                (when (< y body-height)
                  (when side (string-set! line (if (eq? side 'left) 0 (- width 1))
-                              (if (<= at y (- (+ at thumb) 1)) #\┃ #\│)))
+                              (if (<= (car thumb) y (- (+ (car thumb) (cdr thumb)) 1)) #\┃ #\│)))
                  (when (and editor (widget:frame-data editor) (> gutter 0))
                    (let* ([row (editor:frame-row editor y)]
                           [label (if (and row (zero? (list-ref row 3))) (number->string (+ 1 (car row))) "")]
@@ -285,42 +287,47 @@
     (unless (and (string? name) (> (string-length name) 0) (procedure? build)
               (<= (length identity) 1) (for-all (lambda (s) (and (string? s) (> (string-length s) 0))) identity))
       (error 'open-app! "expected a name, builder and optional stable key"))
-    (let ([owner (manager id)] [key (if (null? identity) name (car identity))] [created #f])
+    (let ([owner (manager id)] [key (if (null? identity) name (car identity))])
       (interaction:flush!)
-      (guard (ex [else
-                  (when (model:reference? created)
-                    (let ([r (model:snapshot created)])
-                      (when (and r (eq? (get r 'kind #f) 'widget-view) (= (get r 'schema 0) 3) (equal? id (get r 'scope #f))
-                              (not (view:parent (get r 'value '()))) (not (view:owner (get r 'value '()))))
-                        (view:retire! head:ui-actor created (get r 'revision 0)))))
-                  (raise ex)])
-        (let* ([found (window:find-app owner id key)]
-               [app
-                (cond
-                  [(and found (equal? (car found) id)) (cadr found)]
-                  [found
-                   (let ([rewire? (exists (lambda (row)
-                                            (member (car found) (map cadr (descriptor:commands (cdr row)))))
-                                    (view:tree (cadr found)))])
-                     (set! created (view:fork! head:ui-actor (cadr found)
-                                     (append (list (cons 'owner id))
-                                       (if rewire? (list (list 'receivers (list (car found) id))) '())))) created)]
-                  [else
-                   (set! created (build id (commands id)))
-                   (let* ([r (model:snapshot created)] [d (and r (get r 'value #f))])
-                     (unless (and r (eq? (get r 'kind #f) 'widget-view) (= (get r 'schema 0) 3)
-                               (equal? id (get r 'scope #f)) (not (view:parent d)) (not (view:owner d)))
-                       (error 'open-app! "builder must return a fresh unmounted app under this window" created))
-                     (let-values ([(status rows)
-                                   (view:arrange! head:ui-actor
-                                     (list (list created (get r 'revision 0) (view:children d)
-                                             (append (list (cons 'app-key key))
-                                               (if (assq 'name (view:options d)) '() (list (cons 'name (string-append "<" name ">"))))
-                                               (if (assq 'catalogue (view:options d)) '() '((catalogue . #t)))
-                                               (if (assq 'audience (view:options d)) '() (list (list 'audience head:ui-actor)))
-                                               (remp (lambda (p) (eq? (car p) 'app-key)) (view:options d))))) '())])
-                       (unless (eq? status 'applied) (error 'open-app! "app changed before preparation" status)))) created])])
-          (window:open-document! owner id app)))))
+      (let ([result (construction:call! head:ui-actor
+                      (lambda (remember!)
+                        (define (own! created)
+                          (remember! created (lambda ()
+                                               (when (model:reference? created)
+                                                 (let ([r (read-model created)])
+                                                   (when (and r (eq? (get r 'kind #f) 'widget-view) (= (get r 'schema 0) 3) (equal? id (get r 'scope #f))
+                                                           (not (view:parent (get r 'value '()))) (not (view:owner (get r 'value '()))))
+                                                     (view:retire! head:ui-actor created (get r 'revision 0))))))))
+                        (let* ([found (window:find-app owner id key)]
+                               [app
+                                (cond
+                                  [(and found (equal? (car found) id)) (cadr found)]
+                                  [found
+                                   (let ([rewire? (exists (lambda (row)
+                                                            (member (car found) (map cadr (descriptor:commands (cdr row)))))
+                                                    (view:tree (cadr found)))])
+                                     (own! (view:fork! head:ui-actor (cadr found)
+                                                       (append (list (cons 'owner id))
+                                                         (if rewire? (list (list 'receivers (list (car found) id))) '())))))]
+                                  [else
+                                   (let* ([created (own! (build id (commands id)))]
+                                          [r (read-model created)] [d (and r (get r 'value #f))])
+                                     (unless (and r (eq? (get r 'kind #f) 'widget-view) (= (get r 'schema 0) 3)
+                                                  (equal? id (get r 'scope #f)) (not (view:parent d)) (not (view:owner d)))
+                                       (error 'open-app! "builder must return a fresh unmounted app under this window" created))
+                                     (let-values ([(status rows)
+                                                   (view:arrange! head:ui-actor
+                                                     (list (list created (get r 'revision 0) (view:children d)
+                                                             (append (list (cons 'app-key key))
+                                                               (if (assq 'name (view:options d)) '() (list (cons 'name (string-append "<" name ">"))))
+                                                               (if (assq 'catalogue (view:options d)) '() '((catalogue . #t)))
+                                                               (if (assq 'audience (view:options d)) '() (list (list 'audience head:ui-actor)))
+                                                               (remp (lambda (p) (eq? (car p) 'app-key)) (view:options d))))) '())])
+                                       (unless (eq? status 'applied) (error 'open-app! "app changed before preparation" status))) created)])])
+                          (window:open-document! owner id app))))])
+        ;; The app is now admitted. Display acquisition may fail, but must
+        ;; not roll back its durable resources or completed placement.
+        (widget:refresh! id) result)))
 
   (edoc "Open a catalogue document through this window. Keyboard and scripted calls use this window; a pointer action in an inactive panel opens in the previously focused window of the same manager. An app from another window gets an independent presentation with its window commands rebound; an existing named presentation is reused. Preserve the panel's focus."
         (receiver id (view window)) (id model "hosting window") (document (or buffer model) "catalogue text or prepared app")
@@ -353,9 +360,11 @@
              (if builder
                (open-app! destination (format "~a ~a" (car builder) (store:buffer-name document))
                  (lambda (owner commands) ((cadr builder) owner document commands)) (format "~a:~s" (car builder) document))
-               (let* ([r (and (model:reference? document) (model:snapshot document))]
+               (let* ([r (and (model:reference? document) (read-model document))]
                       [scope (and r (get r 'scope #f))])
-                 (if (or (not r) (equal? scope destination)) (window:open-document! owner destination document)
+                 (if (or (not r) (equal? scope destination))
+                   (let ([result (window:open-document! owner destination document)])
+                     (widget:refresh! destination) result)
                    (let* ([d (get r 'value '())] [options (view:options d)]
                           [key (get options 'app-key (format "~s" document))])
                      (unless (and (eq? (get r 'kind #f) 'widget-view) (get options 'catalogue #f))
@@ -373,6 +382,27 @@
             (editor:move! result (cdr (assq 'point options)))))
         result)))
 
+  (edoc "Discard the document shown in this window. Shared text goes to Trash with its history; disposable output is deleted. An app is retired with its owned presentation resources, preserving borrowed data. Every displaying window chooses its retained fallback."
+        (receiver id (view window)) (id model "window showing the document"))
+  (define (discard! id)
+    (interaction:flush!)
+    (let ([document (window:document (manager id) id)])
+      (when document
+        (if (handle:buffer? document)
+          (let ([metadata (cadar (cadr (store:metadata (list document))))])
+            (unless metadata (error 'discard! "document is unavailable" document))
+            (let-values ([(status current) (store:archive! head:ui-actor document (get metadata 'version #f) 'trash)])
+              (unless (eq? status 'applied) (error 'discard! "document changed; choose it again" status)))
+            (log:add! 'window-control:discard!
+              (format "Killed ~a~a" (get metadata 'name "")
+                (cond [(get metadata 'disposable #f) ""]
+                  [(get metadata 'modified #f) "; its unsaved work is in the trash"] [else "; it is in the trash"]))))
+          (let ([r (read-model document)])
+            (unless r (error 'discard! "app is unavailable" document))
+            (let-values ([(status current) (view:retire! head:ui-actor document (get r 'revision #f))])
+              (unless (eq? status 'applied) (error 'discard! "app changed; choose it again" status)))))
+        (widget:refresh! id))))
+
   (edoc "Return the app currently shown in this explicit window to its saved origin or retained fallback. Preserve an inactive panel's previous focus; base validation refuses a changed active app."
         (receiver id (view window)) (id model "hosting window") (returns (or model #f)))
   (define (return! id)
@@ -382,7 +412,8 @@
       (interaction:flush!)
       (let ([target (widget:command-owner id 'dismiss)])
         (if target (begin (widget:invoke! target 'dismiss) #t)
-          (window:return! owner id (cadr app))))))
+          (let ([result (window:return! owner id (cadr app))])
+            (widget:refresh! id) result)))))
 
   (edoc "Install window-manager, split and window containers with explicit open/return actions and draggable separators. Loading constructs no windows, mounts or legacy host records." (public))
   (define (init!)
@@ -400,7 +431,7 @@
         (cons 'render-children window-render)
         (cons 'decorate (lambda (data d width height range) (list (list (list 0 0 width height) 'chrome))))
         (cons 'event window-event!) (cons 'pointer-bindings window-bindings)
-        (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!)
+        (cons 'actions (list (cons 'open-document open-document!) (cons 'return return!) (cons 'discard discard!)
                          (cons 'select select!) (cons 'split split!) (cons 'close close!) (cons 'navigate navigate!) (cons 'keep keep!)
                          (cons 'scroll scroll!) (cons 'toggle-display toggle-display!)))))
     (widget:register! 'window-status 1
@@ -413,6 +444,7 @@
       '(("C-x o" . next) ("M-UP" . up) ("M-DOWN" . down) ("M-LEFT" . left) ("M-RIGHT" . right)))
     (keymap:bind-default! 'composed-window "C-x 0" (keymap:call close! widget:target))
     (keymap:bind-default! 'composed-window "C-x 1" (keymap:call keep! widget:target))
+    (keymap:bind-default! 'composed-window "C-x k" (keymap:call discard! widget:target))
     (keymap:bind-default! 'composed-window "C-x l" (keymap:call toggle-display! widget:target 'line-numbers))
     (keymap:bind-default! 'composed-window "C-x t" (keymap:call toggle-display! widget:target 'wrap))
     (keymap:bind-default! 'composed-window "C-x 2" (keymap:call split! widget:target 'below))

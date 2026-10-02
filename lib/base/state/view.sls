@@ -8,8 +8,8 @@
     (rename (descriptor:kind kind))
     (rename (descriptor:options options))
     (rename (descriptor:owned owned)) (rename (descriptor:owner owner))
-    (rename (descriptor:parent parent)) publish! register-copy! register-resource-kind! release!
-    release-owner! reset-owners! resume! retire! retire-scope!
+    (rename (descriptor:parent parent)) publish! recover! register-copy! register-resource-kind! release!
+    release-owner! resume! retire! retire-scope!
     (rename (descriptor:schema schema))
     (rename (descriptor:sequence sequence)) set-state! snapshot
     (rename (descriptor:source source))
@@ -664,12 +664,30 @@
                                                      (when (and d (equal? actor (descriptor:owner d)))
                                                        (put id (descriptor:with d '((owner . #f))))))) (model:ids 'widget-view))) #t)))
 
-  (edoc "Clear saved ownership after restoring models.")
-  (define (reset-owners!)
-    (transaction! '(base view) (lambda (get need put read fail)
-                                 (for-each (lambda (id) (let ([d (get id)])
-                                                          (when (and d (descriptor:owner d))
-                                                            (put id (descriptor:with d '((owner . #f))))))) (model:ids 'widget-view))) #t))
+  (edoc "Recover persistent containment after model import: clear head ownership and links to absent transient views, and clear focus outside each surviving subtree. Existing unknown schemas and borrowed sources remain untouched; missing interactive children can be recreated by their host after admission.")
+  (define (recover!)
+    (transaction! '(base view)
+      (lambda (get need put read fail)
+        (define ids (model:ids 'widget-view))
+        (define (present? id)
+          (and id (begin (get id) (hashtable-ref read id #f))))
+        (define (within? id root seen)
+          (and id (not (member id seen))
+            (or (equal? id root)
+              (let ([d (get id)]) (and d (within? (descriptor:parent d) root (cons id seen)))))))
+        (for-each
+          (lambda (id)
+            (let ([d (get id)])
+              (when d
+                (put id (descriptor:with d
+                          (list '(owner . #f)
+                            (cons 'parent (and (present? (descriptor:parent d)) (descriptor:parent d)))
+                            (cons 'children (filter (lambda (child) (present? (cadr child))) (descriptor:children d))))))))) ids)
+        (for-each
+          (lambda (id)
+            (let ([d (get id)])
+              (when (and d (descriptor:focus d) (not (within? (descriptor:focus d) id '())))
+                (put id (descriptor:with d '((focus . #f))))))) ids)) #t))
 
   (edoc "Upgrade saved views before model import. Schema 3 makes catalogue membership explicit: former named root entries keep it, while named children stay private. Unknown schemas and current explicit choices are unchanged."
         (r list "model envelope") (returns list))

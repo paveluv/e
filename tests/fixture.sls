@@ -1,7 +1,7 @@
 ;; Shared process fixtures: private bases, PTY readers and editor evaluation.
 (library (fixture)
   (export start! stop! call-with-base command directory process diagnostics quote-shell
-          terminal-reader query evaluator evaluate)
+          terminal-reader evaluator evaluate composed)
   (import (except (chezscheme) process) (prefix (sys sys) sys:) (prefix (foundation string) string:)
           (prefix (foundation wire) wire:) (prefix (core kernel) kernel:))
 
@@ -36,6 +36,42 @@
       (parameterize ([kernel:installation-directory installation]) (kernel:fingerprint)) #t))
 
   (define evaluation-token 0)
+  ;; Explicit selectors shared by process-boundary fixtures. The product has
+  ;; no implicit current-window API; these address the shipped test screen.
+  (define (composed expression)
+    `(begin
+       (unless (top-level-bound? 'test-root)
+         (kernel:load-module! "tui")
+         (eval '(begin
+                  (define (field record key) (cdr (assq key record)))
+                  (define (test-root) (field (field (root:current) 'value) 'root))
+                  (define (test-manager) (widget:descendant (test-root) 'content 'windows))
+                  (define (test-window) (window:current (test-manager)))
+                  (define (test-editor) (widget:descendant (test-window) 'document))
+                  (define (test-document) (window:document (test-manager) (test-window)))
+                  (define (test-point) (car (view:state (interaction:snapshot (test-editor)))))
+                  (define (test-frame id)
+                    (define (find-frame frame)
+                      (if (equal? id (widget:frame-id frame)) frame
+                        (exists find-frame (widget:frame-children frame))))
+                    (exists (lambda (p) (find-frame (car p))) (widget:shown)))
+                  (define (test-divider)
+                    (let* ([id (cadar (view:children (interaction:snapshot (test-manager))))]
+                           [f (test-frame id)] [d (widget:frame-descriptor f)]
+                           [r (widget:frame-rect (car (widget:frame-children f)))]
+                           [x? (eq? (field (view:options d) 'axis) 'x)])
+                      (list (if x? 'right 'below) (+ (car r) (if x? (caddr r) 0))
+                        (+ (cadr r) (if x? 0 (- (cadddr r) 1))))))
+                  (define (test-show! document) (window-control:open-document! (test-window) document))
+                  (define (test-go! point) (edit:select! (test-editor) point point))
+                  (define (test-retire! id)
+                    (interaction:flush!)
+                    (let ([r (caddar (cadr (model:snapshots (list id))))])
+                      (when r (view:retire! head:ui-actor id (field r 'revision)))))
+                  (define (test-private! name text)
+                    (store:create! head:ui-actor name (list text) (list (list 'audience head:ui-actor))))
+                )))
+       (kernel:evaluate! ',expression (interaction-environment))))
   (define (evaluated-payload message token)
     ;; The head answers with actor:send!, which the base delivers raw to a
     ;; wire client: (event (evaluated token ...)). Accept the mail envelope too.
@@ -107,17 +143,6 @@
                              (begin (put-char output c) (drain))))))))])
           (unless (string=? text "") (consume! text))
           ended?))))
-
-  (define (query path expression send! await!)
-    ;; A rename publishes one complete datum, including #f, without accepting
-    ;; an empty file or a partially written atom. Keep UI diagnostics with the
-    ;; caller, which owns the screen(s) that must be drained while waiting.
-    (let ([pending (string-append path ".pending")])
-      (when (file-exists? path) (delete-file path))
-      (send! (format "\x1b;x\x1b;[200~~begin (call-with-output-file ~s (lambda (p) (write ~s p)) (quote replace)) (rename-file ~s ~s)\x1b;[201~~\r"
-               pending expression pending path))
-      (await! (list 'editor-query expression) (lambda () (file-exists? path)))
-      (call-with-input-file path read)))
 
   (define (command base . args)
     (string-append "exec "

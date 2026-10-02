@@ -562,7 +562,7 @@
             (let* ([ids (map car (view:tree screen))]
                    [saved (filter (lambda (r) (member (get r 'id) ids)) records)]
                    [identity (window:list manager)])
-              (view:reset-owners!)
+              (view:recover!)
               (view:claim! who screen)
               (check 'window-recovery-contract-keeps-identities-and-local-numbers
                 (list (model:valid-import? next-id saved) (window:list manager)

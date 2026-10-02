@@ -3,6 +3,10 @@
 Pretty Scheme changes how delimiters look without changing buffer text or the
 saved file. It is presentation, not source transformation.
 
+Pass the document reference explicitly, for example
+`(pretty-scheme:rainbow! (store:find-named "example.sls"))`. The choice is a
+shared document fact, so every editor view of that document follows it.
+
 ## Structural clusters
 
 `pretty-scheme:clusters!` assigns Unicode delimiter pairs by construct:
@@ -49,4 +53,3 @@ editor face. Thus `M-x` presents standard Scheme plainly, editor API names in
 the editor style, and incomplete or unknown names in italics.
 
 These faces are customizable through the [style DSL](STYLES.md).
-
