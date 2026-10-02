@@ -14,9 +14,10 @@
 (eval
   '(begin
      (import (prefix (head head) head:) (prefix (head tui) tui:)
-             (prefix (head widget) widget:) (prefix (head root) root:) (prefix (state model) model:)
+             (prefix (head widget) widget:) (prefix (head root) root:) (prefix (head interaction) interaction:) (prefix (state model) model:)
              (prefix (state store) store:) (prefix (state view) view:)
              (prefix (core kernel) kernel:)
+             (prefix (service vt) vt:)
              (prefix (test) test:) (prefix (sys sys) sys:))
      (parameterize ([kernel:registering-module 'bare-engine]) (widget:init!))
      (head:before-frame!)
@@ -43,6 +44,30 @@
        (let ([errors (open-output-string)])
          (parameterize ([current-error-port errors]) (head:report! "No composition"))
          (test:check 'head-diagnostic-without-an-echo-area (get-output-string errors) "No composition\n")))
+     (let* ([root (view:create! head:ui-actor #f 'link-fixture 1 '() "https://one")]
+            [child (view:create! head:ui-actor #f 'link-overlay 1 '() '())]
+            [output (open-output-string)] [mirror (vt:make-emulator 24 80)])
+       (widget:register! 'link-overlay 1 (list (cons 'render (lambda args '("covered")))))
+       (widget:register! 'link-fixture 1
+         (list (cons 'render (lambda args '("abcdefgh")))
+           (cons 'links (lambda (data d width height range) (list (list '(0 0 8 1) (view:state d) "fixture"))))
+           (cons 'layout (lambda (d width height measure locate) (list (list child '(2 0 10 1)))))))
+       (view:arrange! head:ui-actor (list (list root 0 (list (list 'overlay child '(grow 1))) '())) '())
+       (widget:mount! root 'link-fixture)
+       (parameterize ([sys:terminal-output-port output])
+         (tui:render! head:before-frame! (lambda () (tui:draw-root! (widget:prepare! root 8 1))) #f)
+         (vt:emulator-feed! mirror (get-output-string output))
+         (test:check 'hyperlinks-compose-and-clip-with-text-and-opaque-overlays
+           (list (widget:frame-row-links (widget:prepared root) 0)
+             (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 0)
+             (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 2))
+           '(((0 2 "https://one" "fixture")) ("https://one" "fixture") #f))
+         (interaction:set-state! head:ui-actor root #f "https://two")
+         (tui:render! head:before-frame! (lambda () (tui:draw-root! (widget:prepare! root 8 1))) #f)
+         (vt:emulator-feed! mirror (get-output-string output))
+         (test:check 'destination-only-change-repaints-root-row
+           (vector-ref (vector-ref (vt:emulator-hyperlinks mirror) 0) 0) '("https://two" "fixture")))
+       (widget:unmount! root) (view:retire! head:ui-actor root (model:revision root)))
      (include "tests/root-install.sps")
      (kernel:retract-module! 'bare-engine)))
 
@@ -52,7 +77,7 @@
 
 (evaluate!
   '(begin
-     (import (prefix (head paint) paint:) (prefix (head tui) tui:) (prefix (head widget) widget:)
+     (import (prefix (head paint) paint:) (prefix (head render) render:) (prefix (head tui) tui:) (prefix (head widget) widget:)
              (prefix (head edit) edit:) (prefix (head dispatch) dispatch:)
              (prefix (head entry) entry:) (prefix (state store) store:)
              (prefix (head interaction) interaction:) (prefix (head window-host) window-host:)
@@ -325,18 +350,18 @@
      ;; -- hyperlink detection ---------------------------------------------------------
 
      (check 'detects-http
-            (paint:detect-hyperlinks "see http://a.example/x here")
+            (render:detect-links "see http://a.example/x here")
             '((4 22 "http://a.example/x")))
      (check 'trims-trailing-punctuation
-            (map paint:detect-hyperlinks '("at https://e.dev/p, then" "See https://example.com/path."))
+            (map render:detect-links '("at https://e.dev/p, then" "See https://example.com/path."))
             '(((3 18 "https://e.dev/p")) ((4 28 "https://example.com/path"))))
      (check 'angle-brackets-end-a-url
-            (paint:detect-hyperlinks "<http://a.example>")
+            (render:detect-links "<http://a.example>")
             '((1 17 "http://a.example")))
      (check 'bare-scheme-skipped
-            (paint:detect-hyperlinks "http:// is not a link") '())
+            (render:detect-links "http:// is not a link") '())
      (check 'several-links
-            (map caddr (paint:detect-hyperlinks
+            (map caddr (render:detect-links
                          "http://one.example and https://two.example"))
             '("http://one.example" "https://two.example"))
 

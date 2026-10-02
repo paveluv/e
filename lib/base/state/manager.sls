@@ -1,7 +1,7 @@
 ;; Default window topology is a view tree, not a second layout registry.
 (import (only (foundation edoc) elibrary))
 (elibrary (state manager)
-  (export close! create! current document documents find-app link! links numbered open-document! resize! return! select! split! unlink! upgrade windows)
+  (export close! create! current document documents find-app link! links numbered open-document! resize! return! select! set-display! split! unlink! upgrade windows)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core editor-schema) editor-schema:)
           (prefix (core handle) handle:) (prefix (core identity) identity:) (prefix (core kernel) kernel:)
           (prefix (state model) model:) (prefix (state store) store:) (prefix (state terminal-state) terminal-state:) (prefix (state view) view:))
@@ -23,6 +23,9 @@
   (define (options r) (descriptor:options (value r)))
   (define (option r k default) (cond [(assq k (options r)) => cdr] [else default]))
   (define (with-option r k v) (cons (cons k v) (remp (lambda (p) (eq? k (car p))) (options r))))
+  (define (display-options r) (filter (lambda (p) (memq (car p) '(wrap line-numbers scrollbar))) (options r)))
+  (define (merge-options old changes)
+    (append changes (remp (lambda (p) (assq (car p) changes)) old)))
   (define (record rows id) (or (find (lambda (r) (and r (equal? id (field r 'id)))) rows) (error 'manager "view is unavailable" id)))
   (define (kind? r kind)
     (and r (eq? (field r 'kind) 'widget-view) (= (field r 'schema) 3) (descriptor:valid? (value r))
@@ -220,14 +223,14 @@
         (unless (eq? status 'applied) (error 'manager "topology changed; retry the operation" status)))))
 
   (edoc "Create a persistent manager with one empty window, numbered 1. Allocation creates no renderer or background service."
-        (actor actor "owning head") (returns model))
-  (define (create! actor)
+        (actor actor "owning head") (owner (or model #f) "lifetime owner, false for a session root") (returns model))
+  (define (create! actor owner)
     (unless (descriptor:head? actor) (error 'create! "expected a head"))
     (car (model:allocate! actor 3
            (lambda (ids)
-             (list (spec 'session (descriptor:with (descriptor:make #f 'window-manager 2
-                                                     (list (cons 'head actor) (cons 'selected (cadr ids)) '(links)) '())
-                                    (list (cons 'children (list (list 'layout (cadr ids) '(grow 1)))))))
+             (list (spec (or owner 'session) (descriptor:with (descriptor:make #f 'window-manager 2
+                                                                (list (cons 'head actor) (cons 'selected (cadr ids)) '(links)) '())
+                                               (list (cons 'children (list (list 'layout (cadr ids) '(grow 1)))))))
                (spec (car ids) (window-descriptor (car ids) 1 (caddr ids)))
                (spec (cadr ids) (status-descriptor (cadr ids))))))))
 
@@ -254,6 +257,34 @@
   (define (documents actor manager window)
     (let* ([rows (capture actor manager)] [w (require-window rows manager window)])
       (map (lambda (r) (document-of w r)) (retained rows w))))
+
+  (edoc "Change a window's display preferences without moving focus or changing input ownership. Wrap preferences update every retained ordinary editor atomically; hidden presentations and future visits use the same window policy. Terminal and app-owned editors keep their own policy. No backend geometry is stored."
+        (actor actor "head") (manager model "manager") (window model "window")
+        (preferences list "alist: wrap and line-numbers accept default or booleans; scrollbar also accepts left, right or auto"))
+  (define (set-display! actor manager window preferences)
+    (unless (and (list? preferences)
+              (for-all (lambda (p) (and (pair? p)
+                                     (case (car p)
+                                       [(wrap line-numbers) (memq (cdr p) '(default #t #f))]
+                                       [(scrollbar) (memq (cdr p) '(default #t #f left right auto))]
+                                       [else #f]))) preferences)
+              (let unique ([rest preferences])
+                (or (null? rest) (and (not (assq (caar rest) (cdr rest))) (unique (cdr rest))))))
+      (error 'set-display! "invalid display preferences" preferences))
+    (let* ([rows (capture actor manager)] [w (require-window rows manager window)]
+           [saved (retained rows w)] [rows (with-retained rows saved)]
+           [editors (map (lambda (r) (field r 'id)) (filter (lambda (r) (and (kind? r 'editor) (handle:buffer? (document-of w r)))) saved))]
+           [wrap (assq 'wrap preferences)])
+      (let-values ([(status records)
+                    (model:commit! actor
+                      (map (lambda (r)
+                             (change r
+                               (cond [(equal? window (field r 'id))
+                                      (descriptor:with (value r) (list (cons 'options (merge-options (options r) preferences))))]
+                                 [(and wrap (member (field r 'id) editors))
+                                  (descriptor:with (value r) (list (cons 'options (with-option r 'wrap (cdr wrap)))))]
+                                 [else (value r)]))) rows))])
+        (unless (eq? status 'applied) (error 'set-display! "window changed; retry" status)))))
 
   (edoc "Find a retained app by its app-key, preferring the destination window and then other panes in topology order. Return (owning-window app) or false; callers explicitly fork another pane's app before placement. No separate app registry is maintained."
         (actor actor "head") (manager model "manager") (window model "preferred window") (key string "nonempty app key") (returns any))
@@ -321,7 +352,7 @@
                     id)
                   (let ([ids (model:allocate! actor 1
                                (lambda (ids)
-                                 (list (spec window (descriptor:with (editor-schema:make document '())
+                                 (list (spec window (descriptor:with (editor-schema:make document (list (cons 'wrap (option w 'wrap 'default))))
                                                       (list (cons 'parent window) (cons 'owner owner) (cons 'generation (if owner 1 0)))))))
                                (lambda (ids) (updates (car ids))))])
                     (unless ids (error 'open-document! "window changed before placement; retry"))
@@ -370,10 +401,7 @@
       (let ([w (require-window rows manager window)])
         (configure! actor rows manager (with-option m 'selected window) (or (active w) window)))))
 
-  (edoc "Split beside an existing window, creating an empty window with the smallest free number. Selection stays in the existing window. Logical orientation and weights have no display units."
-        (actor actor "head") (manager model "manager view") (window model "existing window")
-        (direction (one-of left right above below) "new window's side") (returns model))
-  (define (split! actor manager window direction)
+  (define (split-empty! actor manager window direction)
     (unless (memq direction '(left right above below)) (error 'split! "invalid direction"))
     (let* ([rows (capture actor manager)] [w (require-window rows manager window)]
            [parent (record rows (descriptor:parent (value w)))]
@@ -386,7 +414,8 @@
                       (map (lambda (d scope) (spec scope (descriptor:with d
                                                            (list (cons 'owner owner) (cons 'generation (if owner 1 0))))))
                         (list
-                          (window-descriptor (cadr ids) number (caddr ids))
+                          (let ([d (window-descriptor (cadr ids) number (caddr ids))])
+                            (descriptor:with d (list (cons 'options (append (display-options w) (descriptor:options d))))))
                           (descriptor:with (descriptor:make #f 'window-split 2
                                              (list (cons 'axis (if (memq direction '(left right)) 'x 'y))) '(1 1))
                             (list (cons 'parent (field parent 'id))
@@ -406,6 +435,44 @@
                              (change r d))) rows)))])
       (unless ids (error 'split! "manager changed before allocation"))
       (car ids)))
+
+  (edoc "Split beside an existing window, retaining selection and independently copying its current presentation and saved app-return chain. Other hidden history is not copied. Sources and processes remain shared. Failed preparation removes the new pane and its copies. Logical orientation and proportions have no display units."
+        (actor actor "head") (manager model "manager view") (window model "existing window")
+        (direction (one-of left right above below) "new window's side") (returns model))
+  (define (split! actor manager window direction)
+    (let* ([rows (capture actor manager)] [w (require-window rows manager window)]
+           [ps (option w 'presentations '())] [origins (option w 'origins '())]
+           [chain
+            (let walk ([document (active-document w)] [seen '()])
+              (let ([p (and document (not (member document seen)) (assoc document ps))])
+                (if (not p) '()
+                  (let ([origin (assoc document origins)])
+                    (append (if origin (walk (cadr origin) (cons document seen)) '()) (list p))))))]
+           [created (split-empty! actor manager window direction)])
+      (guard (ex [else (close! actor manager created) (raise ex)])
+        (let ([mapping '()])
+          (for-each
+            (lambda (p)
+              (let* ([tree (view:tree (cadr p))]
+                     [rewire? (exists (lambda (row) (member window (map cadr (descriptor:commands (cdr row))))) tree)]
+                     [copy (view:fork! actor (cadr p)
+                             (append (list (cons 'owner created))
+                               (if rewire? (list (list 'receivers (list window created))) '())))]
+                     [identity (if (handle:buffer? (car p)) (car p) copy)]
+                     [current (capture actor manager)])
+                (unless (and (equal? (active-document w) (active-document (require-window current manager window)))
+                          (or (not (handle:buffer? identity)) (available-document? actor identity)))
+                  (error 'split! "source presentation changed during copy"))
+                (place-document! actor manager current (require-window current manager created) identity #f copy)
+                (set! mapping (cons (cons (car p) identity) mapping)))) chain)
+          (unless (null? mapping)
+            (let* ([rows (capture actor manager)] [target (require-window rows manager created)]
+                   [origins (filter values
+                              (map (lambda (p)
+                                     (let ([app (assoc (car p) mapping)] [origin (assoc (cadr p) mapping)])
+                                       (and app (list (cdr app) (and origin (cdr origin)))))) origins))])
+              (configure! actor rows created (with-option target 'origins origins) #f))))
+        created)))
 
   (define (cleanup-options r outputs)
     (if (null? outputs) (options r)

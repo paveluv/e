@@ -239,9 +239,11 @@
   ;; chaining and typed runs ask).
   (define quit-requested #f)
 
-  (edoc "Request that the main loop end.")
+  (edoc "Request that the main loop end, waking a blocked input reader. Remote and windowless compositions need no synthetic key to detach.")
   (define (quit!)
-    (set! quit-requested #t))
+    (unless quit-requested
+      (set! quit-requested #t)
+      (kernel:mailbox-post! mailbox '(quit))))
 
   (edoc "Whether quitting was requested."
         (returns boolean))
@@ -355,6 +357,7 @@
              (finish-frame!)))
          (let ([message (kernel:mailbox-receive! mailbox frame-deadline #t)])
            (case (and message (car message))
+             [(quit) (eof-object)]
              [(#f)
               (frame!)
               (pump)]

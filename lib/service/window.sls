@@ -1,14 +1,14 @@
 ;; Logical window operations run on the base. Rendering belongs to head adapters.
 (import (only (foundation edoc) elibrary))
 (elibrary (service window)
-  (export close! create-manager! current document documents find-app init! link! links (rename (windows list)) numbered open-document! resize! return! select! split! unlink!)
+  (export close! create-manager! current document documents find-app init! link! links (rename (windows list)) numbered open-document! resize! return! select! set-display! split! unlink!)
   (import (chezscheme) (prefix (core operation) operation:) (prefix (state model) model:))
 
   (edoc "Create a persistent window-manager view for this head with one empty window numbered 1. Construction starts no renderer; mount the manager through a composition."
-        (returns model))
-  (define-operation (create-manager!)
+        (owner (or model #f) "lifetime owner, false for a session root") (returns model))
+  (define-operation (create-manager! owner)
     (import (prefix (state manager) manager:) (prefix (state actor) actor:))
-    (manager:create! (actor:current)))
+    (manager:create! (actor:current) owner))
 
   (edoc "List a manager's window models in topology order. Displayed numbers are local selectors, not identities."
         (manager model "manager view") (returns list))
@@ -64,7 +64,13 @@
     (import (prefix (state manager) manager:) (prefix (state actor) actor:))
     (manager:select! (actor:current) manager window))
 
-  (edoc "Create an empty window beside an existing one, preserving selection. The new window takes the smallest free number. Splits store logical orientation and proportions, without display units."
+  (edoc "Set window display preferences without changing focus or ownership. The alist accepts wrap and line-numbers as booleans or default, and scrollbar as boolean, default, left, right or auto. Wrap applies to retained and future ordinary editors; terminals and app-owned editors keep their own preferences. Splitting copies the policy."
+        (manager model "manager") (window model "window") (preferences list "display preference alist"))
+  (define-operation (set-display! manager window preferences)
+    (import (prefix (state manager) manager:) (prefix (state actor) actor:))
+    (manager:set-display! (actor:current) manager window preferences))
+
+  (edoc "Split beside an existing window, preserving selection and copying its current presentation and saved app-return chain. Sources and processes remain shared; hidden history outside that chain is not copied. Failed preparation removes the new pane. The new window takes the smallest free number; orientation and proportions have no display units."
         (manager model "manager view") (window model "existing window")
         (direction (one-of left right above below) "new window's side") (returns model))
   (define-operation (split! manager window direction)
@@ -114,6 +120,7 @@
     (operation:register! 'window:open-document! open-document! 'control)
     (operation:register! 'window:return! return! 'control)
     (operation:register! 'window:select! select! 'control)
+    (operation:register! 'window:set-display! set-display! 'control)
     (operation:register! 'window:split! split! 'control)
     (operation:register! 'window:close! close! 'control)
     (operation:register! 'window:resize! resize! 'control)

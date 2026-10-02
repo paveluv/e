@@ -466,5 +466,21 @@
            (list (widget:receiver-live? (car single))
              (list-ref (lookup one "(receiver-probe:ch") 3)) '(#f ()))))
 
+     (let* ([document (store:create! head:ui-actor "completion origin" '("source"))]
+            [editor (create-view! head:ui-actor document '())]
+            [factory (completion:provider '(scheme 1 ()))])
+       (widget:mount! editor 'completion-origin)
+       (widget:present! (list (list (widget:prepare! editor 20 3) 0 0)))
+       (let* ([source (factory '() (list (cons 'view editor) (cons 'receivers (widget:receivers editor))))]
+              [input "(delta-log:show! 2"]
+              [context ((completion:source-context source) input (string-length input))])
+         (check 'composed-completion-keeps-canonical-editor-and-document-origin
+           (list (widget:focused) (cdr (assq 'editor context)) (cdr (assq 'document context)))
+           (list editor editor document))
+         (widget:set-active! editor #f)
+         (check 'inactive-presentation-is-not-the-current-receiver (widget:focused) #f))
+       (widget:unmount! editor)
+       (view:retire! head:ui-actor editor (model:revision editor)))
+
      (include "tests/environment-widget.sps")
      (test:finish! 'mx)))

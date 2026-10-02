@@ -151,7 +151,10 @@
       (and id (or (equal? id (session-id s))
                 (let ([d (interaction:snapshot id)]) (and d (loop (view:parent d))))))))
   (define (repaint! s)
-    (for-each (lambda (id) (when id (widget:repaint! id #t))) (list (session-id s) (child s 'heading) (body s))))
+    ;; Acquisition can drop a hidden subtree before the widget pump releases
+    ;; its range subscription. A queued invalidation has nothing left to paint.
+    (when (descriptor s)
+      (for-each (lambda (id) (when id (widget:repaint! id #t))) (list (session-id s) (child s 'heading) (body s)))))
   (define (release! id)
     (hashtable-delete! emphasis id)
     (let ([s (hashtable-ref sessions id #f)])

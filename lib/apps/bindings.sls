@@ -18,9 +18,11 @@
           (prefix (head mouse) mouse:)
           (prefix (head seat) seat:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service inspection) inspection:)
           (prefix (service log) log:)
+          (prefix (service window) window:)
           (prefix (state model) model:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
@@ -36,7 +38,19 @@
       (unless (member query (vector->list (hashtable-values instances)))
         (let ([s (hashtable-ref sessions query #f)]) (when s (session-alive?-set! s #f)))
         (hashtable-delete! sessions query))))
-  (define (subject root) (list root '(global) #f (if root (format "~s" root) "Global keys")))
+  (define (subject root) (list root '(global) #f (if root (format "~s" root) "Global keys") '()))
+  (define (within? id parent)
+    (and id (or (equal? id parent)
+              (let ([d (interaction:snapshot id)]) (and d (within? (view:parent d) parent))))))
+  (define (composed-subject root)
+    (let ([focus (widget:focused root)])
+      (and focus (within? focus root)
+        (not (exists (lambda (id) (within? focus id)) (vector->list (hashtable-keys instances))))
+        (let loop ([id focus])
+          (let ([d (interaction:snapshot id)])
+            (if (or (eq? (view:kind d) 'window) (equal? id root))
+              (list id '() #f (format "~s" id) (list focus))
+              (loop (view:parent d))))))))
   (define (session! id value)
     (or (hashtable-ref sessions id #f)
       (let ([s (make-session (get value 'subject (subject #f)) #f '() '() #t)]) (hashtable-set! sessions id s) s)))
@@ -86,18 +100,23 @@
   (define (service! id frame)
     (define (mouse-row? r) (let ([key (car r)]) (or (eq? key 'mouse) (and (pair? key) (eq? (car key) 'mouse)))))
     (let-values ([(source d inputs) (widget:context id)])
-      (let* ([v (get source 'value '())] [query (view:source d)] [s (session! query v)] [target (session-subject s)] [root (car target)])
+      (let* ([v (get source 'value '())] [query (view:source d)] [s (session! query v)]
+             [follow (get (view:options d) 'follow #f)]
+             [target (or (and follow (composed-subject follow)) (session-subject s))] [root (car target)])
+        (session-subject-set! s target)
         (hashtable-set! instances id query)
         (when (and (equal? (get v 'owner #f) head:ui-actor) (not (eq? (get v 'status #f) 'unavailable))
                 (not (exists (lambda (other) (and (< (cadr other) (cadr id)) (equal? query (hashtable-ref instances other #f))))
                        (vector->list (hashtable-keys instances)))))
           (let* ([pointer (if (exists (lambda (other) (and (equal? query (hashtable-ref instances other #f)) (over? other)))
                                 (vector->list (hashtable-keys instances))) (session-pointer s) (mouse:bindings))]
-                 [available? (or (not root) (interaction:snapshot root))]
-                 [basis (if available? (listing:basis root (cadr target) (caddr target) pointer) (list 'unavailable root))]
+                 [available? (or (not root)
+                               (and (interaction:snapshot root)
+                                 (for-all (lambda (focus) (or (not focus) (within? focus root))) (list-ref target 4))))]
+                 [basis (if available? (apply listing:basis root (cadr target) (caddr target) pointer (list-ref target 4)) (list 'unavailable root))]
                  [full-basis (cons target basis)])
             (unless (equal? full-basis (session-basis s))
-              (let* ([capture (if available? (apply listing:capture basis pointer (list-tail target 4))
+              (let* ([capture (if available? (apply listing:capture basis pointer (list-tail target 5))
                                 '(((unavailable "[Inspected view unavailable]" () "" "" ())) #f))]
                      [parts (list (cons 'mouse (filter mouse-row? (car capture))) (cons 'listing (remp mouse-row? (car capture))))])
                 (session-basis-set! s full-basis) (session-pointer-set! s pointer)
@@ -216,7 +235,7 @@
       (unless (assq 'reader (view:children d))
         (let* ([s (session! (view:source d) (get source 'value '()))]
                [reader (view:create! head:ui-actor #f 'binding-reader 1
-                         (list '(modal . #t) (cons 'subject (list-head (session-subject s) 4))) '() id)])
+                         (list '(modal . #t) (cons 'subject (list-head (session-subject s) 5))) '() id)])
           (widget:arrange! (list (list id (get (model:snapshot id) 'revision 0)
                                    (cons (list 'reader reader 'fit) (view:children d)) (view:options d))))))))
   (define (finish-key! id sequence)
@@ -227,6 +246,9 @@
                       (widget:arrange! (list (list parent (get (model:snapshot parent) 'revision 0)
                                                (remp (lambda (c) (equal? (cadr c) id)) (view:children app)) (view:options app))))])
           (unless (eq? status 'applied) (refuse "Key inspection changed while closing its capture"))
+          (let climb ([root parent])
+            (let ([above (view:parent (interaction:snapshot root))])
+              (if above (climb above) (interaction:focus! root parent))))
           ;; Arrangement flushes provisional input and releases its mirror.
           ;; Read the resulting revision once for this explicit retirement.
           (let ([r (caddar (cadr (model:snapshots (list id))))])
@@ -238,7 +260,7 @@
     (if (member key '("ESC" "C-g")) (finish-key! id #f)
       (let-values ([(source d inputs) (widget:context id)])
         (let* ([target (get (view:options d) 'subject '())] [root (car target)] [sequence (append (view:state d) (list key))])
-          (if (and (or (not root) (interaction:snapshot root)) (listing:key-prefix? root (cadr target) sequence))
+          (if (and (or (not root) (interaction:snapshot root)) (apply listing:key-prefix? root (cadr target) sequence (list-ref target 4)))
             (interaction:set-state! head:ui-actor id #f sequence)
             (finish-key! id sequence))))))
   (define (capture-event! id source d event)
@@ -261,7 +283,7 @@
     (let* ([w (seat:current-window)] [root (dispatch:input-root)] [b (seat:window-buffer w)])
       (and (not (and default-root (equal? (seat:window-widget w) default-root)))
         (list root (if root '(global) (append (mode:key-contexts b) '(global)))
-          (and (or (seat:app-buffer? b) (seat:buffer-read-only b)) #t) (seat:buffer-name b)))))
+          (and (or (seat:app-buffer? b) (seat:buffer-read-only b)) #t) (seat:buffer-name b) '()))))
   (define (follow!)
     (let ([app (active-app)])
       (when app (let ([target (default-subject)]) (when target (request! app target))))))
@@ -280,7 +302,7 @@
 
   (edoc "Show mouse, keyboard, command and composition bindings in the default pop-up. An already visible inspector pages down."
         (returns model))
-  (define (show!)
+  (define (show-legacy!)
     (let ([app (active-app)] [target (default-subject)])
       (if app (begin (when target (request! app target)) (page! app 'down) default-root)
         (let ([root (ensure! target)])
@@ -288,24 +310,76 @@
             (begin (window-host:show-widget! (seat:popup) root) (seat:show-popup! (seat:popup-default-rows)))) root))))
 
   (edoc "Page the visible default inspector up, or show it when hidden.")
-  (define (page-up!) (let ([app (active-app)]) (if app (page! app 'up) (show!))))
+  (define (page-up-legacy!) (let ([app (active-app)]) (if app (page! app 'up) (show!))))
 
-  (edoc "Show the inspector in the current window, following its captured subject until another window becomes active." (returns model) (public))
-  (define (open!)
+  (edoc "Show the inspector in the current window, following its captured subject until another window becomes active." (returns model))
+  (define (open-legacy!)
     (let* ([target (default-subject)] [root (ensure! target)]) (window-host:show-widget! (seat:current-window) root) root))
 
   (edoc "Capture a key or chord and show its contextual resolution, binding origin, forwarding trace and shadowed definitions in the default inspector. Return immediately; the ordinary event pump collects the keys.")
-  (define (key!)
+  (define (key-legacy!)
     (let ([root (show!)])
       (let ([w (find (lambda (w) (and (equal? root (seat:window-widget w)) (or (not (seat:popup? w)) (> (seat:popup-rows) 0)))) (seat:windows))])
         (when w (window-host:focus! w) (capture-key! (widget:descendant root 'app))))))
 
-  (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening." (public))
-  (define (hide!)
+  (edoc "Hide the default inspector's placements. Its saved subject and scrolling remain for reopening.")
+  (define (hide-legacy!)
     (when default-root
       (for-each (lambda (w)
                   (when (equal? (seat:window-widget w) default-root)
                     (if (seat:popup? w) (seat:hide-popup!) (window-host:return! default-root)))) (seat:windows))))
+
+  (define (open-composed! window root)
+    (let* ([target (composed-subject root)]
+           [old (window:find-app (window-control:manager window) window "bindings")])
+      (when (and old (equal? (car old) window))
+        (let* ([r (caddar (cadr (model:snapshots (list (cadr old)))))]
+               [source (view:source (get r 'value '()))]
+               [query (caddar (cadr (model:snapshots (list source))))])
+          (when (or (not query) (eq? (get (get query 'value '()) 'status #f) 'unavailable))
+            (view:retire! head:ui-actor (cadr old) (get r 'revision 0)))))
+      (let ([app (window-control:open-app! window "bindings"
+                   (lambda (owner commands)
+                     (let ([app (create! owner commands (and target (car target)))])
+                       (let ([d (view:snapshot app)])
+                         (view:arrange! head:ui-actor
+                           (list (list app 1 (view:children d)
+                                   (cons (cons 'follow root) (view:options d)))) '())) app)))])
+        (widget:pump!)
+        (when target (request! app target)) app)))
+
+  (edoc "Open an inspector in an explicit window and follow focus within the supplied composition. While focus is inside any inspector, retain its preceding subject and route."
+    (receiver window (view window)) (window model "destination window") (root model "composition to follow") (returns model))
+  (define open!
+    (case-lambda [() (open-legacy!)] [(window root) (open-composed! window root)]))
+
+  (define (show-composed! root direction)
+    (let* ([focus (widget:focused root)] [window (widget:invoke! root 'auxiliary)]
+           [old (window:document (window-control:manager window) window)]
+           [shown? (and (model:reference? old) (widget:prepared old))]
+           [app (open-composed! window root)])
+      (when focus (interaction:focus! root focus))
+      (when (and shown? (equal? old app)) (page! app direction)) app))
+
+  (edoc "Show contextual bindings through a composition's explicit auxiliary command without moving focus. Repeating the command pages the visible inspector."
+    (root model "composition with an auxiliary host") (returns model))
+  (define show! (case-lambda [() (show-legacy!)] [(root) (show-composed! root 'down)]))
+
+  (edoc "Page the composition's visible inspector upward, or show it when hidden."
+    (root model "composition with an auxiliary host"))
+  (define page-up! (case-lambda [() (page-up-legacy!)] [(root) (show-composed! root 'up)]))
+
+  (edoc "Capture a key through the ordinary modal route and show its resolution against the preceding subject, without executing it."
+    (root model "composition with an auxiliary host"))
+  (define key!
+    (case-lambda [() (key-legacy!)]
+      [(root)
+       (let ([app (show! root)])
+         (capture-key! app))]))
+
+  (edoc "Hide a composition's auxiliary inspector through its declared hide-auxiliary command, retaining its subject and scroll position."
+    (root model "composition with an auxiliary host"))
+  (define hide! (case-lambda [() (hide-legacy!)] [(root) (widget:invoke! root 'hide-auxiliary)]))
 
   (edoc "Register the Bindings composition and commands; hidden inspectors do no capture or trace work." (public))
   (define (init!)
@@ -332,6 +406,9 @@
         (cons 'locate (lambda (data anchor width) (listing:locate (fitted data width) anchor)))))
     (keymap:bind-default! "C-x TAB" show!) (keymap:bind-default! "C-x S-TAB" page-up!)
     (keymap:bind-default! "C-h k" key!)
+    (keymap:bind-default! 'screen "C-x TAB" (keymap:call show! widget:target))
+    (keymap:bind-default! 'screen "C-x S-TAB" (keymap:call page-up! widget:target))
+    (keymap:bind-default! 'screen "C-h k" (keymap:call key! widget:target))
     (keymap:bind-default! 'widget-binding-list "M-w" (keymap:call copy! widget:target))
     (for-each (lambda (p) (keymap:bind-default! 'widget-bindings (car p) (keymap:call page! widget:target (cadr p))))
       '(("PAGEUP" up) ("PAGEDOWN" down) ("M-v" up) ("C-v" down)))

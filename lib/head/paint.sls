@@ -5,7 +5,7 @@
   (export add-buffer-status-hint! add-highlighter!
     add-status-hint! buffer-line-hyperlinks buffer-wrap-setting
     clean-wrap? column-at-cell compute-breaks compute-echo-spans
-    cursor-in-echo detect-hyperlinks display-echo-log-row!
+    cursor-in-echo display-echo-log-row!
     echo-append! echo-box-border echo-box-width echo-cap
     echo-cursor-now echo-highlight echo-indent-now echo-index-at
     echo-log-prefix echo-log-rows echo-log-spans echo-position
@@ -49,48 +49,6 @@
 
   ;;; Hyperlinks -------------------------------------------------------------------
 
-  (define (url-end-character? character)
-    (or (char-whitespace? character)
-        (memv character '(#\< #\> #\" #\' #\`))))
-
-  (define (url-trailing-character? character)
-    (memv character '(#\. #\, #\; #\: #\! #\? #\) #\] #\})))
-
-  (edoc "The http and https URLs in a text, as (start end url) ranges."
-        (text string "the text to scan")
-        (returns list))
-  (define (detect-hyperlinks text)
-    ;; Return explicit ranges rather than styling URLs directly, so callers
-    ;; can inspect the destination and modes can add non-URL labels later.
-    (let ([length (string-length text)])
-      (let loop ([from 0] [links '()])
-        (let ([http (string:search text "http://" from length)]
-              [https (string:search text "https://" from length)])
-          (let ([start (cond [(and http https) (min http https)]
-                             [http http]
-                             [else https])])
-            (if (not start)
-                (reverse links)
-                (let* ([raw-end
-                        (let scan ([at start])
-                          (if (or (= at length)
-                                  (url-end-character? (string-ref text at)))
-                              at
-                              (scan (+ at 1))))]
-                       [end
-                        (let trim ([at raw-end])
-                          (if (and (> at start)
-                                   (url-trailing-character?
-                                     (string-ref text (- at 1))))
-                              (trim (- at 1))
-                              at))])
-                  (if (= end (+ start
-                                (if (and https (= start https)) 8 7)))
-                      (loop (max (+ start 1) raw-end) links)
-                      (loop (max end (+ start 1))
-                            (cons (list start end
-                                        (substring text start end))
-                                  links))))))))))
   (define editor-name "e")
 
   (define (mode-info b lines)
@@ -342,7 +300,7 @@
                    (cons (render:character frame row (car range))
                          (cons (render:character frame row (cadr range)) (cddr range))))
                  (caddr data)) '())
-        (detect-hyperlinks text))))
+        (render:detect-links text))))
 
   (define (cell-ranges frame row ranges)
     (map (lambda (range)
@@ -584,7 +542,7 @@
                                              (render:column frame i (cdr span) #t)))]
                        [marks (cell-ranges frame i (ranges-on-row ranges w b i current?))]
                        [links (append (if data (caddr data) '())
-                                      (cell-ranges frame i (detect-hyperlinks line)))])
+                                      (cell-ranges frame i (render:detect-links line)))])
                   (let-values ([(shown row-styles)
                                 (if data (values (car data) (cadr data))
                                     (render:present frame i line replacement

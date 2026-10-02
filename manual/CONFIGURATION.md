@@ -2,7 +2,7 @@
 
 ## Startup and head names
 
-Run `./e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]`. A name is a nonempty string; quote it
+Run `./e [--restart [--force]] [--name NAME] [--start FILE] [--base-working-dir DIR] [--] [file]`. A name is a nonempty string; quote it
 in the shell if it contains spaces. `--name=NAME` also works. `--` allows a
 file whose name begins with `-`. Help (`-h` or `--help`) and argument errors
 are handled before loading the editor or `config.e`.
@@ -13,6 +13,18 @@ Compatibility with a running base is also checked before head imports and
 `config.e`; a base-library source or wire mismatch prints a restart command
 and exits. Head-only source changes do not require a base restart.
 Configuration files themselves do not participate in the fingerprint.
+
+`--start FILE` (or `--start=FILE`) selects a trusted head composition script,
+resolved against the invocation directory. Its final expression returns a
+`profile` and an `entry` procedure, as described in [Widgets](WIDGETS.md#composition-bindings).
+The script chooses whether to load `config.e`; saved state never selects
+executable code. `--base` rejects this head-only option. Restart and resume
+guidance preserve an explicitly selected script.
+
+`./e --start examples/blank.e` demonstrates an empty head with no editor
+bindings or windows. File arguments are delivered after input starts through
+the root's `open-file` command; an unsupported request reports a diagnostic.
+The ordinary launcher's default-host migration is still in progress.
 
 Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,

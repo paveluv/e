@@ -3,6 +3,7 @@
 (elibrary (apps delta-log)
   (export choose! choose-all! conflicts conflicts! create! filter! init! log open! resolve! settle! show!)
   (import (except (chezscheme) log)
+          (prefix (core handle) handle:)
           (prefix (foundation edoc) edoc:)
           (prefix (foundation string) string:)
           (prefix (head edit) edit:)
@@ -16,6 +17,7 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service change-preview) change-preview:)
           (prefix (service conflict-review) conflict-review:)
@@ -24,6 +26,7 @@
           (prefix (service review-preview) review-preview:)
           (prefix (service rewrite) rewrite:)
           (prefix (service rewrite-source) rewrite-source:)
+          (prefix (service window) window:)
           (prefix (state collection) collection:)
           (prefix (state connection) connection:)
           (prefix (state model) model:)
@@ -219,25 +222,45 @@
           (list text (list 0 (string-length text) (if (eq? name 'mine) 'conflict-mine 'conflict-disk))) (list text)))))
   (define target-table (keymap:call widget:descendant widget:target 'table))
   (define (show-review! name kind documents window)
-    (let* ([host (window-host:tool! name (lambda (commands) (create! #f commands kind documents)) (format "~a:~s" kind documents))])
-      (window-host:show-widget! window host)
-      (let ([app (child host 'app)]) (widget:focus! host (child (child (child app 'table) 'body) 'rows)) app)))
+    (if (handle:model? window)
+      (let ([app (window-control:open-app! window name (lambda (owner commands) (create! owner commands kind documents)) (format "~a:~s" kind documents))])
+        (widget:pump!) (widget:focus! app (widget:descendant app 'table 'body 'rows)) app)
+      (let* ([host (window-host:tool! name (lambda (commands) (create! #f commands kind documents)) (format "~a:~s" kind documents))])
+        (window-host:show-widget! window host)
+        (let ([app (child host 'app)]) (widget:focus! host (child (child (child app 'table) 'body) 'rows)) app))))
 
-  (edoc "Open a retained rewrite review of the current document in the chosen window, current by default."
-        (window (list-of window) "optional target window") (returns model))
-  (define (open! . window)
-    (show-review! "delta-log" 'rewrite (list (current-document))
-      (if (null? window) (seat:current-window) (edoc:type-value 'window (car window)))))
+  (edoc "Open a retained rewrite review of this window's document. Nested compositions can pass their explicit document scope to create!."
+        (receiver window (view window)) (window model "window; omission uses the legacy host") (returns model))
+  (define open!
+    (case-lambda
+      [() (open! (seat:current-window))]
+      [(window)
+       (if (handle:model? window)
+         (let ([document (window:document (window-control:manager window) window)])
+           (unless (handle:buffer? document) (error 'open! "this window does not show an editable document"))
+           (show-review! "delta-log" 'rewrite (list document) window))
+         (show-review! "delta-log" 'rewrite (list (current-document))
+           (edoc:type-value 'window window)))]))
 
   (edoc "Open a retained conflict review. Capture visible shared documents once, with the invoking document first; nested hosts pass their scope to create! directly."
-        (window (list-of window) "optional target window") (returns model))
-  (define (conflicts! . window)
-    (let ([documents (fold-left (lambda (out w)
-                                  (let ([id (seat:buffer-store-id (seat:window-buffer w))])
-                                    (if (or (not id) (member id out)) out (append out (list id)))))
-                       (let ([id (seat:buffer-store-id (seat:current-buffer-mirror))]) (if id (list id) '())) (seat:windows))])
-      (show-review! "conflicts" 'conflicts documents
-        (if (null? window) (seat:current-window) (edoc:type-value 'window (car window))))))
+        (receiver window (view window)) (window model "window; omission uses the legacy host") (returns model))
+  (define conflicts!
+    (case-lambda
+      [() (conflicts! (seat:current-window))]
+      [(window)
+       (if (handle:model? window)
+         (let* ([manager (window-control:manager window)]
+                [documents (fold-left (lambda (out w)
+                                        (let ([id (window:document manager w)])
+                                          (if (and (handle:buffer? id) (not (member id out))) (append out (list id)) out)))
+                             '() (cons window (remove window (window:list manager))))])
+           (show-review! "conflicts" 'conflicts documents window))
+         (let ([documents (fold-left (lambda (out w)
+                                       (let ([id (seat:buffer-store-id (seat:window-buffer w))])
+                                         (if (or (not id) (member id out)) out (append out (list id)))))
+                            (let ([id (seat:buffer-store-id (seat:current-buffer-mirror))]) (if id (list id) '())) (seat:windows))])
+           (show-review! "conflicts" 'conflicts documents
+             (edoc:type-value 'window window))))]))
 
   (edoc "Register the review composition and inspectable table commands. No draft is created until requested." (public))
   (define (init!)
@@ -262,8 +285,10 @@
     (keymap:bind-default! 'delta-review "S-RIGHT" (keymap:call choose-all! widget:target 'disk))
     (keymap:bind-default! 'delta-review "M-RET" (keymap:call settle! widget:target))
     (keymap:bind-default! 'delta-review "ESC" (keymap:call widget:invoke! widget:target 'return))
-    (keymap:bind-default! "C-x l" (keymap:call open! 0))
+    (keymap:bind-default! "C-x C-l" (keymap:call open! 0))
     (keymap:bind-default! "C-x !" (keymap:call conflicts! 0))
+    (keymap:bind-default! 'composed-window "C-x C-l" (keymap:call open! widget:target))
+    (keymap:bind-default! 'composed-window "C-x !" (keymap:call conflicts! widget:target))
     (for-each (lambda (type) (prompt:register-presentation! type make-change-preview)) '(revision conflict))
     (widget:register! 'change-preview 1
       (append (remp (lambda (p) (eq? (car p) 'measure)) (layout:container 'y))

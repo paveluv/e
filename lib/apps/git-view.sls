@@ -3,6 +3,7 @@
 (elibrary (apps git-view)
   (export choose! create! init! log! log-of! refresh!)
   (import (chezscheme)
+          (prefix (core handle) handle:)
           (prefix (foundation string) string:)
           (prefix (head head) head:)
           (prefix (head interaction) interaction:)
@@ -12,10 +13,13 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service file) file:)
           (prefix (service git-source) git-source:)
+          (prefix (service window) window:)
           (prefix (state model) model:)
+          (prefix (state store) store:)
           (prefix (state view) view:))
 
   (define (child id name) (cadr (assq name (view:children (interaction:snapshot id)))))
@@ -71,16 +75,31 @@
         [(exists (lambda (prefix) (string:prefix? prefix line)) '("diff --git " "index ")) 'comment]
         [(string:prefix? "[" line) 'ghost] [else 'plain])))
 
-  (edoc "Open the retained Git browser for a path in the current window. Different paths retain independent queries and selections."
-        (path file "path inside the repository") (returns model))
-  (define (log-of! path)
+  (define (log-legacy! path)
     (let* ([path (file:expand path)] [root (window-host:tool! (string-append "git " (file:abbreviate path))
                                              (lambda (commands) (create! #f path)) (string-append "git:" path))])
       (window-host:show-widget! (seat:current-window) root)
       (let ([app (child root 'app)]) (widget:focus! root (child (child (child app 'table) 'body) 'rows)) app)))
 
-  (edoc "Open Git history for the current file, or the working directory. Repository work remains asynchronous.")
-  (define (log!) (log-of! (or (seat:buffer-file (seat:current-buffer-mirror)) ".")))
+  (edoc "Open the retained Git browser for a path in this window. Different paths retain independent queries and selections. Repository work stays asynchronous."
+        (receiver window (view window)) (path file "path inside a repository") (window model "destination window") (returns model))
+  (define log-of!
+    (case-lambda
+      [(path) (log-legacy! path)]
+      [(path window)
+       (let* ([path (file:canonical (file:expand path))]
+              [app (window-control:open-app! window (string-append "git " (file:abbreviate path))
+                     (lambda (owner commands) (create! owner path)) (string-append "git:" path))])
+         (widget:pump!) (widget:focus! app (widget:descendant app 'table 'body 'rows)) app)]))
+
+  (edoc "Open Git history for this window's file, or the working directory."
+        (receiver window (view window)) (window model "window; omission uses the legacy host") (returns model))
+  (define log!
+    (case-lambda
+      [() (log-legacy! (or (seat:buffer-file (seat:current-buffer-mirror)) "."))]
+      [(window)
+       (let ([document (window:document (window-control:manager window) window)])
+         (log-of! (or (and (handle:buffer? document) (store:property document 'file #f)) ".") window))]))
 
   (edoc "Register the Git composition, patch highlighting and named bindings without opening a repository or tool." (public))
   (define (init!)
@@ -98,4 +117,5 @@
         (list 'subject 16 'text '() (present (lambda (value attrs) value)))))
     (mode:register! "git:diff" '() '() diff-styles)
     (for-each (lambda (key) (keymap:bind-default! 'git-history key (keymap:call refresh! widget:target))) '("r" "C-r"))
-    (keymap:bind-default! "C-x g" log!)))
+    (keymap:bind-default! "C-x g" log!)
+    (keymap:bind-default! 'composed-window "C-x g" (keymap:call log! widget:target))))

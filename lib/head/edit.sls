@@ -66,6 +66,7 @@
           (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:)
           (prefix (head tui) tui:)
+          (prefix (head widget) widget:)
           (prefix (head window-host) window-host:)
           (prefix (service document) document:)
           (prefix (service file) file:)
@@ -687,7 +688,7 @@
 
   ;;; Files -----------------------------------------------------------------
 
-  (edoc "Visit a file through the base, creating it and its missing parents if needed; a trailing slash creates/navigates a directory. Reopening preserves shared edits and merges disk changes undoably. An explicit destination receives directory/path or buffer/adopted-buffer; otherwise use this head's current window."
+  (edoc "Visit a file through the base, creating it and its missing parents if needed; a trailing slash creates/navigates a directory. Reopening preserves shared edits and merges disk changes undoably. An explicit destination receives directory/path or buffer/reference; otherwise use this head's current window."
         (path file "the path to visit")
         (destination procedure "optional placement callback")
         (proposal any "optional Finder creation witness")
@@ -696,7 +697,7 @@
     (case-lambda
       [(path)
        (visit-file! path (lambda (kind value)
-                           (case kind [(directory) (seat:open-directory! value)] [(buffer) (seat:show-buffer-mirror! value)])))]
+                           (case kind [(directory) (seat:open-directory! value)] [(buffer) (seat:show-buffer-mirror! (seat:adopt-store-buffer! value))])))]
       [(path destination) (visit-file! path destination #f)]
       [(path destination proposal)
        (unless (procedure? destination) (error 'visit-file! "expected a destination procedure" destination))
@@ -705,10 +706,8 @@
            (case (car result)
              [(directory) (destination 'directory (cadr result))]
              [(buffer)
-              (let ([b (or (seat:adopt-store-buffer! (cadr result))
-                         (error 'visit-file! "acquired buffer is no longer visible"))])
-                (seat:sync-foreign-edits! (cadr result))
-                (destination 'buffer b)
+              (begin
+                (destination 'buffer (cadr result))
                 (log:add! 'edit:visit-file! (cons (if (caddr result) "Loaded" "Visited") (list-ref result 3)) (caddr result))
                 (when (list-ref result 4) (log:add! 'edit:visit-file! (list-ref result 4))))]) #t))]))
 
@@ -878,6 +877,10 @@
       [(entries) (present-log-entries-with! entries "")]
       [(entries tail) (present-log-entries-with! entries tail)]))
   (define (present-log-entries-with! entries tail)
+    (let ([host (widget:command-owner (widget:focused) 'notification)])
+      (if host (widget:invoke! host 'notification entries tail)
+        (present-legacy-log! entries tail))))
+  (define (present-legacy-log! entries tail)
     ;; Queue several existing records and repaint once, avoiding a full echo
     ;; geometry change and terminal redraw for every streamed line.
     (let loop ([left entries])

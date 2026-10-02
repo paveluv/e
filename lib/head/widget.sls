@@ -1,8 +1,8 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions adopt! arrange! cancel! capture! caret command-bindings commands context descendant detach! discard! event-frame focus! focus-next! focused
-          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-source frame-styles generation
+  (export act! actions adopt! arrange! cancel! capture! caret command-bindings command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
+          frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-row-links frame-source frame-styles generation
           host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers register! repaint! reveal! set-active! shown stage! status target unmount!)
   (import (except (chezscheme) inspect)
           (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
@@ -45,14 +45,14 @@
               (member (view:focus d) (list (cadr origin) (cadddr origin)))
               (or (not (cadr origin)) (member (cadr origin) (focusable frame))))
         (set-focus! root (cadr origin)))))
-  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable caret) (mutable activity)))
+  (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable links) (mutable caret) (mutable activity)))
 
   (edoc "An immutable prepared backend frame; only successful output makes it eligible for input."
         (id model "view id") (descriptor any "interaction basis") (definition any "definition identity")
         (source any "source basis") (inputs list "resolved input values and dependency bases") (data any "owned visible projection and hit basis") (rect list "absolute allocation within the root") (clip list "visible intersection")
         (children list "back-to-front child frames") (lines list "clipped backend output")
-        (cells vector "backend style cells") (caret any "root-relative caret point or #f"))
-  (define-record-type frame (fields id descriptor definition source inputs data rect clip children lines cells caret))
+        (cells vector "backend style cells") (links any "optional hyperlink cells") (caret any "root-relative caret point or #f"))
+  (define-record-type frame (fields id descriptor definition source inputs data rect clip children lines cells links caret))
   (define preparations (make-hashtable equal-hash equal?))
   (define services (make-hashtable equal-hash equal?))
   (define pending-scroll (make-hashtable equal-hash equal?))
@@ -113,10 +113,14 @@
       (unless (eq? was active)
         (for-each (lambda (id) (repaint! id)) (mount-ids (node-root (mounted id)))))))
 
-  (edoc "Read the active host's focused descendant, or false for an inactive host." (id model "mounted view") (returns any) (effects internal))
-  (define (focused id)
-    (let* ([root (mount-id (node-root (mounted id)))] [d (read-view root)])
-      (and (not (hashtable-ref inactive root #f)) d (view:focus d))))
+  (edoc "Read the active host's focused descendant, or false for an inactive host. Without an argument, use the successfully presented active root. Discovery reads acquired state and never performs I/O."
+        (id model "mounted view; omission uses the presented active root") (returns (or model #f)) (effects internal))
+  (define focused
+    (case-lambda
+      [() (exists (lambda (p) (focused (frame-id (car p)))) presentations)]
+      [(id)
+       (let* ([root (mount-id (node-root (mounted id)))] [d (read-view root)])
+         (and (not (hashtable-ref inactive root #f)) d (view:focus d)))]))
   (define frame-reads (make-parameter #f))
   (define (read-view id)
     ;; Measurement, layout and painting share one immutable descriptor per
@@ -179,10 +183,12 @@
                            (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
                                                   (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(snapshot prepare viewport service release render measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate caret busy? status) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
+    (when (and (assq 'render definition) (assq 'render-children definition))
+      (error 'register! "choose render or render-children, not both" kind))
     (for-each
       (lambda (action)
         (for-each (lambda (sig)
@@ -193,13 +199,13 @@
       (field (cons #f definition) 'actions '()))
     (kernel:registry-add! definitions (cons (list kind schema) (map (lambda (p) (cons (car p) (cdr p))) definition))))
 
-  (edoc "Capture explicit receivers from ancestry, declared child paths and an explicitly exposed model source. Rows are (id kind schema witness owner label): a view witness is its generation; a model witness retains its hosting view lease and optional namespace generation. Only local mirrors are read."
+  (edoc "Capture explicit receivers from ancestry, declared child paths and an explicitly exposed model source. Rows are (id kind schema witness owner label): a view witness retains its source; a model witness retains its hosting view, owner and optional namespace generation. Only local mirrors are read."
         (id model "focused view") (returns list) (effects internal))
   (define (receivers id)
     (define (row id label)
       (let ([d (read-view id)])
         (and d (definition d)
-          (list id (view:kind d) (view:schema d) (view:generation d) (view:owner d)
+          (list id (view:kind d) (view:schema d) (list 'view (view:source d)) (view:owner d)
             (or label (option d 'name #f) (symbol->string (view:kind d)))))))
     (define (source-row at d label)
       (and label
@@ -208,7 +214,7 @@
             (let* ([value (cdr (assq 'value source))]
                    [generation (and (list? value) (for-all pair? value) (assq 'generation value))])
               (list (cdr (assq 'id source)) (cdr (assq 'kind source)) (cdr (assq 'schema source))
-                (list 'source at (view:generation d) (view:owner d) generation) #f (symbol->string label)))))))
+                (list 'source at (view:owner d) generation) #f (symbol->string label)))))))
     (mounted id)
     (fold-left
       (lambda (out at)
@@ -218,23 +224,23 @@
           (fold-left (lambda (out r) (if (or (not r) (assoc (car r) out)) out (append out (list r))))
             out (append (list (row at #f) (source-row at d (field (definition d) 'source-receiver #f))) extra)))) '() (reverse (path id))))
 
-  (edoc "Whether a captured receiver still has its exact kind, schema, ownership generation and owner. No remote reads or implicit retargeting."
+  (edoc "Whether a captured receiver is still mounted with its captured kind, schema, source and owner. Ordinary ancestor rearrangement, such as opening a prompt, does not change command identity. Model sources also retain their namespace generation. No remote reads or implicit retargeting."
         (receiver list "row from receivers") (returns boolean) (effects internal))
   (define (receiver-live? receiver)
     (let* ([id (car receiver)] [witness (list-ref receiver 3)]
-           [at (if (pair? witness) (cadr witness) id)]
+           [at (if (eq? (car witness) 'source) (cadr witness) id)]
            [d (and (hashtable-contains? nodes at) (read-view at))])
       (and d (definition d)
-        (if (not (pair? witness))
-          (equal? (list (view:kind d) (view:schema d) (view:generation d) (view:owner d))
+        (if (eq? (car witness) 'view)
+          (equal? (list (view:kind d) (view:schema d) (list 'view (view:source d)) (view:owner d))
             (list-head (cdr receiver) 4))
           (and (field (definition d) 'source-receiver #f)
-            (equal? (list (view:generation d) (view:owner d)) (list-head (cddr witness) 2))
+            (equal? (view:owner d) (caddr witness))
             (let-values ([(available? source) (raw-source! (mounted at) d)])
               (and available? source (equal? id (cdr (assq 'id source)))
                 (equal? (list (cdr (assq 'kind source)) (cdr (assq 'schema source))) (list-head (cdr receiver) 2))
                 (let ([value (cdr (assq 'value source))])
-                  (equal? (list-ref witness 4)
+                  (equal? (list-ref witness 3)
                     (and (list? value) (for-all pair? value) (assq 'generation value)))))))) #t)))
 
   (define (source-id id d)
@@ -289,6 +295,12 @@
     (let ([d (read-view id)])
       (if (not d) '()
         (filter (lambda (c) (cdr (command-target c))) (descriptor:commands d)))))
+
+  (edoc "Find the nearest containing view that supplies a usable explicit command, starting at a mounted descendant. False means no host offers that command. Read acquired descriptors only; never invoke the target or acquire a source."
+        (id (or model #f) "starting descendant") (name symbol "command name") (returns (or model #f)) (effects internal) (inspect))
+  (define (command-owner id name)
+    (let ([d (and id (read-view id))])
+      (and d (if (assq name (commands id)) id (command-owner (view:parent d) name)))))
 
   (define (command-target c)
     (let* ([id (cadr c)] [n (hashtable-ref nodes id #f)] [d (and n (read-view id))]
@@ -530,7 +542,7 @@
           (let* ([id (car row)] [old (hashtable-ref nodes id #f)])
             (if (and old (eq? (node-root old) mount))
               (begin (node-mirrored-set! old #f) (node-key-set! old #f))
-              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f #f))))) tree)
+              (hashtable-set! nodes id (make-node id mount #f #f #f #f #f #f #f #f #f #f))))) tree)
       (mount-ids-set! mount ids) (mount-tree-set! mount tree)))
 
   (edoc "Attach a root tree to an opaque host slot. Repeating this attachment is idempotent; a second live host is refused."
@@ -762,35 +774,67 @@
                         (glyph:slice old (+ x (caddr area)) (- width x (caddr area))))))))
               (frame-lines child) (iota (length (frame-lines child)))))) children)
       (vector->list canvas)))
-  (define (style-cells clip rect decorations)
+  (define (rectangle-cells clip rect decorations)
     (let ([rows (list->vector (map (lambda (i) (make-vector (caddr clip) #f)) (iota (cadddr clip))))])
       (for-each (lambda (p)
-                  (unless (and (list? p) (= (length p) 2) (rectangle? (car p))
-                            (or (symbol? (cadr p)) (string? (cadr p))
-                              (and (pair? (cadr p)) (list? (cadr p)) (for-all (lambda (face) (or (symbol? face) (string? face))) (cadr p)))))
-                    (error 'prepare! "invalid decoration" p))
                   (let ([r (layout:intersect clip (layout:translate (car p) (car rect) (cadr rect)))])
                     (do ([y (cadr r) (+ y 1)]) ((= y (+ (cadr r) (cadddr r))))
                       (do ([x (car r) (+ x 1)]) ((= x (+ (car r) (caddr r))))
                         (vector-set! (vector-ref rows (- y (cadr clip))) (- x (car clip)) (cadr p)))))) decorations)
       rows))
-  (define (composite-styles clip cells children)
+  (define (style-cells clip rect decorations)
+    (for-each (lambda (p)
+                (unless (and (list? p) (= (length p) 2) (rectangle? (car p))
+                          (or (symbol? (cadr p)) (string? (cadr p))
+                            (and (pair? (cadr p)) (list? (cadr p))
+                              (for-all (lambda (face) (or (symbol? face) (string? face))) (cadr p)))))
+                  (error 'prepare! "invalid decoration" p))) decorations)
+    (rectangle-cells clip rect decorations))
+  (define (composite-cells clip cells children extract)
     ;; Prepared style rows are immutable. Full-width children can lend their
     ;; rows directly; only a partial overlay needs to copy the row it changes.
-    (let ([rows (if (null? children) cells (vector-copy cells))])
-      (for-each (lambda (child)
-                  (let* ([c (frame-clip child)] [x (- (car c) (car clip))] [y (- (cadr c) (cadr clip))]
-                         [count (length (frame-lines child))])
-                    (do ([row 0 (+ row 1)]) ((= row count))
-                      (let ([from (and (< row (vector-length (frame-cells child))) (vector-ref (frame-cells child) row))]
-                            [at (+ row y)])
-                        (if (and (zero? x) (= (caddr c) (caddr clip)))
-                          (vector-set! rows at (or from (make-vector (caddr clip) #f)))
-                          (let ([to (vector-copy (vector-ref rows at))])
-                            (do ([col 0 (+ col 1)]) ((= col (caddr c)))
-                              (vector-set! to (+ col x) (and from (vector-ref from col))))
-                            (vector-set! rows at to))))))) children)
-      rows))
+    (and (or cells (exists extract children))
+      (let ([rows (cond [(not cells) (style-cells clip clip '())] [(null? children) cells] [else (vector-copy cells)])])
+        (for-each (lambda (child)
+                    (let* ([c (frame-clip child)] [x (- (car c) (car clip))] [y (- (cadr c) (cadr clip))]
+                           [count (length (frame-lines child))])
+                      (do ([row 0 (+ row 1)]) ((= row count))
+                        (let* ([child-cells (extract child)]
+                               [from (and child-cells (< row (vector-length child-cells)) (vector-ref child-cells row))]
+                               [at (+ row y)])
+                          (if (and (zero? x) (= (caddr c) (caddr clip)))
+                            (vector-set! rows at (or from (make-vector (caddr clip) #f)))
+                            (let ([to (vector-copy (vector-ref rows at))])
+                              (do ([col 0 (+ col 1)]) ((= col (caddr c)))
+                                (vector-set! to (+ col x) (and from (vector-ref from col))))
+                              (vector-set! rows at to))))))) children)
+        rows)))
+
+  (define (link-cells clip rect links)
+    (unless (list? links) (error 'prepare! "expected hyperlink ranges" links))
+    (and (pair? links)
+      (rectangle-cells clip rect
+        (map (lambda (p)
+               (unless (and (list? p) (memv (length p) '(2 3)) (rectangle? (car p))
+                         (string? (cadr p)) (> (string-length (cadr p)) 0)
+                         (or (= (length p) 2) (not (caddr p)) (string? (caddr p))))
+                 (error 'prepare! "invalid hyperlink" p))
+               (list (car p) (cdr p))) links))))
+
+  (edoc "Read a clipped frame row's hyperlinks as (first-cell end-cell uri [id]) ranges. No links returns an empty list. Text, styles and destinations share the same composed geometry."
+        (frame any "prepared frame") (row integer "clipped display row") (returns list))
+  (define (frame-row-links frame row)
+    (let ([cells (frame-links frame)])
+      (if (not (and cells (<= 0 row) (< row (vector-length cells)))) '()
+        (let ([row (vector-ref cells row)])
+          (let loop ([i 0] [out '()])
+            (cond [(= i (vector-length row)) (reverse out)]
+              [(not (vector-ref row i)) (loop (+ i 1) out)]
+              [else
+               (let* ([value (vector-ref row i)]
+                      [end (let run ([j (+ i 1)])
+                             (if (and (< j (vector-length row)) (equal? value (vector-ref row j))) (run (+ j 1)) j))])
+                 (loop end (cons (cons* i end value) out)))]))))))
 
   (edoc "Read a prepared row's styles as source-character styles for the TUI window adapter."
         (frame any "widget frame") (row integer "row index") (line string "the already selected display row") (returns any))
@@ -823,7 +867,11 @@
         (define (placeholder text)
           (make-frame id d #f source (inputs! id) #f rect clip '()
             (if (or (zero? (caddr clip)) (zero? (cadddr clip))) '() (list (glyph:fit text (caddr clip))))
-            (style-cells clip rect (list (list (list 0 0 (caddr rect) (cadddr rect)) 'ghost))) #f))
+            (style-cells clip rect (list (list (list 0 0 (caddr rect) (cadddr rect)) 'ghost))) #f #f))
+        (define (clip-lines lines count)
+          (unless (and (list? lines) (for-all string? lines)) (error 'prepare! "expected display lines"))
+          (map (lambda (line) (glyph:slice line (- (car clip) (car rect)) (caddr clip)))
+            (list-head lines (min count (length lines)))))
         (guard (ex [else
                     (when (staging?) (raise ex))
                     (let ([basis (list entry source)])
@@ -831,7 +879,7 @@
                         (hashtable-set! failures id basis) (head:report! (kernel:condition-text ex))))
                     (placeholder (format "[Widget failed ~s]" id))])
           (cond
-            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) #f rect clip '() '() (make-vector 0) #f)]
+            [(or (zero? (caddr clip)) (zero? (cadddr clip))) (make-frame id d entry source (inputs! id) #f rect clip '() '() (make-vector 0) #f #f)]
             [(not (and entry available?)) (placeholder (format "[Unavailable widget ~s]" id))]
             [else
              (let* ([data (projection! n entry source)] [width (caddr rect)] [height (cadddr rect)]
@@ -849,23 +897,27 @@
                  (let* ([visible ((field entry 'viewport (lambda (data d width height range) data)) data d width height range)]
                         [lines (if render (render visible d width height range) '())])
                    (node-visible-set! n visible)
-                   (unless (and (list? lines) (for-all string? lines)) (error 'prepare! "expected display lines"))
-                   (node-lines-set! n
-                     (map (lambda (line) (glyph:slice line (- (car clip) (car rect)) (caddr clip)))
-                       (list-head lines (min (cdr range) (length lines)))))
+                   (node-lines-set! n (clip-lines lines (cdr range)))
                    (node-styles-set! n (style-cells clip rect
                                          ((field entry 'decorate (lambda args '())) (node-visible n) d width height range)))
+                   (node-links-set! n (link-cells clip rect
+                                        ((field entry 'links (lambda args '())) (node-visible n) d width height range)))
                    (node-caret-set! n ((field entry 'caret (lambda args #f)) (node-visible n) d width height))
                    (node-key-set! n key)))
                (let* ([children (map (lambda (p) (build-frame! (car p) (layout:translate (cadr p) (car rect) (cadr rect)) clip)) placements)]
-                      [lines (if (and (null? children) (option d 'pass-through #f)) (node-lines n) (composite clip (node-lines n) children))]
-                      [cells (composite-styles clip (node-styles n) children)]
+                      [container-render (field entry 'render-children #f)]
+                      [background (if container-render
+                                    (clip-lines (container-render (node-visible n) d width height range children) (cdr range))
+                                    (node-lines n))]
+                      [lines (if (and (null? children) (option d 'pass-through #f)) background (composite clip background children))]
+                      [cells (composite-cells clip (node-styles n) children frame-cells)]
+                      [links (composite-cells clip (node-links n) children frame-links)]
                       [busy? (field entry 'busy? #f)])
                  (unless busy? (node-activity-set! n #f))
                  (when (and busy? (not (node-activity n)))
                    (node-activity-set! n (spinner:make (lambda () (current-time 'time-monotonic)) head:request-frame-at!)))
                  (let-values ([(lines cells) (if busy? (spinner:render! (node-activity n) (busy? (node-visible n) d) rect clip lines cells) (values lines cells))])
-                   (make-frame id d entry source (inputs! id) (node-visible n) rect clip children lines cells
+                   (make-frame id d entry source (inputs! id) (node-visible n) rect clip children lines cells links
                      (let ([p (node-caret n)]) (and p (cons (+ (car rect) (car p)) (+ (cadr rect) (cdr p)))))))))])))))
 
   (edoc "Prepare a recursive frame for a root allocation. Geometry and borrowed source snapshots stay in the head; preparation does not make hits live."
@@ -979,12 +1031,18 @@
   (define (focus-frame root)
     (let ([f (if (event-frame) (shown-root root) (or (prepared root) (shown-root root)))]) (and f (or (modal f) f))))
 
-  (edoc "Focus a visible accepting descendant within the root's current modal scope. Hidden roots retain their remembered target."
-        (root model "root view") (id model "descendant view"))
-  (define (focus! root id)
-    (let ([frame (focus-frame root)])
-      (unless (and frame (read-view root) (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
-      (set-focus! root id)))
+  (edoc "Focus a visible accepting descendant of this subtree within its mounted root's current modal scope. A newly attached descendant requested programmatically prepares the current tree at its existing allocation first; pointer requests always use shown geometry."
+        (scope model "root or containing subtree") (id model "descendant view"))
+  (define (focus! scope id)
+    (unless (member scope (path id)) (error 'focus! "target is outside the requested subtree" scope id))
+    (let ([root (mount-id (node-root (mounted scope)))])
+      (let ([old (prepared root)])
+        (when (and old (not (event-frame)) (member root (path id))
+                (let ([target (find-frame old id)]) (not (and target (live-frame? target)))))
+          (let ([rect (frame-rect old)]) (prepare! root (caddr rect) (cadddr rect)))))
+      (let ([frame (focus-frame root)])
+        (unless (and frame (read-view root) (member id (focusable frame))) (error 'focus! "target is not focusable here" root id))
+        (set-focus! root id))))
   (define (set-focus! root id)
     (let* ([d (read-view root)] [old (and d (view:focus d))])
       (unless (equal? old id)
@@ -1044,11 +1102,18 @@
   (define (scope-path ids barrier)
     (if barrier (or (member barrier ids) '()) ids))
 
-  (edoc "Read the remembered focus's key routing without changing focus or consuming a pending chord. Includes capture, yield and modal boundaries; hosts can append their contexts."
-        (root model "mounted root") (key string "first key token, or empty for all contexts") (returns list "(basis scopes focused-view)") (effects internal))
-  (define (key-scopes root key)
-    (let* ([d (read-view root)] [focus (and d (view:focus d))] [scope (focus-frame root)]
-           [path (if focus (path focus) (if scope (path (frame-id scope)) (list root)))] [barrier (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope))]
+  (edoc "Read key routing without changing focus or consuming a pending chord. By default use the root's remembered focus and modal scope. An explicit focus inspects that acquired descendant's own ancestry, even while another control captures input."
+        (root model "mounted subject") (key string "first key token, or empty for all contexts")
+        (at (list-of (or model #f)) "optional captured focus") (returns list "(basis scopes focused-view)") (effects internal))
+  (define (key-scopes root key . at)
+    (unless (and (<= (length at) 1) (or (null? at) (not (car at)) (member root (path (car at)))))
+      (error 'key-scopes "focus is outside the acquired subject"))
+    (let* ([d (read-view root)] [focus (if (pair? at) (car at) (and d (view:focus d)))]
+           [scope (and (null? at) (focus-frame root))]
+           [path (if focus (path focus) (if scope (path (frame-id scope)) (list root)))]
+           [barrier (if (pair? at)
+                      (find (lambda (id) (option (read-view id) 'modal #f)) (reverse path))
+                      (and scope (option (frame-descriptor scope) 'modal #f) (frame-id scope)))]
            [normal (let loop ([rest (reverse path)] [out '()])
                      (if (null? rest) (reverse out)
                        (let* ([id (car rest)] [d (read-view id)] [entry (definition d)]
@@ -1168,7 +1233,8 @@
           (when hover-target (send! (frame-id hover-target) '(pointer leave none () 0 0) hover-target))
           (set! hover-target f)))
       (and root
-        (parameterize ([pointer-origin
+        (parameterize ([event-frame (and (eq? (car event) 'scroll) f)]
+                       [pointer-origin
                         (if captured capture-origin
                           (and (eq? (car event) 'pointer) (eq? (cadr event) 'press)
                             (let ([d (read-view (frame-id root))])

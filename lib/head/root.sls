@@ -2,7 +2,7 @@
 ;; TUI transaction remain the only input and presentation paths.
 (import (only (foundation edoc) elibrary))
 (elibrary (head root)
-  (export acquire! current init! install!)
+  (export acquire! current init! install! start!)
   (import (chezscheme)
           (prefix (core kernel) kernel:)
           (prefix (foundation datum) datum:)
@@ -39,6 +39,43 @@
         (returns (or list #f)) (public))
   (define (current) (datum:copy binding))
 
+  (define (recipe file)
+    (let ([result
+           (call-with-input-file file
+             (lambda (port)
+               (let loop ([result (void)])
+                 (let ([form (read port)])
+                   (if (eof-object? form) result
+                     (loop (kernel:evaluate! form (interaction-environment))))))))])
+      (unless (and (list? result) (= (length result) 2) (for-all pair? result)
+                (assq 'profile result) (assq 'entry result)
+                (string? (field result 'profile)) (> (string-length (field result 'profile)) 0)
+                (procedure? (field result 'entry)))
+        (error 'start! "startup script must return exactly profile and entry" file))
+      result))
+
+  (edoc "Evaluate a trusted startup script before interactive input begins. Its final expression must return ((profile . nonempty-string) (entry . procedure)). Entry receives head, profile, saved, requests and capabilities. Saved is false only for an uninitialized profile. An initialized root, including explicit emptiness, must be reused; intentional replacement uses install!. Return admission status and the binding; adoption happens at the next command boundary. Scripts own cleanup of partial construction and must not prompt."
+        (file string "selected script path; saved state never selects executable code")
+        (requests (list-of string) "admitted absolute file paths; delivery follows adoption")
+        (capabilities list "portable backend capability alist") (returns (values symbol datum)))
+  (define (start! file requests capabilities)
+    (require-main!)
+    (when (head:input-live?) (error 'start! "startup must precede interactive input; use install! to replace a live root"))
+    (unless (and (string? file) (list? requests)
+              (for-all (lambda (s) (and (string? s) (> (string-length s) 0) (char=? (string-ref s 0) #\/))) requests)
+              (list? capabilities) (for-all (lambda (p) (and (pair? p) (symbol? (car p)))) capabilities))
+      (error 'start! "expected a script, absolute file paths and backend capabilities"))
+    (let* ([requests (datum:copy requests)] [capabilities (datum:copy capabilities)]
+           [plan (recipe file)] [profile (string-copy (field plan 'profile))]
+           [saved (acquire! profile)] [initialized? (field (field saved 'value) 'initialized?)]
+           [candidate ((field plan 'entry)
+                       (list (cons 'head head:ui-actor) (cons 'profile profile)
+                         (cons 'saved (and initialized? (datum:copy saved)))
+                         (cons 'requests requests) (cons 'capabilities capabilities)))])
+      (when (and initialized? (not (equal? candidate (root-of saved))))
+        (error 'start! "entry must reuse the saved root; choose another profile or explicitly replace it"))
+      (install! saved candidate #f)))
+
   (define (finish!)
     (when (and binding (pair? (field (field binding 'value) 'cleanup)))
       (let-values ([(status r) (composition:finish! binding)])
@@ -61,9 +98,17 @@
       [(equal? event "MOUSE-HANDLED") (routing:cancel!)]
       [else
        (let ([key (if (char? event) (tty:character-event event) event)])
-         (routing:input! mounted
-           (if (equal? key "PASTE") (list 'text (head:read-paste) 'paste)
-             (list 'key key (let ([c (tty:key-event-character key)]) (and c (string c)))))))]))
+         (parameterize ([routing:feedback feedback!])
+           (routing:input! mounted
+             (if (equal? key "PASTE") (list 'text (head:read-paste) 'paste)
+               (list 'key key (let ([c (tty:key-event-character key)]) (and c (string c))))))))]))
+  (define (feedback! text)
+    (when (and mounted (assq 'message (widget:commands mounted)))
+      (widget:invoke! mounted 'message text "")))
+  (define (report! text)
+    (unless (and mounted (assq 'message (widget:commands mounted)))
+      (error 'report! "composition has no message target"))
+    (widget:invoke! mounted 'message text ""))
   (define click #f)
   (define (mouse! handle? phase bits x y)
     (when (and handle? (not pending?))
@@ -110,7 +155,7 @@
                     (when stage (widget:adopt! stage))
                     (set! mounted candidate)
                     (head:set-prepare-hook! void) (head:set-after-key! void)
-                    (head:set-idle-hook! (lambda (fence?) (void))) (head:set-report-handler! #f)
+                    (head:set-idle-hook! (lambda (fence?) (void))) (head:set-report-handler! (and candidate report!))
                     (set! pending? #f))
                   (finish!)
                   (redraw! #f))))

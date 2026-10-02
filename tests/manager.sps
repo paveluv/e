@@ -20,7 +20,7 @@
     (check 'window-definitions-do-not-allocate-state (model:ids) before))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)] [second (window:split! manager first 'right)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)] [second (window:split! manager first 'right)]
              [process '(app terminal 91234)]
              [document (store:create! process "composed terminal" '("output") (list (cons 'app process) '(read-only . #t)))]
              [ordinary (store:create! who "terminal fallback" '("text"))]
@@ -28,6 +28,9 @@
              [b (window:open-document! manager second document)])
         (view:claim! who manager)
         (window:open-document! manager first ordinary)
+        (window:set-display! manager first '((wrap . #t) (line-numbers . #t)))
+        (check 'window-preferences-do-not-reflow-terminal-owned-editors
+          (get (view:options (view:snapshot a-text)) 'wrap) #f)
         (let ([before (model:ids)])
           (check 'window-terminal-retains-capture-and-child-without-changing-document-identity
             (list (view:kind (view:snapshot a)) (window:document manager second)
@@ -52,15 +55,26 @@
             (list (make-list (length graph) #f) '() #f ordinary))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)] [second (window:split! manager first 'right)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)] [second (window:split! manager first 'right)]
              [a (store:create! who "origin a" '("a"))] [b (store:create! who "origin b" '("b"))]
              [editor (window:open-document! manager first a)]
              [x (view:create! who #f 'label 1 '((name . "<x>") (catalogue . #t)) '() first)]
              [y (view:create! who #f 'label 1 '((name . "<y>") (catalogue . #t)) '() first)]
              [z (view:create! who #f 'label 1 '((name . "<z>") (catalogue . #t)) '() second)])
         (define (origins window) (get (view:options (view:snapshot window)) 'origins))
+        (window:open-document! manager first b) (window:open-document! manager first a)
+        (view:set-state! who editor (store:revision a) '((0 . 1) (0 . 1) (0 . 0) #f))
         (window:open-document! manager second b)
         (view:claim! who manager) (window:select! manager first)
+        (let ([before (map model:snapshot (list second (car (children second))))]
+              [generation (view:generation (view:snapshot editor))])
+          (window:set-display! manager first '((wrap . #f) (line-numbers . #t) (scrollbar . left)))
+          (check 'window-display-policy-updates-retained-editors-without-touching-other-panes-or-leases
+            (list (map (lambda (p) (get (view:options (view:snapshot (cadr p))) 'wrap))
+                    (get (view:options (view:snapshot first)) 'presentations))
+              (view:generation (view:snapshot editor))
+              (map model:snapshot (list second (car (children second)))))
+            (list '(#f #f) generation before)))
         (let* ([events (test:recorder)]
                [token (model:subscribe! (list first)
                         (lambda (event) (events (list (window:document manager first) (origins first)))))])
@@ -78,6 +92,33 @@
         ;; Returning restores an existing placement even after catalogue opt-out;
         ;; it must not rewrite the restored app's own origin and create a loop.
         (view:arrange! who (list (list x (model:revision x) '() '((name . "<x>") (catalogue . #f)))) '())
+        (let* ([copy (window:split! manager first 'below)] [copy-y (window:document manager copy)]
+               [copy-x (window:return! manager copy copy-y)] [copy-editor (window:return! manager copy copy-x)])
+          (check 'split-copies-presentation-and-nested-return-chain-without-unrelated-history
+            (list (window:current manager) (window:document manager first) (window:document manager copy)
+              (length (window:documents manager copy)) (member b (window:documents manager copy))
+              (equal? copy-y y) (equal? copy-x x) (equal? copy-editor editor)
+              (view:state (view:snapshot copy-editor))
+              (map (lambda (key) (get (view:options (view:snapshot copy)) key)) '(wrap line-numbers scrollbar)))
+            (list first y a 3 #f #f #f #f (view:state (view:snapshot editor)) '(#f #t left)))
+          (let* ([c (store:create! who "display inheritance" '("c"))]
+                 [presentation (window:open-document! manager copy c)] [before (view:tree manager)])
+            (check 'new-document-inherits-window-wrap-and-invalid-preferences-refuse-without-change
+              (list (get (view:options (view:snapshot presentation)) 'wrap)
+                (map (lambda (preferences) (test:raises? (lambda () (window:set-display! manager copy preferences))))
+                  '(((wrap . cells)) ((wrap . #t) (wrap . #f)) ((width . 20))))
+                (view:tree manager)) (list #f '(#t #t #t) before)))
+          (window:close! manager copy))
+        (let ([fail? #t] [before (model:ids)] [windows (window:list manager)])
+          (view:register-copy! 'label 1
+            (lambda (options state mapped)
+              (when (and fail? (equal? (cdr (assq 'name options)) "<y>")) (error 'test "copy failed"))
+              (values options state)))
+          (check 'failed-split-cleans-already-copied-return-targets-and-preserves-original-pane
+            (list (test:raises? (lambda () (window:split! manager first 'left)))
+              (window:list manager) (model:ids) (window:document manager first))
+            (list #t windows before y))
+          (set! fail? #f))
         (check 'window-nested-return-preserves-origins-and-hidden-app-state
           (list (window:return! manager first y) (window:return! manager first x) (window:document manager first))
           (list x editor a))
@@ -103,7 +144,7 @@
             (list (window:return! manager second z) (view:tree manager) (model:ids)) (list #f tree ids))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
              [second (window:split! manager first 'right)]
              [borrowed (store:create! who "window borrowed" '("keep"))]
              [prototype (view:create! who borrowed 'label 1 '((name . "<owned app>") (catalogue . #t)) '())]
@@ -166,7 +207,7 @@
             (model:unsubscribe! token))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)] [second (window:split! manager first 'right)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)] [second (window:split! manager first 'right)]
              [screen (view:create! who #f 'vertical 1 '() '())] [prompt (view:create! who #f 'prompt 1 '() '())]
              [source (store:create! who "app source" '("borrowed"))] [text (store:create! who "app fallback" '("fallback"))]
              [template (view:create! who #f 'app-fixture 1 '((name . "<app>") (catalogue . #t)) '())]
@@ -266,7 +307,7 @@
               (list text (list text) editor '(#f #f #f) #f other-app "borrowed" "fallback")))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
              [second (window:split! manager first 'right)]
              [screen (view:create! who #f 'vertical 1 '() '())] [prompt (view:create! who #f 'prompt 1 '() '())]
              [a (store:create! who "placement a" '("abc"))] [b (store:create! who "placement b" '("def"))]
@@ -344,14 +385,14 @@
               (view:focus (view:snapshot screen)) (cadr (assq 'document (view:children (view:snapshot first))))))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
              [second (window:split! manager first 'right)]
              [screen (view:create! who #f 'vertical 1 '() '())] [prompt (view:create! who #f 'prompt 1 '() '())]
              [a (store:create! who "retiring a" '("a"))] [b (store:create! who "retiring b" '("b"))]
              [b-view (window:open-document! manager first b)]
              [a-view (window:open-document! manager first a)]
              [other-view (window:open-document! manager second a)]
-             [foreign (actor:call-as other window:create-manager!)]
+             [foreign (actor:call-as other (lambda () (window:create-manager! #f)))]
              [foreign-window (actor:call-as other (lambda () (window:current foreign)))]
              [foreign-view (actor:call-as other (lambda () (window:open-document! foreign foreign-window a)))])
         (view:set-state! who b-view (store:revision b) '((0 . 1) (0 . 0) (0 . 0) #f))
@@ -410,8 +451,8 @@
             (list '(internal . #t) '(backup "/archived" #f "checksum") (cons 'audience (list other))))))))
   (actor:call-as who
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)]
-             [foreign (actor:call-as other window:create-manager!)] [foreign-first (actor:call-as other (lambda () (window:current foreign)))])
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
+             [foreign (actor:call-as other (lambda () (window:create-manager! #f)))] [foreign-first (actor:call-as other (lambda () (window:current foreign)))])
         (let* ([r (model:snapshot manager)] [d (get r 'value)]
                [legacy (map (lambda (p)
                               (case (car p)

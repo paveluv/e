@@ -21,12 +21,15 @@
           (prefix (head dispatch) dispatch:)
           (prefix (head echo) echo:)
           (prefix (head head) head:)
+          (prefix (head interaction) interaction:)
           (prefix (head mode) mode:)
           (prefix (head paint) paint:)
           (prefix (head prompt) prompt:)
+          (prefix (head root) root:)
           (prefix (head seat) seat:)
           (prefix (head suspension) suspension:)
           (prefix (head tui) tui:)
+          (prefix (head widget) widget:)
           (prefix (service file) file:)
           (prefix (service log) log:)
           (prefix (state actor) actor:)
@@ -258,7 +261,7 @@
     (parameterize ([exit-handler (exit-handler)] [abort-handler (abort-handler)] [reset-handler (reset-handler)])
       (actor:call-as head:ui-actor run-head)))
 
-  (define (run-head)
+  (define (prepare-legacy!)
     (seat:initialize!)
     (head:set-report-handler! echo:set-text!)
     ;; The loader script is pure bootstrap; the extension modules are
@@ -286,7 +289,21 @@
         (when (and (not file) (not resumed?) startup-page)
           (guard (ex [else (void)]) (startup-page))
           ;; the greeting outlives the page's own load chatter
-          (echo:set-text! (startup-greeting)))))
+          (echo:set-text! (startup-greeting))))))
+
+  (define (deliver-file! path)
+    (if (not (startup:start-file)) (seat:open-file! path)
+      (let* ([binding (root:current)] [root (cdr (assq 'root (cdr (assq 'value binding))))])
+        (if (and root (assq 'open-file (widget:commands root)))
+          (widget:invoke! root 'open-file path)
+          (head:report! (format "This composition does not accept file requests: ~a" path))))))
+
+  (define (run-head)
+    (if (startup:start-file)
+      (begin
+        (kernel:load-module! "root")
+        (root:start! (startup:start-file) (if (startup:file) (list (startup:file)) '()) '((backend . tui))))
+      (prepare-legacy!))
     ;; A stray SIGINT outside an evaluation must not drop into Chez's break
     ;; prompt underneath the editor's screen.
     (keyboard-interrupt-handler void)
@@ -294,7 +311,7 @@
     ;; the process past the modified-buffers check: they run the
     ;; editor's quit and unwind the evaluation instead.
     (let ([safe-quit (lambda args
-                       (seat:quit-command!)
+                       (if (startup:start-file) (head:quit!) (seat:quit-command!))
                        (raise (head:make-interrupted)))])
       (exit-handler safe-quit)
       (abort-handler safe-quit)
@@ -302,8 +319,9 @@
     (dynamic-wind
       (lambda () (tui:enter!) (head:start-input-reader!))
       (lambda ()
+        (head:run-deferred!)
         (let ([file (startup:file)])
-          (when file (run-command! (lambda () (seat:open-file! file)))))
+          (when file (run-command! (lambda () (deliver-file! file)))))
         (let loop ()
           (unless (head:quitting?)
             (resume-commands!)
@@ -312,15 +330,15 @@
             ;; Queue the prepared state without waiting for the base. The
             ;; writer coalesces pending snapshots; lifecycle checkpoints
             ;; still wait. Wake frames queue at most once a second.
-            (seat:checkpoint! 'async)
+            (unless (startup:start-file) (seat:checkpoint! 'async))
             ;; A command that raises (a read-only buffer, a bug in an
             ;; extension module) reports itself instead of killing the
             ;; editor.
             (guard (ex [(client:ended? ex) (raise ex)]
                        [(kernel:read-only-error? ex)
-                        (echo:set-text! "Buffer is read-only")]
+                        (head:report! "Buffer is read-only")]
                        [(kernel:refusal? ex)
-                        (echo:set-text! (condition-message ex))]
+                        (head:report! (condition-message ex))]
                        [else (log:add! 'main:run-head (kernel:condition-text ex))])
               (let ([event (parameterize ([head:in-main-pump #t]) (head:read-key-event))])
                 (run-command! (lambda () (head:key! event)))))
@@ -333,9 +351,10 @@
         (dynamic-wind void
           head:run-shutdown-hooks!
           (lambda ()
-            (guard (ex [else (void)]) (seat:checkpoint!))
+            (guard (ex [else (void)])
+              (if (startup:start-file) (interaction:flush!) (seat:checkpoint!)))
             (tui:leave!)
-            (report-unsaved-work!))))))
+            (unless (startup:start-file) (report-unsaved-work!)))))))
 
   (define (report-unsaved-work!)
     ;; After the screen is given back, in bold red on a terminal: the

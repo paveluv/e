@@ -14,8 +14,10 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service file) file:)
+          (prefix (service window) window:)
           (prefix (state catalogue) catalogue:)
           (prefix (state collection) collection:)
           (prefix (state store) store:)
@@ -99,9 +101,7 @@
 
   (define (default!) (window-host:tool! "buffet" (lambda (commands) (create! #f commands))))
 
-  (edoc "Open the default Buffet in this window, with a clear filter and the previous document selected. The retained window host owns origin and MRU policy."
-        (returns model "Buffet view"))
-  (define (open!)
+  (define (open-legacy!)
     (let* ([was (seat:current-buffer-mirror)] [host (default!)]
            [previous (or (find (lambda (b) (and (not (eq? b was))
                                                 (not (equal? (seat:buffer-fact b 'tool-key #f) "*buffet*")))) (seat:buffers)) was)]
@@ -115,6 +115,26 @@
       (table:select! table (catalogue-host:reference previous))
       app))
 
+  (edoc "Open Buffet in this window, clearing its filter and selecting the previous retained document. Other panes share query preferences but keep independent selection and scrolling."
+        (receiver window (view window)) (window model "destination window; omission uses the legacy host")
+        (returns model "Buffet view"))
+  (define open!
+    (case-lambda
+      [() (open-legacy!)]
+      [(window)
+       (let* ([manager (window-control:manager window)]
+              [found (window:find-app manager window "buffet")]
+              [recent (window:documents manager window)]
+              [previous (find (lambda (ref) (not (and found (equal? ref (cadr found)))))
+                          (if (pair? recent) (cdr recent) '()))]
+              [fallback (window:document manager window)]
+              [app (window-control:open-app! window "buffet" create!)] )
+         (widget:pump!)
+         (let* ([table (child app 'table)] [entry (child (child table 'filter) 'entry)])
+           (entry:delete! entry 'all)
+           (widget:focus! app entry)
+           (table:select! table (or previous fallback))) app)]))
+
   (define (switch! direction)
     (let* ([host (default!)] [app (child host 'app)] [table (child app 'table)]
            [ref (catalogue:neighbor head:ui-actor (view:source (interaction:snapshot table)) (catalogue-host:reference (seat:current-buffer-mirror)) direction)]
@@ -124,11 +144,19 @@
           [(equal? (seat:buffer-fact b 'tool-key #f) "*buffet*") (open!)]
           [else (seat:show-buffer-mirror! b)]))))
 
-  (edoc "Switch to the next live document in Buffet's unfiltered compound order, wrapping at the end.")
-  (define (next!) (switch! 'next))
+  (define (switch-window! window direction)
+    (let* ([manager (window-control:manager window)] [found (window:find-app manager window "buffet")]
+           [query (and found (view:source (view:snapshot (cadr (assq 'table (view:children (view:snapshot (cadr found))))))))]
+           [ref (catalogue:neighbor head:ui-actor query (window:document manager window) direction)])
+      (when ref (window-control:open-document! window ref))))
 
-  (edoc "Switch to the previous live document in Buffet's unfiltered compound order, wrapping at the beginning.")
-  (define (previous!) (switch! 'previous))
+  (edoc "Switch this window to the next live document in Buffet's unfiltered compound order, wrapping at the end. Before Buffet exists, use the default name order without creating a table."
+        (receiver window (view window)) (window model "window; omission uses the legacy host"))
+  (define next! (case-lambda [() (switch! 'next)] [(window) (switch-window! window 'next)]))
+
+  (edoc "Switch this window to the previous live document in Buffet's unfiltered compound order, wrapping at the beginning. Before Buffet exists, use the default name order without creating a table."
+        (receiver window (view window)) (window model "window; omission uses the legacy host"))
+  (define previous! (case-lambda [() (switch! 'previous)] [(window) (switch-window! window 'previous)]))
 
   (define (ready-value cells name)
     (let ([p (assq name cells)]) (and p (eq? (cadr p) 'ready) (caddr p))))
@@ -188,4 +216,7 @@
     (keymap:bind-default! "C-x b" open!)
     (keymap:bind-default! "C-x C-b" open!)
     (keymap:bind-default! "M-S-UP" previous!)
-    (keymap:bind-default! "M-S-DOWN" next!)))
+    (keymap:bind-default! "M-S-DOWN" next!)
+    (for-each (lambda (key) (keymap:bind-default! 'composed-window key (keymap:call open! widget:target))) '("C-x b" "C-x C-b"))
+    (keymap:bind-default! 'composed-window "M-S-UP" (keymap:call previous! widget:target))
+    (keymap:bind-default! 'composed-window "M-S-DOWN" (keymap:call next! widget:target))))

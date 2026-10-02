@@ -11,6 +11,7 @@
             (vt:scrollback scrollback) (control:send! send!) (control:set-capture! set-capture!) (vt:shell shell))
           (rename (control:toggle-capture! toggle-capture!)))
   (import (chezscheme)
+          (prefix (core handle) handle:)
           (prefix (foundation edoc) edoc:)
           (prefix (head edit) edit:)
           (prefix (head head) head:)
@@ -19,9 +20,12 @@
           (prefix (head paint) paint:)
           (prefix (head seat) seat:)
           (prefix (head terminal-control) control:)
+          (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (service doc) doc:)
           (prefix (service file) file:)
           (prefix (service vt) vt:)
+          (prefix (service window) window:)
           (prefix (state store) store:))
 
   (edoc "Close the terminal of a buffer, the current one by default, ending its process."
@@ -38,9 +42,7 @@
   (define (terminal-color-scheme! scheme)
     (vt:color-scheme! scheme head:ui-actor))
 
-  (edoc "Open a terminal in a new buffer, running a command or the shell, in the current file's directory."
-        (command* (list-of string) "the command line to run, at most one; the shell by default"))
-  (define (terminal! . command*)
+  (define (launch-legacy! . command*)
     (let* ([prior (seat:current-buffer-mirror)] [path (seat:buffer-file prior)] [id #f] [buffer #f])
       (guard (ex [else
                   (when id
@@ -58,6 +60,26 @@
         (seat:show-buffer-mirror! buffer)
         (void))))
 
+  (edoc "Start a terminal in this window, running the shell or an explicit command in its file's directory. The base owns the process and document; another presentation shares them. Failed placement closes only the newly started process and document."
+        (receiver window (view window)) (window model "destination window")
+        (command (list-of string) "optional shell command") (returns buffer))
+  (define terminal!
+    (case-lambda
+      [() (launch-legacy!)]
+      [(window . command)
+       (if (not (handle:model? window)) (apply launch-legacy! window command)
+         (begin
+           (unless (and (<= (length command) 1) (for-all string? command)) (error 'terminal! "expected at most one command"))
+           (let* ([manager (window-control:manager window)] [document (window:document manager window)]
+                  [path (and (handle:buffer? document) (store:property document 'file #f))]
+                  [f (widget:prepared window)] [rect (and f (widget:frame-rect f))]
+                  [id (vt:open! head:ui-actor (and (pair? command) (car command))
+                        (if path (file:directory-part path) (current-directory))
+                        (if rect (max 1 (- (cadddr rect) 1)) 1) (if rect (max 1 (caddr rect)) 1)
+                        (head:host-color-scheme))])
+             (guard (ex [else (vt:close! id) (when (store:exists? id) (store:delete! head:ui-actor id)) (raise ex)])
+               (window:open-document! manager window id) id))))]))
+
   (edoc "Install the terminal app: its mode with the keys of its context, color scheme and clipboard capabilities, the C-c t binding and its describe entries." (public))
   (define (init!)
     (control:register! edit:copy-text!)
@@ -65,9 +87,10 @@
     (terminal-color-scheme! (head:host-color-scheme))
     (head:add-color-scheme-hook! terminal-color-scheme!)
     (keymap:bind-default! "C-c t" terminal!)
+    (keymap:bind-default! 'composed-window "C-c t" (keymap:call terminal! widget:target))
     (doc:register!
       '(((terminal:open!)
-         (("procedure" . "(terminal:open! [command])")) "void"
+         (("procedure" . "(terminal:open! window [command])")) "buffer"
          ("(apps terminal)") terminal "Terminal" #f
          "Open a new PTY-backed terminal buffer using the shell configured by `terminal:shell`, or interpret `command` with that shell when supplied. Partial capture is the default: C-x and M-x run e commands; other input reaches the child. C-] or the clickable status indicator toggles full capture for this window. Shift-PageUp/Down scroll in either mode.")
         ((terminal:close!)

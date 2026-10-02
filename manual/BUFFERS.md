@@ -401,7 +401,7 @@ A quoted batch value selects that batch. `(delta-log:show! n)`
 describes one retained entry in the echo area. Revision and batch arguments
 complete from the current document's log.
 
-`C-x l` opens `<delta-log>` in the pop-up; `(delta-log:open! (window n))`
+`C-x C-l` opens `<delta-log>` in the pop-up; `(delta-log:open! (window n))`
 chooses another window. The browser shows one document's retained history,
 newest first, above an independent read-only rewrite preview. `RET` or `SPC`
 toggles whether the selected revision is kept in the preview. The Preview

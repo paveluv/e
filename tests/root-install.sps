@@ -2,6 +2,7 @@
 (let ()
   (import (only (foundation edoc) elibrary)
           (prefix (head root) root:) (prefix (head routing) routing:)
+          (prefix (head message) message:) (prefix (head layout) layout:)
           (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
           (prefix (core operation) operation:) (prefix (service policy) policy:)
           (prefix (state actor) actor:) (prefix (state connection) connection:))
@@ -23,6 +24,17 @@
       (define released '())
       (define mode #f)
       (define pressed 0)
+      (define script (format "/tmp/e-root-start-~a.e" (get-process-id)))
+      (define startup-context (kernel:persistent-cell 'root-start-context (lambda () #f)))
+      (define (write-script form)
+        (call-with-output-file script (lambda (port) (write form port)) 'replace))
+      (define (startup id)
+        (write-script
+          `(list (cons 'profile "root-test")
+             (cons 'entry (lambda (context)
+                            (set-box! (kernel:persistent-cell 'root-start-context (lambda () #f)) context)
+                            ',id))))
+        (call-with-values (lambda () (root:start! script '("/tmp/startup file") '((backend . tui)))) list))
       (define (make-view name)
         (view:create! head:ui-actor #f 'root-test 1 (list (cons 'name name)) 0))
       (define (install id disposition)
@@ -42,12 +54,18 @@
                          (when (eq? (car event) 'key) (set! pressed (+ 1 pressed))) #t))
           (cons 'release (lambda (id) (set! released (cons id released))))))
       (parameterize ([sys:terminal-output-port output] [tui:input-delay 0])
-        (let* ([initial (root:acquire! "root-test")]
-               [old (make-view "old")] [candidate (make-view "next")])
+        (write-script '(list (cons 'profile "bad") (cons 'entry #f)))
+        (test:check 'malformed-startup-recipe-refuses-before-acquiring-a-profile
+          (list (test:raises? (lambda () (root:start! script '() '()))) (root:current)) '(#t #f))
+        (let* ([old (make-view "old")] [candidate (make-view "next")])
           (set! mode 'normalize)
-          (let ([reply (install old #f)])
+          (let ([reply (startup old)])
             (test:check 'root-preparation-does-not-publish-private-normalization
               (list (car reply) (view:state (view:snapshot old)) (widget:shown)) '(applied 0 ())))
+          (test:check 'startup-entry-receives-explicit-context-with-uninitialized-saved-state
+            (unbox startup-context)
+            (list (cons 'head head:ui-actor) '(profile . "root-test") '(saved . #f)
+              '(requests "/tmp/startup file") '(capabilities (backend . tui))))
           (set! mode #f)
           (head:run-deferred!)
           (test:check 'root-installs-without-editor-buffers
@@ -95,8 +113,30 @@
             (install #f retainer) (head:run-deferred!)
             (test:check 'root-empty-retains-only-explicitly-owned-graph
               (list (widget:shown) (view:owner (view:snapshot candidate)) (get (get (root:current) 'value) 'root)) '( () #f #f))
+            (let ([saved (root:current)])
+              (test:check 'startup-cannot-replace-an-initialized-empty-profile
+                (list (test:raises? (lambda () (startup candidate))) (root:current)) (list #t saved))
+              (startup #f) (head:run-deferred!)
+              (test:check 'startup-reuses-initialized-emptiness-without-treating-it-as-uninitialized
+                (list (get (unbox startup-context) 'saved) (widget:shown)) (list saved '())))
             (model:retire! head:ui-actor retainer (model:revision retainer))
             (view:retire! head:ui-actor candidate (model:revision candidate)))
+          (message:init!)
+          (widget:register! 'message-root 1
+            (append (layout:container 'y) '((contexts root-message-fixture))))
+          (keymap:bind-default! 'root-message-fixture "F12 F12" void)
+          (let* ([screen (view:create! head:ui-actor #f 'message-root 1 '() '())]
+                 [messages (message:create! screen)])
+            (view:arrange! head:ui-actor
+              (list (list screen 0 (list (list 'messages messages 'fit))
+                      (list (list 'commands (list 'message messages 'show '()))))) '())
+            (install screen #f) (head:run-deferred!)
+            (let ([before (model:snapshot messages)])
+              (head:key! "F12") (head:redraw!)
+              (test:check 'root-chord-feedback-uses-its-explicit-message-without-model-publication
+                (list (substring (car (widget:frame-lines (widget:prepared messages))) 0 4) (model:snapshot messages))
+                (list "F12-" before)))
+            (install #f 'retire) (head:run-deferred!))
           ;; Unavailable extension definitions retain an inert placeholder, not
           ;; an accidental default editor or a failed replacement.
           (let ([unknown (view:create! head:ui-actor #f 'missing-root-definition 1 '() '())])
@@ -104,6 +144,7 @@
             (test:check 'root-missing-definition-is-an-inert-placeholder
               (list (widget:frame-id (caar (widget:shown))) (widget:caret (caar (widget:shown)))) (list unknown #f))
             (install #f 'retire) (head:run-deferred!))))
+      (delete-file script)
       (head:set-frame-hook! void)
       (head:set-key-handler! (lambda (event) (void)))
       (void)))

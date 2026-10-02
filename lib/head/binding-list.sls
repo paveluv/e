@@ -126,10 +126,12 @@
         (substring text 0 (- (string-length text) 1))
         tail
         ")")))
+  (define inspected-focus (make-parameter '()))
+  (define (scopes root key) (apply widget:key-scopes root key (inspected-focus)))
   (define (contexts root outer key)
     (if (not root)
       outer
-      (let loop ([scopes (cadr (widget:key-scopes root key))]
+      (let loop ([scopes (cadr (scopes root key))]
                  [out '()])
         (if (null? scopes)
             (append out outer)
@@ -149,7 +151,7 @@
     (let ([scope (find
                    (lambda (scope) (memq context (cadr scope)))
                    (cadr
-                     (widget:key-scopes
+                     (scopes
                        root
                        (car (keymap:binding-sequence binding)))))])
       (trace
@@ -168,24 +170,27 @@
     (outer list "outer key contexts")
     (read-only? boolean "legacy text edit policy")
     (pointer list "already resolved pointer actions")
+    (at (list-of (or model #f)) "optional captured focus")
     (returns list) (effects internal))
-  (define (basis root outer read-only? pointer)
+  (define (basis root outer read-only? pointer . at)
     (list root outer read-only? (+ (keymap:generation) (widget:generation))
       (and root
-        (let ([scopes (widget:key-scopes root "")])
+        (let ([scopes (apply widget:key-scopes root "" at)])
           (list (cadr scopes) (cadar scopes))))
       (map (lambda (p) (list (car p) (action-basis (cadr p))))
         pointer)
-      (and root (widget:inspect root 256))))
+      (and root (widget:inspect root 256)) at))
   (define keyboard-cache (make-hashtable equal-hash equal?))
 
   (edoc "Whether the selected input route needs another key for this chord. Reads keymaps without changing dispatch's pending chord."
-        (root (or model #f) "inspected root") (outer list "outer contexts") (sequence (list-of string) "nonempty normalized key sequence") (returns boolean) (effects internal))
-  (define (key-prefix? root outer sequence)
-    (let loop ([path (contexts root outer (car sequence))])
-      (and (pair? path)
-        (let ([prefix? (keymap:binding-prefix? (car path) sequence)])
-          (if (or prefix? (keymap:resolved-binding (car path) sequence)) (and prefix? #t) (loop (cdr path)))))))
+        (root (or model #f) "inspected root") (outer list "outer contexts") (sequence (list-of string) "nonempty normalized key sequence")
+        (at (list-of (or model #f)) "optional captured focus") (returns boolean) (effects internal))
+  (define (key-prefix? root outer sequence . at)
+    (parameterize ([inspected-focus at])
+      (let loop ([path (contexts root outer (car sequence))])
+        (and (pair? path)
+          (let ([prefix? (keymap:binding-prefix? (car path) sequence)])
+            (if (or prefix? (keymap:resolved-binding (car path) sequence)) (and prefix? #t) (loop (cdr path))))))))
   (define (origin owned)
     (let ([owner (car owned)] [kind (keymap:binding-kind (cdr owned))])
       (cond [(eq? owner 'config) "config.e (user override)"]
@@ -199,6 +204,8 @@
     (sequence (list-of list) "optional single key sequence to inspect")
     (returns list) (effects internal))
   (define (capture basis pointer . sequence)
+    (parameterize ([inspected-focus (list-ref basis 7)]) (apply capture-rows basis pointer sequence)))
+  (define (capture-rows basis pointer . sequence)
     (unless (and (<= (length sequence) 1) (or (null? sequence) (and (pair? (car sequence)) (for-all string? (car sequence)))))
       (error 'capture "expected at most one nonempty key sequence"))
     (call/cc (lambda (done)

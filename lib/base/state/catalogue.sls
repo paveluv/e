@@ -79,8 +79,8 @@
         (connection:bind! actor query (list (list query 'filter #f (list filter 'text))))
         (list query filter))))
 
-  (edoc "The next or previous live catalogue key in a query's unfiltered sort order, wrapping at the ends. Uses the provider's cached index; archives never participate."
-        (actor actor "owner/head") (query row-source "catalogue query") (key datum "current row key")
+  (edoc "The next or previous live catalogue key in a query's unfiltered sort order, wrapping at the ends. False uses the default name order without allocating a query. Uses the provider's cached index; archives never participate."
+        (actor actor "owner/head") (query (or row-source #f) "catalogue query or default order") (key datum "current row key")
         (direction (one-of next previous) "ring direction") (returns any) (effects internal))
   (define (neighbor actor query key direction)
     (unless (memq direction '(next previous)) (error 'neighbor "invalid direction" direction))
@@ -92,12 +92,12 @@
             (lambda ()
               (let ([result
                      (guard (ex [else (cons 'error ex)])
-                       (let* ([q (collection:summary query)] [v (and q (get q 'value '()))]
-                              [source (and v (model:snapshot (get v 'source #f)))])
-                         (unless (and source (eq? (get source 'kind #f) 'buffer-catalogue)
-                                   (equal? actor (get (get source 'value '()) 'owner #f)))
+                       (let* ([q (and query (collection:summary query))] [v (if q (get q 'value '()) '())]
+                              [source (and q (model:snapshot (get v 'source #f)))])
+                         (unless (or (not query) (and source (eq? (get source 'kind #f) 'buffer-catalogue)
+                                                   (equal? actor (get (get source 'value '()) 'owner #f))))
                            (error 'neighbor "unavailable catalogue query" query))
-                         (let* ([rows (car (ordered source (get v 'sort '()) (lambda () #f)))]
+                         (let* ([rows (car (ordered actor (get v 'sort '()) (lambda () #f)))]
                                 [ring (or (hashtable-ref rings rows #f)
                                         (let ([keys (list->vector (map car rows))] [positions (make-hashtable equal-hash equal?)])
                                           (vector-for-each (lambda (i k) (hashtable-set! positions k i)) (list->vector (iota (vector-length keys))) keys)
@@ -136,9 +136,8 @@
               (get options 'audience 'all)))))))
   (define (cell r name) (assq name (cadr r)))
   (define (order-key r) (format "~s" (car r)))
-  (define (ordered source sort cancelled?)
-    (let* ([v (get source 'value '())] [actor (get v 'owner #f)] [home (get v 'home "")]
-           [key (list actor home sort)] [cached (hashtable-ref orders key #f)])
+  (define (ordered actor sort cancelled?)
+    (let* ([key (list actor sort)] [cached (hashtable-ref orders key #f)])
       (or cached
         (let ([rows (append
                       (filter values (map (lambda (m)
@@ -169,7 +168,7 @@
   (define (prepare source query cancelled?)
     (let* ([home (get (get source 'value '()) 'home "")]
            [needle (get query 'filter "")] [match (string:searcher needle #t)]
-           [parts (ordered source (get query 'sort '()) cancelled?)])
+           [parts (ordered (get (get source 'value '()) 'owner #f) (get query 'sort '()) cancelled?)])
       (define (matches? r)
         (when (cancelled?) (error 'catalogue "cancelled"))
         (or (string=? needle "")
@@ -220,7 +219,7 @@
                         (let ([ids (and (not reset-views?) (vector->list (hashtable-keys pending-views)))])
                           (set! reset-views? #f) (hashtable-clear! pending-views)
                           (values dirty? ids job))))])
-        (let* ([source-ids (sources)] [sources? (pair? source-ids)] [events (take-events)] [ids (and events (map car events))]
+        (let* ([source-ids (sources)] [sources? (or (pair? source-ids) (and job #t))] [events (take-events)] [ids (and events (map car events))]
                [packet (and sources? (or initial? (not events) (pair? ids)) (if (or initial? (not events)) (store:metadata) (store:metadata ids)))]
                [updated? initial?])
           (unless sources? (hashtable-clear! inventory) (hashtable-clear! orders) (hashtable-clear! rings) (hashtable-clear! view-rows))

@@ -15,7 +15,6 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head layout) layout:)
-          (prefix (head seat) seat:)
           (prefix (head suspension) suspension:)
           (prefix (head table) table:)
           (prefix (head text-control) text-control:)
@@ -29,14 +28,15 @@
 
   (define (get r key) (cdr (assq key r)))
 
+  (define (current-focus)
+    (or (widget:focused) (widget:target)))
+
   (edoc "Whether the focused widget path contains a prompt, without reading remote state."
         (returns boolean))
   (define (active?)
-    (let ([root (seat:window-widget (seat:current-window))])
-      (and root
-        (let loop ([id (widget:focused root)])
-          (let ([d (and id (interaction:snapshot id))])
-            (and d (or (eq? (view:kind d) 'prompt) (and (view:parent d) (loop (view:parent d))))))))))
+    (let loop ([id (current-focus)])
+      (let ([d (and id (interaction:snapshot id))])
+        (and d (or (eq? (view:kind d) 'prompt) (and (view:parent d) (loop (view:parent d))))))))
   (define live (make-hashtable equal-hash equal?))
   (define hovered (make-hashtable equal-hash equal?))
   (define hosts (kernel:make-registry))
@@ -519,12 +519,15 @@
     (let ([entry (hashtable-ref tickets id #f)])
       (when entry (suspension:cancel! (cdr entry)))))
 
-  (edoc "Read authored text through the installed host on the ordinary pump. This linear adapter parks its command, returning text or false after cancellation. Embedded applications bind named targets directly instead."
+  (edoc "Read authored text through the nearest explicit prompt command on the focused widget's ancestry, or the installed outer host. This linear adapter parks its command on the ordinary pump, returning text or false after cancellation. Embedded applications bind named targets directly instead."
         (label string "input label") (initial string "initial authored text")
         (provider datum "completion recipe or false") (options list "prompt control options except label")
         (returns (or string #f)) (prompts))
   (define (read! label initial provider options)
-    (let ([prepare (kernel:registry-find hosts (lambda (entry) #t))])
+    (let ([prepare
+           (or (let ([id (widget:command-owner (current-focus) 'prompt)])
+                 (and id (lambda () (widget:invoke! id 'prompt))))
+             (kernel:registry-find hosts (lambda (entry) #t)))])
       (unless prepare (error 'read! "no prompt host is installed"))
       (let-values ([(parent origin attach) (prepare)])
         (suspension:wait!
@@ -609,9 +612,9 @@
         (returns (or char #f)) (prompts))
   (define (key! question allowed)
     (unless (and (string? allowed) (> (string-length allowed) 0)) (error 'key! "expected allowed characters"))
-    (and (head:input-live?)
-      (let ([answer (read! question "" #f (list (cons 'choices allowed)))])
-        (and answer (> (string-length answer) 0) (string-ref answer 0)))))
+    (unless (head:input-live?) (error 'key! "interactive input has not started"))
+    (let ([answer (read! question "" #f (list (cons 'choices allowed)))])
+      (and answer (> (string-length answer) 0) (string-ref answer 0))))
 
   (edoc "Install prompt composition, request lifetime service and inspectable accept/cancel bindings." (public))
   (define (init!)

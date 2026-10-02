@@ -274,6 +274,12 @@ keyboard bindings, full forwarding chains, widget commands, containment,
 sources, ports and connections. Its ordinary scroll viewport retains logical
 row anchors through reflow. `bindings:page!` pages up or down; pointer selection
 and `bindings:copy!` use stable row/field/character anchors at the shown basis.
+In the composed screen, `(bindings:show! screen)` uses its declared auxiliary
+host and keeps the source focused. `(bindings:open! window root)` explicitly
+chooses a destination and a composition to follow. Key inspection captures the
+source focus route before its reader takes input; inspecting a key never runs
+it. Hiding the auxiliary pane retains the listing but releases its source demand.
+
 Selection belongs to each listing view. `bindings:show!` and `bindings:open!`
 provide the default window placement and active-window following.
 
@@ -700,6 +706,15 @@ is the source envelope. A renderer receives
 rows and cell widths without splitting grapheme clusters. These callbacks
 must be bounded and free of remote requests or domain mutations.
 
+A container can supply `render-children` instead of `render`. It receives
+the same five arguments followed by this preparation's child frames, after
+they have been laid out and rendered. Its lines form the background beneath
+the children. Use this for surrounding controls that must agree with the
+current child projection, such as a window's line-number gutter. It runs
+once per preparation, so keep its work bounded by the visible allocation;
+do not acquire sources, publish state or retain frames. A definition cannot
+supply both renderers.
+
 For sources with separately published presentation data, optional `snapshot`
 receives `(id latest-source)` and returns an already acquired coherent source
 envelope, or false while none is ready. It retains the source identity and
@@ -734,6 +749,12 @@ Later rectangles replace earlier ones where they overlap. `caret` receives
 The host clips and composes both with the text. Only the active root's focused
 descendant supplies the displayed caret. These are head presentation callbacks;
 cell coordinates never enter a base model or view state.
+
+`links` receives the same arguments as `render` and returns
+`((rectangle uri [id]) ...)`. The optional string ID groups terminal links;
+the URI is a string. Links follow the same clipping and child composition as
+text and styles. A covering child without links hides the links underneath it.
+Ordinary editors preserve explicit surface links and detect HTTP(S) URLs.
 
 ## Composition bindings
 
@@ -779,6 +800,14 @@ snapshots acquire an empty cleanup list during recovery.
 These are base admission operations. They do not mount, render or dispose of
 head resources, and the ordinary launcher still uses the existing window host.
 
+The shipped `start.e` recipe assembles an editor screen with a window manager,
+a modal prompt host and a message view using ordinary constructors. It is
+available with `--start start.e` while the launcher migration is in
+progress. Its `"editor"` profile reuses an initialized root. File requests enter
+through the screen's `open-file` command; a directory opens that window's Finder.
+The manager and ancillary views share the screen's lifetime; shared text survives
+their retirement. Alternative compositions need none of these definitions.
+
 ## Logical window managers
 
 The `window:` service owns persistent logical window state on the base. A
@@ -791,7 +820,7 @@ composition therefore preserves its command context. Recovery migrates the
 earlier manager schema that used scope for both purposes.
 
 ```scheme
-(define manager (window:create-manager!))
+(define manager (window:create-manager! #f)) ; or the containing view's lifetime
 (define first (window:current manager))
 (define second (window:split! manager first 'right))
 (window:select! manager second)
@@ -913,6 +942,12 @@ resources. Logical split weights determine the allocated rectangles. An empty
 window accepts focus; a populated window adds no extra Tab stop before its
 controls. Selecting an app enters its first focusable descendant.
 
+Splitting copies the active presentation and its saved app-return chain into
+the new window. Carets and app state become independent; source documents,
+queries and terminal processes remain shared. Escape can walk the copied
+return chain back to its document. Unrelated hidden history is not copied.
+A failed copy removes the new pane and any partially prepared presentations.
+
 Terminal buffers retain a terminal capture parent and its read-only editor
 child, rather than losing process input handling when reopened. Each window
 keeps its own capture, selection and scrollback state over the same process.
@@ -933,9 +968,36 @@ The head converts pointer geometry
 to two positive proportions, applies them immediately, and coalesces publication
 with other interaction state. No terminal dimensions enter the saved model and
 no synchronous request is made per movement. Closing or replacing a split's
-children cancels an in-progress drag. `window-control:resize!` accepts the split,
+children cancels an in-progress drag. `split-control:resize!` accepts the split,
 its two expected child references, and proportions for the same immediate
 mounted interaction; `window:resize!` performs a guarded base operation.
+
+`(window:set-display! manager window preferences)` updates a window's display
+policy. The preference alist accepts `wrap` and `line-numbers` as `#t`, `#f`
+or `default`; `scrollbar` also accepts `left`, `right` and `auto`. Wrap changes
+update all retained ordinary editors together, including hidden documents,
+and new visits inherit the policy. Terminal and app-owned editors keep their
+own policy. Splits copy the preferences. The base stores no cell dimensions
+and changing preferences does not change focus or input ownership.
+
+The TUI window adapter places line numbers and position bars outside ordinary
+editor content. Wrapped continuation rows leave their number blank. The
+head defaults are `(window-control:line-numbers #f)` and
+`(window-control:scrollbar #f)`; the latter also accepts `left`, `right`, `#t`
+and `auto`. `auto` shows a bar when source lines exceed the body height.
+`C-x l` toggles line numbers and `C-x t` toggles wrapping through
+`window-control:toggle-display!`. The bar reflects source-line position.
+Wheel input on surrounding controls or a non-scrolling app header reaches
+the active presentation's scroll target without moving selection or focus;
+an exhausted inner scroller does not start scrolling another control.
+
+Composed windows expose `window-control:navigate!` with `next`, `previous`,
+`up`, `down`, `left` or `right`. Directional navigation casts from the visible
+caret, or the window center when there is no caret, so asymmetric splits pick
+the pane along that row or column. It stays put at an outer edge. `C-x o`
+cycles windows; `M-` with an arrow moves directionally. `C-x 0` closes a window
+and `C-x 1` keeps only that window. These bindings are ordinary window contexts
+and resolve to the same explicit APIs shown in Bindings.
 
 An app constructor can receive `(window-control:commands destination)` as its
 explicit `open` and `return` bindings. These target actions on the window itself,
@@ -956,11 +1018,25 @@ preferring the destination; there is no separate app registry.
 `window-control:open-document!` takes a window and a catalogue document.
 Keyboard and scripted calls open in that window. A pointer action in an
 inactive panel opens in the previously focused window of the same manager,
-preserving the panel. Prepared apps must belong to the chosen destination;
-the operation does not implicitly copy or move them. `window-control:return!`
+preserving the panel. An app belonging to another window gets an independent
+presentation with explicit window commands rebound; an existing named
+presentation in the destination is reused. The base `window:open-document!`
+still admits only a presentation already scoped to that window. `window-control:return!`
 takes the panel's window and returns its active app to its saved origin.
 Target selection reads acquired head state, then calls the registered base
 operation after fencing provisional interaction.
+
+An optional preference alist supplies `point` as `(row . character)` and a
+registered `presentation` name. Markdown registers its builder and source
+locator with `window-control:register-presentation!`; the locator also runs
+when an existing presentation is reused. Unknown presentations refuse before
+changing the window. `ESC` returns hosted apps to their saved document origin.
+
+The composed app openers accept an explicit window: `buffet:open!`,
+`finder:open!`, `markdown:view!`, `terminal:open!`, `git-view:log!`,
+`log-view:show!`, `delta-log:open!` and `delta-log:conflicts!`. Their contextual
+bindings supply that window automatically. `C-x C-l` opens rewrite review;
+`C-x l` toggles line numbers.
 
 Mounted compositions follow base-owned child and source changes through their
 existing subscriptions. The head coalesces structural changes, acquires the
@@ -1300,7 +1376,9 @@ expose finite child paths with a definition field such as
 `(receivers (table table))`: the first symbol labels the receiver, and the
 remaining symbols name its child path. Unlisted siblings and private children
 are not searched. `widget:receivers` reads this structure from local mirrors;
-`widget:receiver-live?` checks a captured identity and ownership generation.
+`widget:receiver-live?` checks mounted identity, kind, source and owner.
+Rearranging an ancestor to open a prompt does not invalidate command identity;
+replacing the source or unmounting the target does.
 Custom prompt hosts pass these rows in the origin's `receivers` field.
 
 `routing:input!` accepts a root and normalized `(key token text-fallback)`
@@ -1633,6 +1711,71 @@ idempotent `release` procedure as the fourth/fifth arguments to
 `completion:make-source`. A changed basis refreshes visible choices and fences
 old selections even when the draft has not changed. Cleanup releases shared
 catalogue demand; painting reads only prepared completion data.
+
+## Modal prompt hosts
+
+Linear prompt callers can use a composed modal host. Load `modal`, create it
+with `(modal:create! owner contexts)`, and attach it as an ordinary child.
+Bind an ancestor's `prompt` command to `(prompt host prepare ())`, where `host`
+is that model reference. `prompt:read!` discovers the nearest such binding
+without querying window state. `contexts` explicitly lists the keymaps allowed
+inside the modal boundary; no editor bindings are implicit.
+
+An empty host takes no space. Only its top prompt is visible. Nested requests
+capture their parent and receiver context before attachment, and completion
+restores surviving origin focus. Removing the host cancels its suspended
+callers and releases their request trees. All input uses the ordinary root
+and recursive routing, with no second reader or temporary input root.
+
+## Notification views
+
+Load `message` and create `(message:create! owner)` to add an optional
+notification area. It projects journal entries presented to this head; the
+base journal remains the durable history. Bind the root's `message` command
+to `(message messages show ())`, where `messages` is the view reference, to
+also display key-chord feedback and runtime diagnostics there. A root without
+that binding has no implicit message area.
+
+`(message:show! messages text ghost)` displays transient feedback without
+logging or publishing view state. The ghost tail is italic. New input clears
+the previous feedback, progress entries replace their preceding line, and
+wrapping preserves Unicode graphemes. The bounded projection keeps the latest
+eight display rows; remounting does not replay old notifications.
+
+Bind `notification` to `(notification messages present ())` for existing
+journal records, including M-x results. `message:present!` preserves their
+component styles and adds the supplied italic ghost after the last record;
+it does not log them again. Pending streamed output is presented before its
+result. M-x captures the focused widget's receiver and refuses execution if
+that origin disappears while the prompt is open. Results follow command
+output instead of replacing it.
+
+## Startup recipes
+
+Before interactive input begins, `root:start!` accepts a trusted script path,
+a list of admitted absolute file paths and a backend capability alist. It
+evaluates the script's forms in the head interaction environment. The final
+expression must produce exactly:
+
+```scheme
+(list (cons 'profile "blank")
+      (cons 'entry (lambda (context) #f)))
+```
+
+The entry receives `head`, `profile`, `saved`, `requests` and `capabilities`.
+`saved` is `#f` only for an uninitialized profile; otherwise it is the acquired
+binding snapshot, even when its root is empty. Return that saved root to
+resume it. A different root is refused; intentional replacement uses
+`root:install!`. Saved state never selects executable code.
+
+Entry runs before input and must not prompt. Its constructors are responsible
+for cleaning up partial construction if they raise. Successful admission is
+adopted at the next command boundary, using the same root installation path
+as live replacement. Deliver launch requests only after adoption and input
+startup, through the composition's explicit commands.
+
+This API is available for composition startup; the ordinary launcher is still
+being migrated from its existing editor host.
 
 ## Prompt completion presentations
 

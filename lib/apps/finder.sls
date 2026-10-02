@@ -3,10 +3,10 @@
 (elibrary (apps finder)
   (export choose! complete! create! enter! init! navigate! open! open-directory! parent! show-hidden toggle-hidden!)
   (import (chezscheme)
+          (prefix (core handle) handle:)
           (prefix (core kernel) kernel:)
           (prefix (foundation path-filter) path-filter:)
           (prefix (foundation string) string:)
-          (prefix (head catalogue-host) catalogue-host:)
           (prefix (head edit) edit:)
           (prefix (head entry) entry:)
           (prefix (head head) head:)
@@ -16,14 +16,17 @@
           (prefix (head seat) seat:)
           (prefix (head table) table:)
           (prefix (head widget) widget:)
+          (prefix (head window-control) window-control:)
           (prefix (head window-host) window-host:)
           (prefix (service directory) directory:)
           (prefix (service file) file:)
           (prefix (service file-query) file-query:)
           (prefix (service filesystem) filesystem:)
+          (prefix (service window) window:)
           (prefix (state collection) collection:)
           (prefix (state connection) connection:)
           (prefix (state model) model:)
+          (prefix (state store) store:)
           (prefix (state view) view:)
           (prefix (sys glyph) glyph:))
 
@@ -146,7 +149,7 @@
             (lambda (kind value)
               (case kind
                 [(directory) (navigate! id value)]
-                [(buffer) (widget:invoke! id 'open (catalogue-host:reference value))]))
+                [(buffer) (widget:invoke! id 'open value)]))
             (and proposed? (ready cells 'proposal)))))))
 
   (edoc "Toggle this Finder query's explicit hidden-entry policy without discarding shared filesystem inventory."
@@ -197,12 +200,24 @@
       (seat:show-buffer-mirror! b) (focus-entry! app) (widget:pump!) app))
 
   (edoc "Reopen the retained Finder with its filter intact; first use starts in the current document's directory."
-        (returns model "Finder view"))
-  (define (open!) (show!))
+        (receiver window (view window)) (window model "destination window; omission uses the legacy host") (returns model "Finder view"))
+  (define open!
+    (case-lambda
+      [() (show!)]
+      [(window)
+       (let* ([document (window:document (window-control:manager window) window)]
+              [path (and (handle:buffer? document) (store:property document 'file #f))]
+              [app (window-control:open-app! window "finder"
+                     (lambda (owner commands) (create! owner commands (if path (file:directory-part path) "."))))])
+         (widget:pump!) (focus-entry! app) app)]))
 
   (edoc "Open the retained Finder and navigate to a directory, clearing other filter keys."
-        (directory directory "directory to list") (returns model))
-  (define (open-directory! directory) (let ([app (show!)]) (navigate! app directory) app))
+        (receiver window (view window)) (directory directory "directory to list")
+        (window model "destination window; omission uses the legacy host") (returns model))
+  (define open-directory!
+    (case-lambda
+      [(directory) (let ([app (show!)]) (navigate! app directory) app)]
+      [(directory window) (let ([app (open! window)]) (navigate! app directory) app)]))
 
   (define (escaped text)
     (apply string-append (map (lambda (c)
@@ -325,4 +340,5 @@
       '(1 2 3 4 5 6) '(name size modified created permissions count))
     (for-each (lambda (key) (keymap:bind-default! 'finder key (keymap:call widget:invoke! widget:target 'return))) '("ESC" "C-g"))
     (keymap:bind-default! "C-x C-f" open!)
+    (keymap:bind-default! 'composed-window "C-x C-f" (keymap:call open! widget:target))
     (seat:set-directory-opener! open-directory!)))

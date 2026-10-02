@@ -1,6 +1,7 @@
 ;; Exercise actual composed windows and app commands in the existing head fixture.
 (let ()
   (import (prefix (service window) window:) (prefix (head window-control) window-control:)
+          (prefix (head split-control) split-control:)
           (prefix (apps buffet) buffet:) (prefix (apps finder) finder:)
           (prefix (apps bindings) bindings:) (prefix (apps delta-log) delta-log:)
           (prefix (apps markdown) markdown:)
@@ -11,7 +12,7 @@
       (list (model:ids) (seat:buffers) (seat:windows)) before))
   (actor:call-as head:ui-actor
     (lambda ()
-      (let* ([manager (window:create-manager!)] [first (window:current manager)]
+      (let* ([manager (window:create-manager! #f)] [first (window:current manager)]
              [second (window:split! manager first 'right)] [third (window:split! manager second 'below)]
              [a (store:create! head:ui-actor "composed a" '("First"))]
              [b (store:create! head:ui-actor "composed b" '("Second"))]
@@ -35,7 +36,20 @@
               (widget:focused manager)
               (begin (widget:prepare! manager 0 0) (model:ids)))
             (list '((0 0 20 6) (21 0 19 3) (21 3 19 3)) first ids)))
-        (window:open-document! manager first a) (window:open-document! manager second b)
+        (show!)
+        (window-control:navigate! first 'right) (show!)
+        (check 'window-direction-without-caret-uses-center-in-an-asymmetric-layout (window:current manager) third)
+        (let ([visited (reverse (fold-left (lambda (out direction)
+                                             (window-control:navigate! (window:current manager) direction) (show!)
+                                             (cons (window:current manager) out)) '() '(next next previous previous)))])
+          (check 'window-topology-navigation-wraps-in-both-directions visited (list first second first third)))
+        (window:select! manager first)
+        (window:open-document! manager first a) (window:open-document! manager second b) (show!)
+        (routing:input! manager '(key "M-RIGHT" #f)) (show!)
+        (check 'window-direction-key-casts-from-the-visible-editor-caret (window:current manager) second)
+        (window-control:navigate! second 'right) (show!)
+        (check 'window-direction-at-an-outer-edge-does-not-change-focus (window:current manager) second)
+        (window:select! manager first)
         (window:open-document! manager second app) (show!)
         (window:select! manager second) (show!)
         (check 'window-selection-enters-its-own-app-without-extra-container-tab-stops
@@ -87,7 +101,7 @@
           (check 'upper-status-drag-resizes-down-and-up-without-an-extra-separator-row
             (list (view:state (interaction:snapshot split))
               (widget:frame-rect (frame second (show!)))) '((2 4) (21 0 19 2)))
-          (window-control:resize! split (map cadr (view:children (interaction:snapshot split))) '(1 1))
+          (split-control:resize! split (map cadr (view:children (interaction:snapshot split))) '(1 1))
           (interaction:flush!) (show!))
         (let* ([split (view:parent (interaction:snapshot first))]
                [expected (map cadr (view:children (interaction:snapshot split)))]
@@ -110,7 +124,7 @@
           (widget:pointer! '(pointer release primary ()) 30 1)
           (check 'changed-split-topology-cancels-captured-resize
             (list (view:state (interaction:snapshot split))
-              (refused? (lambda () (window-control:resize! split expected '(1 1))))) '((12 27) #t)))
+              (refused? (lambda () (split-control:resize! split expected '(1 1))))) '((12 27) #t)))
         (widget:unmount! manager) (widget:invalidate!)
         (let* ([commands (window-control:commands first)]
                [apps (list (buffet:create! first commands) (finder:create! first commands ".")
@@ -170,4 +184,44 @@
                 (model:snapshot failed) (window:documents manager second)
                 (window:find-app manager second "Unlisted"))
               (list #t #f before #f))))
+        (window-control:keep! second) (show!)
+        (check 'keep-window-uses-ordinary-disposal-and-preserves-selection
+          (list (window:list manager) (window:current manager) (store:exists? a)) (list (list second) second #t))
         (widget:unmount! manager)))))
+
+(let ()
+  (import (prefix (service window) window:) (prefix (head window-control) window-control:))
+  (actor:call-as head:ui-actor
+    (lambda ()
+      (let* ([manager (window:create-manager! #f)] [window (window:current manager)]
+             [document (store:create! head:ui-actor "numbered" (cons "界éabcdefghijklmnop" (make-list 11 "short")))]
+             [editor (window:open-document! manager window document)])
+        (define (show width height)
+          (widget:pump!)
+          (let ([f (widget:prepare! manager width height)]) (widget:present! (list (list f 0 0))) f))
+        (window:set-display! manager window '((wrap . #t) (line-numbers . #t) (scrollbar . left)))
+        (widget:mount! manager 'document-chrome)
+        (let ([f (show 16 6)])
+          (check 'composed-gutters-use-current-wrapped-rows-and-preserve-grapheme-geometry
+            (list (widget:frame-rect (widget:prepared editor)) (widget:caret f)
+              (map (lambda (line) (substring line 1 4)) (list-head (widget:frame-lines f) 3)))
+            '((4 0 12 5) (4 . 0) (" 1 " "   " " 2 "))))
+        (widget:pointer! '(scroll 0 2 cells) 0 1)
+        (let ([f (show 16 6)])
+          (check 'wheel-on-position-bar-scrolls-the-same-document-without-moving-selection
+            (list (substring (car (widget:frame-lines f)) 1 4)
+              (car (view:state (interaction:snapshot editor))) (widget:focused manager))
+            (list " 2 " '(0 . 0) editor)))
+        (routing:input! manager '(key "C-x" #f)) (routing:input! manager '(key "l" "l"))
+        (show 16 6)
+        (check 'line-number-key-changes-only-the-explicit-window-policy
+          (list (cdr (assq 'line-numbers (view:options (interaction:snapshot window))))
+            (widget:frame-rect (widget:prepared editor))) '(#f (1 0 15 5)))
+        (window:set-display! manager window '((line-numbers . #t)))
+        (let ([f (show 4 2)])
+          (check 'document-chrome-leaves-a-text-column-in-a-tiny-pane
+            (list (widget:frame-rect (widget:prepared editor))
+              (for-all (lambda (line) (<= (glyph:cells line) 4)) (widget:frame-lines f)))
+            '((3 0 1 1) #t)))
+        (widget:unmount! manager)
+        (view:retire! head:ui-actor manager (model:revision manager))))))

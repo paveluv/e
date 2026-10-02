@@ -418,5 +418,7 @@
      (include "tests/range.sps")
      (include "tests/document.sps")
      (include "tests/tetris.sps")
+     (include "tests/modal.sps")
+     (include "tests/screen.sps")
      (test:finish! 'app))
   (interaction-environment))

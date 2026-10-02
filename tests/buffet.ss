@@ -68,6 +68,10 @@
      (define path "/tmp/buffet-path/with-many-components/file.scm")
      (seat:buffer-file-set! a path)
      (seat:show-buffer-mirror! a) (seat:show-buffer-mirror! b)
+     (let ([models (model:ids)])
+       (test:check 'default-catalogue-neighbor-needs-no-query-or-presentation
+         (list (catalogue:neighbor head:ui-actor #f (seat:buffer-store-id a) 'next)
+           (equal? models (model:ids))) (list (seat:buffer-store-id b) #t)))
      (buffet:open!) (settle!)
      (let* ([lines (widget:frame-lines (draw! (root) 120 15))] [heading (cadr lines)]
             [name (string:search heading "Buffer" 0 120)] [next (string:search heading "Lines" 0 120)])

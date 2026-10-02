@@ -446,11 +446,12 @@
     (let ([lines (if frame (widget:frame-lines frame) '())])
       (do ([y 0 (+ y 1)] [rest lines (if (pair? rest) (cdr rest) '())]) ((= y rows))
         (let ([line (if (pair? rest) (car rest) "")]
-              [styles (and frame (widget:frame-cell-styles frame y))])
-          (paint! y 0 (list line styles cols)
+              [styles (and frame (widget:frame-cell-styles frame y))]
+              [links (if frame (widget:frame-row-links frame y) '())])
+          (paint! y 0 (list line styles links cols)
             (lambda ()
               (let-values ([(cells unused) (render:present (render:prepare #f #f (vector line) 0 '((0 . 1))) 0 line #f #f)])
-                (display-editor-line! cells cells #f '() '() 0 styles #f cols
+                (display-editor-line! cells cells #f '() links 0 styles #f cols
                   (if (vector? cells) (vector-length cells) (string-length cells)))))))))
     (let ([caret (and frame (widget:caret frame))])
       (when caret (goto! (+ 1 (cdr caret)) (+ 1 (car caret))))

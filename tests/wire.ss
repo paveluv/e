@@ -117,6 +117,7 @@
        (error 'wire-test "cannot copy the installation"))
      (mkdir (string-append root "/tools"))
      (copy-text "tools/environment-worker.sps" (string-append root "/tools/environment-worker.sps"))
+     (copy-text "start.e" (string-append root "/start.e"))
      (for-each seed-objects! '("base" "client"))
      (define operation-extension (string-append root "/operation-extension"))
      (for-each (lambda (part) (mkdir (string-append operation-extension part)))
@@ -2643,7 +2644,7 @@
                  ;; pump and terminal output path over at a command boundary.
                  (test:check 'window-service-uses-the-shared-registered-operation-contract
                    (head-read b
-                     '(let* ([manager (window:create-manager!)] [first (window:current manager)]
+                     '(let* ([manager (window:create-manager! #f)] [first (window:current manager)]
                              [second (window:split! manager first 'right)]
                              [text (store:create! head:ui-actor "wire placement" '("borrowed text"))]
                              [app (view:create! head:ui-actor text 'label 1 '((name . "<wire app>") (catalogue . #t)) '() second)])
@@ -2672,7 +2673,7 @@
                            '(begin
                               (root:acquire! "wire-root")
                               (let* ([source (store:create! head:ui-actor "root text" '("Root editor"))]
-                                     [view (window:create-manager!)])
+                                     [view (window:create-manager! #f)])
                                 (root:install! (root:current) view #f)
                                 (list view source))))]
                         [view (car pair)] [source (cadr pair)])
@@ -3228,23 +3229,40 @@
                     (test:parallel 3 (lambda (index) (list-head (loader-exit '("--help")) 2)))) '(1))
              (make-list 1 (make-list 3 '(0 ""))))
            (remove-tree! objects) (mkdir objects #o700) (seed-objects! "base")
-           (let* ([a (start-head "auto α's desk")] [b (start-head "auto B")])
-             (for-each (lambda (head) (head-wait 'automatic-head head (lambda () (head-sees? head "*scratch*"))))
-               (list a b))
+           (write-forms (string-append root "/blank.e")
+             '((list (cons 'profile "blank") (cons 'entry (lambda (context) #f)))))
+           (let* ([a (start-command '("--name" "auto α's desk" "--start" "start.e") 80)]
+                  [b (start-command '("--name" "auto B" "--start" "blank.e" "unhandled.txt") 80)])
+             (head-wait 'automatic-head a (lambda () (head-sees? a "*scratch*")))
+             (head-wait 'blank-head-uses-ordinary-pump b
+               (lambda () (pump-head! b) (> (occurrences (vector-ref b 3) "does not accept file requests") 0)))
+             (head-send! b "\x18;\x03;")
+             (vt:emulator-resize! (vector-ref b 2) 18 100)
+             (sys:resize-terminal-process! (vector-ref b 0) 18 100)
+             (head-wait 'blank-head-resizes-without-default-windows b
+               (lambda () (head-read b '(let () (import (prefix (head tui) tui:)) (= (tui:screen-cols) 100)))))
+             (test:check 'blank-recipe-has-no-editor-windows-or-implicit-keymap
+               (list (head-read b
+                       '(let () (import (prefix (head head) head:) (prefix (head seat) seat:)
+                                        (prefix (head root) root:) (prefix (head widget) widget:))
+                          (list (head:quitting?) (seat:windows) (seat:buffers) (widget:shown)
+                            (cdr (assq 'root (cdr (assq 'value (root:current))))))))
+                 (file-exists? (string-append root "/unhandled.txt")))
+               '((#f () () () #f) #f))
              (let* ([pid-path (string-append base-directory "/pid")]
                     [record (call-with-input-file pid-path read)]
-                    [boot-pid '(store:property (store:find-named "bootstrap") 'process-id)])
+                    [boot-pid '(let () (import (prefix (state store) store:)) (store:property (store:find-named "bootstrap") 'process-id))])
                (test:check 'cold-start-race-shares-one-base-and-preserves-head-directory
                  (list (head-read a boot-pid) (head-read b boot-pid)
                        (head-read a '(current-directory))
-                       (head-read b '(store:property (store:find-named "bootstrap") 'directory))
+                       (head-read b '(let () (import (prefix (state store) store:)) (store:property (store:find-named "bootstrap") 'directory)))
                        (map get-mode (list base-directory socket pid-path (string-append base-directory "/lock")))
                        (file-exists? (string-append base-directory "/log/2000-01-01.log"))
                        (file-exists? (string-append base-directory "/log/keep.txt")))
                  (list (cadr record) (cadr record) root base-directory '(#o700 #o600 #o600 #o600) #f #t))
-               (head-read a '(begin (edit:insert-text! "retained")
-                                    (head:add-shutdown-hook! (lambda () (seat:goto! '(0 . 3)))) #t))
-               (for-each (lambda (head) (head-send! head "\x18;\x03;")) (list a b))
+               (head-read a '(begin (widget:input! (cdr (assq 'root (cdr (assq 'value (root:current))))) '(text "retained" keyboard)) #t))
+               (head-send! a "\x18;\x03;")
+               (head-read b '(let () (import (prefix (head head) head:)) (head:quit!) #t))
                (for-each (lambda (head)
                            (head-wait 'automatic-detach head (lambda () (head-sees? head "e: detached")))
                            (sys:reap-terminal-process! (vector-ref head 0))) (list a b))

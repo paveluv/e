@@ -262,6 +262,25 @@
           (text-layout:locate lines (caddr data) (layout-width data d width)
             (caddr projection) (cadddr projection) (caadr projection))))))
 
+  (define (links projection d width height range)
+    (if (not (cadr projection)) '()
+      (let* ([data (car projection)] [frame (caddr data)] [lines (text-control:lines (cadr data))])
+        (apply append
+          (map (lambda (row)
+                 (let* ([y (car row)] [r (cadr row)] [left (caddr row)] [end (min (cadddr row) (+ left width))]
+                        [surface (render:row frame r)]
+                        [ranges (append
+                                  (map (lambda (link)
+                                         (cons (render:column frame r (car link))
+                                           (cons (render:column frame r (cadr link) #t) (cddr link))))
+                                    (render:detect-links (vector-ref lines r)))
+                                  (if surface (caddr surface) '()))])
+                   (filter values
+                     (map (lambda (link)
+                            (let ([a (max left (car link))] [b (min end (cadr link))])
+                              (and (< a b) (cons (list (- a left) y (- b a) 1) (cddr link))))) ranges))))
+            (list-ref projection 6))))))
+
   (edoc "Read a prepared editor's logical state, including a followed source cursor and top anchor. A host can retain this state once when leaving follow mode; no geometry or per-frame publication enters the base."
         (frame any "prepared editor frame") (returns any))
   (define (frame-state frame)
@@ -711,6 +730,7 @@
   (define (register! commands)
     (widget:register! 'editor 1
       (list (cons 'snapshot snapshot) (cons 'prepare prepare) (cons 'viewport viewport) (cons 'render render) (cons 'decorate decorate) (cons 'caret caret)
+        (cons 'links links)
         (cons 'service service!) (cons 'release release!) (cons 'focus #t) (cons 'contexts contexts)
         (cons 'event event!) (cons 'pointer-bindings pointer-bindings)
         (cons 'actions (append (list (cons 'insert insert!) (cons 'delete delete!) (cons 'select select!) (cons 'move move!) (cons 'scroll scroll!) (cons 'set-mark set-mark!)) commands))))

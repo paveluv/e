@@ -149,9 +149,10 @@
         (returns string))
   (define (head-command name restart?)
     (let ([directory (startup:base-working-directory)])
-      (format "~a~a~a~a"
+      (format "~a~a~a~a~a"
         (shell-quote (string-append (kernel:installation-directory) "/e"))
         (if restart? " --restart" "") (if name (string-append " --name " (shell-quote name)) "")
+        (if (startup:start-file) (string-append " --start " (shell-quote (startup:start-file))) "")
         (if (string=? directory (startup:default-base-working-directory)) ""
             (string-append " --base-working-dir " (shell-quote directory))))))
 
@@ -195,11 +196,12 @@
   (define (help!)
     (define (show-status line)
       (format #t "\n~a\nBase directory: ~s\n" line (startup:base-working-directory)))
-    (display "Usage: e [--restart [--force]] [--name NAME] [--base-working-dir DIR] [--] [file]\n")
+    (display "Usage: e [--restart [--force]] [--name NAME] [--start FILE] [--base-working-dir DIR] [--] [file]\n")
     (display "       e --base [--base-working-dir DIR]\n")
     (display "       e --help [--base-working-dir DIR]\n")
     (display "A tiny, fully customizable, self-aware, Emacs-like editor.\n")
     (display "Head names default to user@host:tty (pid without a terminal).\n")
+    (display "--start selects a trusted head composition script; --base uses only base.e.\n")
     ;; Help never creates a directory, launches a base, claims a name or
     ;; consumes the recovery notice. One bounded maintenance read suffices.
     (guard (ex [else (show-status (format "Base status unavailable: ~a" (kernel:condition-text ex)))])
