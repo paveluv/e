@@ -248,19 +248,76 @@
      ;; The same composition works unmounted from a window with an explicit
      ;; host command; it never finds or replaces the current window itself.
      (let* ([destination #f] [other (finder:create! #f '() root)]
-            [receiver (view:create! head:ui-actor #f 'finder-fixture 1 '() '())])
-       (widget:register! 'finder-fixture 1 (list (cons 'actions (list (cons 'open (lambda (id ref) (set! destination ref)))))))
-       (let ([d (view:snapshot other)])
-         (view:arrange! head:ui-actor (list (list other (get (model:snapshot other) 'revision) (view:children d)
-                                              (list (list 'commands (list 'open receiver 'open '()))))) '()))
+            [receiver (view:create! head:ui-actor #f 'finder-fixture 1 '() '())]
+            [replacement (view:create! head:ui-actor #f 'finder-fixture 1 '() '())])
+       (define (connect! target)
+         (interaction:flush!)
+         (let ([d (view:snapshot other)])
+           (let-values ([(status rows)
+                         (interaction:arrange! head:ui-actor (list (list other (get (model:snapshot other) 'revision) (view:children d)
+                                                                     (list (list 'commands (list 'open target 'open '())))))
+                           (if (view:owner d) (list (list other (view:generation d))) '()))])
+             (unless (eq? status 'applied) (error 'connect! "host binding refused" status)))))
+       (widget:register! 'finder-fixture 1 (list (cons 'actions (list (cons 'open (lambda (id ref) (set! destination (list id ref))))))))
+       (connect! receiver)
        (widget:mount! other 'embedded-finder) (widget:mount! receiver 'embedded-receiver)
+       (widget:mount! replacement 'embedded-replacement)
        (let* ([q (view:source (view:snapshot other))] [before (window:document host window)])
          (test:await 'embedded-ready (lambda () (eq? (get (get (collection:summary q) 'value) 'status) 'ready)))
          (let* ([v (get (collection:summary q) 'value)] [key (list 'path (path "zeta.txt") 'file)])
            (finder:choose! other #f (list q (get v 'generation) key) (get v 'basis)))
          (check 'embedded-finder-delivers-reference-without-window-placement
-           (list (equal? before (window:document host window)) (equal? destination (store:find-file (path "zeta.txt")))) '(#t #t)))
-       (widget:unmount! other) (widget:unmount! receiver))
+           (list (equal? before (window:document host window)) (equal? destination (list receiver (store:find-file (path "zeta.txt"))))) '(#t #t))
+         ;; Acquisition publishes synchronously. A subscriber can replace the
+         ;; host before placement, but this accepted action must not retarget it.
+         (let ([target (path "embedded-new.txt")] [rewired? #f])
+           (entry:set-text! (widget:descendant other 'table 'filter 'entry) target)
+           (test:await 'embedded-proposal-ready
+             (lambda () (let ([v (get (collection:summary q) 'value)])
+                          (and (eq? (get v 'status) 'ready) (equal? (get v 'input-filter) target)))))
+           (set! destination #f)
+           (parameterize ([kernel:registering-module 'finder-acquisition-fixture])
+             (file:add-create-hook! (lambda (created) (when (string=? created target)
+                                                        (connect! replacement) (set! rewired? #t)))))
+           (dynamic-wind void
+             (lambda ()
+               (let ([v (get (collection:summary q) 'value)])
+                 (finder:choose! other #f (list q (get v 'generation) (list 'proposal target 'file)) (get v 'basis)))
+               (check 'finder-refuses-replaced-host-without-rolling-back-acquisition
+                 (list rewired? destination (file-exists? target) (and (store:find-file target) #t)
+                   (equal? before (window:document host window))
+                   (contains? (log:datum (car (log:entries 'edit:visit-file!))) "open command changed during acquisition")) '(#t #f #t #t #t #t))
+               (test:await 'embedded-created-file-ready
+                 (lambda () (let ([v (get (collection:summary q) 'value)])
+                              (and (eq? (get v 'status) 'ready) (get v 'complete) (equal? (get v 'input-filter) target)))))
+               (let ([v (get (collection:summary q) 'value)])
+                 (finder:choose! other #f (list q (get v 'generation) (list 'path target 'file)) (get v 'basis)))
+               (check 'finder-new-action-uses-the-new-host destination (list replacement (store:find-file target))))
+             (lambda () (kernel:retract-module! 'finder-acquisition-fixture) (delete-file target)))))
+       (widget:unmount! other) (widget:unmount! receiver) (widget:unmount! replacement))
+     ;; A creation subscriber can move focus while the accepted pointer
+     ;; activation is acquiring its document. Preserve that choice, but never
+     ;; reinterpret it as the destination of the earlier activation.
+     (filter! (path "focus-new.txt"))
+     (let* ([peer (window-control:split! window 'right)] [target (path "focus-new.txt")]
+            [before (window:document host peer)]
+            [peer-entry (widget:descendant peer 'document 'table 'filter 'entry)] [moved? #f])
+       (settle!)
+       (parameterize ([kernel:registering-module 'finder-focus-fixture])
+         (file:add-create-hook! (lambda (created) (when (string=? created target)
+                                                    (widget:focus! host peer-entry)
+                                                    (set! moved? #t)))))
+       (dynamic-wind void
+         (lambda ()
+           (widget:pointer! '(pointer press primary ()) 3 2)
+           (widget:pointer! '(pointer release primary ()) 3 2)
+           (check 'finder-pointer-acquisition-refuses-a-reentrant-focus-change
+             (list moved? (window:document host peer) (window:document host window)
+               (and (store:find-file target) #t)
+               (equal? (widget:focused host) peer-entry)
+               (contains? (log:datum (car (log:entries 'edit:visit-file!))) "pointer origin changed during activation"))
+             (list #t before app #t #t #t)))
+         (lambda () (kernel:retract-module! 'finder-focus-fixture) (window-control:close! peer) (delete-file target))))
      (for-each (lambda (name) (delete-file (path name))) (append names '("new/inner 日本語/note.txt" "race")))
      (for-each (lambda (name) (delete-directory (path name))) (append '("new/inner 日本語" "new" "only") (reverse directories)))
      (delete-directory root)

@@ -135,23 +135,29 @@
   (define (ready cells key)
     (let ([p (assq key cells)]) (and p (eq? (cadr p) 'ready) (caddr p))))
 
-  (edoc "Visit the exact shown path through edit:visit-file!. Directories navigate this query; files go to its explicit host. Directory-only activation leaves files untouched. Pending or stale selections refuse."
+  (edoc "Visit the exact shown path through edit:visit-file!. Directories navigate this query; files go to its captured explicit host. A replaced host refuses placement, preserving the acquired file and buffer. Directory-only activation leaves files untouched. Pending or stale selections refuse."
         (receiver id (view finder)) (id model "Finder view") (directory-only? boolean "Right rather than Enter")
         (selection row-selection "shown query, generation and key") (basis datum "shown result basis"))
   (define (choose! id directory-only? selection basis)
     (let* ([row (selected-row id selection basis)] [cells (caddr row)]
            [path (ready cells 'path)] [directory? (eq? (ready cells 'kind) 'directory)]
-           [proposed? (eq? (car (cadr row)) 'proposal)])
+           [proposed? (eq? (car (cadr row)) 'proposal)]
+           [host (and (not directory?) (assq 'open (widget:commands id)))])
       (unless (and directory-only? (not directory?))
         (widget:keep-host-focus!)
         (unless (memq (ready cells 'kind) '(file directory)) (error 'choose! "choose a regular file or directory" path))
-        (unless (or directory? (assq 'open (widget:commands id))) (error 'choose! "no open command is connected"))
+        (unless (or directory? host) (error 'choose! "no open command is connected"))
         (if (and directory? (not proposed?)) (navigate! id path)
           (edit:visit-file! (if directory? (string-append path "/") path)
             (lambda (kind value)
               (case kind
                 [(directory) (navigate! id value)]
-                [(buffer) (widget:invoke! id 'open value)]))
+                [(buffer)
+                 ;; Acquisition can publish to subscribers before returning.
+                 ;; Do not send this accepted action to a replacement host.
+                 (unless (equal? host (assq 'open (widget:commands id)))
+                   (error 'choose! "open command changed during acquisition" id path))
+                 (widget:invoke! id 'open value)]))
             (and proposed? (ready cells 'proposal)))))))
 
   (edoc "Toggle this Finder query's explicit hidden-entry policy without discarding shared filesystem inventory."

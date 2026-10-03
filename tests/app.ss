@@ -110,8 +110,23 @@
          (let-values ([(status rows) (widget:arrange! (list (list parent (cdr (assq 'revision (model:snapshot parent))) (list (list 'a a 'fit)) '())))])
            (check 'removed-child-releases-runtime-and-owner
              (list status (refused? (lambda () (widget:actions b))) (view:owner (view:snapshot b))) '(applied #t #f)))
+         (check 'command-barrier-acquires-containment-before-delayed-notices
+           (kernel:call-with-deferred-deliveries
+             (lambda ()
+               (view:arrange! head:ui-actor
+                 (list (list parent (cdr (assq 'revision (model:snapshot parent)))
+                         (list (list 'a a 'fit) (list 'b b '(grow 1))) '()))
+                 (list (list parent (view:generation (view:snapshot parent)))))
+               (widget:refresh! parent)
+               (let ([acquired (list (widget:mounted? b) (and (interaction:snapshot b) #t)
+                                 (view:state (interaction:snapshot a)))])
+                 (view:arrange! head:ui-actor
+                   (list (list parent (cdr (assq 'revision (model:snapshot parent))) (list (list 'a a 'fit)) '()))
+                   (list (list parent (view:generation (view:snapshot parent)))))
+                 (widget:refresh! parent)
+                 (list acquired (widget:mounted? b) (interaction:snapshot b))))) '((#t #t 1) #f #f))
          (widget:unmount! parent)
-         (check 'recursive-release (map (lambda (id) (view:owner (view:snapshot id))) (list parent a)) '(#f #f))))
+         (check 'recursive-release (map (lambda (id) (view:owner (view:snapshot id))) (list parent a b)) '(#f #f #f))))
 
      ;; A bare composition exercises the same routing used by window hosts.
      (let* ([events '()] [owner 'routing-fixture] [capturing? #f]
@@ -319,10 +334,27 @@
                (refused? (lambda () (entry:insert! a "no")))) '(#f #f #t))
        (widget:unmount! root) (widget:invalidate!))
 
-     (let* ([root (view:create! head:ui-actor #f 'row 1 '() '())]
-            [producer (view:create! head:ui-actor #f 'connected-producer 1 '() '((choice . "first")))]
+     (define churn-source-effect void)
+     (model:register-kind! 'connection-churn 1 (lambda (v) (churn-source-effect) (integer? v)))
+     (let* ([churn? #f]
+            [data (model:create! head:ui-actor 'connection-churn 1 'session 'persistent '() 0)]
+            [root (view:create! head:ui-actor #f 'row 1 '() '())]
+            [producer (view:create! head:ui-actor data 'connected-producer 1 '() '((choice . "first")))]
             [consumer (view:create! head:ui-actor #f 'connected-consumer 1 '((choice . "default")) '())])
-       (port:register! '(view connected-producer 1) '((output choice string (state choice))))
+       ;; Advance a borrowed source between dependency capture and validation.
+       ;; The worker queues invalidation without recursively servicing the head.
+       (set! churn-source-effect
+         (lambda ()
+           (when churn?
+             (set! churn? #f)
+             ((test:worker
+                (lambda ()
+                  (let ([r (model:snapshot data)])
+                    (call-with-values
+                      (lambda () (model:commit! head:ui-actor
+                                   (list (list data (cdr (assq 'revision r)) '() (+ 1 (cdr (assq 'value r))))))) list)))))
+             (set! churn? #t))))
+       (port:register! '(view connected-producer 1) '((output choice string (state choice)) (output source list (source))))
        (port:register! '(view connected-consumer 1) '((input choice string (options choice))))
        (widget:register! 'connected-producer 1 '())
        (widget:register! 'connected-consumer 1
@@ -349,7 +381,18 @@
              (parameterize ([widget:event-frame shown]) (widget:act! consumer 'inspect))
              (string:prefix? "default" (car (widget:frame-lines (cadr (widget:frame-children (widget:prepare! root 30 2)))))))
            '("default" "first" #t)))
-       (widget:unmount! root) (widget:invalidate!))
+       (interaction:set-state! head:ui-actor producer #f '((choice . "local")))
+       (set! churn? #t)
+       (let ([bundle (connection:snapshot (list producer))])
+         (widget:pump!)
+         (check 'changing-connection-basis-preserves-endpoints-and-provisional-ownership
+           (list (car bundle) (and (caddr (assoc producer (caddr bundle))) #t)
+             (and (interaction:snapshot root) #t)
+             (view:state (interaction:snapshot producer)) (widget:act! consumer 'inspect))
+           '(#f #t #t ((choice . "local")) changing-basis)))
+       (set! churn? #f) (widget:pump!)
+       (check 'connection-basis-converges-after-churn (widget:act! consumer 'inspect) "default")
+       (widget:unmount! root) (widget:invalidate!) (set! churn-source-effect void))
 
      (model:register-kind! 'widget-view 4 string?)
      (let ([id (model:create! head:ui-actor 'widget-view 4 'session 'persistent '() "future descriptor")])

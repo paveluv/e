@@ -24,7 +24,8 @@ guidance preserve an explicitly selected script.
 `./e --start examples/blank.e` demonstrates an empty head with no editor
 bindings or windows. File arguments are delivered after input starts through
 the root's `open-file` command; an unsupported request reports a diagnostic.
-The ordinary launcher's default-host migration is still in progress.
+Without `--start`, the launcher uses the installation's `start.e` editor
+composition. `--start examples/repl.e` selects a windowless evaluation REPL.
 
 Without `--name`, the head uses `user@host:tty`, with `pid-N` in place of
 the terminal path when there is no terminal. Generated names gain ` 2`,

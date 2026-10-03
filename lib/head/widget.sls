@@ -1,7 +1,7 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions adopt! arrange! cancel! capture! caret command-bindings command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
+  (export act! actions adopt! arrange! cancel! capture! caret command-bindings command-help command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-row-links frame-source frame-styles generation
           host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! mounted? pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers refresh! register! repaint! reveal! set-active! shown stage! status target unmount!)
   (import (except (chezscheme) inspect)
@@ -36,14 +36,16 @@
   (define retain-focus? (make-parameter #f))
   (define pointer-origin (make-parameter #f))
 
-  (edoc "Keep the host and logical focus from before this pointer gesture, including captured release actions. Never restore across a changed composition or a separately moved focus. Keyboard calls leave logical focus unchanged.")
+  (edoc "Keep the host and logical focus from before this pointer gesture, including captured release actions. Refuse if the composition or focus changed independently during activation; never restore or retarget across that change. Keyboard calls leave logical focus unchanged.")
   (define (keep-host-focus!)
     (retain-focus? #t)
     (let* ([origin (pointer-origin)] [root (and origin (car origin))] [d (and root (read-view root))]
            [frame (and d (focus-frame root))])
-      (when (and frame (= (view:generation d) (caddr origin))
-              (member (view:focus d) (list (cadr origin) (cadddr origin)))
-              (or (not (cadr origin)) (member (cadr origin) (focusable frame))))
+      (when origin
+        (unless (and frame (= (view:generation d) (caddr origin))
+                  (member (view:focus d) (list (cadr origin) (cadddr origin)))
+                  (or (not (cadr origin)) (member (cadr origin) (focusable frame))))
+          (error 'keep-host-focus! "pointer origin changed during activation" root))
         (set-focus! root (cadr origin)))))
   (define-record-type node (fields id root (mutable mirrored) (mutable key) (mutable lines) (mutable data) (mutable data-key) (mutable visible) (mutable styles) (mutable links) (mutable caret) (mutable activity)))
 
@@ -93,12 +95,22 @@
       (hashtable-keys pending-scroll))
     (vector-for-each (lambda (id) (reveal! id (hashtable-ref pending-reveal id #f))) (hashtable-keys pending-reveal)))
 
-  (edoc "Synchronize a mounted subtree and its ancestors after a base operation changes containment, then acquire newly exposed descendants through the ordinary pump. Use at a command boundary before addressing the new children; painting and hover must never call this barrier."
+  (edoc "Acquire and adopt a mounted root's canonical containment after a base operation, including released former members, without waiting for notifications. Use at a command boundary before addressing new children; painting and hover must never call this barrier."
     (id model "surviving mounted view affected by the operation"))
   (define (refresh! id)
-    (mounted id)
-    (model:snapshots (append (path id) (map car (cdr (rows id)))))
-    (pump!))
+    (let* ([mount (node-root (mounted id))]
+           [tree (view:tree (mount-id mount))]
+           [tree (if (null? tree) (list (cons (mount-id mount) #f)) tree)]
+           [removed (filter (lambda (id) (not (assoc id tree))) (mount-ids mount))])
+      ;; A commit may return while another thread drains its notifications.
+      ;; This command barrier must adopt containment without relying on them.
+      (unless (null? removed)
+        (interaction:reconcile!
+          (map (lambda (row) (cons (car row) (and (caddr row) (field (caddr row) 'value #f))))
+            (cadr (model:snapshots removed)))))
+      (interaction:reconcile! tree)
+      (refresh-tree! mount tree)
+      (pump!)))
   (define (drain-notifications! pending)
     (for-each (lambda (refresh) (refresh))
       (with-mutex notification-lock
@@ -198,7 +210,7 @@
                            (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
                                                   (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status key-delegates) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status key-delegates command-help) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -257,6 +269,15 @@
                 (let ([value (cdr (assq 'value source))])
                   (equal? (list-ref witness 3)
                     (and (list? value) (for-all pair? value) (assq 'generation value)))))))) #t)))
+
+  (edoc "Read a captured view's contextual command guide from its definition. The optional command-help callback takes (id procedure) and returns text or false using acquired state only. It never invokes the command or acquires data."
+        (receiver list "captured receiver row") (procedure procedure "documented command") (returns (or string #f)) (effects internal))
+  (define (command-help receiver procedure)
+    (and (eq? (car (list-ref receiver 3)) 'view) (receiver-live? receiver)
+      (let* ([id (car receiver)] [d (read-view id)] [help (field (definition d) 'command-help #f)])
+        (and help
+          (let ([text (help id procedure)])
+            (unless (or (not text) (string? text)) (error 'command-help "expected text or false" id)) text)))))
 
   (define (source-id id d)
     (and d (view:source d)
@@ -420,7 +441,9 @@
           (let* ([r (get id)] [ds (and r (port:describe (port:key r)))]
                  [inputs (if ds
                            (map (lambda (d)
-                                  (let ([resolved (port:resolve id (cadr d) (cadr bundle) get text)])
+                                  (let ([resolved (if (car bundle)
+                                                    (port:resolve id (cadr d) (cadr bundle) get text)
+                                                    '(pending changing-basis ()))])
                                     (cons (cadr d) (list (car resolved) (cadr resolved) (cons (car bundle) (caddr resolved))))))
                              (filter (lambda (d) (eq? (car d) 'input)) ds)) '())])
             (when cache (hashtable-set! cache id inputs)) inputs)))))
@@ -535,11 +558,11 @@
   (define (tree-current? mount)
     (define (shape d) (and d (list (view:children d) (view:source d))))
     (for-all (lambda (row) (equal? (shape (cdr row)) (shape (read-view (car row))))) (mount-tree mount)))
-  (define (refresh-tree! mount)
+  (define (refresh-tree! mount . acquired)
     ;; Domain operations can change containment without a head-side arrange.
     ;; Acquire only after that change, on the pump, never while painting.
     (when (and (eq? mount (hashtable-ref roots (mount-id mount) #f)) (not (tree-current? mount)))
-      (let* ([tree (view:tree (mount-id mount))]
+      (let* ([tree (if (null? acquired) (view:tree (mount-id mount)) (car acquired))]
              [tree (if (null? tree) (list (cons (mount-id mount) #f)) tree)]
              [old (mount-subscription mount)])
         (interaction:reconcile! tree)

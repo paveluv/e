@@ -73,9 +73,10 @@
 
      ;; -- join -------------------------------------------------------------
 
-     (check 'join (string:join '("a" "b" "c") ", ") "a, b, c")
-     (check 'join-one (string:join '("a") ", ") "a")
-     (check 'join-none (string:join '() ", ") "")
+     (check 'join-preserves-empty-parts-and-scales-to-many-lines
+       (list (map (lambda (parts) (string:join parts ", ")) '(() ("a") ("a" "" "c")))
+         (string-length (string:join (make-list 65536 "line") "\n")))
+       '(("" "a" "a, , c") 327679))
 
      ;; -- search (KMP) -------------------------------------------------------
 

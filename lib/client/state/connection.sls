@@ -112,7 +112,8 @@
         (id list "endpoint") (name symbol "port") (returns list) (public))
   (define (read id name)
     (let ([bundle (snapshot (list id))])
-      (port:resolve id name (cadr bundle) get (lambda (id) #f))))
+      (if (car bundle) (port:resolve id name (cadr bundle) get (lambda (id) #f))
+        '(pending changing-basis ()))))
 
   (edoc "Read an owner's binding declarations from the base."
         (owner list "composition") (returns list) (effects remote))

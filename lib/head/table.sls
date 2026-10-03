@@ -1,5 +1,4 @@
-;; Virtual collections and shared column rules. Legacy picker formatting
-;; remains here until those apps adopt the composable controls.
+;; Virtual collections and shared column rules for tables and completions.
 (import (only (foundation edoc) elibrary))
 (elibrary (head table)
   (export choose! create! emphasize! init! invoke! layout make move! register-presentation! select! set-columns! sort-by! toggle-sort! toggle-visible-sort!)
@@ -436,6 +435,20 @@
       (widget:arrange! (list (list id (get (model:snapshot id) 'revision #f) (view:children d)
                                (cons (cons 'columns names) (remq (assq 'columns (view:options d)) (view:options d))))))))
 
+  (define (command-help id procedure)
+    (let* ([s (runtime id)] [v (metadata s)]
+           [names (cond [(or (eq? procedure sort-by!) (eq? procedure toggle-sort!)) (get v 'sortable '())]
+                        [(eq? procedure set-columns!) (map car (get v 'columns '()))]
+                        [(eq? procedure invoke!) (map car (widget:commands id))]
+                        [else #f])])
+      (and names
+        (format "~a: ~a~a"
+          (if (eq? procedure invoke!) "Commands" "Columns")
+          (string:join (map symbol->string names) ", ")
+          (cond [(eq? procedure sort-by!) "; '((column ascending) ...) or descending; '() clears sorting"]
+                [(eq? procedure set-columns!) (format "; '(column ...), retaining ~a" (get (view:options (descriptor s)) 'identity #f))]
+                [else ""])))))
+
   (define (data id source inputs) id)
   (define (cell row name rule identity width)
     (let* ([p (assq name (caddr row))] [attributes (cadddr row)]
@@ -712,7 +725,7 @@
     (for-each (lambda (kind)
                 (widget:register! kind 1
                   (append (layout:container 'y)
-                    (list (cons 'prepare data) (cons 'service service!) (cons 'release release!) (cons 'contexts '(widget-table)) (cons 'busy? busy?)
+                    (list (cons 'prepare data) (cons 'service service!) (cons 'release release!) (cons 'contexts '(widget-table)) (cons 'busy? busy?) (cons 'command-help command-help)
                       (cons 'actions (list (cons 'select select!) (cons 'move move!) (cons 'invoke invoke!)
                                        (cons 'emphasize emphasize!) (cons 'sort-by sort-by!) (cons 'toggle-sort toggle-sort!) (cons 'set-columns set-columns!))))))) '(table list))
     (for-each (lambda (kind)

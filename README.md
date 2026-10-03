@@ -18,11 +18,13 @@ restart; see [the reload boundary](manual/MODULES.md#hot-reload).
 
 Highlights:
 
-- **Key helper.** `C-x TAB` lists the keys that work where you are, in a
+- **Bindings inspector.** `C-x TAB` lists the keys that work where you are, in a
   pane above the echo area: the app's or mode's own keys first, then the
   global ones, each with the command it runs and what that command does,
   straight from the command's documentation. The listing follows the active
   window, works inside prompts too, and `C-x TAB` again pages through it.
+  It also shows bindings for the hovered mouse target and the registered
+  forwarding chain from a control to its domain command.
 - **Local installation.** By default, configuration, compiled libraries,
   downloaded reference data, recovery snapshots and diagnostic logs live in
   the installation directory (where you cloned `e`). Stop the base before
@@ -39,10 +41,11 @@ Highlights:
   structural multiline input, fuzzy symbol completion, parameter hints, history,
   and captured output (evaluation results, stdout, and stderr are captured
   separately).
-- **Apps.** Besides normal editing buffers, there are app buffers. They
-  update their presentation from internal structures and can optionally
-  respond to user input. Examples include logs, Git history, live reference
-  pages, rendered Markdown, and the file and buffer pickers.
+- **Composable widgets.** Apps, editors, prompts, tables and windows share
+  one widget runtime. Views can share source models while keeping independent
+  focus and interaction. Extensions compose the same public controls;
+  `--start examples/blank.e` starts an empty head and `--start examples/repl.e`
+  starts a windowless REPL. See [Widgets](manual/WIDGETS.md).
 - **Easy filesystem navigation.** The `<finder>` and `<buffet>` apps have live,
   filterable tables with multi-column sorting and keyboard or mouse
   navigation. Finder combines an editable leading path with recursive search
@@ -257,8 +260,8 @@ immediately.
   configuration lifecycle.
 - [App buffers](manual/APPS.md): dynamic views, interaction, input capture,
   mouse events, and the `<buffet>` buffer switcher.
-- [Widgets](manual/WIDGETS.md): model-backed views, independent interaction,
-  renderer definitions and the experimental text widget.
+- [Widgets](manual/WIDGETS.md): model-backed views, public controls, independent
+  interaction, startup compositions and renderer definitions.
 - [Model state](manual/MODELS.md): canonical records, shared head mirrors,
   guarded view ownership and restart recovery.
 - [Git](manual/GIT.md): structured repository queries and the history browser.

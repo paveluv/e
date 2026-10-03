@@ -32,7 +32,7 @@
 
 (library (foundation edoc)
   (export argument-name argument-notes argument-type argument? call-argument-type edoc edoc-entry edoc-named edoc-of
-          edoc-template edoc-type edoc-type? edoc-types elibrary expression first-sentence forward-callee forwarding-name forwarding-steps inspection-value
+          edoc-template edoc-type edoc-type? edoc-types elibrary expression forward-callee forwarding-name forwarding-steps inspection-value
           install-type-registry! observe-types! restore-types!
           signature-arguments signature-flags signature-formals signature-kind signature-library
           signature-receiver signature-returns signature-summary signature? type-accepts? type-compatible? type-completions
@@ -1417,7 +1417,7 @@
         (format "'~s" value) (format "~s" value))))
 
   (edefine (type-prose t)
-    (edoc "A type as prose: a name's own description, else type-text." (t datum "the type") (returns string))
+    (edoc "A type as prose: a name's own description, else type-text." (t datum "the type") (returns string) (public))
     (let ([type (and (symbol? t) (type-named t))])
       (if type (type-prose-of type) (type-text t))))
 
@@ -1440,16 +1440,6 @@
   (define (join parts separator)
     (if (null? parts) ""
         (fold-left (lambda (out part) (string-append out separator part)) (car parts) (cdr parts))))
-
-  (edefine (first-sentence text)
-    (edoc "A text up to and including its first sentence end." (text string "the text") (returns string))
-    (let ([n (string-length text)])
-      (let loop ([i 0])
-        (cond [(>= i n) text]
-              [(and (char=? (string-ref text i) #\.)
-                    (or (= (+ i 1) n) (char-whitespace? (string-ref text (+ i 1)))))
-               (substring text 0 (+ i 1))]
-              [else (loop (+ i 1))]))))
 
   (edefine (edoc-template name formals)
     (edoc "A call template in the describe corpus's form: (name a b . rest)."

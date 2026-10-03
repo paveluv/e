@@ -192,9 +192,9 @@ body:
 A completer returns `(value label hint)` entries. A false label uses ordinary
 Scheme spelling; a nonfalse label is searchable display text. A false hint
 omits extra details. Selection inserts the value, never the label. Plain
-values use the same expression spelling regardless of type. The temporary
-window record adapter still has a reader and writer; new portable types need
-neither. An elibrary record registers its predicate for `(record name)`.
+values use the same expression spelling regardless of type, including window
+and other model references. Portable types need no constructor, reader or
+writer. An elibrary record registers its predicate for `(record name)`.
 See [Evaluation](EVAL.md) for argument completion. `type-accepts?`,
 `type-completions`, `type-spelling` and `type-prose` work over compound forms too.
 

@@ -57,6 +57,55 @@
       (check 'search-close-retires-request-views-and-draft
         (list (model:snapshot search) (model:snapshot input) (store:exists? source)) '(#f #f #t))))
   (widget:focus! root other)
+  ;; Publish a ready preview before the controller has adopted its hit. The
+  ;; status can already show the first match; repeat must advance from it.
+  (let* ([preview (search-control:create-preview! target 'fold '() root)]
+         [query (view:source (view:snapshot preview))])
+    (interaction:flush!)
+    (widget:arrange! (list (list root (model:revision root)
+                             (append (view:children (interaction:snapshot root)) (list (list 'preview preview 'fit))) '())))
+    (pump!)
+    (search-control:set-needle! preview "alpha") (pump!)
+    (test:await 'preview-first-result
+      (lambda () (let ([v (get (model:snapshot query) 'value)])
+                   (and (eq? (get v 'status) 'ready) (equal? (get (get v 'request) 'needle) "alpha")
+                     (equal? (get (get v 'result) 'count) 2)))))
+    (show!)
+    (let ([generation (get (get (model:snapshot query) 'value) 'generation)])
+      (search-control:repeat! preview) (pump!)
+      (test:await 'preview-repeated-result
+        (lambda () (let ([v (get (model:snapshot query) 'value)])
+                     (and (eq? (get v 'status) 'ready) (> (get v 'generation) generation)
+                       (get (get v 'result) 'count)))))
+      (check 'preview-repeat-adopts-the-ready-hit-before-requesting-the-next
+        (get (get (get (model:snapshot query) 'value) 'result) 'hit) '(0 . 7)))
+    (pump!)
+    (for-each
+      (lambda (directions)
+        (let ([generation (get (get (model:snapshot query) 'value) 'generation)])
+          (for-each (lambda (direction) (search-control:repeat! preview direction)) directions)
+          (test:await 'preview-repeat-burst
+            (lambda ()
+              (pump!)
+              (let ([v (get (model:snapshot query) 'value)])
+                (and (eq? (get v 'status) 'ready)
+                  (= (get v 'generation) (+ generation (length directions)))
+                  (get (get v 'result) 'count)
+                  (null? (caddr (view:state (interaction:snapshot preview))))))))
+          (check 'preview-preserves-batched-repeat-order
+            (get (get (get (model:snapshot query) 'value) 'result) 'hit) '(0 . 7))))
+      '((next next) (previous next) (next previous)))
+    (search-control:repeat! preview)
+    (search-control:toggle-case! preview)
+    (test:await 'preview-case-discards-obsolete-navigation
+      (lambda () (pump!)
+        (let ([v (get (model:snapshot query) 'value)])
+          (and (eq? (get v 'status) 'ready) (not (get (get v 'request) 'fold?))
+            (equal? (get (get v 'result) 'count) 1)))))
+    (check 'preview-case-change-fences-queued-repeats
+      (get (get (get (model:snapshot query) 'value) 'result) 'hit) '(0 . 1))
+    (view:retire! actor preview (model:revision preview))
+    (pump!) (head:run-deferred!))
   (edit:select! target '(0 . 1) '(0 . 6))
   (check 'replacement-captures-the-explicit-reversed-selection
     (list (search:count target "alpha") (search:count target "ALPHA")

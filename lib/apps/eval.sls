@@ -653,11 +653,16 @@
             (eq-hashtable-set! hint-cache key hint)
             hint))))
 
-  (define (completion-candidate match)
+  (define (completion-candidate match receivers)
     ;; The label: the name with its matched characters underlined, then in
     ;; grey what is known about it, kept apart from the inserted value.
     (let* ([name (fuzzy:name match)] [fragments (fuzzy:fragments match)]
-           [hint (completion-hint (string->symbol name))]
+           [symbol (string->symbol name)]
+           [targets (fold-left (lambda (out sig)
+                                 (fold-left (lambda (out r) (if (assoc (car r) out) out (cons r out))) out
+                                   (receiver-matches (edoc:signature-receiver sig) receivers))) '() (receiver-signatures symbol))]
+           [guide (and (pair? targets) (null? (cdr targets)) (widget:command-help (car targets) (top-level-value symbol)))]
+           [hint (string-append (completion-hint symbol) (if guide (string-append "  " guide) ""))]
            [label (if (string=? hint "") name (string-append name "  " hint))]
            [styles (make-vector (string-length label) 'chrome)]
            [face (if (kernel:editor-symbol? (string->symbol name)) 'editor 'plain)]
@@ -741,7 +746,7 @@
                                              [ranked (fuzzy:rank part (filter eligible? (environment-symbols (interaction-environment))))]
                                              [names (map fuzzy:name ranked)])
                                         (values (car range) (cdr range) (lambda () (fuzzy:expansions part names))
-                                                (map completion-candidate ranked))))))
+                                                (map (lambda (match) (completion-candidate match receivers)) ranked))))))
                               ;; an argument with a documented type offers its own candidates; a
                               ;; sole one is what Tab inserts, else Tab extends the token as far as
                               ;; every candidate allows and lists them

@@ -7,7 +7,7 @@
 
 (import (only (foundation edoc) elibrary))
 (elibrary (foundation string)
-  (export common-prefix delete elide fold-case hash insert join lines prefix? search searcher suffix? tail trim-spaces)
+  (export common-prefix elide fold-case hash insert join lines prefix? search searcher suffix? tail trim-spaces)
   (import (rnrs))
 
   (edoc "Fold character case without expanding characters or changing their positions, as char-ci=? compares them."
@@ -57,14 +57,6 @@
   (define (insert s at addition)
     (string-append (substring s 0 at) addition (tail s at)))
 
-  (edoc "A string without its characters [from, to)."
-        (s string "the string")
-        (from integer "the first index removed")
-        (to integer "the index after the last")
-        (returns string))
-  (define (delete s from to)
-    (string-append (substring s 0 from) (tail s to)))
-
   (edoc "A string shortened to about a width with its middle elided, for messages."
         (s string "the string")
         (width integer "the wanted width")
@@ -110,8 +102,10 @@
   (define (join xs sep)
     (if (null? xs)
         ""
-        (fold-left (lambda (acc x) (string-append acc sep x))
-                   (car xs) (cdr xs))))
+        (call-with-string-output-port
+          (lambda (out)
+            (put-string out (car xs))
+            (for-each (lambda (x) (put-string out sep) (put-string out x)) (cdr xs))))))
 
   (edoc "The index of the first occurrence of a needle inside s[start, limit), or #f; exact unless fold? asks to ignore case."
         (s string "the string")

@@ -138,11 +138,15 @@
     (define (head!)
       (unless (eq? (car actor) 'head)
         (error 'wire "operation requires an active head connection" operation)))
-    (define (generic-kind! kind)
-      (when (memq kind '(history history-item change-preview widget-view composition-binding collection buffer-catalogue connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+    (define (generic-kind! kind retiring?)
+      (when (and (memq kind '(history history-item change-preview review-preview conflict-review rewrite-draft
+                               inspection inspection-rows widget-view composition-binding collection buffer-catalogue
+                               connection-topology connection-bindings prompt-request search-request environment evaluation-job))
+              ;; These subscriptions own their cleanup on model retirement.
+              (not (and retiring? (memq kind '(collection buffer-catalogue)))))
         (error 'wire "use the owning service to change this model kind" kind)))
     (define (generic-model! id)
-      (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r))))))
+      (let ([r (model:snapshot id)]) (when r (generic-kind! (cdr (assq 'kind r)) #f))))
     (case operation
       [(environment-create) (control!) (arity 2) (apply environment:create! actor args)]
       [(environment-evaluate) (control!) (arity 4) (apply environment:evaluate! actor args)]
@@ -201,14 +205,12 @@
       [(model-ids) (apply model:ids args)]
       [(model-metadata) (unless (<= (length args) 1) (error 'wire "expected optional model references")) (apply model:metadata args)]
       [(model-read) (arity 1) (model:snapshots (car args))]
-      [(model-create) (control!) (arity 6) (generic-kind! (car args)) (apply model:create! actor args)]
+      [(model-create) (control!) (arity 6) (generic-kind! (car args) #f) (apply model:create! actor args)]
       [(model-commit) (control!) (arity 1) (for-each (lambda (change) (generic-model! (car change))) (car args))
        (call-with-values (lambda () (model:commit! actor (car args))) list)]
       [(model-retire) (control!) (arity 2)
        (let ([r (model:snapshot (car args))])
-         (when r
-           (case (cdr (assq 'kind r))
-             [(history history-item change-preview connection-topology connection-bindings prompt-request search-request widget-view composition-binding environment evaluation-job) (generic-kind! (cdr (assq 'kind r)))])))
+         (when r (generic-kind! (cdr (assq 'kind r)) #t)))
        (call-with-values (lambda () (apply model:retire! actor args)) list)]
       [(buffers actors)
        (arity 0)

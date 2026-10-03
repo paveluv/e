@@ -214,7 +214,7 @@
                       (or changed? (not r) (not (equal? old parent))))) #f (cadr notice)))
           (clean!)))))
 
-  (edoc "Capture a dependency bundle: (graph-basis edges endpoint-rows text-ids). Model rows are coherent snapshots; buffer rows are contract headers, with text and provisional state supplied by the host."
+  (edoc "Capture a dependency bundle: (graph-basis edges endpoint-rows text-ids). Model rows are coherent snapshots; buffer rows are contract headers, with text and provisional state supplied by the host. A false graph basis means resolution is pending, not that its endpoints have retired."
         (ids list "endpoints") (returns list) (effects internal))
   (define (snapshot ids)
     (let loop ([attempt 0])
@@ -228,11 +228,13 @@
                  [rows (map (lambda (id) (hashtable-ref seen id #f)) (car closure))]
                  [all (append (map (lambda (r) (list (field r 'id) #t r)) (cons top records)) rows)]
                  [now (cadr (model:snapshots (map car all)))])
-            (cond [(equal? all now)
-                   (list (list (field top 'id) (field top 'revision)) edges
-                     (append rows (map (lambda (id) (let ([r (endpoint id)]) (list id (and r #t) r))) (cadr closure))) (cadr closure))]
-              [(< attempt 2) (loop (+ attempt 1))]
-              [else (list #f edges (map (lambda (id) (list id #f #f)) (car closure)) (cadr closure))]))))))
+            (if (or (equal? all now) (= attempt 2))
+              ;; A busy graph cannot revoke live view ownership. Keep the
+              ;; latest coherent endpoint batch, marking only resolution pending.
+              (list (and (equal? all now) (list (field top 'id) (field top 'revision))) edges
+                (append (list-tail now (+ 1 (length records)))
+                  (map (lambda (id) (let ([r (endpoint id)]) (list id (and r #t) r))) (cadr closure))) (cadr closure))
+              (loop (+ attempt 1))))))))
 
   (edoc "Resolve a current port with its coherent graph, model and text basis. A busy source yields pending."
         (id list "endpoint") (name symbol "input or output") (returns list) (effects internal))

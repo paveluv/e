@@ -43,11 +43,14 @@
         (0 1 1 1 0 1 2 1) ("APPLE.txt" "apple.txt"))))
   (let* ([v (ready q2)] [g (field v 'generation)] [basis (field v 'basis)]
          [ranks (map (lambda (name) (list-ref (collection:rank q2 g (list 'path (path name) 'file)) 3)) '("APPLE.txt" "apple.txt"))]
+         [absent (map (lambda (key) (list-ref (collection:rank q2 g key) 3))
+                   (list 'not-a-key '(path) 42 (list 'proposal (path "apple.txt") 'file)
+                     (list 'path (path "apple.txt") 'directory)))]
          [r (rows q2 '(size modified))])
     (test:check 'filesystem-metadata-is-demanded-and-exact-case-ranks-stay-distinct
       (list (map (lambda (r) (map cadr (caddr r))) r)
-        ranks)
-      '(((pending pending) (pending pending)) (0 1)))
+        ranks absent)
+      '(((pending pending) (pending pending)) (0 1) (#f #f #f #f #f)))
     (test:await 'filesystem-enriched
       (lambda () (> (field (ready q2) 'generation) g)))
     (let ([r (rows q2 '(size))])
@@ -101,8 +104,9 @@
                       (set! nested #t)
                       (set! nested (cadr (document:acquire! actor (path "nested-acquire")))))))])
     (ready alias)
-    (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination value)))
-    (model:unsubscribe! token)
+    (let ([visited? (edit:visit-file! (path "alias/acquired/child.txt") (lambda (kind value) (set! destination value)))])
+      (model:unsubscribe! token)
+      (unless visited? (error 'filesystem-fixture "file visit refused" (map log:datum (log:entries 'edit:visit-file! 1)))))
     (test:check 'ordinary-visit-invalidates-proposals-and-logs-creation-in-order
       (list (file-exists? target) (equal? nested (store:find-file (path "nested-acquire"))) (store:property destination 'base)
         (map (lambda (q) (map (lambda (r) (car (cadr r))) (rows q '(name)))) (list q2 alias))

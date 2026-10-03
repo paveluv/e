@@ -46,6 +46,21 @@
          (keymap:sequence-text (keymap:spec "PGDN")) (keymap:spec "PGUP")
          (keymap:sequence-text (keymap:spec "DELETE")) (keymap:sequence-text (keymap:spec "C-M-SPC")))
        '("M-BS" ("BACKSPACE") "PGDN" ("PAGEUP") "DEL" "C-M-SPC"))
+     (let* ([calls 0] [probe (view:create! head:ui-actor #f 'route-probe 1 '() '())])
+       (widget:register! 'route-probe 1
+         (list (cons 'contexts (lambda (id d) (set! calls (+ calls 1)) '(inspection-test global)))))
+       (widget:mount! probe 'route-probe)
+       (let* ([basis (listing:basis probe '() #f '())]
+              [keys (fold-left
+                      (lambda (out owned)
+                        (let ([key (car (keymap:binding-sequence (cdr owned)))])
+                          (if (member key out) out (cons key out)))) '("")
+                      (apply append (map keymap:context-bindings '(inspection-test global widget-host))))])
+         (set! calls 0)
+         (listing:capture basis '())
+         (check 'cold-inspection-resolves-each-first-key-route-at-most-once
+           (<= calls (length keys)) #t))
+       (widget:unmount! probe) (view:retire! head:ui-actor probe (model:revision probe)))
      (define source (view:create! head:ui-actor #f 'text 2 '() '(0)))
      (widget:mount! source 'inspection-subject)
      (define a (bindings:create! #f '() source))

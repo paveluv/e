@@ -128,21 +128,25 @@
     ;; Feed available output as a chunk. Per-character emulator calls and
     ;; transcript concatenation made the PTY drivers unnecessarily expensive.
     ;; Remember EOF so callers can await exit without a separate blocking read.
+    ;; Concurrent protocol waits share this reader. Keep readiness/read and
+    ;; emulator delivery together: another drain must not consume a ready byte
+    ;; before this caller reads it, or deliver a newer chunk ahead of this one.
     (let ([input (transcoded-port (sys:terminal-process-input process)
                    (make-transcoder (utf-8-codec) 'none 'replace))]
-          [ended? #f])
+          [ended? #f] [lock (make-mutex)])
       (lambda ()
-        (let ([text
-               (call-with-string-output-port
-                 (lambda (output)
-                   (let drain ()
-                     (when (and (not ended?)
-                                (guard (ex [else (set! ended? #t) #f]) (char-ready? input)))
-                       (let ([c (guard (ex [else (eof-object)]) (get-char input))])
-                         (if (eof-object? c) (set! ended? #t)
+        (with-mutex lock
+          (let ([text
+                 (call-with-string-output-port
+                   (lambda (output)
+                     (let drain ()
+                       (when (and (not ended?)
+                               (guard (ex [else (set! ended? #t) #f]) (char-ready? input)))
+                         (let ([c (guard (ex [else (eof-object)]) (get-char input))])
+                           (if (eof-object? c) (set! ended? #t)
                              (begin (put-char output c) (drain))))))))])
-          (unless (string=? text "") (consume! text))
-          ended?))))
+            (unless (string=? text "") (consume! text))
+            ended?)))))
 
   (define (command base . args)
     (string-append "exec "

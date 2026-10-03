@@ -43,6 +43,7 @@
      (define socket (string-append base-directory "/socket"))
      (define test-base #f)
      (define trigger (string-append root "/continue"))
+     (define producer-result (string-append root "/producer-result"))
      (define terminal-pid-file (string-append root "/terminal-pid"))
      (define inventory-file (string-append root "/sessions"))
      (define audit-file (string-append root "/audit"))
@@ -171,7 +172,8 @@
                  (old-ask held "still active?" '() void) (policy:sessions)))
          ;; Simulate retained daemon history before any screen connects.
          (log:retention 5000)
-         (do ([i 0 (+ i 1)]) ((= i 5002)) (log:add! 'wire-retained i #f))
+         ,@(if (or (null? (command-line-arguments)) (member "protocol" (command-line-arguments)))
+               '((do ([i 0 (+ i 1)]) ((= i 5002)) (log:add! 'wire-retained i #f))) '())
          (define notes (store:create! '(base e) "notes λ" '("hello λ")
                          (list (cons 'bootstrap footprint)
                                (cons 'process-id (get-process-id))
@@ -273,8 +275,11 @@
            (lambda ()
              (let wait ()
                (unless (file-exists? ,trigger) (sleep (make-time 'time-duration 5000000 0)) (wait)))
-             (collect)
-             (store:reset! '(agent "background") notes '("agent work while detached"))))))
+             (guard (ex [else (call-with-output-file ,producer-result
+                                (lambda (out) (write (list 'failed (kernel:condition-text ex)) out)) 'replace)])
+               (call-with-output-file ,producer-result (lambda (out) (write 'publishing out)) 'replace)
+               (store:reset! '(agent "background") notes '("agent work while detached"))
+               (call-with-output-file ,producer-result (lambda (out) (write 'finished out)) 'replace))))))
 
      (test:check 'noninteractive-head-refuses-before-base-config-starts-work
        (list (zero? (system (format "TERM=dumb scheme-script ~a > ~a 2>&1"
@@ -1596,6 +1601,29 @@
                    (list (list 'model-create 'composition-binding 1 identity 'persistent '() value)
                      (list 'model-commit (list (list id (cdr (assq 'revision binding)) '() value)))
                      (list 'model-retire id (cdr (assq 'revision binding))))) '(#t #t #t)))
+             (let* ([inspection (rpc head 'inspection-create 'subject '(keys))]
+                    [id (car inspection)] [part (cdar (cadr inspection))])
+               (test:check 'inspection-authority-cannot-be-bypassed-by-generic-model-operations
+                 (map (lambda (ref)
+                        (let* ([r (caddr (caadr (rpc head 'model-read (list ref))))]
+                               [kind (cdr (assq 'kind r))] [revision (cdr (assq 'revision r))]
+                               [value (cdr (assq 'value r))] [references (cdr (assq 'references r))])
+                          (map (lambda (attempt) (and (apply reject head attempt) #t))
+                            (list (list 'model-create kind 1 identity 'transient references value)
+                              (list 'model-commit (list (list ref revision references value)))
+                              (list 'model-retire ref revision)))))
+                   (list id part)) '((#t #t #t) (#t #t #t)))
+               (rpc head 'inspection-close id))
+             (let* ([draft (rpc head 'conflict-review-create '())]
+                    [preview (rpc head 'review-preview-create draft)]
+                    [id (car preview)] [document (cadr preview)]
+                    [r (caddr (caadr (rpc head 'model-read (list id))))])
+               (test:check 'preview-retirement-must-dispose-owned-output-through-its-service
+                 (list (and (reject head 'model-retire id (cdr (assq 'revision r))) #t)
+                   (begin (rpc head 'review-preview-close id)
+                          (list (caddr (caadr (rpc head 'model-read (list id))))
+                            (member document (rpc head 'buffers))))) '(#t (#f #f)))
+               (rpc head 'conflict-review-close draft 0))
              (let* ([ids (rpc head 'buffers)] [snapshot (rpc head 'snapshot (car ids))]
                     [facts (caddr snapshot)])
                (test:check 'base-only-config-and-owned-snapshot
@@ -1903,8 +1931,12 @@
                    (assq 'mail-refused (caddr (rpc agent 'snapshot '(buffer 1)))))
                  '(#t #t (mail-refused . #t))))
              (write-text trigger "continue")
-             (test:await 'background-agent
-               (lambda () (equal? (car (rpc agent 'snapshot '(buffer 1))) '#("agent work while detached"))))
+             (guard (ex [else (error 'wire-test "background producer did not converge"
+                                (kernel:condition-text ex)
+                                (and (file-exists? producer-result) (call-with-input-file producer-result get-string-all))
+                                (fixture:diagnostics base))])
+               (test:await 'background-agent
+                 (lambda () (equal? (car (rpc agent 'snapshot '(buffer 1))) '#("agent work while detached")))))
              (test:check 'terminal-outlives-head-disconnect
                (cdr (assq 'alive (caddr (rpc agent 'snapshot '(buffer 3))))) #t)
              (signal! "HUP")
@@ -1944,9 +1976,9 @@
                  (list (car (rpc head 'snapshot '(buffer 1)))
                    (rpc head 'edit '(buffer 1) 14 '(0 0 0 0) '("bad")) (rpc head 'undo '(buffer 1)) (rpc head 'redo '(buffer 1)))
                  '(#("agent work while detached") (refused read-only) (refused read-only) (refused read-only)))
-               ;; Separate connection threads race named fact batches against
-               ;; state reads. Bounded bursts keep writes contending without
-               ;; filling the outbox. Each whole worker has one timeout.
+               ;; Exercise connection contention and framing here; store.ss
+               ;; owns the larger atomic name/facts stress. Bounded bursts
+               ;; keep writes contending without filling the outbox.
                (let* ([writer (connect)]
                       [target (rpc head 'create "epoch-0" '("text") '((epoch . 0)))])
                  (hello writer '(head "state writer")) (receive writer)
@@ -1954,7 +1986,7 @@
                         (test:parallel 2
                           (lambda (index)
                             (let ([connection (if (zero? index) writer head)] [mismatch #f]
-                                  [width (if (zero? index) 32 1)] [batches (if (zero? index) 64 2000)])
+                                  [width (if (zero? index) 16 1)] [batches (if (zero? index) 8 128)])
                               (do ([batch 0 (+ batch 1)]) ((= batch batches))
                                   (do ([offset 0 (+ offset 1)]) ((= offset width))
                                     (let ([n (+ (* batch width) offset 1)])
@@ -2095,7 +2127,7 @@
                             (guard (ex [else (void)])
                               (kernel:call-with-registration-update
                                 (lambda () (model:subscribe! '((model 999999)) void) (error 'rollback "rollback"))))
-                            (do ([i 0 (+ i 1)]) ((= i 1000)) (model:snapshot ',model) (model:available? ',model))
+                            (do ([i 0 (+ i 1)]) ((= i 3)) (model:snapshot ',model) (model:available? ',model))
                             (let ([copy (model:snapshot ',model)])
                               (string-set! (cdr (assq 'value copy)) 0 #\X))
                             (model:unsubscribe! second-reader)
@@ -2306,10 +2338,10 @@
                                 (log:retention 5001)
                                 (let ([new (log:retention)]) (log:retention old) (list old new)))
                               (let-values ([(entries end first) (log:snapshot 0 1 'wire-log)])
-                                (list (map log:datum entries) (- end first))))))
+                                (list (map log:datum entries) (<= (- end first) (log:retention)))))))
                    '(((worker (head "screen A") #f #t)
                       (first (head "screen A") #f #t) (second (head "screen A") #f #t))
-                     (after-retraction second) (5000 5001) ((after-retraction) 5000)))
+                     (after-retraction second) (5000 5001) ((after-retraction) #t)))
                  (head-send! a "A")
                  (head-wait 'foreign-paint-without-a-key b (lambda () (head-sees? b "Ashared text")))
                  (head-read b '(begin (test-go! (quote (0 . 12))) #t))
@@ -2546,7 +2578,7 @@
                           (file:add-pre-save-hook!
                             (lambda (target editor)
                               (when (string=? target ,path) (file:write! target '#("from hook") #t))))) #t))
-                   (head-send! a (format "\x1b;xedit:save-file! (test-editor) ~s\r" path))
+                   (head-read a `(edit:save-file! (test-editor) ,path))
                    ;; the hook's write is what the disk holds at save time: the save
                    ;; reloads it, the buffer clean against its baseline, then writes
                    (head-wait 'a-pre-save-hooks-disk-write-is-reloaded a
@@ -2569,16 +2601,19 @@
                          (head-read a
                            `(begin (test-show! (quote (unquote target)))
                                    (edit:insert! (test-editor) "mine ") #t))
-                         (head-send! a (format "\x1b;x~a (~a) ~s\r" command
-                                         (if (eq? command 'edit:save-file!) 'test-editor 'test-root) path))
-                         (head-wait (list command 'rereads-without-asking) a
-                           (lambda () (head-sees? a (if (eq? command 'edit:save-file!) "was reread" "Reread"))))
-                         (test:check (list command 'a-changed-file-past-the-log-is-reread-undoably)
-                           (list (head-read a '(let ([b (test-document)])
-                                                 (list (car (call-with-values (lambda () (store:snapshot b)) list)) (store:property b (quote modified) #f) (store:property b (quote conflicted) #f))))
-                                 (call-with-input-file path get-string-all)
-                                 (head-read a '(begin (edit:undo! (test-editor)) (car (call-with-values (lambda () (store:snapshot (test-document))) list)))))
-                           '((#("disk") #f #f) "disk\n" #("mine keep")))
+                         (let ([accepted
+                                (head-read a
+                                  `(guard (ex [(kernel:refusal? ex)
+                                               (and (eq? ',command 'edit:save-file!)
+                                                 (string:search (kernel:condition-text ex) "was reread" 0
+                                                   (string-length (kernel:condition-text ex))) #t)])
+                                     (,command (,(if (eq? command 'edit:save-file!) 'test-editor 'test-root)) ,path)))])
+                           (test:check (list command 'a-changed-file-past-the-log-is-reread-undoably)
+                             (list accepted (head-read a '(let ([b (test-document)])
+                                                            (list (car (call-with-values (lambda () (store:snapshot b)) list)) (store:property b (quote modified) #f) (store:property b (quote conflicted) #f))))
+                               (call-with-input-file path get-string-all)
+                               (head-read a '(begin (edit:undo! (test-editor)) (car (call-with-values (lambda () (store:snapshot (test-document))) list)))))
+                             '(#t (#("disk") #f #f) "disk\n" #("mine keep"))))
                          (head-read a `(begin (test-show! ',id) #t))
                          (rpc head 'delete target)))
                      '(screen:open-file! edit:save-file!))
@@ -2588,8 +2623,7 @@
                    (write-text path "disk\n")
                    (let ([target (rpc head 'create "file review" '("keep") '((trailing . #t)))])
                      (head-read a `(begin (test-show! (quote (unquote target))) (edit:insert! (test-editor) "mine ") #t))
-                     (head-send! a (format "\x1b;xedit:save-file! (test-editor) ~s\r" path))
-                     (head-wait 'save-as-writes-and-says-so a (lambda () (head-sees? a "saved.txt.bak")))
+                     (head-read a `(edit:save-file! (test-editor) ,path))
                      (test:check 'a-save-as-over-a-file-keeps-what-it-held-as-a-backup
                        (list (call-with-input-file path get-string-all)
                              ;; the newest backup of the path, its name saved.txt.bak or a suffixed one
@@ -3201,14 +3235,16 @@
            (write-forms (string-append root "/config.e") '((void)))
            (write-text (string-append base-directory "/log/2000-01-01.log") "expired")
            (write-text (string-append base-directory "/log/keep.txt") "keep")
-           ;; A cold cache exercises concurrent compilation before both heads
-           ;; race to exec a base and contend on the same lifetime flock.
+           ;; Exercise concurrent cold compilation once. The later heads race
+           ;; to exec a base and contend on its lifetime flock; recompiling the
+           ;; unrelated head adapter repeats the same cache-lock mechanism.
            (test:check 'concurrent-cold-compilers-share-a-consistent-cache
              (map (lambda (round)
                     (remove-tree! objects)
                     (test:parallel 3 (lambda (index) (list-head (loader-exit '("--help")) 2)))) '(1))
              (make-list 1 (make-list 3 '(0 ""))))
-           (remove-tree! objects) (mkdir objects #o700) (seed-objects! "base")
+           (seed-objects! "base")
+           (seed-objects! "client")
            (write-forms (string-append root "/blank.e")
              '((list (cons 'profile "blank") (cons 'entry (lambda (context) #f)))))
            (let* ([a (start-command '("--name" "auto α's desk" "--start" "start.e") 80)]

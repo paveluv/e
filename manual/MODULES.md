@@ -10,10 +10,9 @@ Imports may point down or sideways; no library imports a runtime entrypoint.
 The loader locates the adjacent libraries and object caches and configures
 Chez. It admits options through `startup`, then selects the base or client runtime.
 Plain `e` starts or connects to the base, checks source and wire compatibility,
-and claims the connection before importing the modules, each under its
-prefix, the temporary bare `(window n)` selector
-and `main`, and
-runs `(main:run!)`.
+and claims the connection before importing the head runtime under its
+prefixes and running `(main:run!)`. The selected startup recipe assembles
+the root widget; the default recipe is `start.e`.
 `--base` acquires the directory's lifetime lock and runs the base without
 importing a head. This ordering chooses a head's identity before it creates
 shared state. The base owns terminal processes through shutdown; a client
@@ -123,8 +122,9 @@ publishes an independent private Markdown source. `reference:select!` changes
 that explicit page against its reviewed revision; presentation stays in the head.
 
 Every library is imported with its own prefix, and that is also how M-x
-sees it: `edit:`, `store:`, `keymap:`, `terminal:`, `git:`, `sys:`. Only
-`literal`'s temporary `(window n)` selector is bare. Portable references, identities and regions use quoted Scheme
+sees it: `edit:`, `store:`, `keymap:`, `terminal:`, `git:`, `sys:`.
+Windows and other views use model references; `window:numbered` resolves
+a displayed number within an explicit manager. Portable references, identities and regions use quoted Scheme
 data, such as `'(buffer 17)`, `'(head "desk")` and
 `'(region (buffer 17) (0 . 0) (4 . 0))`. `region:` owns region validation,
 normalizing construction and accessors. Modules

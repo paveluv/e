@@ -162,7 +162,13 @@
               (lambda (inventory skipped done?)
                 (unless (and (not done?) (null? inventory))
                   (let* ([index (file-query:prepare inventory plan (field query 'filter) (field query 'sort) done? check!)]
-                         [entries (file-query:index-entries index)] [positions (make-hashtable equal-hash equal?)])
+                         [entries (file-query:index-entries index)]
+                         ;; Generic equal-hash samples long strings. Paths
+                         ;; varying only in interior directories must not share
+                         ;; buckets; tags and kinds still compare exactly.
+                         [positions (make-hashtable
+                                      (lambda (key) (if (and (pair? key) (pair? (cdr key)) (string? (cadr key)))
+                                                      (string:hash (cadr key)) 0)) equal?)])
                     (do ([i 0 (+ i 1)]) ((= i (vector-length entries)))
                       (check!) (hashtable-set! positions (key (vector-ref entries i)) i))
                     (with-mutex lock (job-index-set! job index) (hashtable-clear! (job-wanted job)))

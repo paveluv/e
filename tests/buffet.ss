@@ -63,14 +63,17 @@
      (define (select! b)
        (let ([ref b])
          (table:select! (table) ref)
-         ;; A ready prior generation may still precede a queued rename.
-         ;; Wait for the selected row to include the fact this action uses.
-         (test:await 'buffet-selected-current-name
+         ;; A ready prior generation can precede metadata or archive changes.
+         ;; Wait for the facts that fence the selected row's next action.
+         (test:await 'buffet-selected-current-facts
            (lambda ()
              (settle!)
-             (let* ([s (selection)] [r (collection:lookup (query) (cadr s) ref '(name))])
+             (let* ([s (selection)] [r (collection:lookup (query) (cadr s) ref '(name version))]
+                    [m (and (eq? (car b) 'buffer) (cadar (cadr (store:metadata (list b)))))])
                (and (equal? (caddr s) ref) (eq? (car r) 'ready) (pair? (list-ref r 4))
-                 (equal? (assq 'name (caddr (car (list-ref r 4)))) (list 'name 'ready (if (eq? (car b) 'buffer) (store:buffer-name b) (get (view:options (view:snapshot b)) 'name))))))))))
+                 (let ([cells (caddr (car (list-ref r 4)))])
+                   (and (equal? (assq 'name cells) (list 'name 'ready (if m (get m 'name) (get (view:options (view:snapshot b)) 'name))))
+                     (or (not m) (equal? (assq 'version cells) (list 'version 'ready (get m 'version))))))))))))
      (define (press! . keys)
        (for-each (lambda (key) (routing:input! manager (list 'key key (and (= (string-length key) 1) key)))) keys))
      (define a (store:create! head:ui-actor "buffet-a" '("")))
@@ -231,17 +234,16 @@
      (settle!) (select! b) (press! "C-k") (settle!)
      (test:check 'trash-retires-the-head-buffer
        (list (and (store:property b 'trashed #f) #t) (member b (window:documents manager window))) '(#t #f))
+     (select! b)
      (let ([text (string:join (widget:frame-lines (draw! (root) 120 15)) "\n")])
        (test:check 'archive-age-and-retention-are-presented
          (and (string:search text " ago" 0 (string-length text)) (string:search text " left" 0 (string-length text)) #t) #t))
-     (table:select! (table) b) (settle!)
      (press! "RET")
      (test:check 'archive-restore-preserves-identity
        (list (app) (store:property b 'trashed #f))
        (list b #f))
      (buffet:open! window) (settle!)
-     (select! b) (press! "C-k") (settle!)
-     (table:select! (table) b) (settle!)
+     (select! b) (press! "C-k") (select! b)
      (press! "C-x" "D")
      (test:check 'permanent-archive-delete (store:exists? b) #f)
      (settle!)

@@ -422,7 +422,9 @@
             [b (view:create! head:ui-actor #f 'receiver-leaf 1 '((name . "Second")) '())]
             [hidden (view:create! head:ui-actor #f 'receiver-leaf 1 '() '())]
             [root (view:create! head:ui-actor #f 'receiver-parent 1 '() '())])
-       (widget:register! 'receiver-leaf 1 (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!))))))
+       (widget:register! 'receiver-leaf 1
+         (list (cons 'actions (list (cons 'change (eval 'receiver-probe:change!))))
+           (cons 'command-help (lambda (id proc) (format "Guide for ~s" id)))))
        (widget:register! 'receiver-parent 1 '((receivers (Other second))))
        (view:arrange! head:ui-actor
          (list (list root 0 (list (list 'first a 'fit) (list 'second b 'fit) (list 'hidden hidden 'fit)) '())) '())
@@ -456,6 +458,13 @@
          (check 'contextual-symbols-and-nested-calls-use-the-same-origin
            (map (lambda (src) (list-ref (lookup src "(list (receiver-probe:ch") 3)) (list one none))
            '(("receiver-probe:change!") ()))
+         (check 'contextual-help-labels-only-a-sole-captured-receiver
+           (map (lambda (src)
+                  (let-values ([(from to extensions candidates)
+                                ((completion:source-lookup src) "(receiver-probe:ch" 18)])
+                    (let ([label (completion:candidate-label (car candidates))])
+                      (and (string:search label "Guide for" 0 (string-length label)) #t))))
+             (list one source)) '(#t #f))
          (check 'existing-receiver-expressions-do-not-get-replaced
            (map (lambda (text) (let ([r (lookup one text)])
                                  (and (or (not (car r)) (= (car r) (string-length text)))

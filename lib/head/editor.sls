@@ -1,7 +1,7 @@
 ;; Editor widget implementation. Public commands are re-exported by edit.
 (import (only (foundation edoc) elibrary))
 (elibrary (head editor)
-  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-position frame-row frame-state history! insert! insert-at! move! page! paste! register! register-effect! replace-region! rewrite-regions! scroll! select! selection set-mark! transfer!)
+  (export basis (rename (editor-state:create! create-view!)) delete! expression! format! frame-hit frame-row frame-state history! insert! insert-at! move! page! paste! register! register-effect! replace-region! rewrite-regions! scroll! select! selection set-mark! transfer!)
   (import (chezscheme) (prefix (core descriptor) descriptor:) (prefix (core kernel) kernel:)
           (prefix (foundation string) string:) (prefix (foundation text) text:) (prefix (head editor-state) editor-state:) (prefix (head expression) expression:)
           (prefix (head head) head:) (prefix (head interaction) interaction:) (prefix (head keymap) keymap:)
@@ -310,14 +310,6 @@
            [entry (and (cadr g) (assv row (list-ref g 6)))])
       (and entry (list (cadr entry) (vector-ref (text-control:lines (cadr data)) (cadr entry))
                    (caddr data) (caddr entry) (cadddr entry) (list-ref entry 4)))))
-
-  (edoc "Map a logical position into a prepared editor's backend coordinates. The result may lie outside its clip."
-        (frame any "editor frame") (position position "logical source position") (returns pair))
-  (define (frame-position frame position)
-    (let* ([g (widget:frame-data frame)] [data (car g)])
-      (text-layout:locate (text-control:lines (cadr data)) (caddr data)
-        (layout-width data (widget:frame-descriptor frame) (caddr (widget:frame-rect frame)))
-        (caddr g) (cadddr g) position)))
 
   (edoc "Map backend coordinates through a prepared editor's source and geometry, snapping to a complete grapheme."
         (frame any "editor frame") (x integer "column") (y integer "row") (returns position))

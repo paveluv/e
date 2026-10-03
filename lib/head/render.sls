@@ -3,7 +3,7 @@
 ;; and both coordinate directions. Public metadata reads own their data.
 (import (only (foundation edoc) elibrary))
 (elibrary (head render)
-  (export breaks character column defer deferred? detect-links header line-count line-ref lines-vector prefix prepare present row width)
+  (export breaks character column defer deferred? detect-links header line-count line-ref lines-vector prepare present row width)
   (import (rnrs)
           (prefix (foundation datum) datum:)
           (prefix (foundation string) string:)
@@ -97,13 +97,6 @@
             (let ([v (make-vector (line-count lines))])
               (do ([i 0 (+ i 1)]) ((= i (vector-length v))) (vector-set! v i (line-ref lines i)))
               (deferred-vector-set! lines v) v))))
-
-  (edoc "Replace a line source's leading rows without copying or formatting its body."
-        (lines any "the original source") (front list "the replacement prefix") (returns any))
-  (define (prefix lines front)
-    (let ([front (text:normalize front)] [count (line-count lines)])
-      (unless (<= (vector-length front) count) (error 'prefix "prefix exceeds source"))
-      (defer count (lambda (i) (if (< i (vector-length front)) (vector-ref front i) (line-ref lines i))))))
 
   (define (positive-integer? n)
     (and (integer? n) (exact? n) (> n 0)))

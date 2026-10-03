@@ -89,13 +89,13 @@
         (let* ([b (cdr (car owned))]
                [action (keymap:binding-action b)]
                [command (and action
+                             (not (shadowed? (keymap:binding-sequence b) nearer))
+                             (not (and read-only? (edits? action)))
+                             (or (not keep) (keep b))
                              (if describe (describe b) (trace action)))])
           (loop
             (cdr owned)
-            (if (and command
-                     (not (shadowed? (keymap:binding-sequence b) nearer))
-                     (not (and read-only? (edits? action)))
-                     (or (not keep) (keep b)))
+            (if command
                 (add (keymap:sequence-text (keymap:binding-sequence b))
                      command
                      (summary-of action)
@@ -127,7 +127,13 @@
         tail
         ")")))
   (define inspected-focus (make-parameter '()))
-  (define (scopes root key) (apply widget:key-scopes root key (inspected-focus)))
+  (define inspected-routes (make-parameter #f))
+  (define (scopes root key)
+    (let ([cache (inspected-routes)])
+      (if (not cache) (apply widget:key-scopes root key (inspected-focus))
+        (or (hashtable-ref cache key #f)
+          (let ([route (apply widget:key-scopes root key (inspected-focus))])
+            (hashtable-set! cache key route) route)))))
   (define (contexts root outer key)
     (if (not root)
       outer
@@ -204,7 +210,8 @@
     (sequence (list-of list) "optional single key sequence to inspect")
     (returns list) (effects internal))
   (define (capture basis pointer . sequence)
-    (parameterize ([inspected-focus (list-ref basis 7)]) (apply capture-rows basis pointer sequence)))
+    (parameterize ([inspected-focus (list-ref basis 7)] [inspected-routes (make-hashtable string-hash string=?)])
+      (apply capture-rows basis pointer sequence)))
   (define (capture-rows basis pointer . sequence)
     (unless (and (<= (length sequence) 1) (or (null? sequence) (and (pair? (car sequence)) (for-all string? (car sequence)))))
       (error 'capture "expected at most one nonempty key sequence"))

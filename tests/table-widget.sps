@@ -32,6 +32,13 @@
   (view:arrange! actor (list (list root 0 (list (list 'table table '(grow 1)) (list 'list list-view '(grow 1)) (list 'target target 'fit)) '())) '())
   (widget:mount! root 'table-fixture)
   (await-key table 0) (await-key list-view 0)
+  (check 'table-command-guides-use-acquired-columns-and-bindings
+    (let ([receiver (car (widget:receivers table))])
+      (map (lambda (proc) (widget:command-help receiver proc))
+        (list table:sort-by! table:set-columns! table:invoke! table:move!)))
+    '("Columns: name, size, flag; '((column ascending) ...) or descending; '() clears sorting"
+      "Columns: name, size, flag; '(column ...), retaining name"
+      "Commands: activate, inspect" #f))
   (check 'table-and-list-share-data-not-selection
     (begin (table:move! table 'next) (list (key table) (key list-view))) '(1 0))
   (show! 80)

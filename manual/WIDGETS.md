@@ -60,6 +60,13 @@ headings by zero-based position. Wheel movement scrolls
 without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
+In M-x, a table command's completion describes its captured table's available
+columns or named commands. Sorting takes `'((name ascending) (size descending))`;
+`'()` clears it. Visible columns take an ordered list such as `'(name size)`
+that retains the identity column. Variables and Scheme expressions work too.
+When several tables are applicable, choose an explicit receiver; completion
+does not guess which table's contract to use.
+
 Use `((cell-commands (mine . mine) (disk . disk)))` to make specific columns
 invoke named table commands. Each command receives the same exact row
 selection and result basis as Enter. Other cells use `activate` when bound.
@@ -733,6 +740,11 @@ returns `(minimum preferred)`. `layout` receives
 have zero extent. `anchor` maps `(data position width)` to a logical anchor;
 `locate` maps `(data anchor width)` back to a backend position.
 
+An optional `command-help` definition callback receives `(view-id procedure)`
+and returns a short guide or `#f`. It reads acquired state only and never
+invokes the command. M-x adds it to the candidate description when there is
+one compatible captured receiver; reexports use the same procedure identity.
+
 An action receives `(view-id . args)`. Register the public operation itself;
 it obtains three values, source envelope, provisional descriptor and resolved inputs, from
 `(widget:context view-id)`. This is a local read. During an action the source
@@ -801,12 +813,12 @@ clean up a newer attachment's pending work. Earlier supported binding
 snapshots acquire an empty cleanup list during recovery.
 
 These are base admission operations. They do not mount, render or dispose of
-head resources, and the ordinary launcher still uses the existing window host.
+head resources; the head's root runtime owns that presentation lifecycle.
 
 The shipped `start.e` recipe assembles an editor screen with a window manager,
 a modal prompt host and a message view using ordinary constructors. It is
-available with `--start start.e` while the launcher migration is in
-progress. Its `"editor"` profile reuses an initialized root. File requests enter
+the ordinary launcher's default composition, also selectable with
+`--start start.e`. Its `"editor"` profile reuses an initialized root. File requests enter
 through the screen's `open-file` command; a directory opens that window's Finder.
 The manager and ancillary views share the screen's lifetime; shared text survives
 their retirement. Alternative compositions need none of these definitions.
@@ -1331,9 +1343,11 @@ mounts without deleting their descriptors or data.
 
 After a base operation changes a mounted subtree, `widget:refresh!` provides
 an explicit command-boundary barrier before addressing its new children. It
-reads that subtree and its ancestors, then acquires newly exposed descendants
-through the ordinary pump. The window commands use it after opening, returning,
-splitting or closing. Rendering, hover and routine input discovery use the
+acquires the containing mount root's canonical tree and immediately adopts its
+containment, even when notifications are delayed. Former members' ownership
+is reconciled before their subscriptions are withdrawn; newly exposed children
+are acquired from the same tree capture. The window commands use it after
+opening, returning, splitting or closing. Rendering, hover and routine input discovery use the
 already acquired state and never invoke this barrier. For an unmounted model,
 read an authoritative `model:snapshots` packet; `model:snapshot` only reads an
 existing subscription.
@@ -1372,7 +1386,8 @@ column for its content. Resizing preserves the logical anchor, and scrolling
 and reveal use the child's actual width.
 
 `widget:prepare!` returns a head-local frame for a root and its allocation.
-The existing-window adapter supplies that allocation automatically.
+The root presenter supplies the screen allocation; recursive hosts allocate
+their own children within it.
 Preparation is separate from presentation: the painter adopts the exact
 frames included in successfully flushed output. Partial echo updates retain
 the previously shown geometry. Failed terminal output disables widget hits

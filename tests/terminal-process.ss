@@ -11,7 +11,7 @@
              (prefix (state actor) actor:) (prefix (state store) store:) (prefix (state surface) surface:) (prefix (state view) view:)
              (prefix (core kernel) kernel:) (prefix (foundation text) text:)
              (prefix (sys activity) activity:)
-             (prefix (test) test:))
+             (prefix (test) test:) (prefix (fixture) fixture:))
 
      (define (check label true?)
        (test:check label true? #t))
@@ -162,7 +162,10 @@
             [output (sys:terminal-process-output process)])
        (put-bytevector output (string->utf8 "hello terminal\n"))
        (flush-output-port output)
-       (let ([text (read-process process)])
+       (let* ([text ""]
+              [drain (fixture:terminal-reader process
+                       (lambda (chunk) (set! text (string-append text chunk))))])
+         (test:parallel 2 (lambda (index) (test:await 'concurrent-pty-drain drain)))
          (sys:reap-terminal-process! process)
          (check 'interactive-input (contains? text "input=<hello terminal>"))
          (check 'stderr-shares-pty (contains? text "stderr-line"))))

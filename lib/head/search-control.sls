@@ -74,7 +74,7 @@
           (let* ([record (caddr (caadr (model:snapshots (list query))))] [draft (get (get record 'value) 'draft)]
                  [options (list '(spacing . normal) (cons 'commands commands) (cons 'remembered remembered) (cons 'summary? (not entry?)) (cons 'overlap? entry?))]
                  [root (view:create! head:ui-actor query 'search 1 options
-                         (list target policy 0 'search (home source point) "") (or owner query))]
+                         (list target policy '() 'search (home source point) "") (or owner query))]
                  [label (view:create! head:ui-actor query 'search-label 1 '() '() root)]
                  [input (and entry? (view:create! head:ui-actor draft 'entry 1 '() '((0 . 0) (0 . 0)) root))])
             (view:arrange! head:ui-actor
@@ -90,7 +90,8 @@
       (if input (entry:set-text! (cadr input) needle)
         (let ([state (view:state d)])
           (unless (equal? needle (list-ref state 5))
-            (interaction:set-state! head:ui-actor id #f (append (list-head state 5) (list needle))))))))
+            (interaction:set-state! head:ui-actor id #f
+              (list (car state) (cadr state) '() 'search (list-ref state 4) needle)))))))
   (define (disconnect! r)
     (when (and (runtime-target r) (interaction:snapshot (runtime-target r)))
       (guard (ex [else (void)])
@@ -120,23 +121,11 @@
           (let* ([state (view:state d)] [target (car state)])
             (connect! r target)
             (let-values ([(needle draft-basis) (text id)] [(source target-d point) (target-context target)])
-              (let* ([signature (list target (cadr state) (caddr state) needle)]
+              (let* ([signature (list target (cadr state) needle)]
                      [changed? (not (equal? signature (runtime-signature r)))]
+                     [repeats (filter (lambda (step) (equal? (cdr step) signature)) (caddr state))]
                      [viewport (list (text-control:revision source) (visible target source point))]
-                     [old (runtime-signature r)] [hit (and (runtime-hit r) (rebase source (runtime-hit r)))])
-                (when (or changed? (not (equal? viewport (runtime-visible r))))
-                  (let* ([repeat? (and old (not (= (caddr state) (caddr old))) (memq (cadddr state) '(repeat previous)))]
-                         [home (or (rebase source (list-ref state 4)) point)]
-                         [start (cond [(and repeat? hit) (if (eq? (cadddr state) 'previous) hit (cons (car hit) (+ 1 (cdr hit))))]
-                                  [(or (not old) (not (eq? (cadr old) (cadr state))) (< (string-length needle) (string-length (list-ref old 3)))) home]
-                                  [else (or hit home)])]
-                         [q (request target source target-d start needle (cadr state)
-                              (if (and repeat? (eq? (cadddr state) 'previous)) 'previous 'next) (get (view:options d) 'summary?) (get (view:options d) 'overlap?))]
-                         [generation (search-request:configure! head:ui-actor query
-                                       (max (get v 'generation) (if (runtime-pending r) (car (runtime-pending r)) 0)) q)])
-                    (when generation
-                      (runtime-signature-set! r signature) (runtime-visible-set! r viewport)
-                      (runtime-pending-set! r (list generation (view:generation target-d) (view:sequence target-d) draft-basis changed?)))))
+                     [old (runtime-signature r)])
                 (let* ([pending (runtime-pending r)] [result (get v 'result)]
                        [stamp (list (get v 'generation) result)])
                   (when (and (eq? (get v 'status) 'unavailable) pending (= (car pending) (get v 'generation)))
@@ -149,7 +138,7 @@
                     (runtime-last-result-set! r stamp)
                     (when (and pending (= (car pending) (get v 'generation)))
                       (runtime-pending-set! r #f)
-                      (when (and (equal? draft-basis (list-ref pending 3)) (= (view:generation target-d) (cadr pending))
+                      (when (and (not changed?) (equal? draft-basis (list-ref pending 3)) (= (view:generation target-d) (cadr pending))
                               (= (view:sequence target-d) (caddr pending)))
                         (let* ([p (get result 'hit)]
                                [p (and p (rebase source (list (get (get v 'request) 'document) (get result 'basis) p)))])
@@ -157,8 +146,31 @@
                           (when (list-ref pending 4)
                             (cond [p (editor:move! target (cons (car p) (+ (cdr p) (string-length needle))))]
                               [(string=? needle "") (let ([origin (rebase source (list-ref state 4))]) (when origin (editor:move! target origin)))]))))))
+                  ;; A ready hit may be visible before this service has adopted
+                  ;; it. Consume it before a repeat supersedes its generation.
+                  (when (or changed? (and (not (runtime-pending r))
+                                       (or (pair? repeats) (not (equal? viewport (runtime-visible r))))))
+                    ;; Adoption can move the editor; fence the next request
+                    ;; against that new provisional sequence, not the old one.
+                    (let-values ([(source target-d point) (target-context target)])
+                      (let* ([hit (and (runtime-hit r) (rebase source (runtime-hit r)))]
+                             [repeat? (and (not changed?) (pair? repeats))]
+                             [previous? (and repeat? (eq? (caar repeats) 'previous))]
+                             [home (or (rebase source (list-ref state 4)) point)]
+                             [start (cond [(and repeat? hit) (if previous? hit (cons (car hit) (+ 1 (cdr hit))))]
+                                      [(or (not old) (not (eq? (cadr old) (cadr state))) (< (string-length needle) (string-length (caddr old)))) home]
+                                      [else (or hit home)])]
+                             [q (request target source target-d start needle (cadr state)
+                                  (if previous? 'previous 'next) (get (view:options d) 'summary?) (get (view:options d) 'overlap?))]
+                             [generation (search-request:configure! head:ui-actor query
+                                           (max (get v 'generation) (if (runtime-pending r) (car (runtime-pending r)) 0)) q)])
+                        (when generation
+                          (runtime-signature-set! r signature) (runtime-visible-set! r viewport)
+                          (runtime-pending-set! r (list generation (view:generation target-d) (view:sequence target-d) draft-basis (or changed? repeat?)))
+                          (interaction:set-state! head:ui-actor id #f
+                            (list target (cadr state) (if repeat? (cdr repeats) repeats) (cadddr state) (list-ref state 4) (list-ref state 5)))))))
                   (when (and (eq? (cadddr state) 'accept) (not (runtime-finishing? r))
-                          (not (runtime-pending r)) (equal? signature (runtime-signature r))
+                          (null? repeats) (not (runtime-pending r)) (equal? signature (runtime-signature r))
                           (memq (get v 'status) '(ready unavailable)) (equal? stamp (runtime-last-result r)))
                     (runtime-finishing?-set! r #t)
                     (head:run-on-main!
@@ -198,17 +210,19 @@
     (unless (and (<= (length direction) 1) (for-all (lambda (x) (memq x '(next previous))) direction)) (error 'repeat! "expected next or previous"))
     (let ([d (interaction:snapshot id)])
       (let-values ([(needle revision) (text id)])
-        (when (string=? needle "") (set-needle! id (get (view:options d) 'remembered))))
-      (let ([state (view:state (interaction:snapshot id))])
-        (interaction:set-state! head:ui-actor id #f (list (car state) (cadr state) (+ 1 (caddr state))
-                                                      (if (equal? direction '(previous)) 'previous 'repeat) (list-ref state 4) (list-ref state 5))))))
+        (if (string=? needle "") (set-needle! id (get (view:options d) 'remembered))
+          (let* ([state (view:state d)] [signature (list (car state) (cadr state) needle)]
+                 [step (cons (if (equal? direction '(previous)) 'previous 'next) signature)])
+            (interaction:set-state! head:ui-actor id #f
+              (list (car state) (cadr state) (append (caddr state) (list step))
+                'search (list-ref state 4) (list-ref state 5))))))))
 
   (edoc "Toggle this search's effective case policy between exact and folded matching." (receiver id (view search)) (id model "search view"))
   (define (toggle-case! id)
     (let* ([d (interaction:snapshot id)] [state (view:state d)])
       (let-values ([(needle revision) (text id)])
         (interaction:set-state! head:ui-actor id #f
-          (list (car state) (if (fold? (cadr state) needle) 'exact 'fold) (+ 1 (caddr state)) 'search (list-ref state 4) (list-ref state 5))))))
+          (list (car state) (if (fold? (cadr state) needle) 'exact 'fold) '() 'search (list-ref state 4) (list-ref state 5))))))
 
   (edoc "Explicitly retarget search to another mounted editor. Pending results for the previous target cannot move the new one; cancellation retains the original receiver."
         (receiver id (view search)) (id model "search view") (target model "new editor"))
@@ -217,7 +231,7 @@
       (unless (equal? target (car state))
         (let-values ([(source target-d point) (target-context target)])
           (interaction:set-state! head:ui-actor id #f
-            (list target (cadr state) (+ 1 (caddr state)) 'search (home source point) (list-ref state 5)))))))
+            (list target (cadr state) '() 'search (home source point) (list-ref state 5)))))))
 
   (define (label id source inputs)
     (let ([v (and source (get source 'value))])

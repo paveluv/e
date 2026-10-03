@@ -189,11 +189,11 @@
          "Add two numbers. Slowly, for the test.\n\n- `x` (integer): the first addend\n- `y` (integer)"))
 
      (check 'presentation-helpers
-       (list (edoc-template 'visit '(path . more)) (first-sentence "Add two numbers. Slowly.") (first-sentence "No end")
+       (list (edoc-template 'visit '(path . more))
              (type-text '(one-of utf-8 latin-1)) (type-text '(or string #f)) (type-text '(list-of buffer)) (type-text '(record frame))
              (edoc-type? 'file) (edoc-type? '(list-of (or window buffer))) (edoc-type? '(record frame))
              (edoc-type? '(or position #f)) (edoc-type? 'nonsense) (edoc-type? '(list-of)))
-       '("(visit path . more)" "Add two numbers." "No end" "one of utf-8 or latin-1" "string or #f" "list of buffer"
+       '("(visit path . more)" "one of utf-8 or latin-1" "string or #f" "list of buffer"
          "frame record" #t #t #t #t #f #f))
 
      (check 'an-elibrary-refuses-malformed-and-missing-edocs

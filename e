@@ -28,8 +28,8 @@
 ;; until run time.  It evaluates in the interaction environment, the
 ;; editor's top level -- the same place M-x expressions run, which is
 ;; why it imports every library under its prefix, the command layer
-;; included: that is the environment M-x sees (the kernel adds the
-;; literals bare when it loads the modules).
+;; included: that is the environment M-x sees. Portable references
+;; are ordinary quoted Scheme data, not bare constructors.
 
 (import (chezscheme))
 
