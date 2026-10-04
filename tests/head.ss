@@ -64,4 +64,27 @@
                (list frames posted-context outer-callback?) '(2 #f #f)))))
        '(#t #f))
 
+     ;; A direct/keyboard preparation consumes older wake demand. A fresh
+     ;; request during that frame still survives the obsolete mailbox token.
+     ;; The posted sentinel follows both tokens: no timing assertion or sleep.
+     (for-each
+       (lambda (during?)
+         (let ([frames 0])
+           (head:set-frame-hook!
+             (lambda (coalesce?)
+               (head:before-frame!)
+               (set! frames (+ frames 1))
+               (when (and during? (= frames 1))
+                 (head:wake-main!) (head:wake-main!))))
+           (head:wake-main!) (head:redraw!)
+           (call/cc
+             (lambda (done)
+               (let ([stop (test:worker (lambda () (head:run-on-main! (lambda () (done #t)))))])
+                 (dynamic-wind void
+                   (lambda () (parameterize ([head:in-main-pump #t]) (head:read-key-event)))
+                   stop))))
+           (head:set-frame-hook! void)
+           (check (list 'covered-wake-retires-without-losing-mid-frame-work during?) frames (if during? 2 1))))
+       '(#f #t))
+
      (test:finish! 'head)))

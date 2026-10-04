@@ -91,20 +91,30 @@
 
   ;; A burst of foreign edits (an agent's tight loop, a chatty PTY)
   ;; must not queue one repaint per event: a wake is posted only when
-  ;; none is outstanding, so a burst collapses into one frame.  The
-  ;; claim happens before the frame is painted, never after -- a wake
-  ;; arriving mid-paint queues the next frame instead of being lost.
+  ;; none is outstanding, so a burst collapses into one frame. Every
+  ;; preparation claims existing demand, including a keyboard frame;
+  ;; queued tokens already covered by that frame do no further work.
+  ;; Claim before painting: a wake during a frame needs a new token.
   (define wake-lock (make-mutex))
   (define wake-queued #f)
+  (define wake-sequence 0)
 
   (edoc "Wake the main loop for a frame, once per burst of events.")
   (define (wake-main!)
-    (when (with-mutex wake-lock
-            (and (not wake-queued) (begin (set! wake-queued #t) #t)))
-      (kernel:mailbox-post! mailbox '(wake))))
+    (let ([token (with-mutex wake-lock
+                   (and (not wake-queued)
+                     (begin (set! wake-sequence (+ wake-sequence 1))
+                            (set! wake-queued wake-sequence) wake-sequence)))])
+      (when token (kernel:mailbox-post! mailbox (list 'wake token)))))
 
-  (define (claim-wake!)
-    (with-mutex wake-lock (set! wake-queued #f)))
+  (define (claim-wake! token)
+    (with-mutex wake-lock
+      (and wake-queued (or (not token) (= token wake-queued))
+        (begin (set! wake-queued #f) #t))))
+
+  (define (covered-wake? message)
+    (and (pair? message) (eq? (car message) 'wake)
+      (with-mutex wake-lock (not (eqv? (cadr message) wake-queued)))))
 
   (define deliver-endpoint! (endpoint:start! wake-main!))
 
@@ -363,9 +373,11 @@
          ;; Only ordinary keys in the outer pump may use prepared geometry;
          ;; mouse events, callbacks and modal readers require publication.
          (when frame-pending?
-           (unless (and (in-main-pump)
-                        (keyboard-message? (kernel:mailbox-peek mailbox)))
-             (finish-frame!)))
+           (let ([next (kernel:mailbox-peek mailbox)])
+             ;; An obsolete wake invokes no callback and must not force the
+             ;; pending frame either. Its token can never become live again.
+             (unless (or (covered-wake? next) (and (in-main-pump) (keyboard-message? next)))
+               (finish-frame!))))
          (let ([message (kernel:mailbox-receive! mailbox frame-deadline #t)])
            (case (and message (car message))
              [(quit) (eof-object)]
@@ -406,8 +418,7 @@
                    (pump)]
                   [else (pump)]))]
              [(wake)
-              (claim-wake!)
-              (frame!)
+              (when (claim-wake! (cadr message)) (frame!))
               (pump)]
              [(run)
               (cond [(in-main-pump)
@@ -446,8 +457,9 @@
         (proc thunk "the preparation callback"))
   (define (set-prepare-hook! proc) (set! prepare-hook proc))
 
-  (edoc "Begin frame preparation, clearing the previous deadline and running composition and registered preparation hooks.")
+  (edoc "Begin frame preparation, claiming pending wake demand, clearing the previous deadline and running composition and registered preparation hooks.")
   (define (before-frame!)
+    (claim-wake! #f)
     (set! frame-deadline #f)
     (deliver-endpoint!)
     (prepare-hook)

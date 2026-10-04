@@ -13,9 +13,15 @@
   (define (field r k) (cdr (assq k r)))
   (define (unique xs) (fold-left (lambda (out x) (if (member x out) out (cons x out))) '() xs))
   (define (buffer? id) (and (pair? id) (eq? (car id) 'buffer)))
+  ;; A bundle owns its captured envelopes. Repeated dependency/contract
+  ;; lookups share those copies only within this read, never across adoption.
+  (define captured (make-parameter #f))
   (define (raw id)
-    (if (buffer? id) (list (cons 'id id))
-      (and (member id demanded) (model:available? id) (model:snapshot id))))
+    (let ([cache (captured)])
+      (if (and cache (hashtable-contains? cache id)) (hashtable-ref cache id #f)
+        (let ([record (if (buffer? id) (list (cons 'id id))
+                        (and (member id demanded) (model:available? id) (model:snapshot id)))])
+          (when cache (hashtable-set! cache id record)) record))))
   (define (get id)
     (let* ([r (raw id)] [t (and top (raw top))] [k (and r (port:key r))]
            [declared (and t (assoc k (caddr (field t 'value))))])
@@ -97,19 +103,20 @@
     (kernel:registry-remove! readers (lambda (r) (eq? token (car r)))) (refresh!))
 
   (edoc "Read an acquired local dependency bundle: (graph-basis edges endpoint-rows text-ids). Buffer rows are contract headers. No I/O; the host supplies mirrored text and provisional descriptors."
-        (ids list "subscribed endpoints") (returns list))
+        (ids list "subscribed endpoints") (returns list) (effects internal))
   (define (snapshot ids)
     (unless (for-all (lambda (id) (or (member id demanded)
                                     (and (buffer? id)
                                       (exists (lambda (r) (member id (cadr r))) (kernel:registry-items readers))))) ids)
       (error 'snapshot "subscribe before reading connections" ids))
-    (let* ([es (edges)] [closure (port:dependencies ids es get)] [r (get top)])
-      (list (and r (list top (field r 'revision))) es
-        (map (lambda (id) (let ([r (get id)]) (list id (and r #t) (if (buffer? id) r (model:snapshot id)))))
-          (append (car closure) (cadr closure))) (cadr closure))))
+    (parameterize ([captured (make-hashtable equal-hash equal?)])
+      (let* ([es (edges)] [closure (port:dependencies ids es get)] [r (get top)])
+        (list (and r (list top (field r 'revision))) es
+          (map (lambda (id) (let ([r (get id)]) (list id (and r #t) (if (buffer? id) r (model:snapshot id)))))
+            (append (car closure) (cadr closure))) (cadr closure)))))
 
   (edoc "Resolve an acquired model port locally; mounted hosts use snapshot to supply provisional descriptors and mirrored text."
-        (id list "endpoint") (name symbol "port") (returns list) (public))
+        (id list "endpoint") (name symbol "port") (returns list) (effects internal) (public))
   (define (read id name)
     (let ([bundle (snapshot (list id))])
       (if (car bundle) (port:resolve id name (cadr bundle) get (lambda (id) #f))

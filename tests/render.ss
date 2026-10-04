@@ -49,6 +49,25 @@
                      (map (lambda (i) (render:column frame 0 i)) (iota (+ (string-length text) 1)))
                      (map (lambda (i) (render:character frame 0 i)) (iota (+ width 1)))))))
          plain-cases) (map cdr plain-cases))
+     ;; Every caret, including an interior grapheme position, agrees with the
+     ;; rendering map. The ASCII fast path must also respect Unicode neighbours.
+     (test:check 'adjacent-motion-keeps-the-shared-grapheme-boundaries
+       (map
+         (lambda (line)
+           (let ([edges (fold-left (lambda (out cluster) (cons (+ (car out) (car cluster)) out)) '(0) (glyph:clusters line))])
+             (for-all
+               (lambda (c)
+                 (equal? (list (text-layout:adjacent (vector line) (cons 0 c) 'left)
+                           (text-layout:adjacent (vector line) (cons 0 c) 'right))
+                   (list (cons 0 (or (find (lambda (n) (< n c)) edges) c))
+                     (cons 0 (or (find (lambda (n) (> n c)) (reverse edges)) c)))))
+               (iota (+ 1 (string-length line))))))
+         (append (map car plain-cases) '("\x600;ab" "ab\x301;c" "a\x200d;bc" "a\tb")))
+       (make-list (+ (length plain-cases) 4) #t))
+     (test:check 'adjacent-motion-crosses-newlines-without-segmenting-a-line
+       (list (text-layout:adjacent '#("ab" "" "cd") '(1 . 0) 'left)
+         (text-layout:adjacent '#("ab" "" "cd") '(1 . 0) 'right))
+       '((0 . 2) (2 . 0)))
      (test:check 'mode-substitutions-must-preserve-source-geometry
        (map
          (lambda (case)

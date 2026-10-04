@@ -9,6 +9,7 @@
           (prefix (head interaction) interaction:)
           (prefix (head keymap) keymap:)
           (prefix (head text-control) text-control:)
+          (prefix (head text-layout) text-layout:)
           (prefix (head text-source) text-source:)
           (prefix (head widget) widget:)
           (prefix (state view) view:)
@@ -180,13 +181,11 @@
         (let* ([old (text-control:basis-text source d)]
                [line (and (single-line? old) (vector-ref old 0))])
           (unless line (refuse "Entry selection refers to a multiline source"))
-          (let* ([edges (fold-left (lambda (out cluster) (cons (+ (car out) (car cluster)) out)) '(0) (glyph:clusters line))]
-                 [at (cdr (car (state d)))]
-                 [next (if (eq? direction 'backward)
-                         (or (find (lambda (n) (< n at)) edges) 0)
-                         (or (find (lambda (n) (> n at)) (reverse edges)) at))])
+          (let* ([at (car (state d))]
+                 [next (and (not (eq? direction 'all))
+                         (text-layout:adjacent old at (if (eq? direction 'backward) 'left 'right)))])
             (replace! id source d (if (eq? direction 'all) (list '(0 . 0) (cons 0 (string-length line)))
-                                    (list (cons 0 at) (cons 0 next))) "")))
+                                    (list at next)) "")))
         (replace! id source d (state d) ""))))
 
   (define (history! id direction scope)
