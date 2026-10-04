@@ -76,7 +76,11 @@
     (list (store:line (output c) 0) (store:line rewrite-document 0)) '("abcX" "aBcX"))
   (check 'rewrite-widget-settles-through-its-shown-basis
     (list (car (delta-log:settle! c)) (store:line rewrite-document 0)) '(applied "abcX"))
-  (delta-log:filter! c '((count . 1))) (await c)
+  ;; Provider publication can race the recipe's guarded revision. A ready
+  ;; old query is not evidence that this filter request was admitted.
+  (test:await 'history-filter-admitted
+    (lambda () (let-values ([(status rows) (delta-log:filter! c '((count . 1)))]) (eq? status 'applied))))
+  (await c)
   (check 'history-filter-keeps-the-query-and-bounds-the-visible-entries
     (get (get (collection:summary (query c)) 'value) 'count) 1)
   (check 'explicit-settle-control-writes-the-chosen-conflict

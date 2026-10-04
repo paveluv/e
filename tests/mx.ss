@@ -15,6 +15,7 @@
   '(begin
      (import (prefix (head edit) edit:) (prefix (apps search) search:) (prefix (apps eval) eval:) (prefix (core extension) extension:) (prefix (service file) file:) (prefix (state actor) actor:) (prefix (head keymap) keymap:) (prefix (head head) head:) (prefix (head prompt) prompt:) (prefix (head completion) completion:)
              (prefix (head widget) widget:) (prefix (head completion-state) completion-state:)
+             (prefix (service prompt-request) prompt-request:)
              (prefix (foundation text) text:)
              (prefix (state model) model:) (prefix (state view) view:) (prefix (head table) table:)
              (prefix (foundation string) string:) (prefix (test) test:) (prefix (service doc) doc:)
@@ -91,6 +92,10 @@
        (map eval:input-closers '("(f (g \"x" "(let ([x 1" "(f x))" "done" "(f \"a\\\"b"))
        '("\"))" "]))" #f "" "\")"))
      (check 'a-trailing-comment-puts-the-closers-on-their-own-line (eval:input-closers "(f x ; c") "\n)")
+     (check 'unfinished-quotations-have-no-error-ghost-but-cannot-execute
+       (map (lambda (text) (list (not (eval:input-diagnostic text)) (eval:input-closers text)))
+         '("(table:sort-by! '" "(f '' " "(f ' ; awaiting a value" "`(f ,@" "(f ')" "(f '\"\\q" "(f #; '"))
+       '((#t #f) (#t #f) (#t #f) (#t #f) (#f #f) (#f #f) (#f #f)))
 
      ;; Text after the cursor is left alone; blank text after it is kept.
      (let* ([symbol "(store:buffer-list"] [pos (string-length symbol)] [text (string-append symbol " 1)")])
@@ -411,6 +416,129 @@
      ;; Context is finite declared structure. A sibling only participates
      ;; when its parent exposes it; ambiguity never chooses by numeric ID.
      (kernel:load-module! "eval")
+     ;; Read the real prompt's prepared ghost, without exposing its private
+     ;; renderer. Live edoc preserves types and overloads; old documentation
+     ;; remains a fallback, and a changed binding must not reuse stale types.
+     (eval '(edoc:elibrary (mx-ghost-fixture)
+              (export gap)
+              (import (chezscheme))
+              (edoc "Separated arities." (a string) (b integer) (c boolean))
+              (define gap (case-lambda [(a) a] [(a b c) a]))))
+     (eval '(import (prefix (mx-ghost-fixture) ghost:)))
+     (kernel:load-module! "prompt")
+     (let* ([request (prompt-request:create! head:ui-actor #f #f "" '() #f)]
+            [root (prompt:create! request '((profile scheme 1 ())) '())])
+       (widget:mount! root 'mx-ghost-fixture)
+       (let ([entry (widget:descendant root 'input 'entry)] [help (widget:descendant root 'help)])
+         (define (ghost text)
+           (entry:set-text! entry text)
+           (entry:select! entry (string-length text) (string-length text))
+           (widget:pump!)
+           (string:trim-spaces (car (widget:frame-lines (widget:prepare! help 180 1))) #f))
+         (check 'prompt-guides-use-live-typed-signatures-with-honest-overloads
+           (map ghost '("(edit:visit-file!" "(edit:visit-file! \"x\" "
+                        "(ghost:gap" "(vector-length (edit:buffer-text" "(mx-plain-proc"
+                        "(string:searcher \"x\" #f " "(string:searcher \"x\" #f display "))
+           '(" path<file> destination<procedure> [proposal<any>]"
+             "destination<procedure> [proposal<any>]"
+             " a<string> | a<string> b<integer> c<boolean>"
+             " b<buffer>" " alpha beta ..."
+             ". checkpoint<(list-of procedure)>" ". checkpoint<(list-of procedure)>"))
+         (define-top-level-value 'mx-live-proc edit:visit-file!)
+         (let ([before (ghost "(mx-live-proc")])
+           (define-top-level-value 'mx-live-proc (top-level-value 'ghost:gap))
+           (check 'prompt-guide-follows-the-live-procedure-binding
+             (list before (ghost "(mx-live-proc "))
+             '(" path<file> destination<procedure> [proposal<any>]"
+               "a<string> | a<string> b<integer> c<boolean>"))))
+       (widget:unmount! root) (prompt:drain!))
+     (define (lookup source text)
+       (let-values ([(from to extensions candidates) ((completion:source-lookup source) text (string-length text))])
+         (list from to (if (procedure? extensions) (extensions) extensions)
+           (map completion:candidate-value candidates))))
+     (define (quoted-tabs source input)
+       (let ([s (completion-state:create source #f)])
+         (completion-state:refresh! s input (string-length input))
+         (completion-state:normalize! s source)
+         (completion-state:normalize! s source)
+         (let* ([snapshot (completion-state:snapshot s)] [page (list-ref snapshot 3)]
+                [choices (and page (map completion:candidate-value page))])
+           (list choices
+             (and (pair? choices) (completion-state:choose! s (car snapshot) (car (reverse choices)))
+               (let ([text (cadr (completion-state:snapshot s))])
+                 (read (open-input-string (string-append text (eval:input-closers text))))))))))
+     (define (list-tabs source input first second)
+       (let ([s (completion-state:create source #f)])
+         (define (append-and-complete text)
+           (let* ([snapshot (completion-state:snapshot s)] [before (cadr snapshot)] [pos (caddr snapshot)]
+                  [input (string-append (substring before 0 pos) text (substring before pos (string-length before)))])
+             (completion-state:refresh! s input (+ pos (string-length text)))
+             (completion-state:normalize! s source)
+             (cadr (completion-state:snapshot s))))
+         (completion-state:refresh! s input (string-length input))
+         (completion-state:normalize! s source)
+         (let* ([open (cadr (completion-state:snapshot s))]
+                [one (append-and-complete first)] [two (append-and-complete second)]
+                [done (append-and-complete ")")])
+           (list open one two (read (open-input-string done))))))
+     (check 'quoted-enumerations-retain-the-page-and-insert-one-quotation
+       (quoted-tabs ((completion:provider '(scheme 1 ())) '() '()) "(window-control:toggle-display! '(model 1) ")
+       '(("'wrap" "'line-numbers" "'scrollbar") (window-control:toggle-display! (quote (model 1)) (quote scrollbar))))
+     (kernel:load-module! "table")
+     (let* ([data (collection:create-source! head:ui-actor '((name "Name" string) (size "Size" integer))
+                    '#(("item" ((name . "item") (size . 7)) ())) 'persistent)]
+            [query (collection:create! head:ui-actor data "" '() 'persistent)]
+            [table (table:create! head:ui-actor #f query '(name size))]
+            [factory (completion:provider '(scheme 1 ()))])
+       (widget:mount! table 'argument-completion)
+       (test:await 'table-completion-ready
+         (lambda () (range:pump!) (widget:pump!) (widget:prepare! table 30 5)
+           (equal? '(name size) (cdr (assq 'sortable (cdr (assq 'value (collection:summary query))))))))
+       (let* ([source (factory '() (list (cons 'receivers (widget:receivers table))))]
+              [prefix (format "(table:sort-by! '~s " table)]
+              [input (string-append prefix "'((name ascending) (size de")]
+              [result (lookup source input)])
+         (check 'quoted-sort-lists-retain-the-page-and-insert-one-quotation
+           (quoted-tabs source prefix)
+           (list '("'(" "'((name ascending)" "'((name descending)" "'((size ascending)" "'((size descending)")
+             (list 'table:sort-by! (list 'quote table) '(quote ((size descending))))))
+         (check 'table-sorting-completes-list-elements-and-nested-clauses
+           (list (list-ref (lookup source prefix) 3)
+             (list-ref (lookup source (string-append prefix "'(")) 3)
+             (caddr result)
+             (substring input 0 (car result)))
+           (list '("'(" "'((name ascending)" "'((name descending)" "'((size ascending)" "'((size descending)")
+             '("(name ascending)" "(name descending)" "(size ascending)" "(size descending)")
+             '("(size descending)") (string-append prefix "'((name ascending) ")))
+         (for-each
+           (lambda (case)
+             (let ([prefix (car case)] [first (cadr case)] [second (caddr case)])
+               (check (list 'tab-builds-repeatable-lists prefix)
+                 (list-tabs source prefix (cadddr case) (list-ref case 4))
+                 (list (string-append prefix "'")
+                   (string-append prefix "'(" first " ")
+                   (string-append prefix "'(" first " " second " ")
+                   (read (open-input-string (string-append prefix "'(" first " " second "))")))))))
+           (list (list prefix "(name ascending)" "(size descending)" "naas" "sides")
+             (list (format "(table:set-columns! '~s " table) "name" "size" "na" "si")
+             (list "(value-probe:many " "(model 701)" "(model 702)" "701" "702")))
+         (check 'table-column-arguments-use-the-same-contextual-metadata
+           (list (list-ref (lookup source (format "(table:toggle-sort! '~s si" table)) 3)
+             (caddr (lookup source (format "(table:set-columns! '~s '(si" table)))
+             (let* ([expression (string-append (substring input 0 (car result)) (car (caddr result)) "))")]
+                    [form (read (open-input-string expression))])
+               (equal? (cadr (caddr form)) '((name ascending) (size descending)))))
+           '(("'size") ("size") #t))
+         (define-top-level-value 'completion-side-effects 0)
+         (check 'table-argument-completion-never-evaluates-receiver-expressions
+           (list (labels "(table:sort-by! (begin (set! completion-side-effects 1) '(model 1)) ")
+             (labels "(table:sort-by! saved-table ") (top-level-value 'completion-side-effects)) '(("'(") ("'(") 0))
+         (widget:unmount! table)
+         (check 'retired-table-offers-no-contextual-argument-values
+           (list-ref (lookup source prefix) 3) '("'(")))
+       (view:retire! head:ui-actor table (model:revision table))
+       (model:retire! head:ui-actor query (model:revision query))
+       (model:retire! head:ui-actor data (model:revision data)))
      (eval '(edoc:elibrary (receiver-probe)
               (export change! optional!) (import (chezscheme))
               (edoc "A receiver command." (id model) (receiver id (view receiver-leaf)))
@@ -434,10 +562,6 @@
               [source (factory '() (list (cons 'receivers captured)))]
               [one (factory '() (list (cons 'receivers single)))]
               [none (factory '() '())])
-         (define (lookup source text)
-           (let-values ([(from to extensions candidates) ((completion:source-lookup source) text (string-length text))])
-             (list from to (if (procedure? extensions) (extensions) extensions)
-               (map completion:candidate-value candidates))))
          (check 'numeric-preview-context-never-evaluates-strings-or-expressions
            (map (lambda (input)
                   (cond [(assq 'value ((completion:source-context none) input (string-length input))) => cdr] [else #f]))

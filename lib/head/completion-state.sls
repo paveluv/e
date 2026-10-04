@@ -155,13 +155,16 @@
                        (edit! s (cons prefix (string-length prefix)) #f)
                        (show! s candidates)))]))])))
 
-  (edoc "Choose a displayed insertion value only while the captured session generation still matches. Refuse stale or absent candidates without editing."
+  (edoc "Choose a displayed insertion value only while the captured session generation still matches. Apply the source's continuation just as for a sole Tab completion. Refuse stale or absent candidates without editing."
         (s any "completion session") (generation integer "prepared page generation")
         (text string "candidate insertion value") (returns boolean))
   (define (choose! s generation text)
     (and (= generation (state-generation s))
       (equal? (state-basis s) (basis (state-primary s)))
       (state-candidates s) (exists (lambda (candidate) (string=? text (value candidate))) (state-candidates s))
-      (let ([candidate (find (lambda (c) (string=? text (value c))) (state-candidates s))]
-            [next (if (state-source s) (replace-range s text) (cons text (string-length text)))])
+      (let* ([candidate (find (lambda (c) (string=? text (value c))) (state-candidates s))]
+             [source (state-source s)]
+             [next (if source (replace-range s text) (cons text (string-length text)))]
+             [next (if (and source (completion:source-settle source))
+                     ((completion:source-settle source) (car next) (cdr next)) next)])
         (dismiss! s) (edit! s next #f) (remember! s candidate) #t))))

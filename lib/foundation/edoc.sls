@@ -64,7 +64,9 @@
     (syntax-rules ()
       [(_)
        (lambda (known? t)
-         (define (literal? x) (or (symbol? x) (string? x) (number? x) (boolean? x) (char? x)))
+         (define (literal? x)
+           (or (symbol? x) (string? x) (number? x) (boolean? x) (char? x)
+             (and (list? x) (for-all literal? x))))
          (let ok? ([t t])
            (cond
              [(symbol? t) (and (known? t) #t)]

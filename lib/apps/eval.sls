@@ -12,8 +12,8 @@
 ;; which are also highlighted in the completions pop-up), the parameters
 ;; still to be supplied appear as a grey suggestion while typing, up and
 ;; down arrows browse the history, and C-g interrupts a runaway
-;; evaluation. Parameter suggestions query the base's reference corpus
-;; and live module entries, with source and arity as fallbacks.
+;; evaluation. Parameter suggestions use live typed edoc signatures, with
+;; the reference corpus, source and arity as fallbacks.
 ;; C-x C-e evaluates the expression before point and C-M-x the top-level
 ;; form around it, as in Emacs, in that same top level; eval:run! takes
 ;; the selected region or the whole buffer at M-x.
@@ -217,15 +217,39 @@
     (let ([value (and (top-level-bound? sym) (top-level-value sym))])
       (if (procedure? value) (edoc:edoc-of value) (named-signatures sym))))
 
-  (define (argument-type sym index)
+  (define (argument-type sym index . start)
     (edoc:call-argument-type (operator-signatures sym) index))
+
+  (define (contextual-argument-type text sym index start receivers)
+    ;; Read only a completed quoted receiver before this argument. Variables
+    ;; and expressions keep their documented type; completion never runs them.
+    (let* ([declared (let loop ([at 0])
+                       (and (< at index) (let ([r (receiver-at sym at)])
+                                           (if r (cons at r) (loop (+ at 1))))))]
+           [id (and declared (guard (ex [else #f])
+                               (let ([in (open-input-string (substring text (+ start 1) (string-length text)))])
+                                 (read in)
+                                 (let loop ([at 0])
+                                   (let ([value (read in)])
+                                     (if (< at (car declared)) (loop (+ at 1))
+                                       (and (list? value) (= (length value) 2) (eq? (car value) 'quote)
+                                         (model:reference? (cadr value)) (cadr value))))))))]
+           [receiver (and id (or (and receivers (assoc id receivers))
+                               (and (widget:mounted? id) (assoc id (widget:receivers id)))))])
+      (and receiver (pair? (receiver-matches (cdr declared) (list receiver)))
+        (widget:command-argument-type receiver (top-level-value sym) index))))
 
   (define (element-type type)
     (cond [(and (pair? type) (eq? (car type) 'list-of)) (cadr type)]
       [(and (pair? type) (eq? (car type) 'or)) (exists element-type (cdr type))]
       [else #f]))
 
-  (define (argument-context s pos)
+  (define (argument-resolver text receivers)
+    (lambda (sym index start)
+      (let ([type (argument-type sym index)])
+        (and type (or (contextual-argument-type text sym index start receivers) type)))))
+
+  (define (argument-context s pos . origin)
     ;; (type start end token where) for the cursor at a documented argument
     ;; position: the argument's type, the range and text of the token being
     ;; completed, and where it sits: #t inside a string literal, else #f.
@@ -235,8 +259,9 @@
     ;; produces has to serve it. Quoted data offers only values, recursively
     ;; using list element types; quoted replaces the value's own outer quote,
     ;; data inserts inside a surrounding quotation. #f without a type.
+    (define resolve (argument-resolver s (and (pair? origin) (car origin))))
     (define (typed frame start end token where)
-      (let ([type (argument-type (string->symbol (frame-operator frame)) (frame-arguments frame))])
+      (let ([type (resolve (string->symbol (frame-operator frame)) (frame-arguments frame) (frame-start frame))])
         (and type (list type start end token where))))
     (define (plain? frame) (and (not (frame-quoted? frame)) (string? (frame-operator frame))))
     (let* ([quote-at (open-string-start s pos)]
@@ -244,14 +269,19 @@
            [start (cond [quote-at (+ quote-at 1)] [range (car range)] [else pos])]
            [end (cond [quote-at pos] [range (cdr range)] [else pos])]
            [token (let ([raw (substring s start end)]) (if quote-at (string-content raw) raw))]
-           [frames (call-frames (substring s 0 (if quote-at quote-at start)))])
-      (and (or quote-at (and range (< (car range) (cdr range))) (open-position? s pos)) (pair? frames)
+           [frames (call-frames (substring s 0 (if quote-at quote-at start)) resolve)]
+           [quotation (and (pair? frames) (not (frame-opener (car frames)))
+                        (quotation-frame? (car frames)) (data-position? frames))])
+      (and (or quote-at (and range (< (car range) (cdr range))) (open-position? s pos) quotation) (pair? frames)
            (let* ([frame (car frames)]
                   ;; A partially inserted reference is still one value, not
                   ;; an application of its tag. Include its quote/container
                   ;; when replacing it, even after normalization added spaces.
+                  ;; A pending quote still owns the whole argument type;
+                  ;; entering its list is what steps into the element type.
                   [whole (and (data-position? frames) (find (lambda (f)
-                                                              (and (frame-expected f) (not (element-type (frame-expected f)))
+                                                              (and (frame-expected f)
+                                                                (or (and quotation (eq? f frame)) (not (element-type (frame-expected f))))
                                                                 (or (frame-quoted? f) (quotation-frame? f))))
                                                         (let loop ([rest frames] [out '()])
                                                           (if (or (null? rest)
@@ -266,10 +296,10 @@
                   (list (frame-expected whole) from through (substring s from end)
                     (if (eqv? (frame-mode whole) 0) 'quoted 'data)))]
                [(data-position? frames)
-                (let ([type (next-type frames)])
+                (let ([type (next-type frames resolve)])
                   (and type (list type start end token (if quote-at #t 'data))))]
                [(quotation-frame? frame)
-                (let ([type (next-type frames)])
+                (let ([type (next-type frames resolve)])
                   (and type (list type start end token (and quote-at #t))))]
                [(plain? frame) (typed frame start end token (and quote-at #t))]
                [(and (eq? (frame-operator frame) 'pending) (not (frame-quoted? frame)) (not quote-at)
@@ -455,6 +485,20 @@
         (or (quoted-part text) text)
         text))
 
+  (define (list-options type token where)
+    ;; List choices are prefixes, not singleton values: completing one leaves
+    ;; the collection open for more elements, even when only one key matches.
+    (let ([element (element-type type)])
+      (if (or (not element) (eq? where #t)) '()
+        (let ([open (if (eq? where 'data) "(" "'(")])
+          (cons (make-option "(" open open "list elements; ) finishes" 'plain #f #f)
+            (map (lambda (option)
+                   (let ([insert (string-append open (option-insert option))])
+                     (make-option (string-append "(" (option-text option)) insert insert
+                       (if (option-named? option) (option-label option) (option-hint option))
+                       'plain #f (option-named? option))))
+              (value-options element token 'data)))))))
+
   (define (typed-options context)
     ;; ((option . fragments) ...) for an argument context, best first, or #f
     ;; when the type offers nothing the token matches: the token aligns with
@@ -462,7 +506,7 @@
     ;; quoted buffer references and their producers; formals are not keys.
     (let* ([type (car context)] [in-string? (car (cddddr context))]
            [token (if (eq? in-string? #t) (cadddr context) (unquoted (cadddr context)))]
-           [all (append (value-options type token in-string?)
+           [all (append (list-options type token in-string?) (value-options type token in-string?)
                         (if in-string? '() (producer-options type))
                         (if in-string? '() (variable-options type)))])
       (cond
@@ -585,6 +629,7 @@
           (append (list (cons 'type type) (cons 'value (option-value option)) '(literal? . #t)) preview)))))
 
   (edoc "The typed completions M-x offers at the cursor: for an argument position whose operator documents the argument's type, the labels of the type's values, of the procedures producing one and of the variables holding one; #f where symbols complete instead."
+        (effects internal)
         (text string "the prompt input")
         (pos integer "the cursor position")
         (returns (or (list-of string) #f)))
@@ -593,6 +638,7 @@
       (and options (map (lambda (entry) (option-label (car entry))) options))))
 
   (edoc "The texts Tab puts in place of the token at a typed argument position: a sole candidate whole, else the longest extensions of the token that every current candidate still matches, the token itself when nothing longer does; #f where symbols complete instead."
+        (effects internal)
         (text string "the prompt input")
         (pos integer "the cursor position")
         (returns (or (list-of string) #f)))
@@ -601,6 +647,7 @@
       (and options (typed-inserts text context options))))
 
   (edoc "The span Tab replaces at a typed argument position, (start . end) character offsets, or #f: the token or the contents of an open string."
+        (effects internal)
         (text string "the prompt input")
         (pos integer "the cursor position")
         (returns (or pair #f)))
@@ -751,7 +798,7 @@
                               ;; sole one is what Tab inserts, else Tab extends the token as far as
                               ;; every candidate allows and lists them
                               (let* ([targets (and typed? (empty-receiver s pos receivers))]
-                                     [context (and typed? (argument-context s pos))]
+                                     [context (and typed? (argument-context s pos receivers))]
                                      [options (and (not (pair? targets)) context (typed-options context))])
                                 (set! kind (if options (type-text (car context)) (if typed? "symbol" "editor symbol")))
                                 (cond [(pair? targets)
@@ -771,7 +818,7 @@
                             (lambda (s pos) kind)
                             (lambda () #f) (lambda () (values))
                             (lambda (s pos)
-                              (let ([context (and typed? (argument-context s pos))])
+                              (let ([context (and typed? (argument-context s pos receivers))])
                                 (if (not context) '()
                                     (append (list (cons 'type (car context)) (cons 'token (cadddr context))
                                                   (cons 'literal? (car (cddddr context)))
@@ -912,6 +959,33 @@
           [(and (pair? (cdr tokens)) (string=? (cadr tokens) "...")) tokens]
           [else (drop-params (cdr tokens) (- n 1))]))
 
+  (define (documented-params sym)
+    ;; Merge only contiguous, prefix-compatible fixed clauses into optional
+    ;; arguments. Other overloads retain their own guides; this is display
+    ;; metadata, never an arity inferred for closing the expression.
+    (define (tokens sig)
+      (define (argument name)
+        (let ([a (find (lambda (a) (eq? name (edoc:argument-name a))) (edoc:signature-arguments sig))])
+          (format "~a<~a>" name (type-text (edoc:argument-type a)))))
+      (let loop ([names (callable-formals sig)])
+        (cond [(null? names) '()]
+          [(symbol? names) (list (string-append ". " (argument names)))]
+          [else (cons (argument (car names)) (loop (cdr names)))])))
+    (let* ([sigs (filter (lambda (sig) (callable-formals sig)) (or (operator-signatures sym) '()))]
+           [clauses (map tokens sigs)]
+           [ordered (list-sort (lambda (a b) (< (length a) (length b))) clauses)])
+      (cond [(null? ordered) #f]
+        [(and (for-all (lambda (sig) (list? (callable-formals sig))) sigs)
+           (let loop ([xs ordered])
+             (or (null? (cdr xs))
+               (and (<= (- (length (cadr xs)) (length (car xs))) 1)
+                 (equal? (car xs) (list-head (cadr xs) (length (car xs))))
+                 (loop (cdr xs))))))
+         (let* ([required (length (car ordered))] [longest (car (reverse ordered))])
+           (list (append (list-head longest required)
+                   (map (lambda (token) (string-append "[" token "]")) (list-tail longest required)))))]
+        [else clauses])))
+
   (define (open-call-frames text)
     ;; The unclosed calls in text, innermost first, each as
     ;; (operator . arguments-so-far) -- operator is its token string, #f
@@ -959,13 +1033,15 @@
       (let ([stack (open-call-frames s)])
         (and (pair? stack)
              (string? (caar stack))
-             (let ([tokens (symbol-params (string->symbol (caar stack)))])
-               (and tokens
-                    (let ([left (drop-params tokens (cdar stack))])
-                      (and (pair? left)
-                           (string-append
-                             (if (string:suffix? " " s) "" " ")
-                             (string:join left " "))))))))))
+             (let* ([sym (string->symbol (caar stack))]
+                    [clauses (or (documented-params sym)
+                               (let ([tokens (symbol-params sym)]) (and tokens (list tokens))))]
+                    [left (and clauses (filter (lambda (tokens) (pair? tokens))
+                                         (map (lambda (tokens) (drop-params tokens (cdar stack))) clauses)))])
+               (and (pair? left)
+                    (string-append
+                      (if (string:suffix? " " s) "" " ")
+                      (string:join (map (lambda (tokens) (string:join tokens " ")) left) " | "))))))))
 
   ;;; Settling a sole completion --------------------------------------------------
 
@@ -1006,16 +1082,17 @@
 
   (define (data-position? stack) (not (eqv? (next-mode stack) 0)))
 
-  (define (next-type stack)
+  (define (next-type stack resolve)
     (and (pair? stack)
       (let ([f (car stack)])
         (cond [(quotation-frame? f) (frame-expected f)]
           [(data-position? stack) (element-type (frame-expected f))]
           [(string? (frame-operator f))
-           (argument-type (string->symbol (frame-operator f)) (frame-arguments f))]
+           (resolve (string->symbol (frame-operator f)) (frame-arguments f) (frame-start f))]
           [else #f]))))
 
-  (define (call-frames text)
+  (define (call-frames text . resolver)
+    (define (type stack) (next-type stack (if (null? resolver) argument-type (car resolver))))
     (let ([in (open-input-string text)])
       (let loop ([stack '()])
         ;; Incomplete strings/escaped identifiers leave the preceding context.
@@ -1026,16 +1103,16 @@
               [(quote)
                (if (eq? value 'datum-comment)
                  (begin (read in) (loop stack))
-                 (loop (cons (make-frame #f (symbol->string value) 0 (next-mode stack) from (next-type stack)) stack)))]
+                 (loop (cons (make-frame #f (symbol->string value) 0 (next-mode stack) from (type stack)) stack)))]
               [(lparen lbrack vparen vu8paren)
                (loop (cons (make-frame (if (eq? kind 'lbrack) #\[ #\() 'pending 0
                              (if (and (memq kind '(vparen vu8paren)) (eqv? (next-mode stack) 0)) 'literal (next-mode stack))
-                             from (next-type stack)) stack))]
+                             from (type stack)) stack))]
               [(rparen rbrack)
                (loop (if (pair? stack) (count-datum (cdr stack) #f) stack))]
               [else
                (cond [(and (= (- to from) 1) (char=? (string-ref text from) #\{))
-                      (loop (cons (make-frame #\{ 'pending 0 (next-mode stack) from (next-type stack)) stack))]
+                      (loop (cons (make-frame #\{ 'pending 0 (next-mode stack) from (type stack)) stack))]
                  [(and (= (- to from) 1) (char=? (string-ref text from) #\}))
                   (loop (if (pair? stack) (count-datum (cdr stack) #f) stack))]
                  [else (loop (count-datum stack (and (eq? kind 'atomic) (symbol? value) (symbol->string value))))])]))))))
@@ -1052,7 +1129,8 @@
                     (if (eq? (frame-operator f) 'pending) 0 (+ (frame-arguments f) 1))
                     (frame-mode f) (frame-start f) (frame-expected f)) (cdr frames))))))
 
-  (edoc "The input to continue with after a sole completion ends at pos: inside a string, a typed value at its dead end closes the literal and settles on, one that completes further stays open; a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, a quoted form, text after pos or an input that does not read leaves the cursor where it is."
+  (edoc "The input to continue with after a completion ends at pos: inside a string, a typed value at its dead end closes the literal and settles on, one that completes further stays open; a completed element of a quoted list-of steps to its next element without closing the list; a form whose operator has a known arity closes when complete and settles again in its parent, or steps to its next argument; an unknown arity, other quoted forms, text after pos or an input that does not read leaves the cursor where it is."
+        (effects internal)
         (text string "the prompt input")
         (pos integer "where the completed symbol ends")
         (returns pair "the new input and cursor position, (text . pos)"))
@@ -1063,7 +1141,7 @@
     ;; Then, while the enclosing operator has a fixed arity, a complete form
     ;; closes with its matching bracket and settles again as an argument of
     ;; its parent, and an incomplete one steps to its next argument. An
-    ;; unknown arity, a quoted form, text after pos or an input that does
+    ;; unknown arity, an untyped quoted form, text after pos or an input that does
     ;; not read leaves the cursor where it is; a settled input always reads.
     (define (blank? from)
       (let loop ([i from])
@@ -1074,7 +1152,13 @@
         (if (and (> n 0) (memv (string-ref s (- n 1)) '(#\space #\tab #\newline))) (loop (- n 1)) (substring s 0 n))))
     (define (settle frames out at)
       (if (or (null? frames) (frame-quoted? (car frames)))
-          (cons out at)
+          ;; A completed element advances within its quoted collection, not
+          ;; out of it. The user supplies ) when the list is finished.
+          (if (and (pair? frames) (frame-opener (car frames))
+                (element-type (frame-expected (car frames)))
+                (not (eq? (frame-operator (car frames)) 'pending))
+                (= (string-length (trim-right out)) (string-length out)))
+            (cons (string-append out " ") (+ at 1)) (cons out at))
           (let* ([frame (car frames)]
                  [operator (frame-operator frame)]
                  [arity (and (string? operator) (fixed-arity (string->symbol operator)))])
@@ -1089,7 +1173,7 @@
                  (settle (count-datum (cdr frames) #f) out (string-length out)))]
               [else (cons out at)]))))
     (define (settled head tail at)
-      (let* ([result (settle (call-frames head) head at)]
+      (let* ([result (settle (call-frames head (argument-resolver head #f)) head at)]
              [out (cons (string-append (car result) tail) (cdr result))])
         (if (input-closers (car out)) out (cons text pos))))
     (cond
@@ -1176,14 +1260,22 @@
     (let-values ([(ok? tail) (scan-openers text)])
       (and ok? (guard (ex [else #f]) (read-all (string-append text tail)) tail))))
 
-  (edoc "Why the M-x input does not read as data even with its open string and forms closed, in a few words for the ghost; #f when it reads."
+  (define (pending-quotation? text)
+    (guard (ex [else #f])
+      (let ([frames (call-frames text)])
+        (and (pair? frames) (not (frame-opener (car frames)))
+          (let ([in (open-input-string (substring text (frame-start (car frames)) (string-length text)))])
+            (read-token in)
+            (let-values ([(kind value from to) (read-token in)]) (eq? kind 'eof)))))))
+
+  (edoc "Why the M-x input does not read as data even with its open string and forms closed, in a few words for the ghost; #f when it reads or a trailing quotation is still awaiting its datum. Execution still requires readable input."
         (text string "the prompt input")
         (returns (or string #f)))
   (define (input-diagnostic text)
     (let-values ([(ok? tail) (scan-openers text)])
       (if (not ok?)
           tail
-          (guard (ex [else (reader-complaint ex)])
+          (guard (ex [else (and (not (pending-quotation? text)) (reader-complaint ex))])
             (read-all (string-append text tail))
             #f))))
 

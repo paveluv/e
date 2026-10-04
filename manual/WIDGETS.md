@@ -61,7 +61,12 @@ without changing selection. Sorting is shared through the collection;
 selection and visible columns belong to each view.
 
 In M-x, a table command's completion describes its captured table's available
-columns or named commands. Sorting takes `'((name ascending) (size descending))`;
+columns or named commands. With a literal table receiver, Tab offers unclosed
+sort-list prefixes such as `'((name ascending)`, then completes further clauses
+inside the same list. Completed clauses leave a space for the next; type `)`
+to finish the list or Enter to supply the remaining closers. Earlier clauses
+are preserved. The same rule builds lists of visible columns.
+Sorting takes `'((name ascending) (size descending))`;
 `'()` clears it. Visible columns take an ordered list such as `'(name size)`
 that retains the identity column. Variables and Scheme expressions work too.
 When several tables are applicable, choose an explicit receiver; completion
@@ -744,6 +749,14 @@ An optional `command-help` definition callback receives `(view-id procedure)`
 and returns a short guide or `#f`. It reads acquired state only and never
 invokes the command. M-x adds it to the candidate description when there is
 one compatible captured receiver; reexports use the same procedure identity.
+
+The optional `command-argument-type` callback takes `(view-id procedure index)`
+and returns an edoc type or `#f` for a zero-based argument position. M-x reads
+a preceding quoted receiver and uses its acquired metadata to refine argument
+completion. It never evaluates a receiver variable or expression, or fetches
+data. A retired captured receiver supplies no contextual values. Finite
+`one-of` choices may contain literal lists, so controls can offer compound
+values through the existing quoted-data completion without an expression builder.
 
 An action receives `(view-id . args)`. Register the public operation itself;
 it obtains three values, source envelope, provisional descriptor and resolved inputs, from

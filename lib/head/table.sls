@@ -403,7 +403,7 @@
           (error 'invoke! "selection is pending or unavailable"))
         (widget:invoke! (root id) (if (null? command) 'activate (car command)) selection basis))))
 
-  (edoc "Set shared collection sorting using raw column values; selection remains local." (receiver id (view table list)) (id model "table") (keys list "(column ascending-or-descending) entries"))
+  (edoc "Set shared collection sorting using raw column values; selection remains local." (receiver id (view table list)) (id model "table") (keys (list-of list) "(column ascending-or-descending) entries"))
   (define (sort-by! id keys)
     (define (recipe r)
       (let ([v (get r 'value '())]) (map (lambda (key) (get v key #f)) '(source filter input-filter sort))))
@@ -424,7 +424,7 @@
                      [(eq? (cadr key) 'descending) (remq key keys)]
                      [else (map (lambda (k) (if (eq? key k) (list column 'descending) k)) keys)]))))
 
-  (edoc "Choose visible columns in display order; the declared identity column must remain present." (receiver id (view table list)) (id model "table") (names list "distinct column names"))
+  (edoc "Choose visible columns in display order; the declared identity column must remain present." (receiver id (view table list)) (id model "table") (names (list-of symbol) "distinct column names"))
   (define (set-columns! id names)
     (let* ([s (runtime id)] [v (metadata s)] [id (session-id s)] [d (descriptor s)])
       (unless (and (pair? names) (list? names) (for-all (lambda (n) (assq n (get v 'columns '()))) names)
@@ -448,6 +448,19 @@
           (cond [(eq? procedure sort-by!) "; '((column ascending) ...) or descending; '() clears sorting"]
                 [(eq? procedure set-columns!) (format "; '(column ...), retaining ~a" (get (view:options (descriptor s)) 'identity #f))]
                 [else ""])))))
+
+  (define (command-argument-type id procedure index)
+    (and (= index 1)
+      (let* ([s (runtime id)] [v (metadata s)] [names (get v 'sortable '())])
+        (cond
+          [(eq? procedure sort-by!)
+           (let ([keys (apply append (map (lambda (name) (list (list name 'ascending) (list name 'descending))) names))])
+             (if (null? keys) '(one-of ())
+               (list 'list-of (cons 'one-of keys))))]
+          [(and (eq? procedure toggle-sort!) (pair? names)) (cons 'one-of names)]
+          [(and (eq? procedure set-columns!) (pair? (get v 'columns '())))
+           (list 'list-of (cons 'one-of (map car (get v 'columns '()))))]
+          [else #f]))))
 
   (define (data id source inputs) id)
   (define (cell row name rule identity width)
@@ -725,7 +738,7 @@
     (for-each (lambda (kind)
                 (widget:register! kind 1
                   (append (layout:container 'y)
-                    (list (cons 'prepare data) (cons 'service service!) (cons 'release release!) (cons 'contexts '(widget-table)) (cons 'busy? busy?) (cons 'command-help command-help)
+                    (list (cons 'prepare data) (cons 'service service!) (cons 'release release!) (cons 'contexts '(widget-table)) (cons 'busy? busy?) (cons 'command-help command-help) (cons 'command-argument-type command-argument-type)
                       (cons 'actions (list (cons 'select select!) (cons 'move move!) (cons 'invoke invoke!)
                                        (cons 'emphasize emphasize!) (cons 'sort-by sort-by!) (cons 'toggle-sort toggle-sort!) (cons 'set-columns set-columns!))))))) '(table list))
     (for-each (lambda (kind)

@@ -128,12 +128,13 @@
              (type-accepts? 'datum (lambda (x) x)) (type-accepts? 'nonsense 1)
              (type-completions 'hue "") (type-completions '(one-of utf-8 latin-1) "") (type-completions '(or hue #f) "x")
              (type-spelling 'hue 'red) (type-spelling 'string "a") (type-spelling '(one-of a b) 'a) (type-spelling '(or string hue) 'blue)
-             (edoc-type? 'hue) (edoc-type? 'nonsense) (edoc-type? '(list-of hue)))
+             (edoc-type? 'hue) (edoc-type? 'nonsense) (edoc-type? '(list-of hue))
+             (edoc-type? '(one-of () (name ascending))) (edoc-type? (list 'one-of (list void))))
        '("(probe)" "(foundation edoc)" #f "a hue, by name" "an exact integer" "hue or #f"
          #t #f #t #f #t #f #t #f #t #f #t #f #t #t #f #t
          ((red #f "a hue") (green #f "a hue") (blue #f "a hue")) ((utf-8 #f #f) (latin-1 #f #f))
          ((red #f "a hue") (green #f "a hue") (blue #f "a hue") (#f #f #f))
-         "'red" "\"a\"" "'a" "'blue" #t #f #t))
+         "'red" "\"a\"" "'a" "'blue" #t #f #t #t #f))
      (check 'plain-values-round-trip-independently-of-metadata
        (for-all
          (lambda (value)

@@ -163,6 +163,9 @@ the editor's notions `file`, `directory`, `buffer`, `window`, `region`,
 `condition`, `datum`, `any`; `#f` for unions such as `(or string #f)`; and
 the compounds `(one-of literal ...)`, `(or type ...)`, `(list-of type)` and
 `(record name)` for an instance of a record type.
+Finite `one-of` choices can also be literal lists, for example
+`(one-of (name ascending) (name descending))`. They are inserted as ordinary
+quoted Scheme data in expressions, or without another quote inside quoted data.
 
 `(public)` marks an intentional API for users, configuration or extensions,
 even when nothing in the repository calls it. It is retained in signature

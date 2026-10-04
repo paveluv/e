@@ -1,7 +1,7 @@
 ;; Recursive mounts are head runtime objects, independent of window buffers.
 (import (only (foundation edoc) elibrary))
 (elibrary (head widget)
-  (export act! actions adopt! arrange! cancel! capture! caret command-bindings command-help command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
+  (export act! actions adopt! arrange! cancel! capture! caret command-argument-type command-bindings command-help command-owner commands context descendant detach! discard! event-frame focus! focus-next! focused
           frame-cell-styles frame-children frame-clip frame-data frame-descriptor frame-id frame-inputs frame-lines frame-rect frame-row-links frame-source frame-styles generation
           host init! input! inspect invalidate! invoke! keep-host-focus! key-scopes key-scopes! mount! mounted? pointer! pointer-bindings prepare! prepared present! pump! receiver-live? receivers refresh! register! repaint! reveal! set-active! shown stage! status target unmount!)
   (import (except (chezscheme) inspect)
@@ -210,7 +210,7 @@
                            (for-all (lambda (r) (and (list? r) (pair? r) (symbol? (car r))
                                                   (pair? (cdr r)) (for-all symbol? (cdr r)))) (cdr p)))]
                         [(capture) (or (procedure? (cdr p)) (memq (cdr p) '(full partial)))]
-                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status key-delegates command-help) (procedure? (cdr p))]
+                        [(snapshot prepare viewport service release render render-children measure layout event capture-event pointer-bindings capture-pointer-bindings anchor locate decorate links caret busy? status key-delegates command-help command-argument-type) (procedure? (cdr p))]
                         [else #f])
                       (loop (cdr rest) (cons (car p) seen)))))))
       (error 'register! "invalid widget definition" kind schema definition))
@@ -270,14 +270,24 @@
                   (equal? (list-ref witness 3)
                     (and (list? value) (for-all pair? value) (assq 'generation value)))))))) #t)))
 
+  (define (command-metadata receiver key procedure . arguments)
+    (and (eq? (car (list-ref receiver 3)) 'view) (receiver-live? receiver)
+      (let* ([id (car receiver)] [d (read-view id)] [provide (field (definition d) key #f)])
+        (and provide (apply provide id procedure arguments)))))
+
   (edoc "Read a captured view's contextual command guide from its definition. The optional command-help callback takes (id procedure) and returns text or false using acquired state only. It never invokes the command or acquires data."
         (receiver list "captured receiver row") (procedure procedure "documented command") (returns (or string #f)) (effects internal))
   (define (command-help receiver procedure)
-    (and (eq? (car (list-ref receiver 3)) 'view) (receiver-live? receiver)
-      (let* ([id (car receiver)] [d (read-view id)] [help (field (definition d) 'command-help #f)])
-        (and help
-          (let ([text (help id procedure)])
-            (unless (or (not text) (string? text)) (error 'command-help "expected text or false" id)) text)))))
+    (let ([text (command-metadata receiver 'command-help procedure)])
+      (unless (or (not text) (string? text)) (error 'command-help "expected text or false" (car receiver))) text))
+
+  (edoc "Read an acquired receiver's contextual argument type. The optional definition callback takes (id procedure index), using zero-based argument positions, and returns an edoc type or false. It refines completion only, without evaluating input, invoking the command or acquiring data."
+    (receiver list "captured receiver row") (procedure procedure "documented command") (index integer "zero-based argument position")
+    (returns datum "completion type or false") (effects internal))
+  (define (command-argument-type receiver procedure index)
+    (let ([type (command-metadata receiver 'command-argument-type procedure index)])
+      (unless (or (not type) (edoc:edoc-type? type))
+        (error 'command-argument-type "expected an edoc type or false" (car receiver) type)) type))
 
   (define (source-id id d)
     (and d (view:source d)

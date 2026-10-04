@@ -48,9 +48,11 @@ While the prompt is active:
 - Unknown or partial symbols are italic, standard Scheme symbols are plain,
   and e-specific symbols use the editor highlight.
 - A grey, italic ghost shows the documented parameters still expected by the
-  innermost open call. Signatures come live from structured describe entries,
-  including entries registered by modules; source parameters and procedure
-  arity are fallbacks. While the input cannot read even with its string and
+  innermost open call, with types in angle brackets and optional arguments
+  in square brackets: `path<file> destination<procedure> [proposal<any>]`.
+  Signatures come from live `edoc` metadata; reference entries, source parameters
+  and procedure arity are fallbacks. Distinct overloads are separated by `|`.
+  While the input cannot read even with its string and
   forms closed, an extra `)` or a bracket of the wrong kind say, the ghost
   shows the complaint instead, bracketed: ` [unexpected )]`.
 - Up and Down browse evaluation history, newest first.
@@ -112,12 +114,12 @@ fixed arity once its arguments are all there, innermost first, and where more
 are due steps one space on to the next argument. For example, after a receiver and path have been supplied to
 `edit:save-file!`, Tab closes its form whether or not that path exists.
 If a required argument is still missing, the cursor steps to that argument. A Tab with exactly one
-match inserts that symbol, closes the list, and settles the same way:
+match inserts that completion and settles the same way:
 a procedure of no arguments closes its form with the matching `)`, `]` or
 `}`, one expecting more arguments leaves the cursor one space on, at the next
 argument, and a completed last argument closes the form. A closed form is then
 settled as an argument of its parent, using the parent's documented argument type. Optional and rest parameters,
-syntax, unbound names, quoted or quasiquoted forms, and text after the
+syntax, unbound names, other quoted or quasiquoted forms, and text after the
 cursor all leave the input alone, and Tab says `[No symbol]`; a symbol
 nothing matches stays as typed, with `[No match]`. Comments and character literals
 are left alone. A fuzzy query need not itself be valid Scheme: `2foo` can
@@ -159,6 +161,12 @@ never producer calls or variables. A `(list-of T)` argument completes its
 elements as `T`, recursively: `(extension:load! "x" "y" '("../sch` lists
 directories. Explicit `(quote ...)` and quasiquotes follow the same rule;
 unquoted positions within a quasiquote offer expressions again.
+At the start of a list argument, choices include `'(` and unclosed prefixes
+with one element, such as `'((name ascending)`. Tab or choosing a candidate
+leaves the list open and puts a space after a completed element, ready for
+another. Type `)` to finish the list; Tab then resumes ordinary call settling.
+Enter supplies any remaining closers. An empty list is still `'()`.
+Variables and arbitrary Scheme expressions remain available.
 A `one-of` type offers its literals, a boolean `#t` and `#f`.
 Completing types keep ordinary Scheme values: a mode is `"scheme"`, a file
 path is `"manual/EVAL.md"`, a style is `'ghost`, and a revision is a number.
